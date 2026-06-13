@@ -32,7 +32,8 @@ func Validate(s *Spec) error {
 		}
 	}
 
-	// V1 — linear topology (also surfaces unknown-parent / fork / cycle).
+	// V1 — tree topology (WS3: relaxed from a strict linear chain to a branching
+	// tree; surfaces unknown-parent / multi-root / cycle / disconnected).
 	chain, err := s.Topology.Chain()
 	if err != nil {
 		// Topology errors are foundational; report and stop (downstream rules
@@ -273,27 +274,29 @@ func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) erro
 func validateObject(s *Spec, o *Object, chain []*Level) error {
 	var errs []error
 
-	// V6 — scope-column nesting. The object's `scoped` chain must be the
-	// root-anchored prefix of the NON-virtual topology chain down to the
-	// object's level (the §6.2 scope-column path: pin every column from the top
-	// real level down to L — a project table carries tenant_id AND project_id,
-	// never project_id alone).
-	nonVirtual := make([]*Level, 0, len(chain))
-	for _, l := range chain {
-		if !l.Virtual {
-			nonVirtual = append(nonVirtual, l)
-		}
-	}
-	if len(o.Scoped) == 0 || len(o.Scoped) > len(nonVirtual) {
-		errs = append(errs, fmt.Errorf("line %d: object %q scoped chain has %d level(s); the non-virtual topology chain has %d (V6)",
-			o.Pos.Line, o.Name, len(o.Scoped), len(nonVirtual)))
+	// V6 — scope-column nesting (WS3 tree-aware). The object's `scoped` chain must
+	// be the NON-virtual root→leaf path to its deepest level through the tree: pin
+	// every ancestor column from the top real level down to L (a team-branch table
+	// carries org_id AND team_id; a client-branch table org_id AND client_id —
+	// never the leaf column alone, and never a sibling branch's column).
+	if len(o.Scoped) == 0 {
+		errs = append(errs, fmt.Errorf("line %d: object %q declares no scoped path (V6)", o.Pos.Line, o.Name))
+	} else if path, perr := s.Topology.AncestorPath(o.Scoped[len(o.Scoped)-1]); perr != nil {
+		errs = append(errs, fmt.Errorf("line %d: object %q scoped leaf %q is not a topology level (V6)", o.Pos.Line, o.Name, o.Scoped[len(o.Scoped)-1]))
 	} else {
-		for i, name := range o.Scoped {
-			if nonVirtual[i].Name != name {
-				errs = append(errs, fmt.Errorf("line %d: object %q scoped[%d]=%q breaks the topology order (expected %q) (V6)",
-					o.Pos.Line, o.Name, i, name, nonVirtual[i].Name))
-				break
+		var want []string
+		for _, l := range path {
+			if !l.Virtual {
+				want = append(want, l.Name)
 			}
+		}
+		ok := len(want) == len(o.Scoped)
+		for i := 0; ok && i < len(want); i++ {
+			ok = want[i] == o.Scoped[i]
+		}
+		if !ok {
+			errs = append(errs, fmt.Errorf("line %d: object %q scoped %v is not the non-virtual root→leaf path to %q (expected %v) (V6)",
+				o.Pos.Line, o.Name, o.Scoped, o.Scoped[len(o.Scoped)-1], want))
 		}
 	}
 

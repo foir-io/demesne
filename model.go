@@ -56,17 +56,21 @@ func (t *Topology) LevelByName(name string) *Level {
 	return nil
 }
 
-// Chain returns the topology levels ordered root → leaf, and verifies the
-// linear-chain invariant (V1): exactly one root, every parent resolves, every
-// level has at most one child (no branching), no cycles, all levels reachable
-// from the root in one path.
+// Chain returns the topology levels in a deterministic topological order (root
+// first, parents before children) and verifies the TREE invariant (V1, relaxed
+// for EID-265 WS3): exactly one root, every parent resolves, no cycles, all
+// levels reachable from the root. Each level has at most one parent (the `parent`
+// field is singular), but a parent MAY have multiple children — a branching tree,
+// not a strict linear chain. Every object still declares a linear root→leaf
+// `scoped` path through the tree (see AncestorPath); per-object emission is
+// identical to the chain case along that path.
 func (t *Topology) Chain() ([]*Level, error) {
 	if t == nil || len(t.Levels) == 0 {
 		return nil, fmt.Errorf("topology: no levels declared")
 	}
 
 	var roots []*Level
-	childOf := map[string]*Level{} // parent name → its (single) child
+	children := map[string][]*Level{} // parent name → children, in declaration order
 	for _, l := range t.Levels {
 		if l.Parent == "" {
 			roots = append(roots, l)
@@ -75,34 +79,77 @@ func (t *Topology) Chain() ([]*Level, error) {
 		if t.LevelByName(l.Parent) == nil {
 			return nil, fmt.Errorf("line %d: level %q has unknown parent %q", l.Pos.Line, l.Name, l.Parent)
 		}
-		if existing, ok := childOf[l.Parent]; ok {
-			return nil, fmt.Errorf("line %d: topology is not a linear chain — level %q forks (%q and %q share parent %q)",
-				l.Pos.Line, l.Parent, existing.Name, l.Name, l.Parent)
-		}
-		childOf[l.Parent] = l
+		children[l.Parent] = append(children[l.Parent], l)
 	}
 	if len(roots) != 1 {
 		return nil, fmt.Errorf("topology: want exactly one root level (no parent), found %d", len(roots))
 	}
 
-	chain := []*Level{roots[0]}
-	seen := map[string]bool{roots[0].Name: true}
-	for cur := roots[0]; ; {
-		next, ok := childOf[cur.Name]
-		if !ok {
+	// BFS from the root in declaration order → a deterministic topological order
+	// that also surfaces cycles / unreachable levels (a cycle never includes the
+	// parentless root, so its members are simply unreachable and caught by count).
+	var order []*Level
+	seen := map[string]bool{}
+	queue := []*Level{roots[0]}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		seen[cur.Name] = true
+		order = append(order, cur)
+		queue = append(queue, children[cur.Name]...)
+	}
+	if len(order) != len(t.Levels) {
+		return nil, fmt.Errorf("topology: %d level(s) not reachable from the root (cycle or disconnected)", len(t.Levels)-len(order))
+	}
+	return order, nil
+}
+
+// AncestorPath returns the levels from the root down to (and including) the named
+// level — the unique path through the tree (each level has a single parent). This
+// is the per-object/level linear view the chain-era code assumed globally.
+func (t *Topology) AncestorPath(name string) ([]*Level, error) {
+	l := t.LevelByName(name)
+	if l == nil {
+		return nil, fmt.Errorf("unknown level %q", name)
+	}
+	var rev []*Level
+	for cur := l; cur != nil; cur = t.LevelByName(cur.Parent) {
+		rev = append(rev, cur)
+		if cur.Parent == "" {
 			break
 		}
-		if seen[next.Name] {
-			return nil, fmt.Errorf("topology: cycle through level %q", next.Name)
+	}
+	path := make([]*Level, len(rev))
+	for i, lv := range rev {
+		path[len(rev)-1-i] = lv // reverse to root → level
+	}
+	return path, nil
+}
+
+// descendants returns every level strictly below the named level in the tree
+// (the subtree, across all branches), in topological order.
+func (t *Topology) descendants(name string) ([]*Level, error) {
+	order, err := t.Chain()
+	if err != nil {
+		return nil, err
+	}
+	var out []*Level
+	for _, l := range order {
+		if l.Name == name {
+			continue
 		}
-		seen[next.Name] = true
-		chain = append(chain, next)
-		cur = next
+		path, err := t.AncestorPath(l.Name)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range path {
+			if a.Name == name {
+				out = append(out, l)
+				break
+			}
+		}
 	}
-	if len(chain) != len(t.Levels) {
-		return nil, fmt.Errorf("topology: %d level(s) not reachable from the root in a single chain", len(t.Levels)-len(chain))
-	}
-	return chain, nil
+	return out, nil
 }
 
 // nonVirtualChain returns the chain with virtual levels removed (the levels
@@ -157,24 +204,16 @@ func (s *Spec) ClaimsContract() ([]string, error) {
 // see FreeColumns. Sibling isolation (V7) is a consequence of a non-empty
 // pinned set.
 func (s *Spec) PinnedColumns(sub *Subject) (cols []string, virtualAnchor bool, err error) {
-	chain, err := s.Topology.Chain()
+	// The pinned set is the anchor's root→anchor path (its ancestor path in the
+	// tree) — the chain-era "root down to the anchor", now path-aware (WS3).
+	path, err := s.Topology.AncestorPath(sub.Anchor)
 	if err != nil {
-		return nil, false, err
-	}
-	anchorIdx := -1
-	for i, l := range chain {
-		if l.Name == sub.Anchor {
-			anchorIdx = i
-			break
-		}
-	}
-	if anchorIdx < 0 {
 		return nil, false, fmt.Errorf("line %d: subject %q anchors at unknown level %q", sub.Pos.Line, sub.Name, sub.Anchor)
 	}
-	virtualAnchor = chain[anchorIdx].Virtual
-	for i := 0; i <= anchorIdx; i++ {
-		if !chain[i].Virtual {
-			cols = append(cols, chain[i].Name+"_id")
+	virtualAnchor = path[len(path)-1].Virtual
+	for _, l := range path {
+		if !l.Virtual {
+			cols = append(cols, l.Name+"_id")
 		}
 	}
 	return cols, virtualAnchor, nil
@@ -189,24 +228,16 @@ func (s *Spec) FreeColumns(sub *Subject) ([]string, error) {
 	if sub.Reach != "descendants" {
 		return nil, nil
 	}
-	chain, err := s.Topology.Chain()
+	// The free set is the anchor's subtree (every level below it) — the chain-era
+	// "columns below the anchor", now the tree's descendants (WS3).
+	desc, err := s.Topology.descendants(sub.Anchor)
 	if err != nil {
-		return nil, err
-	}
-	anchorIdx := -1
-	for i, l := range chain {
-		if l.Name == sub.Anchor {
-			anchorIdx = i
-			break
-		}
-	}
-	if anchorIdx < 0 {
-		return nil, fmt.Errorf("subject %q anchors at unknown level %q", sub.Name, sub.Anchor)
+		return nil, fmt.Errorf("subject %q: %w", sub.Name, err)
 	}
 	var free []string
-	for i := anchorIdx + 1; i < len(chain); i++ {
-		if !chain[i].Virtual {
-			free = append(free, chain[i].Name+"_id")
+	for _, l := range desc {
+		if !l.Virtual {
+			free = append(free, l.Name+"_id")
 		}
 	}
 	return free, nil

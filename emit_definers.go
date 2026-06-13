@@ -249,6 +249,12 @@ func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[strin
 // level (pinning ancestor scope cols, the level col, and NULLing deeper cols),
 // optionally OR'd with a recursion call.
 func (s *Spec) roleDefiner(name string, rs *RoleStore, level string, keys []string, recurse string) GenFn {
+	// The role store's scope columns are a fixed ordered set; pin root..level to
+	// args and NULL the columns BELOW level. This needs the full nonVirtual level
+	// sequence the scope columns map to (the topological order), not just the
+	// ancestor path — a tenant-level role must NULL project_id. (WS3: a branching
+	// tree whose roles span multiple branches needs per-branch scope columns, out
+	// of scope here; single-branch role stays identical to the chain case.)
 	chain, _ := s.Topology.Chain()
 	var nonVirtual []string
 	for _, l := range chain {

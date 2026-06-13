@@ -13,9 +13,12 @@ func TestValidateRejects(t *testing.T) {
 		want string // substring expected in the error
 	}{
 		{
-			name: "V1 fork",
-			src:  `topology { level a level b parent a level c parent a }`,
-			want: "not a linear chain",
+			// A fork (b, c both parent a) is now VALID — a branching tree (WS3).
+			// What stays invalid: a level unreachable from the root (here b↔c form a
+			// disconnected cycle).
+			name: "V1 disconnected cycle",
+			src:  `topology { level a level b parent c level c parent b }`,
+			want: "not reachable from the root",
 		},
 		{
 			name: "V1 multi-root",
