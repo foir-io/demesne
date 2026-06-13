@@ -137,6 +137,12 @@ func (p *parser) parseSpec() (*Spec, error) {
 				return nil, err
 			}
 			s.RoleStores = append(s.RoleStores, rs)
+		case "grant":
+			g, err := p.parseGrant()
+			if err != nil {
+				return nil, err
+			}
+			s.Grants = append(s.Grants, g)
 		default:
 			return nil, p.errf("unknown declaration %q", p.cur().lit)
 		}
@@ -314,7 +320,16 @@ func (p *parser) parseSubject() (*Subject, error) {
 		case p.acceptKw("anchor"):
 			sub.Anchor, err = p.ident()
 		case p.acceptKw("reach"):
-			sub.Reach, err = p.ident()
+			// `reach self|descendants`, or `reach via grant <name>` (reach
+			// conferred by a level-scoped grant edge rather than topology pinning).
+			if p.acceptKw("via") {
+				if err = p.expectKw("grant"); err == nil {
+					sub.Reach = "grant"
+					sub.ReachGrant, err = p.ident()
+				}
+			} else {
+				sub.Reach, err = p.ident()
+			}
 		case p.acceptKw("identifies"):
 			sub.Identifies, err = p.ident()
 			if err == nil && p.acceptKw("via") {
@@ -1002,6 +1017,65 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 		return nil, err
 	}
 	return rs, nil
+}
+
+// parseGrant: grant IDENT at LEVEL via edge TABLE(grantee_col, level_col)
+//             [active COL] [expires COL]
+func (p *parser) parseGrant() (*Grant, error) {
+	g := &Grant{Pos: Pos{p.cur().line}}
+	p.advance() // 'grant'
+	name, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	g.Name = name
+	if err := p.expectKw("at"); err != nil {
+		return nil, err
+	}
+	if g.Level, err = p.ident(); err != nil {
+		return nil, err
+	}
+	if err := p.expectKw("via"); err != nil {
+		return nil, err
+	}
+	if err := p.expectKw("edge"); err != nil {
+		return nil, err
+	}
+	if g.Table, err = p.ident(); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	if g.GranteeCol, err = p.ident(); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tComma); err != nil {
+		return nil, err
+	}
+	if g.LevelCol, err = p.ident(); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return nil, err
+	}
+	// optional `active <col>` (NULL ⇒ active) and `expires <col>` (> now() ⇒ active)
+	for {
+		if p.acceptKw("active") {
+			if g.ActiveCol, err = p.ident(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if p.acceptKw("expires") {
+			if g.ExpiresCol, err = p.ident(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		break
+	}
+	return g, nil
 }
 
 func (p *parser) parseFieldScopes() (*FieldScopes, error) {

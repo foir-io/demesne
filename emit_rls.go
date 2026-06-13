@@ -182,14 +182,24 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 
 	var top []string
 	for _, sub := range s.Subjects {
-		if sub.Membership == nil || !virtual[sub.Anchor] {
-			continue
-		}
-		fn := fmt.Sprintf("auth.%s(%s)", membershipFn(sub.Membership), claim(sub.Identifies))
-		if obj.IsLevelEntity() {
-			top = append(top, fn)
-		} else {
-			top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, claim(objLeaf+"_id")))
+		switch {
+		case sub.Membership != nil && virtual[sub.Anchor]:
+			// Legacy unconditional membership operator (a god-flag): reaches every
+			// row, gated only by `<leaf>_id IS NULL` (no scope selected).
+			fn := fmt.Sprintf("auth.%s(%s)", membershipFn(sub.Membership), claim(sub.Identifies))
+			if obj.IsLevelEntity() {
+				top = append(top, fn)
+			} else {
+				top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, claim(objLeaf+"_id")))
+			}
+		case sub.Reach == "grant":
+			// Scoped grant operator (the general replacement for the god-flag):
+			// reach is gated by an ACTIVE grant edge at the grant's level — not
+			// unconditional — and cascades to the whole subtree via the object's
+			// level-scope column. No `<leaf>_id IS NULL` ambient view.
+			if g := s.grantByName(sub.ReachGrant); g != nil {
+				top = append(top, fmt.Sprintf("auth.%s_reach(%s, %s)", g.Table, claim(sub.Identifies), scopeCol(obj, g.Level)))
+			}
 		}
 	}
 

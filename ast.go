@@ -19,6 +19,31 @@ type Spec struct {
 	Ungoverned  []*Ungoverned
 	FieldScopes []*FieldScopes
 	RoleStores  []*RoleStore
+	Grants      []*Grant
+}
+
+// Grant is a level-scoped reachability grant store: an edge table whose rows
+// confer reach into a topology level to a granted subject. It is the general
+// form of "a relationship grants access" — where a Descriptor's `grants` edge
+// confers reach to one OBJECT ROW (an ACL), a Grant confers reach to a whole
+// LEVEL subtree (containment). It compiles to a SECURITY DEFINER `EXISTS` over
+// the edge store (`auth.<table>_reach(grantee, <level>_id)`) that is BOTH a
+// disjunct of the level's role-resolution definer AND a top-level OR branch on
+// every object scoped under that level. This replaces an unconditional
+// membership operator (a god-flag) with a scoped, revocable, expiring grant:
+// the grantee reaches exactly the levels it holds an active grant for, nothing
+// more. Cross-plane management of the store (who may write a grant) is the edge
+// table's own object write rule (owner-origination, no self-escalation); the
+// root-of-trust bootstrap lives in the BYPASSRLS plane, never in the grammar.
+type Grant struct {
+	Name       string // grant name (referenced by `subject … reach via grant <name>`)
+	Level      string // the topology level the grant confers reach at
+	Table      string // the edge store
+	GranteeCol string // the granted-subject id column (matched against the grantee claim)
+	LevelCol   string // the level-scope column (e.g. tenant_id)
+	ActiveCol  string // revoked/active filter column; "" if none (NULL ⇒ active)
+	ExpiresCol string // expiry column; "" if none (> now() ⇒ active)
+	Pos        Pos
 }
 
 // RoleStore declares where a subject's role assignments live, so the compiler
@@ -90,11 +115,12 @@ type Preset struct {
 type Subject struct {
 	Name       string
 	Anchor     string
-	Reach      string // "self" | "descendants"
+	Reach      string // "self" | "descendants" | "grant"
 	Identifies string // claim key; "" if unspecified
 	Membership *Membership
 	Roles      string // vocabulary name; "" if none/unspecified
 	RolesNone  bool
+	ReachGrant string // grant name when Reach == "grant" (reach conferred by a Grant edge)
 	Pos        Pos
 }
 
