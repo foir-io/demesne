@@ -29,26 +29,26 @@ subsumes ad-hoc record sharing.
 
 ## Status — what's live today
 
-Be precise about how "live" the compiler is. Today Demesne runs as a **drift
-guard / conformance oracle**, not as the generator in the deploy path:
+Demesne is the **source of truth** for the authorization layer (EID-252 Phase B,
+complete). The platform no longer hand-authors policies or the PDP map:
 
-- The enforced Postgres policies and the Go PDP are still **hand-authored**
-  (migrations + an `authz.Policy` map), shaped to match what Demesne emits.
-- Demesne's emitters run in the platform's **test suite**, which applies the
-  generated SQL to a real Postgres inside a rolled-back transaction and asserts
-  the live objects equal the generated ones (and re-applies each generated
-  `SECURITY DEFINER` body and asserts it is unchanged). A regression in a
-  hand-written policy — e.g. a dropped tenant/owner clause — fails CI.
+- A generator (`cmd/gen` in the platform) reads the spec and writes the admin
+  PDP maps + the JWT claims contract as committed Go, and the idempotent
+  `CREATE OR REPLACE FUNCTION` + `DROP/CREATE POLICY` set as a goose migration.
+  The migration applies that SQL; a spec change emits a new migration (goose
+  migrations are immutable, so changes supersede rather than edit history).
+- Because every emitted `USING`/`WITH CHECK` and `SECURITY DEFINER` body is the
+  same expression the differential oracle verified against `pg_policies` /
+  `pg_get_functiondef`, the cutover was a proven byte-for-byte **no-op** (fresh
+  DB with the generated migration == the prior hand-written set).
 
-So the moat is hand-written and Demesne *verifies* it. Making the compiler the
-**source of truth** (delete the hand-written artifacts; generate them in the
-migration/build pipeline) is the planned next phase. The drift-guard value is
-real and shipped; the generator-as-source-of-truth is not yet wired.
-
-The guarantee is also only as wide as the migrated surface: the oracle compares
-generated policies against live ones and reports coverage, so an emitter change
-to a not-yet-migrated policy is verified the day that policy goes live, not
-before.
+The oracle still runs, but with generation as the source of truth its
+generated-vs-live comparison is now (correctly) trivial — so the **V7 SQL
+isolation property test** is the real semantic gate: it seeds sibling nodes and
+runs queries under the emitted policies to prove cross-tenant/owner isolation
+actually holds. Tables, columns, indexes, `ENABLE ROW LEVEL SECURITY` and
+`GRANT`s remain hand-written migrations; Demesne owns only the idempotent
+policy + definer + PDP + claims layer.
 
 ## Known limitations
 
