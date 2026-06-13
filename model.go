@@ -36,6 +36,16 @@ func (r *Relation) CostClass() CostClass {
 	return Definer
 }
 
+// grantByName returns the named level-scoped reachability grant, or nil.
+func (s *Spec) grantByName(name string) *Grant {
+	for _, g := range s.Grants {
+		if g.Name == name {
+			return g
+		}
+	}
+	return nil
+}
+
 // LevelByName returns the named level, or nil.
 func (t *Topology) LevelByName(name string) *Level {
 	for _, l := range t.Levels {

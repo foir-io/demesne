@@ -109,7 +109,8 @@ commented spec (a fictional document app). In brief:
 | `topology` | the linear level chain; a `virtual` root has no scope column |
 | `vocabulary` | permissions + `preset`s (`@ level`) + a `rank` ladder |
 | `rolestore` | where role assignments live → generates the role definers |
-| `subject` | who acts: anchor level, reach (`self`/`descendants`), identifying claim, membership or configurable roles |
+| `subject` | who acts: anchor level, reach (`self`/`descendants`/`via grant <name>`), identifying claim, membership or configurable roles |
+| `grant` | `grant <name> at <level> via edge <table>(grantee_col, level_col) [active <col>] [expires <col>]` — a level-scoped reachability grant store: an edge whose rows confer reach into a topology level. The general form of "a relationship grants access" (a `descriptor`'s grants confer reach to one object row; a `grant` confers it to a whole level subtree). Compiles to a `SECURITY DEFINER` `EXISTS` that is both a disjunct of the level's role definer and a top-level branch on objects under that level — a scoped, revocable, expiring operator in place of an unconditional god-flag |
 | `object` | a governed table: relations + permissions (`@rls` / `@pdp` / `@kernel`), and an optional `descriptor` (owner + mode + grants) |
 | `procedures` / `ungoverned` | the RPC → permission map for the PDP emit-site |
 

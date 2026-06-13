@@ -66,8 +66,9 @@ func DefinersSQL(defs []GenFn) string {
 func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	var out []GenFn
 
-	// Membership operator fn (e.g. is_platform_admin).
-	membFn := ""
+	// Membership operator fn (e.g. is_platform_admin) — a LEGACY unconditional
+	// god-flag. The general, scoped form is a `grant` (below); a spec uses at most
+	// one of the two as its operator.
 	for _, sub := range s.Subjects {
 		m := sub.Membership
 		if m == nil {
@@ -76,13 +77,35 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		if m.IDCol == "" || m.FlagCol == "" {
 			return nil, fmt.Errorf("subject %q membership needs (idcol, flagcol)", sub.Name)
 		}
-		membFn = m.FlagCol
 		body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = user_id AND %s", m.Table, m.IDCol, m.FlagCol)
 		if m.ActiveCol != "" {
 			body += fmt.Sprintf(" AND %s = '%s'", m.ActiveCol, m.ActiveVal)
 		}
 		body += ")"
 		out = append(out, GenFn{Name: m.FlagCol, Sig: "user_id text", Body: body})
+	}
+
+	// Level-scoped grant-reach fns: an active grant edge confers reach into a
+	// topology level. auth.<table>_reach(user_id, check_<level>_id) EXISTS over
+	// the grant store. These are BOTH a disjunct of the level's role definer AND a
+	// top-level OR branch on objects scoped under that level, so they are emitted
+	// before the role definers that call them (callee before caller).
+	gseen := map[string]bool{}
+	for _, g := range s.Grants {
+		name := g.Table + "_reach"
+		if gseen[name] {
+			continue
+		}
+		gseen[name] = true
+		body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = user_id AND %s = check_%s_id", g.Table, g.GranteeCol, g.LevelCol, g.Level)
+		if g.ActiveCol != "" {
+			body += fmt.Sprintf(" AND %s IS NULL", g.ActiveCol)
+		}
+		if g.ExpiresCol != "" {
+			body += fmt.Sprintf(" AND %s > now()", g.ExpiresCol)
+		}
+		body += ")"
+		out = append(out, GenFn{Name: name, Sig: fmt.Sprintf("user_id text, check_%s_id text", g.Level), Body: body})
 	}
 
 	// Role-resolution fns, derived from each object's role relations + walks.
@@ -98,7 +121,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		}
 		for _, pm := range obj.Perms {
 			for _, t := range pm.Expr {
-				d, ok, err := s.roleDefinerForTerm(obj, pm, t, rels, rs, membFn, rankIdx, presetLevels)
+				d, ok, err := s.roleDefinerForTerm(obj, pm, t, rels, rs, rankIdx, presetLevels)
 				if err != nil {
 					return nil, err
 				}
@@ -155,12 +178,13 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 
 // roleDefinerForTerm returns the definer a role-bearing term needs (a walk into
 // a parent level, or a via-role relation), or ok=false for non-role terms.
-func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, rs *RoleStore, membFn string, rankIdx map[string]int, presetLevels map[string][]string) (GenFn, bool, error) {
+func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, rs *RoleStore, rankIdx map[string]int, presetLevels map[string][]string) (GenFn, bool, error) {
 	if rs == nil {
 		return GenFn{}, false, nil
 	}
 	// Ancestor walk: `<rel>-><verb>` → is_<level>_admin, role at that ancestor
-	// level (deeper scope cols pinned NULL), recursing to the membership fn.
+	// level (deeper scope cols pinned NULL), OR'd with the operator's reach AT
+	// that level (an unconditional god-flag, or a scoped grant — see operatorReach).
 	if t.WalkVerb != "" {
 		parent := rels[t.Ident]
 		if parent == nil {
@@ -169,7 +193,7 @@ func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[strin
 		lvl := parent.Types[0] // the level the walk targets (e.g. tenant)
 		fn := fmt.Sprintf("is_%s_admin", lvl)
 		keys := presetLevels[lvl] // all presets bound at that level
-		return s.roleDefiner(fn, rs, lvl, keys, membFn+"(user_id)"), true, nil
+		return s.roleDefiner(fn, rs, lvl, keys, s.operatorReach(lvl)), true, nil
 	}
 	// A via-role relation on this object — referenced directly, or session-gated
 	// via `@session(<rel>)`.
@@ -191,7 +215,7 @@ func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[strin
 		// is_<rank>: project-level presets at or above the rank threshold,
 		// recursing to the parent-level admin fn (is_<ancestor>_admin).
 		keys = atOrAbove(keys, vr.RankMin, rankIdx)
-		recurse := s.parentLevelRecurse(obj, membFn)
+		recurse := s.parentLevelRecurse(obj)
 		return s.roleDefiner("is_"+vr.RankMin, rs, objLevel, keys, recurse), true, nil
 	}
 	// admin_has_<obj>_role: any role at the object's level, no recursion.
@@ -247,13 +271,38 @@ func (s *Spec) roleDefiner(name string, rs *RoleStore, level string, keys []stri
 }
 
 // parentLevelRecurse returns the recursion call a project-level rank fn makes —
-// the ancestor-level admin fn (is_<parent>_admin(user_id, check_<parent>_id)).
-func (s *Spec) parentLevelRecurse(obj *Object, membFn string) string {
+// the ancestor-level admin fn (is_<parent>_admin(user_id, check_<parent>_id)),
+// or, when the object is already at the top non-virtual level, the operator's
+// reach at that level (a god-flag or a scoped grant; "" if no operator).
+func (s *Spec) parentLevelRecurse(obj *Object) string {
 	if len(obj.Scoped) < 2 {
-		return membFn + "(user_id)"
+		return s.operatorReach(obj.Scoped[len(obj.Scoped)-1])
 	}
 	parent := obj.Scoped[len(obj.Scoped)-2]
 	return fmt.Sprintf("is_%s_admin(user_id, check_%s_id)", parent, parent)
+}
+
+// operatorReach returns the recursion predicate the privileged ("operator")
+// subject contributes to a role-resolution definer AT a given level — the
+// disjunct by which an operator satisfies that level's admin authority:
+//   - a LEGACY membership operator → its unconditional flag fn, level-independent
+//     (e.g. `is_platform_admin(user_id)`);
+//   - a SCOPED grant operator whose grant is at this level → the grant-reach call
+//     (`<table>_reach(user_id, check_<level>_id)`), gated by an active grant edge;
+//   - "" if no operator contributes here (the role definer is then the bare role
+//     EXISTS — no ambient cross-tenant authority).
+func (s *Spec) operatorReach(level string) string {
+	for _, sub := range s.Subjects {
+		if sub.Membership != nil {
+			return sub.Membership.FlagCol + "(user_id)"
+		}
+		if sub.Reach == "grant" {
+			if g := s.grantByName(sub.ReachGrant); g != nil && g.Level == level {
+				return fmt.Sprintf("%s_reach(user_id, check_%s_id)", g.Table, g.Level)
+			}
+		}
+	}
+	return ""
 }
 
 // kernelDefiner builds the realtime/collab reachability gate over an object's

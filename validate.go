@@ -53,6 +53,16 @@ func Validate(s *Spec) error {
 		add(validateVocabulary(v))
 	}
 
+	// Grant stores confer reach at a topology level — the level must resolve.
+	for _, g := range s.Grants {
+		if !levelNames[g.Level] {
+			add(fmt.Errorf("line %d: grant %q confers reach at unknown level %q", g.Pos.Line, g.Name, g.Level))
+		}
+		if g.Table == "" || g.GranteeCol == "" || g.LevelCol == "" {
+			add(fmt.Errorf("line %d: grant %q must name an edge table, grantee column and level column", g.Pos.Line, g.Name))
+		}
+	}
+
 	for _, sub := range s.Subjects {
 		add(validateSubject(s, sub, levelNames, vocabNames))
 	}
@@ -179,12 +189,23 @@ func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) erro
 	var errs []error
 
 	// V2 — bounded reach + anchor resolves.
-	if sub.Reach != "self" && sub.Reach != "descendants" {
-		errs = append(errs, fmt.Errorf("line %d: subject %q has reach %q — only self|descendants are emittable (V2)",
+	if sub.Reach != "self" && sub.Reach != "descendants" && sub.Reach != "grant" {
+		errs = append(errs, fmt.Errorf("line %d: subject %q has reach %q — only self|descendants|grant are emittable (V2)",
 			sub.Pos.Line, sub.Name, sub.Reach))
 	}
 	if !levels[sub.Anchor] {
 		errs = append(errs, fmt.Errorf("line %d: subject %q anchors at unknown level %q (V2)", sub.Pos.Line, sub.Name, sub.Anchor))
+	}
+
+	// A grant-reach subject's reach is conferred entirely by a declared Grant edge
+	// (the scoped-operator form, replacing an unconditional membership god-flag);
+	// it must name a declared grant.
+	if sub.Reach == "grant" {
+		if sub.ReachGrant == "" {
+			errs = append(errs, fmt.Errorf("line %d: subject %q has `reach via grant` but names no grant", sub.Pos.Line, sub.Name))
+		} else if g := s.grantByName(sub.ReachGrant); g == nil {
+			errs = append(errs, fmt.Errorf("line %d: subject %q reaches via unknown grant %q", sub.Pos.Line, sub.Name, sub.ReachGrant))
+		}
 	}
 
 	// roles vocabulary must exist when configurable.
