@@ -148,7 +148,9 @@ func TestExample_EmitDefiners(t *testing.T) {
 	}
 	for _, want := range []string{
 		"is_root", "is_tenant_admin", "admin_has_workspace_role",
-		"is_ws_editor", "customer_can_access_doc", "doc_acl_grants",
+		// The doc's owner principal is `member`, so the realtime gate is named for
+		// it — NOT an assumed `customer` (EID-265 WS2 principal-kinds generalization).
+		"is_ws_editor", "member_can_access_doc", "doc_acl_grants",
 	} {
 		if !got[want] {
 			t.Errorf("missing generated definer %q; got %v", want, keys(got))
