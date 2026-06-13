@@ -139,6 +139,20 @@ func scopeCol(obj *Object, lvl string) string {
 	return lvl + "_id"
 }
 
+// reqClaim fails closed when an owner / customer-plane term needs the per-record
+// owner claim but no owner subject resolved one. Without this guard the emitter
+// would substitute an empty claim key and produce `(... ->> '')`, which is
+// silently NULL and would match (or fail to constrain) every row — a soundness
+// hole. The spec must declare a `reach self` subject (with roles) at the
+// object's leaf level for any object whose policy references the owner axis.
+func reqClaim(custClaim string, obj *Object, what string) error {
+	if custClaim == "" {
+		return fmt.Errorf("object %q: %s references the owner axis, but no owner subject (a `reach self` subject with roles at level %q) resolves a claim — refusing to emit an empty-claim predicate",
+			obj.Name, what, obj.Scoped[len(obj.Scoped)-1])
+	}
+	return nil
+}
+
 // guardSQL renders the bounded ABAC guard, null-safe for `<>`.
 func guardSQL(g *Guard) string {
 	if g.Op == "<>" {
@@ -260,6 +274,9 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 	}
 	switch {
 	case t.Builtin == "app_scope":
+		if err := reqClaim(custClaim, obj, "@app_scope"); err != nil {
+			return nil, err
+		}
 		return []string{claim(custClaim) + " IS NULL"}, nil
 	case t.Builtin == "descriptor":
 		return s.emitDescriptor(obj, pm, custClaim)
@@ -292,11 +309,20 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 	switch repr := r.Repr.(type) {
 	case ViaColumn:
 		// Inline owner axis: column equals the customer claim.
+		if err := reqClaim(custClaim, obj, "owner relation "+t.Ident); err != nil {
+			return nil, err
+		}
 		return []string{fmt.Sprintf("%s = %s", repr.Column, claim(custClaim))}, nil
 	case ViaEdge:
 		// Definer tail: the compiler owns auth.<edgeTable>(...).
+		if err := reqClaim(custClaim, obj, "edge relation "+t.Ident); err != nil {
+			return nil, err
+		}
 		return []string{fmt.Sprintf("auth.%s(%s, %s, '%s')", repr.Table, claim(custClaim), pk, access)}, nil
 	case ViaComposition:
+		if err := reqClaim(custClaim, obj, "composition relation "+t.Ident); err != nil {
+			return nil, err
+		}
 		return []string{fmt.Sprintf("auth.%s_composition_%s(%s, %s, '%s')", obj.Name, r.Name, claim(custClaim), pk, access)}, nil
 	case ViaRole:
 		// A role membership on this object → a project-role definer call over
@@ -326,6 +352,9 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	d := obj.Descriptor
 	if d == nil {
 		return nil, fmt.Errorf("@descriptor used but object has no descriptor")
+	}
+	if err := reqClaim(custClaim, obj, "@descriptor"); err != nil {
+		return nil, err
 	}
 	var frags []string
 	owner, _ := d.Owner.Repr.(ViaColumn)

@@ -29,7 +29,15 @@ const (
 func TestEmitRLS_RoleTerms(t *testing.T) {
 	src := `
 	  topology { level platform virtual level tenant parent platform level project parent tenant }
-	  vocabulary v { permission a:b }
+	  vocabulary v { permission a:b preset member @ project = a:b preset tadmin @ tenant = a:b rank tadmin > member }
+	  rolestore admin {
+	    assignments role_assignments
+	    kind        principal_kind = "admin"
+	    subject     principal_id
+	    scope       tenant_id project_id
+	    rolejoin    role_id roles id key
+	    revoked     revoked_at
+	  }
 	  subject operator { anchor platform reach descendants identifies sub via membership admin_users(id, is_platform_admin) roles none }
 	  subject admin    { anchor tenant   reach descendants identifies sub roles configurable v }
 	  subject customer { anchor project  reach self        identifies customer_id roles configurable v }

@@ -68,6 +68,27 @@ func TestValidateRejects(t *testing.T) {
 			      vocabulary v { permission a:b preset p = a:b + c:d }`,
 			want: "unknown permission/preset",
 		},
+		{
+			// V11: a `via edge` relation referenced in @rls emits auth.<table>()
+			// that the kernel does not generate — the dangling-definer hole.
+			name: "V11 dangling definer",
+			src: `topology { level a }
+			      vocabulary v { permission p:q }
+			      subject cust { anchor a reach self identifies customer_id roles configurable v }
+			      object o { table t scoped a relation share: cust via edge acl(rid, pid, acc)
+			                 permission view = share @rls maps select }`,
+			want: "definer closure (V11)",
+		},
+		{
+			// Owner axis with no `reach self` subject to resolve a claim — must
+			// refuse rather than emit an empty-claim predicate (surfaced via V11,
+			// which runs the emitter as the comprehensive gate).
+			name: "owner claim unresolved",
+			src: `topology { level a }
+			      object o { table t scoped a relation owner: a via cid
+			                 permission view = owner @rls maps select }`,
+			want: "no owner subject",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

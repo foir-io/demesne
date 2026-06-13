@@ -3,6 +3,7 @@ package demesne
 import (
 	"errors"
 	"fmt"
+	"sort"
 )
 
 // Validate runs the semantic rules V1–V10 (RFC §8.2) over a parsed Spec and
@@ -77,6 +78,66 @@ func Validate(s *Spec) error {
 		}
 	}
 
+	// V11 — definer closure. The V9 promise is that the compiler owns 100% of the
+	// SECURITY DEFINER surface: every auth.<fn>() the emitted RLS calls must be one
+	// the kernel generates. Enforce it by construction so a dangling reference
+	// (e.g. a `via edge` relation whose definer nothing emits) cannot ship — the
+	// DB oracle would catch it only for the migrated subset, and never for a
+	// third-party consumer of the engine.
+	add(validateDefinerClosure(s))
+
+	return errors.Join(errs...)
+}
+
+// validateDefinerClosure emits the RLS + the kernel and asserts the set of
+// definers the policies reference is a subset of the set the kernel generates.
+// A spec outside the bounded emitter (EmitRLS error) surfaces here too, so
+// Validate is the single comprehensive gate.
+func validateDefinerClosure(s *Spec) error {
+	res, err := s.EmitRLS()
+	if err != nil {
+		return fmt.Errorf("definer closure (V11): RLS does not emit: %w", err)
+	}
+	// A declared @rls permission that the emitter could not compile is a spec
+	// defect, not a silent no-op — fail loud (an uncompiled policy means the row
+	// is unreachable, never weaker SQL). reqClaim failures land here.
+	if len(res.Unsupported) > 0 {
+		var errs []error
+		for _, u := range res.Unsupported {
+			errs = append(errs, fmt.Errorf("uncompilable @rls permission (V11): %s", u))
+		}
+		return errors.Join(errs...)
+	}
+	gen, err := s.EmitDefiners()
+	if err != nil {
+		return fmt.Errorf("definer closure (V11): kernel does not emit: %w", err)
+	}
+	generated := map[string]bool{}
+	for _, g := range gen {
+		generated["auth."+g.Name] = true
+	}
+	referenced := map[string]bool{}
+	for _, p := range res.Policies {
+		for _, body := range []string{p.Using, p.Check} {
+			for _, fn := range scanDefiners(body) {
+				referenced[fn] = true
+			}
+		}
+	}
+	var dangling []string
+	for fn := range referenced {
+		if !generated[fn] {
+			dangling = append(dangling, fn)
+		}
+	}
+	if len(dangling) == 0 {
+		return nil
+	}
+	sort.Strings(dangling)
+	var errs []error
+	for _, fn := range dangling {
+		errs = append(errs, fmt.Errorf("definer closure (V11): emitted RLS calls %s() but the kernel does not generate it — declare it so the compiler owns the whole definer surface", fn))
+	}
 	return errors.Join(errs...)
 }
 

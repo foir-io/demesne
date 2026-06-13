@@ -27,6 +27,47 @@ project`), the **subjects** that act in it, the **objects** they act on, and the
 descriptor** (owner + per-record mode + an app-managed grant store) that
 subsumes ad-hoc record sharing.
 
+## Status — what's live today
+
+Be precise about how "live" the compiler is. Today Demesne runs as a **drift
+guard / conformance oracle**, not as the generator in the deploy path:
+
+- The enforced Postgres policies and the Go PDP are still **hand-authored**
+  (migrations + an `authz.Policy` map), shaped to match what Demesne emits.
+- Demesne's emitters run in the platform's **test suite**, which applies the
+  generated SQL to a real Postgres inside a rolled-back transaction and asserts
+  the live objects equal the generated ones (and re-applies each generated
+  `SECURITY DEFINER` body and asserts it is unchanged). A regression in a
+  hand-written policy — e.g. a dropped tenant/owner clause — fails CI.
+
+So the moat is hand-written and Demesne *verifies* it. Making the compiler the
+**source of truth** (delete the hand-written artifacts; generate them in the
+migration/build pipeline) is the planned next phase. The drift-guard value is
+real and shipped; the generator-as-source-of-truth is not yet wired.
+
+The guarantee is also only as wide as the migrated surface: the oracle compares
+generated policies against live ones and reports coverage, so an emitter change
+to a not-yet-migrated policy is verified the day that policy goes live, not
+before.
+
+## Known limitations
+
+The engine is policy-agnostic in shape but still carries a few assumptions from
+its first deployment; they're called out honestly rather than hidden:
+
+- **Owner principal kind.** The descriptor grant kernel and the realtime gate
+  assume a customer-style owner principal (the grant store filter and the
+  generated signatures name a customer principal). A second principal kind for
+  record ownership would need generalizing here.
+- **Descriptor mode vocabulary.** Public-mode scopes (`project` / `world`) and
+  the list mode (`customers` / `admins`) are a fixed vocabulary in the
+  validator rather than spec-declared.
+- **Subject-role inference.** The owner subject (`reach self` + roles at the
+  leaf) and the admin subject (`reach descendants` + roles) are inferred from
+  subject shape, not an explicit role-binding keyword. Validation now fails
+  closed if the owner claim can't be resolved (V11), but the inference itself is
+  shape-based.
+
 ## This module is pure
 
 `github.com/eidestudio/demesne` depends on the **standard library only**. It
