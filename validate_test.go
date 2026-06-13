@@ -74,7 +74,7 @@ func TestValidateRejects(t *testing.T) {
 			name: "V11 dangling definer",
 			src: `topology { level a }
 			      vocabulary v { permission p:q }
-			      subject cust { anchor a reach self identifies customer_id roles configurable v }
+			      subject cust { anchor a reach self identifies customer_id roles configurable v binds owner }
 			      object o { table t scoped a relation share: cust via edge acl(rid, pid, acc)
 			                 permission view = share @rls maps select }`,
 			want: "definer closure (V11)",

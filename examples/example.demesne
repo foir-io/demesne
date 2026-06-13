@@ -49,8 +49,8 @@ rolestore staff {
 }
 
 subject root   { anchor org;       reach descendants; identifies sub via membership staff_users(id, is_root) active status = "ACTIVE"; roles none }
-subject staff  { anchor tenant;    reach descendants; identifies sub;        roles configurable staff }
-subject member { anchor workspace; reach self;        identifies member_id;  roles configurable member }
+subject staff  { anchor tenant;    reach descendants; identifies sub;        roles configurable staff;  binds admin }
+subject member { anchor workspace; reach self;        identifies member_id;  roles configurable member; binds owner }
 subject service { anchor workspace; reach self;       identifies sub;        roles none }
 
 // The workspace node itself: a level-entity object (its own table IS the node).

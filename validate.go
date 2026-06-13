@@ -75,6 +75,27 @@ func Validate(s *Spec) error {
 		add(validateSubject(s, sub, levelNames, vocabNames))
 	}
 
+	// Explicit plane-role bindings must be unambiguous: at most one owner per
+	// anchor level, at most one admin per spec (EID-265 WS2 — the binding REPLACES
+	// the former first-match shape inference, so ambiguity is an error, not a
+	// silent pick).
+	ownerAt := map[string]string{}
+	adminSub := ""
+	for _, sub := range s.Subjects {
+		switch sub.Binds {
+		case "owner":
+			if prev := ownerAt[sub.Anchor]; prev != "" {
+				add(fmt.Errorf("subjects %q and %q both `binds owner` at level %q — the owner plane must be unambiguous", prev, sub.Name, sub.Anchor))
+			}
+			ownerAt[sub.Anchor] = sub.Name
+		case "admin":
+			if adminSub != "" {
+				add(fmt.Errorf("subjects %q and %q both `binds admin` — the admin plane must be unambiguous", adminSub, sub.Name))
+			}
+			adminSub = sub.Name
+		}
+	}
+
 	// V5 — claims contract is derivable (also validates anchors resolve).
 	if _, err := s.ClaimsContract(); err != nil {
 		add(err)
@@ -219,6 +240,13 @@ func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) erro
 	// roles vocabulary must exist when configurable.
 	if sub.Roles != "" && !vocabs[sub.Roles] {
 		errs = append(errs, fmt.Errorf("line %d: subject %q roles reference unknown vocabulary %q", sub.Pos.Line, sub.Name, sub.Roles))
+	}
+
+	// The explicit plane-role binding (EID-265 WS2) must name a known role.
+	switch sub.Binds {
+	case "", "owner", "admin":
+	default:
+		errs = append(errs, fmt.Errorf("line %d: subject %q has unknown binding %q (binds owner|admin)", sub.Pos.Line, sub.Name, sub.Binds))
 	}
 
 	// V7-precondition / safety: a subject that pins NO scope column has

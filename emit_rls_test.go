@@ -39,8 +39,8 @@ func TestEmitRLS_RoleTerms(t *testing.T) {
 	    revoked     revoked_at
 	  }
 	  subject operator { anchor platform reach descendants identifies sub via membership admin_users(id, is_platform_admin) roles none }
-	  subject admin    { anchor tenant   reach descendants identifies sub roles configurable v }
-	  subject customer { anchor project  reach self        identifies customer_id roles configurable v }
+	  subject admin    { anchor tenant   reach descendants identifies sub roles configurable v binds admin }
+	  subject customer { anchor project  reach self        identifies customer_id roles configurable v binds owner }
 	  object thing {
 	    table  things
 	    scoped tenant > project

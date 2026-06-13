@@ -14,7 +14,7 @@ topology {
   level project parent tenant
 }
 vocabulary member { permission self:read }
-subject member { anchor project; reach self; identifies customer_id; roles configurable member }
+subject member { anchor project; reach self; identifies customer_id; roles configurable member; binds owner }
 object thing {
   table  things
   scoped tenant > project

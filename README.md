@@ -63,18 +63,23 @@ hand-written migrations; Demesne owns only the idempotent policy + definer + PDP
 
 ## Known limitations
 
-The engine is policy-agnostic in shape but still carries a few assumptions from
-its first deployment; they're called out honestly rather than hidden:
+The engine is policy-agnostic in shape. The original single-deployment
+assumptions have been lifted into spec-declared parameters (EID-265 WS2): the
+claims accessor (`claims via`), the definer schema (`definers schema`), the
+descriptor mode vocabulary (`private` / `read "<sentinel>"` / `list "<kind>"`),
+the owner principal kind (the grant + realtime-gate signatures name the spec's
+own owner principal), and the owner/admin plane bindings (`binds owner|admin`,
+explicit rather than shape-inferred). What honestly remains:
 
-- **Owner principal kind.** The descriptor grant kernel and the realtime gate
-  assume a customer-style owner principal (the grant store filter and the
-  generated signatures name a customer principal). A second principal kind for
-  record ownership would need generalizing here.
-- **Subject-role inference.** The owner subject (`reach self` + roles at the
-  leaf) and the admin subject (`reach descendants` + roles) are inferred from
-  subject shape, not an explicit role-binding keyword. Validation now fails
-  closed if the owner claim can't be resolved (V11), but the inference itself is
-  shape-based.
+- **Function-name affixes.** The generated definer names still derive from a
+  fixed affix vocabulary (`is_<level>_admin`, `admin_has_<obj>_role`); the
+  principal and schema are spec-declared, but the role-name affixes are not.
+- **Second claim-bearing owner principal.** A descriptor's owner resolves a
+  single claim-bearing principal (plus the no-claim app/service plane); a record
+  owned by two *distinct* claim-bearing principals isn't modelled (no spec needs
+  it — deliberately not built).
+- **Linear topology.** The level chain is strictly linear (root → … → leaf);
+  cost-classed reachability DAGs are WS3.
 
 ## This module is pure
 
