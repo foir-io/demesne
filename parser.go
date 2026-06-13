@@ -359,6 +359,10 @@ func (p *parser) parseSubject() (*Subject, error) {
 			}
 		case p.acceptKw("roles"):
 			err = p.parseSubjectRoles(sub)
+		case p.acceptKw("binds"):
+			// `binds owner|admin` — the subject's distinguished plane role, declared
+			// explicitly rather than inferred from shape (EID-265 WS2).
+			sub.Binds, err = p.ident()
 		default:
 			return nil, p.errf("unexpected %s %q in subject %q", p.peekKind(), p.cur().lit, sub.Name)
 		}

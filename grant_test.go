@@ -37,8 +37,8 @@ grant impersonation at tenant
   active revoked_at expires expires_at
 
 subject operator { anchor platform; reach via grant impersonation; identifies sub; roles none }
-subject admin    { anchor tenant;   reach descendants; identifies sub; roles configurable admin }
-subject customer { anchor project;  reach self; identifies customer_id; roles configurable customer }
+subject admin    { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+subject customer { anchor project;  reach self; identifies customer_id; roles configurable customer; binds owner }
 
 object project {
   table  projects

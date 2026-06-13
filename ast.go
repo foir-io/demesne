@@ -168,7 +168,13 @@ type Subject struct {
 	Roles      string // vocabulary name; "" if none/unspecified
 	RolesNone  bool
 	ReachGrant string // grant name when Reach == "grant" (reach conferred by a Grant edge)
-	Pos        Pos
+	// Binds is the subject's distinguished plane role, declared explicitly (EID-265
+	// WS2) rather than inferred from shape: "owner" (the per-record owner principal
+	// whose claim the descriptor / owner axis resolves against) or "admin" (the
+	// role-resolution principal whose claim drives the is_<level>_admin definers).
+	// "" for subjects that bind no plane (e.g. the operator, or a no-claim service).
+	Binds string
+	Pos   Pos
 }
 
 // Membership is `via membership <Table>(<IDCol>, <FlagCol>) [active <Col> = "<Val>"]`

@@ -113,23 +113,27 @@ func (s *Spec) EmitRLS() (*RLSResult, error) {
 	return res, nil
 }
 
-// ownerSubject returns the per-record owner subject: reach self, anchored at the
-// object's leaf level, with a configurable role vocabulary (the customer plane —
-// distinguished from `service`, which has roles none).
+// ownerSubject returns the per-record owner-plane subject for an object's leaf
+// level — the subject EXPLICITLY bound with `binds owner` at that anchor (EID-265
+// WS2). This is a declared binding, not a shape heuristic (formerly "the unique
+// reach-self + roles subject at the leaf", which silently disambiguated `customer`
+// from a no-claim `service`). nil if the spec binds no owner at this level.
 func (s *Spec) ownerSubject(leafLevel string) *Subject {
 	for _, sub := range s.Subjects {
-		if sub.Reach == "self" && sub.Anchor == leafLevel && sub.Roles != "" {
+		if sub.Binds == "owner" && sub.Anchor == leafLevel {
 			return sub
 		}
 	}
 	return nil
 }
 
-// adminIdentify returns the admin subject's claim key (reach descendants,
-// configurable roles, non-virtual anchor — distinct from the virtual operator).
+// adminIdentify returns the claim key of the role-resolution (admin) plane — the
+// subject EXPLICITLY bound with `binds admin` (EID-265 WS2), not the formerly
+// inferred "reach descendants + roles, non-membership" subject. Falls back to
+// "sub" when the spec declares no admin plane.
 func (s *Spec) adminIdentify() string {
 	for _, sub := range s.Subjects {
-		if sub.Reach == "descendants" && sub.Roles != "" && sub.Membership == nil {
+		if sub.Binds == "admin" {
 			return sub.Identifies
 		}
 	}
@@ -154,7 +158,7 @@ func scopeCol(obj *Object, lvl string) string {
 // object's leaf level for any object whose policy references the owner axis.
 func reqClaim(custClaim string, obj *Object, what string) error {
 	if custClaim == "" {
-		return fmt.Errorf("object %q: %s references the owner axis, but no owner subject (a `reach self` subject with roles at level %q) resolves a claim — refusing to emit an empty-claim predicate",
+		return fmt.Errorf("object %q: %s references the owner axis, but no owner subject (a subject `binds owner` at level %q) resolves a claim — refusing to emit an empty-claim predicate",
 			obj.Name, what, obj.Scoped[len(obj.Scoped)-1])
 	}
 	return nil
