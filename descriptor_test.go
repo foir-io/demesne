@@ -22,21 +22,21 @@ func TestDescriptorRejects(t *testing.T) {
 		},
 		{
 			name: "list mode without grants",
-			body: `descriptor { owner c via oid modes customers }
+			body: `descriptor { owner c via oid mode via m modes list "customer" }
 			       permission view = @descriptor @rls maps select }`,
 			want: "no `grants via edge",
 		},
 		{
-			name: "public without scope arg",
-			body: `descriptor { owner c via oid mode via m modes private + public grants via edge acl(r,k,p,x) }
+			name: "read mode without sentinel value",
+			body: `descriptor { owner c via oid mode via m modes private + read grants via edge acl(r,k,p,x) }
 			       permission view = @descriptor @rls maps select }`,
-			want: "expected (", // parser-level: public( … )
+			want: "expected", // parser-level: read '<sentinel>'
 		},
 		{
-			name: "unknown mode",
+			name: "unknown mode kind",
 			body: `descriptor { owner c via oid mode via m modes frobnicate }
 			       permission view = @descriptor @rls maps select }`,
-			want: "unknown mode",
+			want: "descriptor mode must be private",
 		},
 		{
 			name: "column mode without mode column",
@@ -79,9 +79,9 @@ func TestDescriptorRejects(t *testing.T) {
 	}
 }
 
-func hasMode(d *Descriptor, name, scope string) bool {
+func hasMode(d *Descriptor, kind, value string) bool {
 	for _, m := range d.Modes {
-		if m.Name == name && m.Scope == scope {
+		if m.Kind == kind && m.Value == value {
 			return true
 		}
 	}

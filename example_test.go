@@ -67,7 +67,8 @@ func TestExample_ParseAndShape(t *testing.T) {
 	if d.ModeCol != "visibility" {
 		t.Errorf("descriptor mode column: %q", d.ModeCol)
 	}
-	if !hasMode(d, "private", "") || !hasMode(d, "public", "project") || !hasMode(d, "public", "world") {
+	if !hasMode(d, "private", "") || !hasMode(d, "read", "public_project") ||
+		!hasMode(d, "read", "public_world") || !hasMode(d, "list", "customer") {
 		t.Errorf("descriptor modes: %+v", d.Modes)
 	}
 	if d.Grants == nil || d.Grants.Table != "doc_acl" || d.Grants.RecordCol != "doc_id" {

@@ -743,25 +743,28 @@ func (p *parser) parseModes() ([]Mode, error) {
 	return modes, nil
 }
 
+// parseModeItem parses one descriptor mode: `private`, `read '<sentinel>'`, or
+// `list '<kind>'`. The sentinel/kind are spec-declared strings — the engine has
+// no baked mode vocabulary (EID-265 WS2).
 func (p *parser) parseModeItem() (Mode, error) {
 	m := Mode{Pos: Pos{p.cur().line}}
-	name, err := p.ident()
-	if err != nil {
-		return m, err
-	}
-	m.Name = name
-	if name == "public" {
-		if _, err := p.expect(tLParen); err != nil {
-			return m, err
-		}
-		scope, err := p.ident()
+	switch {
+	case p.acceptKw("private"):
+		m.Kind = "private"
+	case p.acceptKw("read"):
+		v, err := p.expect(tString)
 		if err != nil {
 			return m, err
 		}
-		m.Scope = scope
-		if _, err := p.expect(tRParen); err != nil {
+		m.Kind, m.Value = "read", v.lit
+	case p.acceptKw("list"):
+		v, err := p.expect(tString)
+		if err != nil {
 			return m, err
 		}
+		m.Kind, m.Value = "list", v.lit
+	default:
+		return m, p.errf("descriptor mode must be private | read '<sentinel>' | list '<kind>', got %s %q", p.peekKind(), p.cur().lit)
 	}
 	return m, nil
 }

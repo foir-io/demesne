@@ -23,7 +23,6 @@ import (
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true}
 var knownBuiltins = map[string]bool{"app_scope": true, "descriptor": true, "scoped": true, "session": true}
-var knownModes = map[string]bool{"private": true, "public": true, "customers": true, "admins": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -323,36 +322,38 @@ func validateDescriptor(o *Object) error {
 		errs = append(errs, fmt.Errorf("line %d: object %q descriptor owner must be an inline column axis", d.Pos.Line, o.Name))
 	}
 
+	// Modes are spec-declared by structural KIND (EID-265 WS2) — no fixed name
+	// allowlist. A column-driven mode (private baseline / read sentinel) needs a
+	// per-record mode column; a list mode needs a record_acl grant store.
 	hasListMode := false
 	hasColumnMode := false
 	for _, m := range d.Modes {
-		if !knownModes[m.Name] {
-			errs = append(errs, fmt.Errorf("line %d: object %q descriptor has unknown mode %q (private|public|customers|admins)", m.Pos.Line, o.Name, m.Name))
-			continue
-		}
-		switch m.Name {
-		case "public":
-			if m.Scope != "project" && m.Scope != "world" {
-				errs = append(errs, fmt.Errorf("line %d: object %q descriptor mode public(%s) — scope must be project|world", m.Pos.Line, o.Name, m.Scope))
-			}
-			hasColumnMode = true
+		switch m.Kind {
 		case "private":
 			hasColumnMode = true
-		case "customers", "admins":
+		case "read":
+			if m.Value == "" {
+				errs = append(errs, fmt.Errorf("line %d: object %q descriptor read mode needs a sentinel value (read '<value>')", m.Pos.Line, o.Name))
+			}
+			hasColumnMode = true
+		case "list":
+			if m.Value == "" {
+				errs = append(errs, fmt.Errorf("line %d: object %q descriptor list mode needs a principal kind (list '<kind>')", m.Pos.Line, o.Name))
+			}
 			hasListMode = true
-		}
-		if m.Name != "public" && m.Scope != "" {
-			errs = append(errs, fmt.Errorf("line %d: object %q descriptor mode %q takes no scope argument", m.Pos.Line, o.Name, m.Name))
+		default:
+			errs = append(errs, fmt.Errorf("line %d: object %q descriptor has unknown mode kind %q", m.Pos.Line, o.Name, m.Kind))
 		}
 	}
 
 	// The explicit-list modes need a record_acl edge to back them.
 	if hasListMode && d.Grants == nil {
-		errs = append(errs, fmt.Errorf("line %d: object %q descriptor declares customers/admins modes but no `grants via edge record_acl(...)` store", d.Pos.Line, o.Name))
+		errs = append(errs, fmt.Errorf("line %d: object %q descriptor declares a list mode but no `grants via edge record_acl(...)` store", d.Pos.Line, o.Name))
 	}
-	// Column-driven modes (private/public) need a per-record mode column.
+	// Column-driven modes (private baseline / read sentinels) need a per-record
+	// mode column.
 	if hasColumnMode && d.ModeCol == "" {
-		errs = append(errs, fmt.Errorf("line %d: object %q descriptor uses private/public modes but declares no `mode via <column>`", d.Pos.Line, o.Name))
+		errs = append(errs, fmt.Errorf("line %d: object %q descriptor uses column modes (private/read) but declares no `mode via <column>`", d.Pos.Line, o.Name))
 	}
 	return errors.Join(errs...)
 }

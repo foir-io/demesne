@@ -167,6 +167,12 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		if obj.Descriptor == nil || obj.Descriptor.Grants == nil {
 			continue
 		}
+		// The principal kind the grant list filters on is spec-declared by the
+		// descriptor's `list` mode (EID-265 WS2) — no list mode, no grants definer.
+		kind := descriptorListKind(obj.Descriptor)
+		if kind == "" {
+			continue
+		}
 		g := obj.Descriptor.Grants
 		name := g.Table + "_grants"
 		if seen[name] {
@@ -174,8 +180,8 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		}
 		seen[name] = true
 		body := fmt.Sprintf(
-			"EXISTS (SELECT 1 FROM %s WHERE %s = p_%s_id AND %s = 'customer' AND %s = p_customer_id AND %s = p_access)",
-			g.Table, g.RecordCol, obj.Name, g.KindCol, g.PrincipalCol, g.AccessCol)
+			"EXISTS (SELECT 1 FROM %s WHERE %s = p_%s_id AND %s = '%s' AND %s = p_customer_id AND %s = p_access)",
+			g.Table, g.RecordCol, obj.Name, g.KindCol, kind, g.PrincipalCol, g.AccessCol)
 		out = append(out, GenFn{
 			Name: name,
 			Sig:  fmt.Sprintf("p_customer_id text, p_%s_id text, p_access text", obj.Name),

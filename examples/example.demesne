@@ -75,7 +75,7 @@ object doc {
   descriptor {
     owner  member via owner_id
     mode   via visibility
-    modes  private + public(project) + public(world) + customers
+    modes  private + read "public_project" + read "public_world" + list "customer"
     grants via edge doc_acl(doc_id, principal_kind, principal_id, access)
   }
   permission view    = @descriptor   @rls,kernel maps select

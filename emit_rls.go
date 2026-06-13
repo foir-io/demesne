@@ -377,21 +377,19 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	owner, _ := d.Owner.Repr.(ViaColumn)
 	frags = append(frags, fmt.Sprintf("%s = %s", owner.Column, s.claim(custClaim)))
 
-	// Public modes are READ-only (anyone-in-project / anyone may VIEW, never
-	// write); they contribute only to the select policy.
+	// Column read-gate modes are READ-only disjuncts: a row whose ModeCol equals
+	// the declared sentinel may be VIEWed by any in-scope reader, never written.
+	// They contribute only to the select policy.
 	if pm.Maps == "select" {
 		for _, m := range d.Modes {
-			switch {
-			case m.Name == "public" && m.Scope == "project":
-				frags = append(frags, fmt.Sprintf("%s = 'public_project'", d.ModeCol))
-			case m.Name == "public" && m.Scope == "world":
-				frags = append(frags, fmt.Sprintf("%s = 'public_world'", d.ModeCol))
+			if m.Kind == "read" {
+				frags = append(frags, fmt.Sprintf("%s = '%s'", d.ModeCol, m.Value))
 			}
 		}
 	}
 	// The explicit grant list applies to read/write/delete at the perm's access
 	// class — never to insert (you create your own rows, you aren't "granted" it).
-	if d.Grants != nil && hasMode2(d, "customers") && pm.Maps != "insert" {
+	if d.Grants != nil && descriptorHasList(d) && pm.Maps != "insert" {
 		frags = append(frags, fmt.Sprintf("%s.%s_grants(%s, %s, '%s')", s.definerSchema(), d.Grants.Table, s.claim(custClaim), obj.Table+".id", accessFor(pm.Maps)))
 	}
 	return frags, nil
@@ -463,13 +461,19 @@ func contains(ss []string, want string) bool {
 	return false
 }
 
-func hasMode2(d *Descriptor, name string) bool {
+// descriptorHasList reports whether the descriptor declares any `list` mode (an
+// explicit record_acl grant list).
+func descriptorHasList(d *Descriptor) bool { return descriptorListKind(d) != "" }
+
+// descriptorListKind returns the principal kind of the descriptor's list mode
+// (the value the record_acl grant definer filters on), or "" if there is none.
+func descriptorListKind(d *Descriptor) string {
 	for _, m := range d.Modes {
-		if m.Name == name {
-			return true
+		if m.Kind == "list" {
+			return m.Value
 		}
 	}
-	return false
+	return ""
 }
 
 // scanDefiners extracts `<schema>.<name>(` references from a predicate.

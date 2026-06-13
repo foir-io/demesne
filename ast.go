@@ -204,9 +204,9 @@ func (o *Object) IsLevelEntity() bool { return o.Level != "" }
 // subsumes sharing (EID-263). It declares:
 //   - Owner — who may EDIT the descriptor (owner-origination; an inline FK axis,
 //     distinct from the grantees);
-//   - Modes — the access modes the object supports (private / public(project|
-//     world) / explicit customer + admin lists), with the per-record selection
-//     stored in ModeCol;
+//   - Modes — the spec-declared access modes the object supports (an owner-only
+//     baseline, column read-gates, and explicit principal-kind grant lists), with
+//     the per-record selection stored in ModeCol;
 //   - Grants — the record_acl edge backing the explicit lists, principal-kind-
 //     tagged so admins and customers coexist without merging their stores.
 //
@@ -221,12 +221,21 @@ type Descriptor struct {
 	Pos     Pos
 }
 
-// Mode is one supported access mode. Scope qualifies `public` as "project"
-// (every customer in the project) or "world" (unauthenticated — today's
-// app/service scope); empty for private/customers/admins.
+// Mode is one supported access mode of a descriptor. Modes are spec-declared
+// (EID-265 WS2) — the engine carries NO fixed vocabulary (no private/public/
+// customers/admins allowlist, no project/world scope words):
+//   - "private": the owner-only baseline. Emits no extra predicate (the owner
+//     axis already covers it); decorative — documents that the mode column's
+//     default value is a recognised mode.
+//   - "read":    a column read-gate. Opens READ when ModeCol = Value (the declared
+//     sentinel). Generalises the former public(project)/public(world) — the
+//     "scope" was only ever a second sentinel string, so it is one now.
+//   - "list":    an explicit grant list over the record_acl edge, filtered to the
+//     principal kind Value. Opens read/write/delete at the permission's access
+//     class. Generalises the former customers/admins list modes.
 type Mode struct {
-	Name  string // "private" | "public" | "customers" | "admins"
-	Scope string
+	Kind  string // "private" | "read" | "list"
+	Value string // read → the ModeCol sentinel; list → the principal kind; "" for private
 	Pos   Pos
 }
 
