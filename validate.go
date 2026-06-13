@@ -133,12 +133,12 @@ func validateDefinerClosure(s *Spec) error {
 	}
 	generated := map[string]bool{}
 	for _, g := range gen {
-		generated["auth."+g.Name] = true
+		generated[g.schema()+"."+g.Name] = true
 	}
 	referenced := map[string]bool{}
 	for _, p := range res.Policies {
 		for _, body := range []string{p.Using, p.Check} {
-			for _, fn := range scanDefiners(body) {
+			for _, fn := range scanDefiners(body, s.definerSchema()) {
 				referenced[fn] = true
 			}
 		}

@@ -21,9 +21,18 @@ import (
 
 // GenFn is a generated SECURITY DEFINER function.
 type GenFn struct {
-	Name string // unqualified (auth schema)
-	Sig  string // argument signature, e.g. "user_id text, check_tenant_id text"
-	Body string // the SELECT expression (a boolean)
+	Name   string // unqualified function name
+	Schema string // the schema the function lives in ("" → "auth")
+	Sig    string // argument signature, e.g. "user_id text, check_tenant_id text"
+	Body   string // the SELECT expression (a boolean)
+}
+
+// schema returns the function's schema, defaulting to "auth".
+func (d GenFn) schema() string {
+	if d.Schema != "" {
+		return d.Schema
+	}
+	return "auth"
 }
 
 // ArgTypes returns the comma-joined argument types of the signature (for a
@@ -44,8 +53,8 @@ func (d GenFn) ArgTypes() string {
 // CreateSQL renders the full CREATE OR REPLACE FUNCTION statement.
 func (d GenFn) CreateSQL() string {
 	return fmt.Sprintf(
-		"CREATE OR REPLACE FUNCTION auth.%s(%s)\nRETURNS boolean\nLANGUAGE sql\nSTABLE\nSECURITY DEFINER\nSET search_path = public\nAS $$\n  SELECT %s;\n$$;",
-		d.Name, d.Sig, d.Body)
+		"CREATE OR REPLACE FUNCTION %s.%s(%s)\nRETURNS boolean\nLANGUAGE sql\nSTABLE\nSECURITY DEFINER\nSET search_path = public\nAS $$\n  SELECT %s;\n$$;",
+		d.schema(), d.Name, d.Sig, d.Body)
 }
 
 // DefinersSQL renders the full CREATE OR REPLACE FUNCTION set for the generated
@@ -173,6 +182,11 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			Body: body,
 		})
 	}
+	// Stamp the configured definer schema on every generated function so CreateSQL
+	// qualifies them consistently (default "auth" keeps Foir's SQL byte-identical).
+	for i := range out {
+		out[i].Schema = s.definerSchema()
+	}
 	return out, nil
 }
 
@@ -265,7 +279,7 @@ func (s *Spec) roleDefiner(name string, rs *RoleStore, level string, keys []stri
 		rs.RevokedCol, rs.KeyCol, strings.Join(quoted, ", "))
 	body := exists
 	if recurse != "" {
-		body = "auth." + recurse + " OR " + exists
+		body = s.definerSchema() + "." + recurse + " OR " + exists
 	}
 	return GenFn{Name: name, Sig: strings.Join(args, ", "), Body: body}
 }

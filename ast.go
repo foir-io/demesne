@@ -21,6 +21,21 @@ type Spec struct {
 	RoleStores  []*RoleStore
 	Grants      []*Grant
 	Claims      *ClaimsAccessor
+	// DefinerSchema is the Postgres schema the generated SECURITY DEFINER kernel
+	// lives in (and that the emitted policies qualify their calls with). ""
+	// defaults to "auth" — Foir's schema — so a spec that omits the `definers
+	// schema` block emits byte-identically. De-Foirs the assumption that trusted
+	// functions live in a schema literally named `auth`.
+	DefinerSchema string
+}
+
+// definerSchema returns the schema for the generated definer kernel (default
+// "auth"). Every `auth.<fn>` reference in the emitted SQL is qualified with it.
+func (s *Spec) definerSchema() string {
+	if s.DefinerSchema != "" {
+		return s.DefinerSchema
+	}
+	return "auth"
 }
 
 // ClaimsAccessor declares HOW a claim key is read from the request context — the

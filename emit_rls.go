@@ -193,7 +193,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 		case sub.Membership != nil && virtual[sub.Anchor]:
 			// Legacy unconditional membership operator (a god-flag): reaches every
 			// row, gated only by `<leaf>_id IS NULL` (no scope selected).
-			fn := fmt.Sprintf("auth.%s(%s)", membershipFn(sub.Membership), s.claim(sub.Identifies))
+			fn := fmt.Sprintf("%s.%s(%s)", s.definerSchema(), membershipFn(sub.Membership), s.claim(sub.Identifies))
 			if obj.IsLevelEntity() {
 				top = append(top, fn)
 			} else {
@@ -205,7 +205,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			// unconditional — and cascades to the whole subtree via the object's
 			// level-scope column. No `<leaf>_id IS NULL` ambient view.
 			if g := s.grantByName(sub.ReachGrant); g != nil {
-				top = append(top, fmt.Sprintf("auth.%s_reach(%s, %s)", g.Table, s.claim(sub.Identifies), scopeCol(obj, g.Level)))
+				top = append(top, fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), scopeCol(obj, g.Level)))
 			}
 		}
 	}
@@ -287,7 +287,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		if !ok {
 			return nil, fmt.Errorf("role-walk parent %q must be a column relation", t.Ident)
 		}
-		return []string{fmt.Sprintf("auth.is_%s_admin(%s, %s)", parent.Types[0], s.claim(s.adminIdentify()), col.Column)}, nil
+		return []string{fmt.Sprintf("%s.is_%s_admin(%s, %s)", s.definerSchema(), parent.Types[0], s.claim(s.adminIdentify()), col.Column)}, nil
 	}
 	switch {
 	case t.Builtin == "app_scope":
@@ -335,12 +335,12 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		if err := reqClaim(custClaim, obj, "edge relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("auth.%s(%s, %s, '%s')", repr.Table, s.claim(custClaim), pk, access)}, nil
+		return []string{fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), repr.Table, s.claim(custClaim), pk, access)}, nil
 	case ViaComposition:
 		if err := reqClaim(custClaim, obj, "composition relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("auth.%s_composition_%s(%s, %s, '%s')", obj.Name, r.Name, s.claim(custClaim), pk, access)}, nil
+		return []string{fmt.Sprintf("%s.%s_composition_%s(%s, %s, '%s')", s.definerSchema(), obj.Name, r.Name, s.claim(custClaim), pk, access)}, nil
 	case ViaRole:
 		// A role membership on this object → a project-role definer call over
 		// the object's scope columns. Convention: auth.admin_has_<obj>_role(
@@ -355,7 +355,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		if repr.HasRank {
 			fn = "is_" + repr.RankMin
 		}
-		return []string{fmt.Sprintf("auth.%s(%s, %s)", fn, s.claim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
+		return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), fn, s.claim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
 	default:
 		return nil, fmt.Errorf("relation %q has an unknown representation", r.Name)
 	}
@@ -392,7 +392,7 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	// The explicit grant list applies to read/write/delete at the perm's access
 	// class — never to insert (you create your own rows, you aren't "granted" it).
 	if d.Grants != nil && hasMode2(d, "customers") && pm.Maps != "insert" {
-		frags = append(frags, fmt.Sprintf("auth.%s_grants(%s, %s, '%s')", d.Grants.Table, s.claim(custClaim), obj.Table+".id", accessFor(pm.Maps)))
+		frags = append(frags, fmt.Sprintf("%s.%s_grants(%s, %s, '%s')", s.definerSchema(), d.Grants.Table, s.claim(custClaim), obj.Table+".id", accessFor(pm.Maps)))
 	}
 	return frags, nil
 }
@@ -439,7 +439,7 @@ func (s *Spec) DefinerNames() ([]string, error) {
 	set := map[string]bool{}
 	for _, p := range res.Policies {
 		for _, body := range []string{p.Using, p.Check} {
-			for _, fn := range scanDefiners(body) {
+			for _, fn := range scanDefiners(body, s.definerSchema()) {
 				set[fn] = true
 			}
 		}
@@ -472,10 +472,10 @@ func hasMode2(d *Descriptor, name string) bool {
 	return false
 }
 
-// scanDefiners extracts `auth.<name>(` references from a predicate.
-func scanDefiners(sql string) []string {
+// scanDefiners extracts `<schema>.<name>(` references from a predicate.
+func scanDefiners(sql, schema string) []string {
 	var out []string
-	const marker = "auth."
+	marker := schema + "."
 	for i := 0; i+len(marker) <= len(sql); {
 		idx := strings.Index(sql[i:], marker)
 		if idx < 0 {
@@ -487,7 +487,7 @@ func scanDefiners(sql string) []string {
 			j++
 		}
 		if j < len(sql) && sql[j] == '(' {
-			out = append(out, "auth."+sql[start:j])
+			out = append(out, marker+sql[start:j])
 		}
 		i = j
 	}

@@ -152,6 +152,19 @@ func (p *parser) parseSpec() (*Spec, error) {
 				return nil, p.errf("duplicate claims block")
 			}
 			s.Claims = c
+		case "definers":
+			p.advance() // 'definers'
+			if err := p.expectKw("schema"); err != nil {
+				return nil, err
+			}
+			sch, err := p.expect(tString)
+			if err != nil {
+				return nil, err
+			}
+			if s.DefinerSchema != "" {
+				return nil, p.errf("duplicate definers block")
+			}
+			s.DefinerSchema = sch.lit
 		default:
 			return nil, p.errf("unknown declaration %q", p.cur().lit)
 		}
