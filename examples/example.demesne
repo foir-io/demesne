@@ -1,0 +1,96 @@
+// =============================================================================
+// Demesne worked example — a fictional multi-tenant document app.
+//
+// This is NOT a real deployment's policy; it exists to exercise every language
+// construct so the compiler's emitters have positive end-to-end coverage and so
+// readers have one complete spec to learn the grammar from. A real platform's
+// spec, its generated migrations, and the live-DB oracle live in that platform's
+// own repo (verification belongs where the database is).
+//
+// Topology: org (virtual root) → tenant → workspace. A document lives in a
+// workspace; staff hold ranked roles; members own documents and share them via
+// an access descriptor.
+// =============================================================================
+
+topology {
+  level org       virtual            // synthetic root: no scope column, the operator anchors here
+  level tenant    parent org
+  level workspace parent tenant
+}
+
+// Staff role vocabulary → compiles to the app PDP (the admin emit-site). Presets
+// are bound to a topology level (@level) which drives the role-store scope.
+vocabulary staff {
+  permission docs:read
+  permission docs:write
+  permission docs:publish
+
+  preset ws_viewer   @ workspace = docs:read
+  preset ws_editor   @ workspace = ws_viewer + docs:write + docs:publish
+  preset tenant_owner @ tenant   = *
+  rank tenant_owner > ws_editor > ws_viewer
+}
+
+// Member (end-user) vocabulary → compiles to the public-API scope gate.
+vocabulary member {
+  permission self:read
+  permission self:write
+}
+
+// Where staff role assignments live — lets the compiler GENERATE the role-
+// resolution definers (is_tenant_admin / admin_has_workspace_role / is_ws_editor).
+rolestore staff {
+  assignments role_grants
+  kind        grantee_kind = "staff"
+  subject     grantee_id
+  scope       tenant_id workspace_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+
+subject root   { anchor org;       reach descendants; identifies sub via membership staff_users(id, is_root) active status = "ACTIVE"; roles none }
+subject staff  { anchor tenant;    reach descendants; identifies sub;        roles configurable staff }
+subject member { anchor workspace; reach self;        identifies member_id;  roles configurable member }
+subject service { anchor workspace; reach self;       identifies sub;        roles none }
+
+// The workspace node itself: a level-entity object (its own table IS the node).
+object workspace {
+  table  workspaces
+  level  workspace
+  scoped tenant > workspace
+  relation tenant: tenant via tenant_id
+  relation member: staff  via role
+  relation admin:  staff  via role(rank >= ws_editor)
+  permission view = tenant->owner + member + @session   @rls maps select
+  permission edit = tenant->owner + @session(admin)     @rls maps update
+}
+
+// A document: owner-origination + per-record mode + an app-managed grant store
+// (the access descriptor). @kernel adds the realtime/collab reachability gate.
+object doc {
+  table  docs
+  scoped tenant > workspace
+  relation tenant: tenant via tenant_id
+  relation owner:  member via owner_id
+  descriptor {
+    owner  member via owner_id
+    mode   via visibility
+    modes  private + public(project) + public(world) + customers
+    grants via edge doc_acl(doc_id, principal_kind, principal_id, access)
+  }
+  permission view    = @descriptor   @rls,kernel maps select
+  permission edit    = @descriptor   @rls        maps update
+  permission create  = @descriptor   @rls        maps insert
+  permission delete  = @descriptor   @rls        maps delete
+  permission publish = docs:publish  @pdp
+}
+
+procedures staff {
+  docs.v1.DocService/CreateDoc  -> docs:write
+  docs.v1.DocService/GetDoc     -> docs:read
+  docs.v1.DocService/PublishDoc -> docs:publish
+}
+
+ungoverned staff {
+  meta.v1.MetaService/Healthz : "liveness probe, no authz"
+}
