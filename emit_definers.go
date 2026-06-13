@@ -161,8 +161,8 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	}
 
 	// Access-descriptor grant fns: an object with a descriptor grant store gets
-	// auth.<store>_grants(customer, record, access) — EXISTS over the record_acl
-	// store for a customer principal at the requested access.
+	// auth.<store>_grants(<principal>, record, access) — EXISTS over the record_acl
+	// store for the spec-declared principal kind at the requested access.
 	for _, obj := range s.Objects {
 		if obj.Descriptor == nil || obj.Descriptor.Grants == nil {
 			continue
@@ -179,12 +179,15 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			continue
 		}
 		seen[name] = true
+		// The grantee param + the owner-claim it is matched against name the spec's
+		// actual principal, not an assumed "customer".
+		principal := s.descriptorPrincipal(obj)
 		body := fmt.Sprintf(
-			"EXISTS (SELECT 1 FROM %s WHERE %s = p_%s_id AND %s = '%s' AND %s = p_customer_id AND %s = p_access)",
-			g.Table, g.RecordCol, obj.Name, g.KindCol, kind, g.PrincipalCol, g.AccessCol)
+			"EXISTS (SELECT 1 FROM %s WHERE %s = p_%s_id AND %s = '%s' AND %s = p_%s_id AND %s = p_access)",
+			g.Table, g.RecordCol, obj.Name, g.KindCol, kind, g.PrincipalCol, principal, g.AccessCol)
 		out = append(out, GenFn{
 			Name: name,
-			Sig:  fmt.Sprintf("p_customer_id text, p_%s_id text, p_access text", obj.Name),
+			Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", principal, obj.Name),
 			Body: body,
 		})
 	}
@@ -325,8 +328,25 @@ func (s *Spec) operatorReach(level string) string {
 	return ""
 }
 
+// descriptorPrincipal returns the name of the claim-bearing owner principal for
+// an object's descriptor / owner axis — the `reach self` + roles subject at the
+// object's leaf level (EID-265 WS2). It drives the generated grant + realtime-gate
+// signatures so they name the spec's ACTUAL principal (Foir: "customer"; the
+// worked example: "member"), instead of assuming a customer principal. Falls back
+// to the first declared owner type — a descriptor with no claim-bearing subject is
+// rejected by reqClaim before any claim-bearing predicate is emitted.
+func (s *Spec) descriptorPrincipal(obj *Object) string {
+	if sub := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); sub != nil {
+		return sub.Name
+	}
+	if obj.Descriptor != nil && obj.Descriptor.Owner != nil && len(obj.Descriptor.Owner.Types) > 0 {
+		return obj.Descriptor.Owner.Types[0]
+	}
+	return "principal"
+}
+
 // kernelDefiner builds the realtime/collab reachability gate over an object's
-// own table: the owner axis (the customer owns the row).
+// own table: the owner axis (the owner principal owns the row).
 func (s *Spec) kernelDefiner(obj *Object) (GenFn, error) {
 	var ownerCol string
 	for _, r := range obj.Relations {
@@ -344,10 +364,11 @@ func (s *Spec) kernelDefiner(obj *Object) (GenFn, error) {
 	if ownerCol == "" {
 		return GenFn{}, fmt.Errorf("object %q has a @kernel perm but no owner column", obj.Name)
 	}
-	body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s r WHERE r.id = p_%s_id AND r.%s = p_customer_id)", obj.Table, obj.Name, ownerCol)
+	principal := s.descriptorPrincipal(obj)
+	body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s r WHERE r.id = p_%s_id AND r.%s = p_%s_id)", obj.Table, obj.Name, ownerCol, principal)
 	return GenFn{
-		Name: fmt.Sprintf("customer_can_access_%s", obj.Name),
-		Sig:  "p_customer_id text, p_" + obj.Name + "_id text, p_access text",
+		Name: fmt.Sprintf("%s_can_access_%s", principal, obj.Name),
+		Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", principal, obj.Name),
 		Body: body,
 	}, nil
 }
