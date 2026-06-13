@@ -20,6 +20,20 @@ type Spec struct {
 	FieldScopes []*FieldScopes
 	RoleStores  []*RoleStore
 	Grants      []*Grant
+	Claims      *ClaimsAccessor
+}
+
+// ClaimsAccessor declares HOW a claim key is read from the request context — the
+// SQL expression every emitted RLS policy uses to read the subject / scope ids.
+// It de-Foirs the one assumption baked into every policy: that claims arrive as
+// a JSON blob in the `request.jwt.claims` GUC. A different deployment may use a
+// jsonb blob or a differently-named setting. Nil ⇒ the default
+// (`current_setting('request.jwt.claims', true)::json ->> '<key>'`), so a spec
+// that omits the block emits byte-identically to before.
+type ClaimsAccessor struct {
+	Setting string // GUC name, e.g. "request.jwt.claims"
+	Cast    string // "json" | "jsonb"
+	Pos     Pos
 }
 
 // Grant is a level-scoped reachability grant store: an edge table whose rows

@@ -35,11 +35,18 @@ type RLSResult struct {
 	Unsupported []string
 }
 
-// claim renders the JWT claim accessor for a key. Postgres normalizes this and
-// the verbose `((current_setting('request.jwt.claims'::text, true))::json ->>
-// 'k'::text)` form to the same pg_policies expression.
-func claim(key string) string {
-	return fmt.Sprintf("(current_setting('request.jwt.claims', true)::json ->> '%s')", key)
+// claim renders the claim accessor for a key — the SQL that reads a claim from
+// the request context. The accessor is spec-declared (the `claims` block); when
+// omitted it defaults to Foir's JSON-GUC form, so existing specs emit
+// byte-identically. Postgres normalizes this and the verbose
+// `((current_setting('…'::text, true))::json ->> 'k'::text)` form to the same
+// pg_policies expression.
+func (s *Spec) claim(key string) string {
+	setting, cast := "request.jwt.claims", "json"
+	if s.Claims != nil {
+		setting, cast = s.Claims.Setting, s.Claims.Cast
+	}
+	return fmt.Sprintf("(current_setting('%s', true)::%s ->> '%s')", setting, cast, key)
 }
 
 // accessFor maps a table op to the access level a parameterised relation
@@ -186,11 +193,11 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 		case sub.Membership != nil && virtual[sub.Anchor]:
 			// Legacy unconditional membership operator (a god-flag): reaches every
 			// row, gated only by `<leaf>_id IS NULL` (no scope selected).
-			fn := fmt.Sprintf("auth.%s(%s)", membershipFn(sub.Membership), claim(sub.Identifies))
+			fn := fmt.Sprintf("auth.%s(%s)", membershipFn(sub.Membership), s.claim(sub.Identifies))
 			if obj.IsLevelEntity() {
 				top = append(top, fn)
 			} else {
-				top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, claim(objLeaf+"_id")))
+				top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, s.claim(objLeaf+"_id")))
 			}
 		case sub.Reach == "grant":
 			// Scoped grant operator (the general replacement for the god-flag):
@@ -198,7 +205,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			// unconditional — and cascades to the whole subtree via the object's
 			// level-scope column. No `<leaf>_id IS NULL` ambient view.
 			if g := s.grantByName(sub.ReachGrant); g != nil {
-				top = append(top, fmt.Sprintf("auth.%s_reach(%s, %s)", g.Table, claim(sub.Identifies), scopeCol(obj, g.Level)))
+				top = append(top, fmt.Sprintf("auth.%s_reach(%s, %s)", g.Table, s.claim(sub.Identifies), scopeCol(obj, g.Level)))
 			}
 		}
 	}
@@ -229,7 +236,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 		if obj.IsLevelEntity() && lvl == obj.Level {
 			continue
 		}
-		containment = append(containment, fmt.Sprintf("%s = %s", scopeCol(obj, lvl), claim(lvl+"_id")))
+		containment = append(containment, fmt.Sprintf("%s = %s", scopeCol(obj, lvl), s.claim(lvl+"_id")))
 	}
 	block := strings.Join(containment, " AND ")
 	if len(blockTerms) > 0 {
@@ -280,14 +287,14 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		if !ok {
 			return nil, fmt.Errorf("role-walk parent %q must be a column relation", t.Ident)
 		}
-		return []string{fmt.Sprintf("auth.is_%s_admin(%s, %s)", parent.Types[0], claim(s.adminIdentify()), col.Column)}, nil
+		return []string{fmt.Sprintf("auth.is_%s_admin(%s, %s)", parent.Types[0], s.claim(s.adminIdentify()), col.Column)}, nil
 	}
 	switch {
 	case t.Builtin == "app_scope":
 		if err := reqClaim(custClaim, obj, "@app_scope"); err != nil {
 			return nil, err
 		}
-		return []string{claim(custClaim) + " IS NULL"}, nil
+		return []string{s.claim(custClaim) + " IS NULL"}, nil
 	case t.Builtin == "descriptor":
 		return s.emitDescriptor(obj, pm, custClaim)
 	case t.Builtin == "session":
@@ -295,7 +302,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		// leaf claim. `@session(<rel>)` gates it by a role (e.g. project-admin
 		// of your selected project).
 		leaf := obj.Scoped[len(obj.Scoped)-1]
-		self := fmt.Sprintf("%s = %s", scopeCol(obj, leaf), claim(leaf+"_id"))
+		self := fmt.Sprintf("%s = %s", scopeCol(obj, leaf), s.claim(leaf+"_id"))
 		if t.SessionRel == "" {
 			return []string{self}, nil
 		}
@@ -322,18 +329,18 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		if err := reqClaim(custClaim, obj, "owner relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("%s = %s", repr.Column, claim(custClaim))}, nil
+		return []string{fmt.Sprintf("%s = %s", repr.Column, s.claim(custClaim))}, nil
 	case ViaEdge:
 		// Definer tail: the compiler owns auth.<edgeTable>(...).
 		if err := reqClaim(custClaim, obj, "edge relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("auth.%s(%s, %s, '%s')", repr.Table, claim(custClaim), pk, access)}, nil
+		return []string{fmt.Sprintf("auth.%s(%s, %s, '%s')", repr.Table, s.claim(custClaim), pk, access)}, nil
 	case ViaComposition:
 		if err := reqClaim(custClaim, obj, "composition relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("auth.%s_composition_%s(%s, %s, '%s')", obj.Name, r.Name, claim(custClaim), pk, access)}, nil
+		return []string{fmt.Sprintf("auth.%s_composition_%s(%s, %s, '%s')", obj.Name, r.Name, s.claim(custClaim), pk, access)}, nil
 	case ViaRole:
 		// A role membership on this object → a project-role definer call over
 		// the object's scope columns. Convention: auth.admin_has_<obj>_role(
@@ -348,7 +355,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		if repr.HasRank {
 			fn = "is_" + repr.RankMin
 		}
-		return []string{fmt.Sprintf("auth.%s(%s, %s)", fn, claim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
+		return []string{fmt.Sprintf("auth.%s(%s, %s)", fn, s.claim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
 	default:
 		return nil, fmt.Errorf("relation %q has an unknown representation", r.Name)
 	}
@@ -368,7 +375,7 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	}
 	var frags []string
 	owner, _ := d.Owner.Repr.(ViaColumn)
-	frags = append(frags, fmt.Sprintf("%s = %s", owner.Column, claim(custClaim)))
+	frags = append(frags, fmt.Sprintf("%s = %s", owner.Column, s.claim(custClaim)))
 
 	// Public modes are READ-only (anyone-in-project / anyone may VIEW, never
 	// write); they contribute only to the select policy.
@@ -385,7 +392,7 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	// The explicit grant list applies to read/write/delete at the perm's access
 	// class — never to insert (you create your own rows, you aren't "granted" it).
 	if d.Grants != nil && hasMode2(d, "customers") && pm.Maps != "insert" {
-		frags = append(frags, fmt.Sprintf("auth.%s_grants(%s, %s, '%s')", d.Grants.Table, claim(custClaim), obj.Table+".id", accessFor(pm.Maps)))
+		frags = append(frags, fmt.Sprintf("auth.%s_grants(%s, %s, '%s')", d.Grants.Table, s.claim(custClaim), obj.Table+".id", accessFor(pm.Maps)))
 	}
 	return frags, nil
 }

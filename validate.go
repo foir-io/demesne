@@ -63,6 +63,15 @@ func Validate(s *Spec) error {
 		}
 	}
 
+	if s.Claims != nil {
+		if s.Claims.Setting == "" {
+			add(fmt.Errorf("line %d: claims block needs a setting name", s.Claims.Pos.Line))
+		}
+		if s.Claims.Cast != "json" && s.Claims.Cast != "jsonb" {
+			add(fmt.Errorf("line %d: claims cast %q must be json or jsonb", s.Claims.Pos.Line, s.Claims.Cast))
+		}
+	}
+
 	for _, sub := range s.Subjects {
 		add(validateSubject(s, sub, levelNames, vocabNames))
 	}
