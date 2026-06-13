@@ -143,6 +143,15 @@ func (p *parser) parseSpec() (*Spec, error) {
 				return nil, err
 			}
 			s.Grants = append(s.Grants, g)
+		case "claims":
+			c, err := p.parseClaims()
+			if err != nil {
+				return nil, err
+			}
+			if s.Claims != nil {
+				return nil, p.errf("duplicate claims block")
+			}
+			s.Claims = c
 		default:
 			return nil, p.errf("unknown declaration %q", p.cur().lit)
 		}
@@ -1017,6 +1026,25 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 		return nil, err
 	}
 	return rs, nil
+}
+
+// parseClaims: claims via "<setting>" [json|jsonb] — declares the request-context
+// claim accessor (the GUC name + cast). Cast defaults to json.
+func (p *parser) parseClaims() (*ClaimsAccessor, error) {
+	c := &ClaimsAccessor{Cast: "json", Pos: Pos{p.cur().line}}
+	p.advance() // 'claims'
+	if err := p.expectKw("via"); err != nil {
+		return nil, err
+	}
+	setting, err := p.expect(tString)
+	if err != nil {
+		return nil, err
+	}
+	c.Setting = setting.lit
+	if p.peekKind() == tIdent {
+		c.Cast = p.advance().lit
+	}
+	return c, nil
 }
 
 // parseGrant: grant IDENT at LEVEL via edge TABLE(grantee_col, level_col)
