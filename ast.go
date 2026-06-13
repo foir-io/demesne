@@ -35,6 +35,24 @@ type Spec struct {
 // more. Cross-plane management of the store (who may write a grant) is the edge
 // table's own object write rule (owner-origination, no self-escalation); the
 // root-of-trust bootstrap lives in the BYPASSRLS plane, never in the grammar.
+//
+// CONVERGENCE NOTE (WS3, EID-265). A Grant and a Descriptor's `grants` edge
+// (AclEdge) are the SAME primitive at the concept level: a tuple
+// (grantee, target, access, validity) in an edge table, owner-originated,
+// conferring reach, enforced by a SECURITY DEFINER EXISTS. They differ only in
+// the target node — a Grant reaches a whole LEVEL subtree (cascade; a top branch
+// on every object under the level + a disjunct of the level's role definer); an
+// AclEdge reaches ONE object row (no cascade; inside one descriptor expansion) —
+// and in cost class. Under WS3's "topology is a cost-classed reachability DAG"
+// they unify into one declarative notion ("an edge confers reach to a node of
+// type X", parameterized by target granularity / access / principal-kind /
+// validity). Deliberately KEPT SEPARATE until after the WS1 inversion, so
+// today's shapes aren't baked into the general model. CRITICAL: unify the
+// declarative CONCEPT, never the physical store — a generic
+// grants(grantee, target_kind, target_id, …) tuple table IS the Zanzibar
+// relation-tuple the moat rejects; each shape must keep compiling to its
+// specialized sargable RLS (inline column / per-object definer / level-cascade
+// definer), not a single runtime-checked store.
 type Grant struct {
 	Name       string // grant name (referenced by `subject … reach via grant <name>`)
 	Level      string // the topology level the grant confers reach at
