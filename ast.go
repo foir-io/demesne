@@ -75,13 +75,17 @@ type ClaimsAccessor struct {
 // and in cost class. Under WS3's "topology is a cost-classed reachability DAG"
 // they unify into one declarative notion ("an edge confers reach to a node of
 // type X", parameterized by target granularity / access / principal-kind /
-// validity). Deliberately KEPT SEPARATE until after the WS1 inversion, so
-// today's shapes aren't baked into the general model. CRITICAL: unify the
-// declarative CONCEPT, never the physical store — a generic
+// validity).
+//
+// UNIFIED (post-WS1, see grants.go): both *Grant and *AclEdge satisfy the
+// ReachGrant interface (EdgeTable / GranteeColumn / Granularity), Spec.ReachGrants
+// enumerates the whole grant surface as one concept, and both definer bodies are
+// built from the one shared grantEdgeExists shape. CRITICAL and honoured: the
+// CONCEPT is unified, the physical store is NOT — a generic
 // grants(grantee, target_kind, target_id, …) tuple table IS the Zanzibar
-// relation-tuple the moat rejects; each shape must keep compiling to its
-// specialized sargable RLS (inline column / per-object definer / level-cascade
-// definer), not a single runtime-checked store.
+// relation-tuple the moat rejects; each shape keeps compiling to its specialized
+// sargable RLS (a level-cascade definer vs a per-row definer, each over its OWN
+// edge table), never a single runtime-checked store.
 type Grant struct {
 	Name       string // grant name (referenced by `subject … reach via grant <name>`)
 	Level      string // the topology level the grant confers reach at

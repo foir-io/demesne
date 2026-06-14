@@ -106,15 +106,19 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			continue
 		}
 		gseen[name] = true
-		body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = user_id AND %s = check_%s_id", g.Table, g.GranteeCol, g.LevelCol, g.Level)
+		// Shared reachability-grant shape; conjuncts are this grant's own: grantee
+		// match, the level-subtree target, then the validity gates.
+		conj := []string{
+			fmt.Sprintf("%s = user_id", g.GranteeCol),
+			fmt.Sprintf("%s = check_%s_id", g.LevelCol, g.Level),
+		}
 		if g.ActiveCol != "" {
-			body += fmt.Sprintf(" AND %s IS NULL", g.ActiveCol)
+			conj = append(conj, fmt.Sprintf("%s IS NULL", g.ActiveCol))
 		}
 		if g.ExpiresCol != "" {
-			body += fmt.Sprintf(" AND %s > now()", g.ExpiresCol)
+			conj = append(conj, fmt.Sprintf("%s > now()", g.ExpiresCol))
 		}
-		body += ")"
-		out = append(out, GenFn{Name: name, Sig: fmt.Sprintf("user_id text, check_%s_id text", g.Level), Body: body})
+		out = append(out, GenFn{Name: name, Sig: fmt.Sprintf("user_id text, check_%s_id text", g.Level), Body: grantEdgeExists(g.Table, conj...)})
 	}
 
 	// Role-resolution fns, derived from each object's role relations + walks.
@@ -182,9 +186,14 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		// The grantee param + the owner-claim it is matched against name the spec's
 		// actual principal, not an assumed "customer".
 		principal := s.descriptorPrincipal(obj)
-		body := fmt.Sprintf(
-			"EXISTS (SELECT 1 FROM %s WHERE %s = p_%s_id AND %s = '%s' AND %s = p_%s_id AND %s = p_access)",
-			g.Table, g.RecordCol, obj.Name, g.KindCol, kind, g.PrincipalCol, principal, g.AccessCol)
+		// Same reachability-grant shape as a level Grant; this grant's conjuncts are
+		// the row target, the principal-kind gate, the grantee match, and the access.
+		body := grantEdgeExists(g.Table,
+			fmt.Sprintf("%s = p_%s_id", g.RecordCol, obj.Name),
+			fmt.Sprintf("%s = '%s'", g.KindCol, kind),
+			fmt.Sprintf("%s = p_%s_id", g.PrincipalCol, principal),
+			fmt.Sprintf("%s = p_access", g.AccessCol),
+		)
 		out = append(out, GenFn{
 			Name: name,
 			Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", principal, obj.Name),
