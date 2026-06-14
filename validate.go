@@ -106,6 +106,11 @@ func Validate(s *Spec) error {
 		add(validateObject(s, o, chain))
 	}
 
+	// Cross-object references (v3 WS3) must reference a real object and form NO
+	// cycle — a cycle would make the generated `<X>_can_<v>` definers mutually
+	// recursive and loop forever at query time.
+	add(validateCrossObjectAcyclic(s))
+
 	// V10 — every PDP block targets a declared vocabulary (emit-site).
 	for _, pr := range s.Procedures {
 		if !vocabNames[pr.EmitSite] {
@@ -394,6 +399,47 @@ func validateDescriptor(o *Object) error {
 		errs = append(errs, fmt.Errorf("line %d: object %q descriptor uses column modes (private/read) but declares no `mode via <column>`", d.Pos.Line, o.Name))
 	}
 	return errors.Join(errs...)
+}
+
+// validateCrossObjectAcyclic rejects an unknown target or a cycle in the
+// cross-object (`via object`) reference graph (object O → Other per ViaObject
+// relation). A cycle would make the generated `<X>_can_<v>` definers mutually
+// recursive and loop forever at query time.
+func validateCrossObjectAcyclic(s *Spec) error {
+	edges := map[string][]string{}
+	for _, o := range s.Objects {
+		for _, r := range o.Relations {
+			vo, ok := r.Repr.(ViaObject)
+			if !ok {
+				continue
+			}
+			if s.objectByName(vo.Object) == nil {
+				return fmt.Errorf("object %q relation %q references unknown object %q (via object)", o.Name, r.Name, vo.Object)
+			}
+			edges[o.Name] = append(edges[o.Name], vo.Object)
+		}
+	}
+	color := map[string]int{} // 0 unvisited, 1 on-stack, 2 done
+	var dfs func(n string) bool
+	dfs = func(n string) bool {
+		color[n] = 1
+		for _, m := range edges[n] {
+			if color[m] == 1 {
+				return true
+			}
+			if color[m] == 0 && dfs(m) {
+				return true
+			}
+		}
+		color[n] = 2
+		return false
+	}
+	for _, o := range s.Objects {
+		if color[o.Name] == 0 && dfs(o.Name) {
+			return fmt.Errorf("cross-object `via object` references form a cycle through %q — this would generate mutually-recursive definers", o.Name)
+		}
+	}
+	return nil
 }
 
 // permPositive reports whether a permission node grants access on its own — every

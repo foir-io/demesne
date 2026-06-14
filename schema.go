@@ -138,6 +138,10 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 					reqCol(repr.Edge, repr.EdgeMember, rc)
 					reqCol(repr.Edge, repr.EdgeGroup, rc)
 				}
+			case ViaObject:
+				// The FK column on this object; the other object's table is checked
+				// when that object is validated.
+				reqCol(o.Table, repr.Col, rc)
 			}
 		}
 		// Descriptor: owner axis, mode column, grant store.

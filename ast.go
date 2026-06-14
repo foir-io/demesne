@@ -338,11 +338,26 @@ type ViaGroup struct {
 	Col        string // the object row's column naming the granted group
 }
 
+// ViaObject: `via object <Object>-><verb> on <col>` — a cross-object permission
+// reference (Demesne v3 WS3, the general tuple_to_userset). This object's grant
+// is "the caller passes <Object>'s <verb> permission for the RELATED row named by
+// this object's <col>." It compiles to a SECURITY DEFINER that runs the OTHER
+// object's FULL <verb> RLS predicate for the row at <col> — so the borrowed
+// permission may itself be roles / ACLs / groups / boolean, evaluated at the
+// related object, still entirely in the database. (Supersedes the never-finished
+// ViaComposition.)
+type ViaObject struct {
+	Object string // the other object whose permission is borrowed
+	Verb   string // its permission verb
+	Col    string // this object's FK column naming the related row
+}
+
 func (ViaColumn) isRepr()      {}
 func (ViaEdge) isRepr()        {}
 func (ViaRole) isRepr()        {}
 func (ViaComposition) isRepr() {}
 func (ViaGroup) isRepr()       {}
+func (ViaObject) isRepr()      {}
 func (ViaClosure) isRepr()     {}
 
 // Perm is an object permission: a verb, a union expression, the layer tag(s),

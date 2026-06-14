@@ -289,6 +289,19 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 	return strings.Join(branches, " OR "), nil
 }
 
+// objectVerbPredicate returns the full RLS predicate of an object's @rls
+// permission verb — the predicate a cross-object reference (ViaObject) borrows
+// and runs at the related row.
+func (s *Spec) objectVerbPredicate(obj *Object, verb string, virtual map[string]bool) (string, error) {
+	for _, pm := range obj.Perms {
+		if pm.Verb == verb && contains(pm.Layers, "rls") {
+			cust := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1])
+			return s.rlsPredicate(obj, pm, cust, virtual)
+		}
+	}
+	return "", fmt.Errorf("object %q has no @rls permission %q for a cross-object reference", obj.Name, verb)
+}
+
 // guardable reports whether the bounded guard rides this term — a node-level
 // grant (a same-level via-role or @session), never an ancestor walk or the
 // operator.
@@ -468,6 +481,12 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 			return nil, err
 		}
 		return []string{fmt.Sprintf("%s.%s_member(%s, %s)", s.definerSchema(), repr.Closure, repr.Col, s.claim(custClaim))}, nil
+	case ViaObject:
+		// Cross-object permission reference (v3 WS3 — tuple_to_userset): the caller
+		// passes the other object's <verb> for the related row named by repr.Col. The
+		// generated definer runs that object's full predicate (claims read from the
+		// GUC inside it), so no claim is threaded through the call here.
+		return []string{fmt.Sprintf("%s.%s_can_%s(%s)", s.definerSchema(), repr.Object, repr.Verb, repr.Col)}, nil
 	case ViaRole:
 		// A role membership on this object → a project-role definer call over
 		// the object's scope columns. Convention: auth.admin_has_<obj>_role(

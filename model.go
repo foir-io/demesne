@@ -48,6 +48,16 @@ func (r *Relation) CostClass() CostClass {
 	}
 }
 
+// objectByName returns the named object, or nil.
+func (s *Spec) objectByName(name string) *Object {
+	for _, o := range s.Objects {
+		if o.Name == name {
+			return o
+		}
+	}
+	return nil
+}
+
 // grantByName returns the named level-scoped reachability grant, or nil.
 func (s *Spec) grantByName(name string) *Grant {
 	for _, g := range s.Grants {

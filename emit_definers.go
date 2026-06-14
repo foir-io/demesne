@@ -75,6 +75,16 @@ func DefinersSQL(defs []GenFn) string {
 func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	var out []GenFn
 
+	// The virtual-level set, for re-deriving an object's predicate (cross-object
+	// references below).
+	vchain, _ := s.Topology.Chain()
+	virtual := map[string]bool{}
+	for _, l := range vchain {
+		if l.Virtual {
+			virtual[l.Name] = true
+		}
+	}
+
 	// Membership operator fn (e.g. is_platform_admin) — a LEGACY unconditional
 	// god-flag. The general, scoped form is a `grant` (below); a spec uses at most
 	// one of the two as its operator.
@@ -241,6 +251,37 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 				Name: name,
 				Sig:  "p_group text, p_member text",
 				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_group AND %s = p_member)", g.Closure, g.GroupCol, g.MemberCol),
+			})
+		}
+	}
+
+	// Cross-object permission references (v3 WS3): `auth.<Other>_can_<verb>(id)` runs
+	// the OTHER object's full <verb> predicate for the related row — so a comment's
+	// reader can be "the parent document's reader", borrowing whatever roles / ACLs
+	// / groups / boolean that object's policy uses, evaluated at the related row.
+	for _, obj := range s.Objects {
+		for _, r := range obj.Relations {
+			vo, ok := r.Repr.(ViaObject)
+			if !ok {
+				continue
+			}
+			name := vo.Object + "_can_" + vo.Verb
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			other := s.objectByName(vo.Object)
+			if other == nil {
+				return nil, fmt.Errorf("relation %q references unknown object %q", r.Name, vo.Object)
+			}
+			pred, err := s.objectVerbPredicate(other, vo.Verb, virtual)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, GenFn{
+				Name: name,
+				Sig:  fmt.Sprintf("p_%s_id text", vo.Object),
+				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.id = p_%s_id AND (%s))", other.Table, other.Table, vo.Object, pred),
 			})
 		}
 	}

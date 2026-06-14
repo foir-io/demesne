@@ -749,6 +749,27 @@ func (p *parser) parseRepr() (Repr, error) {
 			Closure: clo, GroupCol: cloCols[0], MemberCol: cloCols[1],
 			Edge: edge, EdgeMember: edgeCols[0], EdgeGroup: edgeCols[1], Col: col,
 		}, nil
+	case p.acceptKw("object"):
+		// object <Other>-><verb> on <col>
+		other, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tArrow); err != nil {
+			return nil, err
+		}
+		verb, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectKw("on"); err != nil {
+			return nil, err
+		}
+		col, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		return ViaObject{Object: other, Verb: verb, Col: col}, nil
 	default:
 		// via <fk column>
 		col, err := p.ident()
