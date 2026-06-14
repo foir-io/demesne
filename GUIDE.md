@@ -1,0 +1,180 @@
+# Demesne — a guide for adopting it on your Postgres app
+
+Demesne compiles **one declarative authorization spec** into a Postgres
+**Row-Level-Security** policy set, the **SECURITY DEFINER kernel** those policies
+call, a **verb-level PDP** (the capability map RLS can't express), and the **JWT
+claims contract** your sessions must present. Enforcement lives in the database —
+not in a runtime authorization service — so a row is provably invisible to the
+wrong tenant at the storage layer, not merely in your app code.
+
+It borrows Zanzibar's *declarative schema* and rejects its *runtime*: there is no
+Check service, no parallel reachability evaluator. The trade is deliberate and is
+the moat. The honest niche: **multi-tenant Postgres apps with a hierarchical
+tenancy + an ACL grant tail.**
+
+This guide is for an engineer adopting Demesne on their own database — no
+knowledge of any particular deployment assumed.
+
+---
+
+## The workflow
+
+```
+introspect → scaffold → edit the spec → validate → check → emit → apply → verify
+```
+
+1. **Introspect** your database and **scaffold** a starter spec:
+
+   ```
+   demesne scaffold "$DATABASE_URL" > authz.demesne
+   ```
+
+   The starter infers your tenancy hierarchy from the foreign-key graph and emits
+   one containment-only object per scoped table. It is a **draft** — the schema
+   cannot tell a tenancy *level* (a container every row lives in) from an owner
+   *principal* (a customer/user a row belongs to); both look like "a table many
+   rows reference." Review every line.
+
+2. **Edit** `authz.demesne` to express your real policy: mark which inferred
+   "levels" are actually owner principals, add owner axes, roles, descriptors
+   (per-record ACLs), and subjects. See the language reference below.
+
+3. **Validate** the spec, and **check** it binds to your live schema:
+
+   ```
+   demesne validate authz.demesne
+   demesne check    authz.demesne "$DATABASE_URL"
+   ```
+
+   `check` fails loudly if the spec references a table or column your database
+   doesn't have (a typo, a missing migration, drift).
+
+4. **Emit** the generated SQL and apply it as a normal migration:
+
+   ```
+   demesne emit authz.demesne all > 0001_authz.sql   # definers + policies + triggers
+   # review it, then run it in your migration tool
+   ```
+
+   Demesne owns only the idempotent **policy + definer + (closure) trigger**
+   layer. Tables, columns, indexes, `ENABLE ROW LEVEL SECURITY`, and `GRANT`s
+   stay your own migrations.
+
+5. **Verify** drift any time:
+
+   ```
+   demesne diff authz.demesne "$DATABASE_URL"
+   ```
+
+   Reports any generated policy missing live, or any **orphan** policy live on a
+   governed table but not generated (RLS policies are permissive — an orphan is an
+   open path).
+
+---
+
+## The CLI
+
+| command | needs a DB | what it does |
+|---|---|---|
+| `demesne validate <spec>` | no | parse + validate the spec |
+| `demesne emit <spec> [rls\|definers\|triggers\|claims\|pdp\|all]` | no | print the generated SQL/Go |
+| `demesne introspect <dsn>` | yes | summarise the live schema |
+| `demesne scaffold <dsn>` | yes | generate a starter spec from the schema |
+| `demesne check <spec> <dsn>` | yes | validate, then bind the spec to the live schema |
+| `demesne diff <spec> <dsn>` | yes | generated-vs-live policy drift |
+
+`<dsn>` defaults to `$DATABASE_URL`. The engine package never touches a database;
+only the CLI links a Postgres driver, for the live-database subcommands.
+
+---
+
+## The spec language, briefly
+
+```demesne
+// How a claim is read from the session (default shown; omit to use it).
+claims via "request.jwt.claims" json
+
+// The tenancy shape: a DAG of levels. One parent = a chain/tree; `parents A, B`
+// = a multi-parent DAG; `virtual` = a synthetic root with no scope column.
+topology {
+  level tenant
+  level project parent tenant
+}
+
+// A verb grammar → the capability PDP. Presets bind at a @level; rank delegates.
+vocabulary admin {
+  permission content:read   permission content:write
+  preset viewer @ project = content:read
+  preset owner  @ tenant  = *
+  rank owner > viewer
+}
+
+// Where role assignments live, so the compiler GENERATES the role definers.
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+
+// Actors. `binds owner|admin` declares a subject's plane explicitly.
+subject admin    { anchor tenant  reach descendants identifies sub          roles configurable admin    binds admin }
+subject customer { anchor project reach self        identifies customer_id  roles configurable customer binds owner }
+
+// A governed table + its object-relative permissions.
+object record {
+  table  records
+  scoped tenant > project
+  // The access descriptor: owner-origination + per-record mode + an app-managed
+  // grant list (ACLs). Modes are spec-declared, no baked vocabulary.
+  descriptor {
+    owner  customer via customer_id
+    mode   via access_mode
+    modes  private + read "public_project" + list "customer"
+    grants via edge record_acl(record_id, principal_kind, principal_id, access)
+  }
+  permission view = @descriptor @rls maps select
+  permission edit = @descriptor @rls maps update
+}
+```
+
+Beyond this: **level-scoped grants** (`grant … at <level> via edge …` — a
+scoped, revocable operator/impersonation reach), **unbounded-depth hierarchies**
+(`relation … via closure <C>(anc,desc) base <B>(id,parent) on <col>` — the
+compiler generates a trigger-maintained transitive-closure table + an indexed
+reachability lookup, an explicit write-amplification cost), and a spec-declared
+**definer schema** (`definers schema "<name>"`). A level grant and a descriptor's
+ACL edge are the *same* reachability-grant concept at different granularities
+(level subtree vs one row) — unified declaratively, kept as separate physical
+stores (never one generic tuple table).
+
+---
+
+## The runtime glue
+
+Enforcement is in the DB; a little runtime still mints claims, enforces verbs, and
+answers point-checks. The engine ships it as pure helpers (it never re-evaluates
+policy in app code):
+
+- `Spec.MintClaims(values)` + `Spec.ClaimsSetSQL(local)` — build the
+  `request.jwt.claims` blob a session presents (validated against the contract)
+  and the `set_config` statement that installs it. Pair with `SET ROLE <your RLS
+  role>`.
+- `PDP.Authorize(procedure, holds) → Allow | Deny | NotGoverned` — the verb gate
+  at your request boundary (RLS can't see verbs).
+- `Spec.PointCheckSQL(object)` — a read-check **query** you run *under* the
+  principal's claims; the **database** answers "can this principal see this row?"
+  via the real policy. For UI affordances, never as a substitute for enforcement.
+
+---
+
+## What it is not
+
+Not arbitrary general ReBAC, and not a Zanzibar/Permify-style Check service. The
+graph reachability you express compiles to inline sargable predicates + SECURITY
+DEFINER `EXISTS` + (opt-in) a closure index — all in Postgres, all on the query's
+own plan. If you need a standalone authorization service evaluating relations at
+request time across heterogeneous stores, that is a different tool. Demesne's bet
+is that *enforcement compiled into your database* is worth the constraint.

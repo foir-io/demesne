@@ -97,6 +97,14 @@ parses a spec to an AST, validates it (rules V1–V10, including a generative
 sibling-isolation property), and emits SQL / Go / the claims contract. It never
 touches a database.
 
+The product CLI (`cmd/demesne`) is a **separate module** so this purity holds:
+only the CLI links a Postgres driver, for its live-database subcommands
+(`introspect` / `scaffold` / `check` / `diff`). It introspects `information_schema`
+into the engine's plain-data `Schema` and hands it in — the engine still never
+opens a connection. See [GUIDE.md](GUIDE.md) for adopting Demesne on your own
+database (`scaffold → edit → check → emit → apply → diff`), plus the runtime glue
+(`MintClaims` / `PDP.Authorize` / `PointCheckSQL`).
+
 That is deliberate. The strongest possible test of a security generator is
 **differential equivalence**: apply the generated artifacts to a real database
 in a rolled-back transaction, read back `pg_policies` / `pg_get_functiondef`, and
