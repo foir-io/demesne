@@ -40,6 +40,12 @@ func (sc *Schema) Scaffold(opts ScaffoldOptions) (string, error) {
 		if fk.Table == fk.RefTable {
 			continue
 		}
+		// Only clean `<x>_id → <container>.id` foreign keys signal a tenancy level.
+		// A FK to a non-`id` key (e.g. model_key → models.key) is a domain
+		// reference, not a containment axis whose scope column is `<level>_id`.
+		if !strings.HasSuffix(fk.Column, "_id") || fk.RefColumn != "id" {
+			continue
+		}
 		if refsTo[fk.RefTable] == nil {
 			refsTo[fk.RefTable] = map[string]bool{}
 			colInto[fk.RefTable] = map[string]int{}
