@@ -894,20 +894,17 @@ func (p *parser) parseObjectPerm() (*Perm, error) {
 	if _, err := p.expect(tEq); err != nil {
 		return nil, err
 	}
-	// expr := term (('+'|'or') term)*  — stops at the '@' layertag.
-	t, err := p.parseTerm()
+	// Boolean expression (v3 WS1), stops at the '@' layertag. Precedence, low→high:
+	//   union := and (('+'|'or') and)*
+	//   and   := unary (('and') unary)*
+	//   unary := 'not'? primary
+	//   primary := '(' union ')' | term
+	tree, err := p.parsePermUnion()
 	if err != nil {
 		return nil, err
 	}
-	pm.Expr = append(pm.Expr, t)
-	for p.peekKind() == tPlus || p.isKw("or") {
-		p.advance()
-		t, err := p.parseTerm()
-		if err != nil {
-			return nil, err
-		}
-		pm.Expr = append(pm.Expr, t)
-	}
+	pm.Tree = tree
+	pm.Expr = tree.Leaves()
 	// layertag := '@' LAYER (',' LAYER)*
 	if _, err := p.expect(tAt); err != nil {
 		return nil, err
@@ -957,6 +954,82 @@ func (p *parser) parseObjectPerm() (*Perm, error) {
 		pm.Guard = g
 	}
 	return pm, nil
+}
+
+// parsePermUnion / parsePermAnd / parsePermUnary / parsePermPrimary parse the
+// permission boolean expression (v3 WS1). Union (`+`/`or`) is lowest precedence,
+// then intersection (`and`), then unary `not`, then a term or a parenthesised
+// sub-expression. A single operand returns its bare node (so a union-only spec is
+// unchanged). Parsing stops at the `@` layertag (no operator consumes it).
+func (p *parser) parsePermUnion() (*PermNode, error) {
+	left, err := p.parsePermAnd()
+	if err != nil {
+		return nil, err
+	}
+	kids := []*PermNode{left}
+	for p.peekKind() == tPlus || p.isKw("or") {
+		p.advance()
+		r, err := p.parsePermAnd()
+		if err != nil {
+			return nil, err
+		}
+		kids = append(kids, r)
+	}
+	if len(kids) == 1 {
+		return left, nil
+	}
+	return &PermNode{Op: "or", Kids: kids}, nil
+}
+
+func (p *parser) parsePermAnd() (*PermNode, error) {
+	left, err := p.parsePermUnary()
+	if err != nil {
+		return nil, err
+	}
+	kids := []*PermNode{left}
+	for p.isKw("and") {
+		p.advance()
+		r, err := p.parsePermUnary()
+		if err != nil {
+			return nil, err
+		}
+		kids = append(kids, r)
+	}
+	if len(kids) == 1 {
+		return left, nil
+	}
+	return &PermNode{Op: "and", Kids: kids}, nil
+}
+
+func (p *parser) parsePermUnary() (*PermNode, error) {
+	if p.isKw("not") {
+		p.advance()
+		k, err := p.parsePermPrimary()
+		if err != nil {
+			return nil, err
+		}
+		return &PermNode{Op: "not", Kids: []*PermNode{k}}, nil
+	}
+	return p.parsePermPrimary()
+}
+
+func (p *parser) parsePermPrimary() (*PermNode, error) {
+	if p.peekKind() == tLParen {
+		p.advance()
+		n, err := p.parsePermUnion()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tRParen); err != nil {
+			return nil, err
+		}
+		return n, nil
+	}
+	t, err := p.parseTerm()
+	if err != nil {
+		return nil, err
+	}
+	return &PermNode{Op: "leaf", Term: t}, nil
 }
 
 func (p *parser) parseTerm() (*Term, error) {

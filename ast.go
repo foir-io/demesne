@@ -326,11 +326,40 @@ func (ViaClosure) isRepr()     {}
 // and (optionally) the table-op / pdp-verb it maps to and a row guard.
 type Perm struct {
 	Verb   string
-	Expr   []*Term  // union (∪)
-	Layers []string // "rls" | "pdp" | "kernel"
-	Maps   string   // mapref; "" if absent
-	Guard  *Guard   // optional bounded row-attribute predicate; nil if absent
+	Expr   []*Term   // the flat set of leaf terms (definer generation + validation)
+	Tree   *PermNode // the boolean expression structure (emission); leaves are Expr
+	Layers []string  // "rls" | "pdp" | "kernel"
+	Maps   string    // mapref; "" if absent
+	Guard  *Guard    // optional bounded row-attribute predicate; nil if absent
 	Pos    Pos
+}
+
+// PermNode is a node of a permission's boolean expression (v3 WS1 — Zanzibar-style
+// algebra over Postgres RLS): a leaf term, or a union / intersection / negation of
+// sub-nodes. A union-only expression (a flat `+`/`or` list) is a single "or" node
+// (or a bare leaf) and emits identically to the historical flat OR, so existing
+// specs are byte-for-byte unchanged. Intersection emits `AND`; negation emits a
+// fail-closed `NOT COALESCE(<pred>, true)` (an indeterminate exclusion denies).
+type PermNode struct {
+	Op   string      // "leaf" | "or" | "and" | "not"
+	Term *Term       // Op == "leaf"
+	Kids []*PermNode // Op == "or"/"and" (n-ary); "not" has exactly one child
+}
+
+// Leaves returns every leaf Term in the tree (depth-first), so code that needs the
+// flat term set (definer generation, validation) is unaffected by the structure.
+func (n *PermNode) Leaves() []*Term {
+	if n == nil {
+		return nil
+	}
+	if n.Op == "leaf" {
+		return []*Term{n.Term}
+	}
+	var out []*Term
+	for _, k := range n.Kids {
+		out = append(out, k.Leaves()...)
+	}
+	return out
 }
 
 // Guard is the single sanctioned ABAC predicate (otherwise a §8.2 non-goal): a

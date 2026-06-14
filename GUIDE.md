@@ -142,6 +142,14 @@ object record {
 }
 ```
 
+Permission expressions are a boolean algebra over the grant terms: **union**
+(`a + b` / `a or b`), **intersection** (`a and b`), **exclusion / negation**
+(`a and not b`), and parentheses, with precedence union < intersection < `not`.
+So `viewer and member`, `viewer and not banned`, and `(owner + shared) and not
+banned` all compile to RLS. Negation is **fail-closed**: an exclusion whose
+condition can't be determined (a NULL claim) denies. A union-only expression is
+unchanged.
+
 Beyond this: **level-scoped grants** (`grant … at <level> via edge …` — a
 scoped, revocable operator/impersonation reach), **unbounded-depth hierarchies**
 (`relation … via closure <C>(anc,desc) base <B>(id,parent) on <col>` — the

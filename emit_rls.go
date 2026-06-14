@@ -228,23 +228,20 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 		}
 	}
 
-	var blockTerms []string
-	scopedGrant := false // @scoped: containment alone grants (the admin-config plane)
+	// @scoped (containment alone grants — the admin-config plane) is a flag on the
+	// permission, not a boolean operand; detect it across the leaves.
+	scopedGrant := false
 	for _, t := range pm.Expr {
 		if t.Builtin == "scoped" {
 			scopedGrant = true
-			continue
 		}
-		frags, err := s.emitTerm(obj, pm, t, rels, custClaim)
-		if err != nil {
-			return "", err
-		}
-		for _, f := range frags {
-			if pm.Guard != nil && guardable(t, rels) {
-				f = fmt.Sprintf("(%s AND %s)", f, guardSQL(pm.Guard))
-			}
-			blockTerms = append(blockTerms, f)
-		}
+	}
+	// The grant block: the permission's boolean expression (union / intersection /
+	// negation) over the leaf-term fragments. A union-only tree flattens to the
+	// historical `f1 OR f2 …`.
+	blockTerms, err := s.nodeFrags(obj, pm, pm.Tree, rels, custClaim)
+	if err != nil {
+		return "", err
 	}
 
 	// Containment: pin every ancestor scope column along the object's root→leaf
@@ -308,6 +305,74 @@ func guardable(t *Term, rels map[string]*Relation) bool {
 		}
 	}
 	return false
+}
+
+// nodeFrags compiles a permission boolean node into the OR-composable predicate
+// fragments of the grant block (v3 WS1). For a leaf it is the term's fragments
+// (guard-wrapped); for `or` it FLATTENS the children's fragments (so a union-only
+// tree reproduces the historical flat `f1 OR f2 …` exactly — byte-identical); for
+// `and` it returns a single fragment `(A) AND (B)` (each side its own fragments
+// OR'd); for `not` a single fail-closed `NOT COALESCE(<pred>, true)` (an
+// indeterminate exclusion denies). The `@scoped` flag is not a predicate and
+// contributes nothing here.
+func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Relation, custClaim string) ([]string, error) {
+	if n == nil {
+		return nil, nil
+	}
+	switch n.Op {
+	case "leaf":
+		if n.Term.Builtin == "scoped" {
+			return nil, nil
+		}
+		frags, err := s.emitTerm(obj, pm, n.Term, rels, custClaim)
+		if err != nil {
+			return nil, err
+		}
+		var out []string
+		for _, f := range frags {
+			if pm.Guard != nil && guardable(n.Term, rels) {
+				f = fmt.Sprintf("(%s AND %s)", f, guardSQL(pm.Guard))
+			}
+			out = append(out, f)
+		}
+		return out, nil
+	case "or":
+		var out []string
+		for _, k := range n.Kids {
+			kf, err := s.nodeFrags(obj, pm, k, rels, custClaim)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, kf...) // flatten — no per-child parens
+		}
+		return out, nil
+	case "and":
+		var parts []string
+		for _, k := range n.Kids {
+			kf, err := s.nodeFrags(obj, pm, k, rels, custClaim)
+			if err != nil {
+				return nil, err
+			}
+			if len(kf) == 0 {
+				continue
+			}
+			parts = append(parts, "("+strings.Join(kf, " OR ")+")")
+		}
+		if len(parts) == 0 {
+			return nil, nil
+		}
+		return []string{strings.Join(parts, " AND ")}, nil
+	case "not":
+		kf, err := s.nodeFrags(obj, pm, n.Kids[0], rels, custClaim)
+		if err != nil {
+			return nil, err
+		}
+		if len(kf) == 0 {
+			return nil, nil
+		}
+		return []string{fmt.Sprintf("NOT COALESCE(%s, true)", strings.Join(kf, " OR "))}, nil
+	}
+	return nil, fmt.Errorf("unknown permission node op %q", n.Op)
 }
 
 // emitTerm compiles one union term to one or more predicate fragments.
