@@ -126,14 +126,20 @@ type Topology struct {
 	Pos    Pos
 }
 
-// Level is one tier of the chain. Parent == "" marks the root. Virtual levels
-// emit no scope column / claim key (the operator anchors at a virtual root).
+// Level is one tier of the topology. A level may have ZERO parents (the root),
+// ONE parent (a chain/tree link), or MULTIPLE parents (a DAG — WS3 Phase B: a
+// node reachable through more than one container, e.g. an item filed under a team
+// OR a folder). Virtual levels emit no scope column / claim key (the operator
+// anchors at a virtual root).
 type Level struct {
 	Name    string
-	Parent  string
+	Parents []string // empty = root; >1 = multi-parent (column-backed OR containment)
 	Virtual bool
 	Pos     Pos
 }
+
+// isRoot reports whether the level has no parent.
+func (l *Level) isRoot() bool { return len(l.Parents) == 0 }
 
 // Vocabulary is a PDP verb grammar: the permission keys, the built-in role
 // presets, and (optionally) the delegation rank ladder.

@@ -247,16 +247,36 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 		}
 	}
 
-	// Containment: the full scoped chain for a sub-row object; the ANCESTOR
-	// levels for a level-entity object (its own node identity is a grant axis).
-	var containment []string
-	for _, lvl := range obj.Scoped {
-		if obj.IsLevelEntity() && lvl == obj.Level {
-			continue
-		}
-		containment = append(containment, fmt.Sprintf("%s = %s", scopeCol(obj, lvl), s.claim(lvl+"_id")))
+	// Containment: pin every ancestor scope column along the object's root→leaf
+	// path(s). A single-parent leaf has ONE path → a plain AND-chain (identical to
+	// the chain/tree case). A multi-parent leaf (WS3 Phase B) has one path per
+	// lineage → an OR of per-path AND-chains (column-backed, sargable). A
+	// level-entity object excludes its own node column (that is a grant axis, not
+	// containment); virtual levels carry no column.
+	paths, err := s.Topology.AncestorPaths(objLeaf)
+	if err != nil {
+		return "", err
 	}
-	block := strings.Join(containment, " AND ")
+	var pathPreds []string
+	for _, path := range paths {
+		var cols []string
+		for _, lvl := range path {
+			if lvl.Virtual || (obj.IsLevelEntity() && lvl.Name == obj.Level) {
+				continue
+			}
+			cols = append(cols, fmt.Sprintf("%s = %s", scopeCol(obj, lvl.Name), s.claim(lvl.Name+"_id")))
+		}
+		pathPreds = append(pathPreds, strings.Join(cols, " AND "))
+	}
+	var block string
+	if len(pathPreds) == 1 {
+		block = pathPreds[0]
+	} else {
+		for i := range pathPreds {
+			pathPreds[i] = "(" + pathPreds[i] + ")"
+		}
+		block = strings.Join(pathPreds, " OR ")
+	}
 	if len(blockTerms) > 0 {
 		if block != "" {
 			block += " AND (" + strings.Join(blockTerms, " OR ") + ")"

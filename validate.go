@@ -274,19 +274,26 @@ func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) erro
 func validateObject(s *Spec, o *Object, chain []*Level) error {
 	var errs []error
 
-	// V6 — scope-column nesting (WS3 tree-aware). The object's `scoped` chain must
-	// be the NON-virtual root→leaf path to its deepest level through the tree: pin
-	// every ancestor column from the top real level down to L (a team-branch table
-	// carries org_id AND team_id; a client-branch table org_id AND client_id —
-	// never the leaf column alone, and never a sibling branch's column).
+	// V6 — scope-column nesting (WS3 tree/DAG-aware). The object's `scoped` chain
+	// must list, in topological order, EVERY non-virtual ancestor of its deepest
+	// level across all root→leaf paths (a single-parent leaf → its one path; a
+	// multi-parent leaf → the union of its lineages, e.g. org_id + team_id +
+	// folder_id). It pins every ancestor column, never the leaf alone, never a
+	// stray level outside the leaf's ancestry.
 	if len(o.Scoped) == 0 {
 		errs = append(errs, fmt.Errorf("line %d: object %q declares no scoped path (V6)", o.Pos.Line, o.Name))
-	} else if path, perr := s.Topology.AncestorPath(o.Scoped[len(o.Scoped)-1]); perr != nil {
+	} else if paths, perr := s.Topology.AncestorPaths(o.Scoped[len(o.Scoped)-1]); perr != nil {
 		errs = append(errs, fmt.Errorf("line %d: object %q scoped leaf %q is not a topology level (V6)", o.Pos.Line, o.Name, o.Scoped[len(o.Scoped)-1]))
 	} else {
-		var want []string
-		for _, l := range path {
-			if !l.Virtual {
+		inAncestry := map[string]bool{}
+		for _, p := range paths {
+			for _, l := range p {
+				inAncestry[l.Name] = true
+			}
+		}
+		var want []string // topological order, non-virtual
+		for _, l := range chain {
+			if inAncestry[l.Name] && !l.Virtual {
 				want = append(want, l.Name)
 			}
 		}
@@ -295,7 +302,7 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 			ok = want[i] == o.Scoped[i]
 		}
 		if !ok {
-			errs = append(errs, fmt.Errorf("line %d: object %q scoped %v is not the non-virtual root→leaf path to %q (expected %v) (V6)",
+			errs = append(errs, fmt.Errorf("line %d: object %q scoped %v is not the non-virtual ancestry of %q in topological order (expected %v) (V6)",
 				o.Pos.Line, o.Name, o.Scoped, o.Scoped[len(o.Scoped)-1], want))
 		}
 	}

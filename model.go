@@ -69,34 +69,47 @@ func (t *Topology) Chain() ([]*Level, error) {
 		return nil, fmt.Errorf("topology: no levels declared")
 	}
 
-	var roots []*Level
-	children := map[string][]*Level{} // parent name → children, in declaration order
+	var roots int
+	indeg := map[string]int{}          // level name → number of parents
+	children := map[string][]*Level{}  // parent name → children, in declaration order
 	for _, l := range t.Levels {
-		if l.Parent == "" {
-			roots = append(roots, l)
+		if l.isRoot() {
+			roots++
 			continue
 		}
-		if t.LevelByName(l.Parent) == nil {
-			return nil, fmt.Errorf("line %d: level %q has unknown parent %q", l.Pos.Line, l.Name, l.Parent)
+		for _, par := range l.Parents {
+			if t.LevelByName(par) == nil {
+				return nil, fmt.Errorf("line %d: level %q has unknown parent %q", l.Pos.Line, l.Name, par)
+			}
+			indeg[l.Name]++
+			children[par] = append(children[par], l)
 		}
-		children[l.Parent] = append(children[l.Parent], l)
 	}
-	if len(roots) != 1 {
-		return nil, fmt.Errorf("topology: want exactly one root level (no parent), found %d", len(roots))
+	if roots != 1 {
+		return nil, fmt.Errorf("topology: want exactly one root level (no parent), found %d", roots)
 	}
 
-	// BFS from the root in declaration order → a deterministic topological order
-	// that also surfaces cycles / unreachable levels (a cycle never includes the
-	// parentless root, so its members are simply unreachable and caught by count).
+	// Kahn's algorithm → a deterministic topological order (every parent before
+	// each child, even when a level has multiple parents — a DAG). Levels still in
+	// the graph after the sort form a cycle or are unreachable.
 	var order []*Level
-	seen := map[string]bool{}
-	queue := []*Level{roots[0]}
+	var queue []*Level
+	for _, l := range t.Levels { // declaration order → deterministic
+		if indeg[l.Name] == 0 {
+			queue = append(queue, l)
+		}
+	}
+	done := map[string]int{}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		seen[cur.Name] = true
 		order = append(order, cur)
-		queue = append(queue, children[cur.Name]...)
+		for _, ch := range children[cur.Name] {
+			done[ch.Name]++
+			if done[ch.Name] == indeg[ch.Name] {
+				queue = append(queue, ch)
+			}
+		}
 	}
 	if len(order) != len(t.Levels) {
 		return nil, fmt.Errorf("topology: %d level(s) not reachable from the root (cycle or disconnected)", len(t.Levels)-len(order))
@@ -104,30 +117,48 @@ func (t *Topology) Chain() ([]*Level, error) {
 	return order, nil
 }
 
-// AncestorPath returns the levels from the root down to (and including) the named
-// level — the unique path through the tree (each level has a single parent). This
-// is the per-object/level linear view the chain-era code assumed globally.
-func (t *Topology) AncestorPath(name string) ([]*Level, error) {
+// AncestorPaths returns EVERY root→level path through the topology DAG (one path
+// per distinct route, root first). A single-parent level has exactly one path
+// (the chain/tree case); a multi-parent level has one per parent lineage (WS3
+// Phase B) — these become the OR branches of the object's containment predicate.
+func (t *Topology) AncestorPaths(name string) ([][]*Level, error) {
 	l := t.LevelByName(name)
 	if l == nil {
 		return nil, fmt.Errorf("unknown level %q", name)
 	}
-	var rev []*Level
-	for cur := l; cur != nil; cur = t.LevelByName(cur.Parent) {
-		rev = append(rev, cur)
-		if cur.Parent == "" {
-			break
+	if l.isRoot() {
+		return [][]*Level{{l}}, nil
+	}
+	var paths [][]*Level
+	for _, par := range l.Parents {
+		up, err := t.AncestorPaths(par)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range up {
+			paths = append(paths, append(append([]*Level{}, p...), l))
 		}
 	}
-	path := make([]*Level, len(rev))
-	for i, lv := range rev {
-		path[len(rev)-1-i] = lv // reverse to root → level
-	}
-	return path, nil
+	return paths, nil
 }
 
-// descendants returns every level strictly below the named level in the tree
-// (the subtree, across all branches), in topological order.
+// AncestorPath returns the UNIQUE root→level path, erroring if the level has more
+// than one (a multi-parent lineage). Used where a single linear path is required
+// — subject pinning and role-store scope columns. Phase B confines multi-parent
+// to OBJECT containment; subjects and roles still anchor at unique-path levels.
+func (t *Topology) AncestorPath(name string) ([]*Level, error) {
+	paths, err := t.AncestorPaths(name)
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) != 1 {
+		return nil, fmt.Errorf("level %q has %d ancestor paths (multi-parent) — only single-path levels can be pinned here", name, len(paths))
+	}
+	return paths[0], nil
+}
+
+// descendants returns every level strictly below the named level (every level
+// some of whose ancestor paths pass through it), in topological order.
 func (t *Topology) descendants(name string) ([]*Level, error) {
 	order, err := t.Chain()
 	if err != nil {
@@ -138,18 +169,27 @@ func (t *Topology) descendants(name string) ([]*Level, error) {
 		if l.Name == name {
 			continue
 		}
-		path, err := t.AncestorPath(l.Name)
+		paths, err := t.AncestorPaths(l.Name)
 		if err != nil {
 			return nil, err
 		}
-		for _, a := range path {
-			if a.Name == name {
+		for _, p := range paths {
+			if containsLevel(p, name) {
 				out = append(out, l)
 				break
 			}
 		}
 	}
 	return out, nil
+}
+
+func containsLevel(path []*Level, name string) bool {
+	for _, l := range path {
+		if l.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // nonVirtualChain returns the chain with virtual levels removed (the levels
@@ -208,7 +248,7 @@ func (s *Spec) PinnedColumns(sub *Subject) (cols []string, virtualAnchor bool, e
 	// tree) — the chain-era "root down to the anchor", now path-aware (WS3).
 	path, err := s.Topology.AncestorPath(sub.Anchor)
 	if err != nil {
-		return nil, false, fmt.Errorf("line %d: subject %q anchors at unknown level %q", sub.Pos.Line, sub.Name, sub.Anchor)
+		return nil, false, fmt.Errorf("line %d: subject %q anchor %q: %w", sub.Pos.Line, sub.Name, sub.Anchor, err)
 	}
 	virtualAnchor = path[len(path)-1].Virtual
 	for _, l := range path {

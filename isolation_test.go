@@ -130,7 +130,7 @@ func genSpec(rng *rand.Rand) *Spec {
 		if i == 0 {
 			lv.Virtual = virtualRoot
 		} else {
-			lv.Parent = names[i-1]
+			lv.Parents = []string{names[i-1]}
 		}
 		top.Levels = append(top.Levels, lv)
 	}

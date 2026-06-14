@@ -187,14 +187,29 @@ func (p *parser) parseTopology() (*Topology, error) {
 			return nil, err
 		}
 		lv.Name = name
-		// ('parent' IDENT)? ('virtual')? — accept in any order, both optional.
+		// ('parent' IDENT | 'parents' IDENT (',' IDENT)*)? ('virtual')? — any order,
+		// all optional. `parents` (plural) declares a multi-parent DAG level.
 		for {
 			if p.acceptKw("parent") {
 				par, err := p.ident()
 				if err != nil {
 					return nil, err
 				}
-				lv.Parent = par
+				lv.Parents = append(lv.Parents, par)
+				continue
+			}
+			if p.acceptKw("parents") {
+				for {
+					par, err := p.ident()
+					if err != nil {
+						return nil, err
+					}
+					lv.Parents = append(lv.Parents, par)
+					if p.peekKind() != tComma {
+						break
+					}
+					p.advance() // ','
+				}
 				continue
 			}
 			if p.acceptKw("virtual") {
