@@ -208,6 +208,13 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 	objIsGlobal := virtual[objLeaf] // a virtual-leaf object lives above tenancy
 	objHasStaffTerm := s.objectReferencesStaff(obj)
 	var top []string
+	// Grant reaches to fold INTO the containment block at a given ancestor level
+	// (keyed by level name), rather than as a top-level disjunct. For a sub-row
+	// object deeper than the grant's level, the grant admits the operator into the
+	// granted level but the SELECTED deeper scope (e.g. the project claim) still
+	// applies — so the grant ORs with that level's containment column and ANDs
+	// with the rest, keeping a project-scoped surface project-scoped for operators.
+	grantInject := map[string][]string{}
 	for _, sub := range s.Subjects {
 		switch {
 		case sub.Membership != nil && virtual[sub.Anchor]:
@@ -219,7 +226,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			} else {
 				top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, s.claim(objLeaf+"_id")))
 			}
-		case s.isPlatformRoleSubject(sub) && objIsGlobal && sub.Anchor == objLeaf && !objHasStaffTerm:
+		case s.isPlatformRoleSubject(sub) && (objHasStaffTerm || (objIsGlobal && sub.Anchor == objLeaf)):
 			// Platform-anchored ROLE subject on a PURE-GLOBAL object (the `platform
 			// <table>` shorthand, v3 WS6): a table above tenancy whose ONLY grant is
 			// the platform plane. The platform-role definer is the whole top branch —
@@ -237,7 +244,21 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			// reaches DOWN into its level's subtree, so it contributes nothing to a
 			// GLOBAL object above that level (which carries no such scope column).
 			if g := s.grantByName(sub.ReachGrant); g != nil && contains(obj.Scoped, g.Level) {
-				top = append(top, fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), scopeCol(obj, g.Level)))
+				reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), scopeCol(obj, g.Level))
+				if g.Level != objLeaf && !obj.IsLevelEntity() && !objIsGlobal {
+					// Sub-row object deeper than the grant's level: fold the grant into
+					// the grant-level containment column so the deeper scope (the
+					// selected project) still constrains the operator's view. An
+					// operator reaches OTHER projects in the granted tenant by selecting
+					// them, exactly like a normal admin — never tenant-wide at once.
+					grantInject[g.Level] = append(grantInject[g.Level], reach)
+				} else {
+					// Object AT the grant's level (a level-entity selector, e.g. the
+					// project/tenant lists) or a global object: the grant is a top-level
+					// reach so the operator can see — and pick — every node in the
+					// granted level's subtree.
+					top = append(top, reach)
+				}
 			}
 		}
 	}
@@ -275,7 +296,13 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			if lvl.Virtual || (obj.IsLevelEntity() && lvl.Name == obj.Level) {
 				continue
 			}
-			cols = append(cols, fmt.Sprintf("%s = %s", scopeCol(obj, lvl.Name), s.claim(lvl.Name+"_id")))
+			colPred := fmt.Sprintf("%s = %s", scopeCol(obj, lvl.Name), s.claim(lvl.Name+"_id"))
+			if reaches := grantInject[lvl.Name]; len(reaches) > 0 {
+				// (<col> = <claim> OR grant_reach(...)) — the grant admits the operator
+				// at this level; deeper levels still AND in, keeping it scoped.
+				colPred = "(" + colPred + " OR " + strings.Join(reaches, " OR ") + ")"
+			}
+			cols = append(cols, colPred)
 		}
 		pathPreds = append(pathPreds, strings.Join(cols, " AND "))
 	}
