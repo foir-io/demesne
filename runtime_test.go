@@ -90,3 +90,27 @@ func TestRuntime_PointCheckSQL(t *testing.T) {
 		t.Error("PointCheckSQL accepted an unknown object")
 	}
 }
+
+func TestComposeCan(t *testing.T) {
+	cases := []struct {
+		name          string
+		pointGoverned bool
+		pointAllow    bool
+		pdp           Decision
+		want          Decision
+	}{
+		{"neither governs", false, false, NotGoverned, NotGoverned},
+		{"row governs + passes", true, true, NotGoverned, Allow},
+		{"row governs + fails", true, false, NotGoverned, Deny},
+		{"pdp denies (no row)", false, false, Deny, Deny},
+		{"pdp allows (no row)", false, false, Allow, Allow},
+		{"row passes + pdp allows", true, true, Allow, Allow},
+		{"row passes but pdp denies", true, true, Deny, Deny},
+		{"row fails but pdp allows", true, false, Allow, Deny},
+	}
+	for _, c := range cases {
+		if got := ComposeCan(c.pointGoverned, c.pointAllow, c.pdp); got != c.want {
+			t.Errorf("%s: ComposeCan(%v,%v,%v) = %v, want %v", c.name, c.pointGoverned, c.pointAllow, c.pdp, got, c.want)
+		}
+	}
+}

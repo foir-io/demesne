@@ -110,6 +110,36 @@ func (p *PDP) Authorize(procedure string, holds func(perm string) bool) Decision
 
 // --- (c) DB-delegating point-check ------------------------------------------
 
+// ComposeCan is the unified Can(principal, action, resource) → Allow|Deny|
+// NotGoverned decision: it COMPOSES the two governing layers a pre-flight check
+// consults, without re-evaluating either. Both inputs come from DB-delegating
+// primitives the caller already ran — the row predicate via PointCheckSQL under
+// the principal's claims, and the verb gate via PDP.Authorize — so this adds no
+// policy logic of its own (the moat: the database / the emitted PDP map decided;
+// this only folds the two answers together). The composition is fail-closed:
+//
+//   - pointGoverned reports whether the object governs row access for this action
+//     (it has a SELECT predicate to point-check); pointAllow is that check's
+//     result under the principal's claims.
+//   - pdp is the verb decision (Allow / Deny / NotGoverned) for the action's
+//     procedure, or NotGoverned when the action carries no verb gate.
+//
+// A governing layer that DENIES denies the whole check; if NEITHER layer governs
+// the action, the result is NotGoverned (the caller decides what that means —
+// other layers may still apply). Otherwise Allow.
+func ComposeCan(pointGoverned, pointAllow bool, pdp Decision) Decision {
+	if !pointGoverned && pdp == NotGoverned {
+		return NotGoverned
+	}
+	if pointGoverned && !pointAllow {
+		return Deny
+	}
+	if pdp == Deny {
+		return Deny
+	}
+	return Allow
+}
+
 // PointCheckSQL renders a read point-check for an object: a query that, run UNDER
 // a principal's minted claims (ClaimsSetSQL) and the RLS connection role, returns
 // whether that principal can SEE a given row — i.e. the row passes the object's
