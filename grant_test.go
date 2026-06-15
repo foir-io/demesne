@@ -137,6 +137,56 @@ func TestGrant_ScopedOperatorReplacesGodFlag(t *testing.T) {
 	}
 }
 
+// TestGrant_OperatorIsProjectScopedOnSubRows locks the rule that a grant on a
+// SUB-ROW object deeper than the grant's level (e.g. records, scoped
+// tenant>project, grant at tenant) is FOLDED into the tenant containment term —
+// so the selected project still constrains the operator — while a LEVEL-ENTITY
+// object (the project selector) keeps a top-level tenant-wide reach so the
+// operator can still see and pick projects. Without this an operator's session
+// would show every project's content in the granted tenant at once, defeating
+// the admin app's per-project scope.
+func TestGrant_OperatorIsProjectScopedOnSubRows(t *testing.T) {
+	s, err := Parse(grantSpec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	rls, err := s.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit rls: %v", err)
+	}
+	using := func(name string) string {
+		for i := range rls.Policies {
+			if rls.Policies[i].Name == name {
+				return rls.Policies[i].Using
+			}
+		}
+		t.Fatalf("no %s policy emitted", name)
+		return ""
+	}
+
+	// Sub-row (records): grant folded into the tenant term, project still ANDs in.
+	rec := using("records_select")
+	if !strings.Contains(rec, "OR auth.impersonation_grants_reach(") {
+		t.Errorf("records: operator grant must be FOLDED into the tenant containment term (project-scoped), got:\n%s", rec)
+	}
+	if !strings.Contains(rec, "project_id = ") {
+		t.Errorf("records: must remain project-scoped (project_id claim term), got:\n%s", rec)
+	}
+
+	// Level-entity (projects): grant is a leading top-level disjunct (tenant-wide)
+	// so the operator can list/pick projects — NOT folded.
+	proj := using("projects_select")
+	if !strings.Contains(proj, "auth.impersonation_grants_reach(") {
+		t.Errorf("projects: operator must still reach the project list, got:\n%s", proj)
+	}
+	if strings.Contains(proj, "OR auth.impersonation_grants_reach(") {
+		t.Errorf("projects (level-entity selector) must keep TOP-LEVEL tenant-wide operator reach, not a folded project-scoped one, got:\n%s", proj)
+	}
+}
+
 func keysOf(m map[string]GenFn) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
