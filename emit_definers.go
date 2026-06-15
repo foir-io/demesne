@@ -301,6 +301,33 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		out = append(out, s.accessorDefiner(obj))
 	}
 
+	// Structural accessor enumerators (Expand over the role/staff CONTROL plane):
+	// for every level-entity object (project, tenant, …), auth.<table>_accessors(p_id)
+	// enumerates who can administer the node — role-holders (ROLE), platform staff
+	// (STAFF), and the impersonation operators (IMPERSONATION). The control plane has
+	// no owner/grant/visibility axes; every accessor is a NAMED principal (no
+	// "everyone" category) read from the role store + impersonation grant the SELECT
+	// predicate compiles from. Settings tables defer to their containing project/
+	// tenant (containment-only access = the level's accessors), so only the level
+	// entities get an enumerator.
+	for _, obj := range s.Objects {
+		if !obj.IsLevelEntity() {
+			continue
+		}
+		name := obj.Table + "_accessors"
+		if seen[name] {
+			continue
+		}
+		d, ok, err := s.structuralAccessorDefiner(obj)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			seen[name] = true
+			out = append(out, d)
+		}
+	}
+
 	// Closure-reachability lookups (WS3 Phase C): an indexed EXISTS over a
 	// trigger-maintained transitive-closure table — the row's node is reachable
 	// from the subject's granted ancestor. The maintenance trigger is generated
@@ -708,6 +735,194 @@ func (s *Spec) accessorDefiner(obj *Object) GenFn {
 		RawBody: true,
 		Body:    "  " + strings.Join(branches, "\n  UNION ALL\n  "),
 	}
+}
+
+// structuralAccessorDefiner builds auth.<table>_accessors(p_id) for a level-entity
+// (control-plane) object — the Expand enumerator over the role/staff plane. It
+// walks the object's SELECT permission terms, mapping each to a principal
+// enumeration: a platform-staff via-role → STAFF; a role-walk into a parent level,
+// a via-role, or a via-memberin → ROLE at the matching scope; and (for a level
+// entity reachable by the operator grant) the active impersonation grants →
+// IMPERSONATION. @session / containment builtins add no NEW principals (they are
+// the mechanism by which the enumerated role-holders' claims match) and are
+// skipped. UNION (not UNION ALL) so a principal reachable two ways lists once per
+// distinct (source, principal). Returns ok=false if there are no enumerable terms.
+func (s *Spec) structuralAccessorDefiner(obj *Object) (GenFn, bool, error) {
+	rs := roleStoreByName(s)
+	if rs == nil {
+		return GenFn{}, false, nil
+	}
+	var sel *Perm
+	for _, pm := range obj.Perms {
+		if pm.Maps == "select" {
+			sel = pm
+			break
+		}
+	}
+	if sel == nil {
+		return GenFn{}, false, nil
+	}
+	rels := map[string]*Relation{}
+	for _, r := range obj.Relations {
+		rels[r.Name] = r
+	}
+	presetLevels := presetLevelMap(s)
+	rankIdx := rankIndex(s)
+
+	var branches []string
+	for _, t := range sel.Expr {
+		b, err := s.structuralTermEnum(obj, t, rels, rs, presetLevels, rankIdx)
+		if err != nil {
+			return GenFn{}, false, err
+		}
+		branches = append(branches, b...)
+	}
+	// The operator (impersonation) grant auto-applies to a level entity reachable
+	// at the grant's level — enumerate the active grants for the row's scope.
+	for _, g := range s.Grants {
+		if s.levelOnObjectPath(obj, g.Level) {
+			branches = append(branches, s.impersonationEnumSQL(obj, g))
+		}
+	}
+	if len(branches) == 0 {
+		return GenFn{}, false, nil
+	}
+	return GenFn{
+		Name:    obj.Table + "_accessors",
+		Sig:     "p_id text",
+		Returns: "TABLE(source text, principal_kind text, principal_id text, access text)",
+		RawBody: true,
+		Body:    "  " + strings.Join(branches, "\n  UNION\n  "),
+	}, true, nil
+}
+
+// structuralTermEnum maps one SELECT-permission term of a control-plane object to
+// its principal-enumeration branch(es). Mirrors roleDefinerForTerm, but emits the
+// enumeration (who satisfies the term) instead of the boolean check.
+func (s *Spec) structuralTermEnum(obj *Object, t *Term, rels map[string]*Relation, rs *RoleStore, presetLevels map[string][]string, rankIdx map[string]int) ([]string, error) {
+	if t.WalkVerb != "" {
+		// Role-walk into a parent level (e.g. tenant->owner): the parent level's
+		// admin roles. The parent's operator reach is covered by the impersonation
+		// branch (added once per object), so this stays roles-only.
+		parent := rels[t.Ident]
+		if parent == nil {
+			return nil, fmt.Errorf("structural accessors: walk references unknown relation %q", t.Ident)
+		}
+		lvl := parent.Types[0]
+		return []string{s.roleEnumSQL(obj, rs, lvl, presetLevels[lvl], "role", "read")}, nil
+	}
+	if t.Builtin != "" {
+		// @session / @app_scope / @open contribute no NEW enumerable principals.
+		return nil, nil
+	}
+	r := rels[t.Ident]
+	if r == nil {
+		return nil, nil
+	}
+	switch repr := r.Repr.(type) {
+	case ViaRole:
+		if len(r.Types) > 0 {
+			if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
+				// The platform-staff plane: has_<anchor>_role holders (NULL scope).
+				return []string{s.roleEnumSQL(obj, rs, st.Anchor, presetLevels[st.Anchor], "staff", "write")}, nil
+			}
+		}
+		objLevel := obj.Scoped[len(obj.Scoped)-1]
+		keys := presetLevels[objLevel]
+		if repr.HasRank {
+			keys = atOrAbove(keys, repr.RankMin, rankIdx)
+		}
+		return []string{s.roleEnumSQL(obj, rs, objLevel, keys, "role", "read")}, nil
+	case ViaMemberIn:
+		// Any admin role at the named level scope (no preset filter, descendants of
+		// that scope included — the memberin shape).
+		return []string{s.memberinEnumSQL(obj, rs, repr.Level)}, nil
+	}
+	return nil, nil
+}
+
+// roleEnumSQL enumerates the role store's admins holding a role at `level` that
+// reaches this row's scope — pinning the level's root→level scope columns to the
+// row's columns, NULLing the deeper ones (the inverse of roleDefiner's claim
+// pinning), filtered to `presets` when non-empty. Tagged with `source` / `access`.
+func (s *Spec) roleEnumSQL(obj *Object, rs *RoleStore, level string, presets []string, source, access string) string {
+	chain, _ := s.Topology.Chain()
+	var nonVirtual []string
+	for _, l := range chain {
+		if !l.Virtual {
+			nonVirtual = append(nonVirtual, l.Name)
+		}
+	}
+	onPath := map[string]bool{}
+	if path, err := s.Topology.AncestorPath(level); err == nil {
+		for _, l := range path {
+			onPath[l.Name] = true
+		}
+	}
+	var conds []string
+	for i, lvl := range nonVirtual {
+		if i >= len(rs.ScopeCols) {
+			break
+		}
+		raCol := rs.ScopeCols[i]
+		if onPath[lvl] {
+			conds = append(conds, fmt.Sprintf("ra.%s = e.%s", raCol, scopeCol(obj, lvl)))
+		} else {
+			conds = append(conds, fmt.Sprintf("ra.%s IS NULL", raCol))
+		}
+	}
+	join := ""
+	if len(presets) > 0 {
+		ks := append([]string(nil), presets...)
+		sort.Strings(ks)
+		q := make([]string, len(ks))
+		for i, p := range ks {
+			q[i] = "'" + p + "'"
+		}
+		join = fmt.Sprintf(" JOIN %s rr ON rr.%s = ra.%s AND rr.%s IN (%s)",
+			rs.RolesTable, rs.RolesID, rs.RoleCol, rs.KeyCol, strings.Join(q, ", "))
+	}
+	return fmt.Sprintf(
+		"SELECT '%s'::text AS source, '%s'::text AS principal_kind, ra.%s AS principal_id, '%s'::text AS access\n    FROM %s e JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND %s%s\n    WHERE e.id = p_id",
+		source, rs.KindVal, rs.SubjectCol, access, obj.Table, rs.Assignments,
+		rs.KindCol, rs.KindVal, rs.RevokedCol, strings.Join(conds, " AND "), join)
+}
+
+// memberinEnumSQL enumerates admins with ANY role at the given level's scope (the
+// via-memberin shape: a tenant member is anyone with a role anywhere in the
+// tenant, regardless of project) — so the deeper scope columns are NOT NULL-pinned.
+func (s *Spec) memberinEnumSQL(obj *Object, rs *RoleStore, level string) string {
+	return fmt.Sprintf(
+		"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s e JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND ra.%s = e.%s\n    WHERE e.id = p_id",
+		rs.KindVal, rs.SubjectCol, obj.Table, rs.Assignments, rs.KindCol, rs.KindVal,
+		rs.RevokedCol, s.scopeColForLevel(rs, level), scopeCol(obj, level))
+}
+
+// impersonationEnumSQL enumerates the operators holding an ACTIVE impersonation
+// grant reaching this row's grant-level scope (e.g. the tenant) — the IMPERSONATION
+// plane, the same active-grant gate impersonation_grants_reach checks.
+func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
+	conds := []string{fmt.Sprintf("ig.%s = e.%s", g.LevelCol, scopeCol(obj, g.Level))}
+	if g.ActiveCol != "" {
+		conds = append(conds, fmt.Sprintf("ig.%s IS NULL", g.ActiveCol))
+	}
+	if g.ExpiresCol != "" {
+		conds = append(conds, fmt.Sprintf("ig.%s > now()", g.ExpiresCol))
+	}
+	return fmt.Sprintf(
+		"SELECT 'impersonation'::text, 'admin'::text, ig.%s, 'write'::text\n    FROM %s e JOIN %s ig ON %s\n    WHERE e.id = p_id",
+		g.GranteeCol, obj.Table, g.Table, strings.Join(conds, " AND "))
+}
+
+// levelOnObjectPath reports whether a topology level is on the object's scope path
+// (so an operator grant at that level reaches the object's rows).
+func (s *Spec) levelOnObjectPath(obj *Object, level string) bool {
+	for _, l := range obj.Scoped {
+		if l == level {
+			return true
+		}
+	}
+	return false
 }
 
 // kernelDefiner builds the realtime/collab reachability gate over an object's
