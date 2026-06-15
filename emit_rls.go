@@ -529,7 +529,17 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		if err := reqClaim(custClaim, obj, "@app_scope"); err != nil {
 			return nil, err
 		}
-		return []string{s.claim(custClaim) + " IS NULL"}, nil
+		base := s.claim(custClaim) + " IS NULL"
+		// When the object has an ADMIN owner axis, the broad app/service reach is
+		// gated to EXCLUDE admin-owned rows: an operator sees non-admin-owned
+		// records, but an admin-owned row is reachable only by its owning admin
+		// (the admin-owner term below) + grants — operator-private.
+		if obj.Descriptor != nil && obj.Descriptor.AdminOwner != nil {
+			if ac, ok := obj.Descriptor.AdminOwner.Repr.(ViaColumn); ok {
+				base = fmt.Sprintf("(%s AND %s IS NULL)", base, ac.Column)
+			}
+		}
+		return []string{base}, nil
 	case t.Builtin == "descriptor":
 		return s.emitDescriptor(obj, pm, custClaim)
 	case t.Builtin == "store_manage":
@@ -674,6 +684,16 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	var frags []string
 	owner, _ := d.Owner.Repr.(ViaColumn)
 	frags = append(frags, fmt.Sprintf("%s = %s", owner.Column, s.claim(custClaim)))
+
+	// The ADMIN owner axis: a record owned by the admin who created it is reachable
+	// by that admin (its claim) for every op (read/write/delete/insert). The broad
+	// operator reach is gated to exclude these rows (see @app_scope), so an
+	// admin-owned record is private to its owner + grants.
+	if d.AdminOwner != nil {
+		if ac, ok := d.AdminOwner.Repr.(ViaColumn); ok {
+			frags = append(frags, fmt.Sprintf("%s = %s", ac.Column, s.claim(s.relationClaim(d.AdminOwner, custClaim))))
+		}
+	}
 
 	// Column read-gate modes are READ-only disjuncts: a row whose ModeCol equals
 	// the declared sentinel may be VIEWed by any in-scope reader, never written.

@@ -888,6 +888,19 @@ func (p *parser) parseDescriptor() (*Descriptor, error) {
 				return nil, err
 			}
 			d.Owner = o
+		case p.acceptKw("admin"):
+			if err := p.expectKw("owner"); err != nil {
+				return nil, err
+			}
+			if d.AdminOwner != nil {
+				return nil, p.errf("descriptor has more than one admin owner")
+			}
+			ao, err := p.parseDescriptorOwner()
+			if err != nil {
+				return nil, err
+			}
+			ao.Name = "admin_owner"
+			d.AdminOwner = ao
 		case p.acceptKw("mode"):
 			if err := p.expectKw("via"); err != nil {
 				return nil, err

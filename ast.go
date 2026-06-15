@@ -234,7 +234,13 @@ type Descriptor struct {
 	ModeCol string    // per-record mode column; "" if modes aren't column-driven
 	Modes   []Mode    // supported modes
 	Grants  *AclEdge  // record_acl edge; nil if no explicit list
-	Pos     Pos
+	// AdminOwner is an OPTIONAL second owner axis for the ADMIN plane: a record
+	// owned by the admin who created it (admin_owner_id = the admin's claim),
+	// operator-PRIVATE — the broad app/service reach (@app_scope) is gated to
+	// EXCLUDE admin-owned rows so one operator can't see another's. nil when the
+	// object has no admin-owned records (byte-identical to before).
+	AdminOwner *Relation
+	Pos        Pos
 }
 
 // Mode is one supported access mode of a descriptor. Modes are spec-declared
