@@ -335,6 +335,55 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		}
 	}
 
+	// Write-moat dispatch (v0.28.0): for every discriminated grant store named by a
+	// @store_manage write-governance object, auth.<store>_manage(p_type, p_id) CASEs
+	// the discriminator to the matching KIND's can-edit predicate — fail-closed
+	// (ELSE false). Each kind's auth.<O>_can_edit(p_id) runs that object's full edit
+	// predicate AT the row (the same EXISTS-over-table shape as a cross-object
+	// borrow). The set of kinds is the spec's descriptor objects on the store
+	// (compile-time platform STRUCTURE); per-model access config is a runtime-data
+	// layer the edit predicate reads, never baked here.
+	manageStores := map[string]bool{}
+	for _, obj := range s.Objects {
+		if objectUsesStoreManage(obj) {
+			manageStores[obj.Table] = true
+		}
+	}
+	storeNames := make([]string, 0, len(manageStores))
+	for st := range manageStores {
+		storeNames = append(storeNames, st)
+	}
+	sort.Strings(storeNames)
+	for _, store := range storeNames {
+		var whens []string
+		for _, o := range s.storeDescriptors(store) {
+			canEdit := o.Name + "_can_edit"
+			if !seen[canEdit] {
+				seen[canEdit] = true
+				pred, err := s.objectVerbPredicate(o, "edit", virtual)
+				if err != nil {
+					return nil, fmt.Errorf("@store_manage dispatch for %q: %w", store, err)
+				}
+				out = append(out, GenFn{
+					Name: canEdit,
+					Sig:  "p_id text",
+					Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.id = p_id AND (%s))", o.Table, o.Table, pred),
+				})
+			}
+			whens = append(whens, fmt.Sprintf("WHEN '%s' THEN %s.%s(p_id)", o.Descriptor.Grants.DiscrimVal, s.definerSchema(), canEdit))
+		}
+		name := storeManageName(store)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, GenFn{
+			Name: name,
+			Sig:  "p_type text, p_id text",
+			Body: fmt.Sprintf("(CASE p_type %s ELSE false END)", strings.Join(whens, " ")),
+		})
+	}
+
 	// Stamp the configured definer schema on every generated function so CreateSQL
 	// qualifies them consistently (default "auth" keeps Foir's SQL byte-identical).
 	for i := range out {

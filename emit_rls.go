@@ -532,6 +532,20 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		return []string{s.claim(custClaim) + " IS NULL"}, nil
 	case t.Builtin == "descriptor":
 		return s.emitDescriptor(obj, pm, custClaim)
+	case t.Builtin == "store_manage":
+		// Write-moat for a discriminated grant store (v0.28.0): the caller may
+		// write/list/revoke a row iff it can EDIT the resource the row points at.
+		// Emits auth.<store>_manage(<discrim>, <record>) over the row's own columns;
+		// the generated dispatch CASEs the discriminator to the kind's can-edit.
+		descs := s.storeDescriptors(obj.Table)
+		if len(descs) == 0 {
+			return nil, fmt.Errorf("@store_manage on %q: no descriptor uses table %q as a grant store", obj.Name, obj.Table)
+		}
+		g := descs[0].Descriptor.Grants
+		if g.DiscrimCol == "" {
+			return nil, fmt.Errorf("@store_manage on %q: store %q is not discriminated (a single-kind store uses `via object <kind>->edit`)", obj.Name, obj.Table)
+		}
+		return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), storeManageName(obj.Table), g.DiscrimCol, g.RecordCol)}, nil
 	case t.Builtin == "session":
 		// The caller's session-selected node: the entity's own column = the
 		// leaf claim. `@session(<rel>)` gates it by a role (e.g. project-admin

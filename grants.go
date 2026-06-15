@@ -106,3 +106,34 @@ func grantDefinerName(obj *Object) string {
 	}
 	return g.Table + "_grants"
 }
+
+// storeManageName is the write-moat dispatch definer for a discriminated grant
+// store: auth.<store>_manage(p_type, p_id) → the matching kind's can-edit.
+func storeManageName(table string) string { return table + "_manage" }
+
+// storeDescriptors returns, in object order, the descriptor objects whose grant
+// list is backed by the given store table. For a discriminated (shared) store
+// these are the resource KINDS the store serves; the write-moat dispatch CASEs
+// over them.
+func (s *Spec) storeDescriptors(table string) []*Object {
+	var out []*Object
+	for _, o := range s.Objects {
+		if o.Descriptor != nil && o.Descriptor.Grants != nil && o.Descriptor.Grants.Table == table {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// objectUsesStoreManage reports whether any of the object's permissions invoke
+// the @store_manage write-moat builtin.
+func objectUsesStoreManage(o *Object) bool {
+	for _, pm := range o.Perms {
+		for _, t := range pm.Expr {
+			if t.Builtin == "store_manage" {
+				return true
+			}
+		}
+	}
+	return false
+}

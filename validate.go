@@ -22,7 +22,7 @@ import (
 // per-spec rule.
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true}
-var knownBuiltins = map[string]bool{"app_scope": true, "descriptor": true, "scoped": true, "session": true, "open": true}
+var knownBuiltins = map[string]bool{"app_scope": true, "descriptor": true, "scoped": true, "session": true, "open": true, "store_manage": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -115,6 +115,10 @@ func Validate(s *Spec) error {
 	// discriminated with DISTINCT discriminator values — otherwise their rows are
 	// indistinguishable and one object's grant would leak onto another's reads.
 	add(validateGrantStores(s))
+
+	// @store_manage write-moat: the governance object's table must be a discriminated
+	// grant store with ≥1 descriptor (the kinds the dispatch CASEs over).
+	add(validateStoreManage(s))
 
 	// V10 — every PDP block targets a declared vocabulary (emit-site).
 	for _, pr := range s.Procedures {
@@ -478,6 +482,31 @@ func validateGrantStores(s *Spec) error {
 				errs = append(errs, fmt.Errorf("objects %q and %q share grant store %q with the SAME discriminator value %q — values must be distinct", prev, r.obj.Name, table, r.g.DiscrimVal))
 			}
 			seen[r.g.DiscrimVal] = r.obj.Name
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// validateStoreManage checks the @store_manage write-moat builtin: the object
+// using it must be backed by a discriminated grant store with at least one
+// descriptor (the resource KINDS the generated dispatch CASEs over). Without a
+// discriminator the dispatch has no column to switch on; without descriptors it
+// has nothing to dispatch to.
+func validateStoreManage(s *Spec) error {
+	var errs []error
+	for _, o := range s.Objects {
+		if !objectUsesStoreManage(o) {
+			continue
+		}
+		descs := s.storeDescriptors(o.Table)
+		if len(descs) == 0 {
+			errs = append(errs, fmt.Errorf("object %q uses @store_manage but no descriptor uses its table %q as a grant store", o.Name, o.Table))
+			continue
+		}
+		for _, d := range descs {
+			if d.Descriptor.Grants.DiscrimCol == "" {
+				errs = append(errs, fmt.Errorf("object %q uses @store_manage but descriptor %q on store %q is not discriminated (`where <col> = \"<val>\"`)", o.Name, d.Name, o.Table))
+			}
 		}
 	}
 	return errors.Join(errs...)

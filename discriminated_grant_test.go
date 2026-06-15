@@ -187,6 +187,148 @@ subject customer { anchor a reach self identifies customer_id roles configurable
 	}
 }
 
+// The @store_manage write-moat dispatches per resource_type to the matching
+// kind's can-edit, fail-closed — the engine-generated write governance for a
+// shared resource_acl.
+const storeManageSpec = `
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin { permission c:r  preset pa @ project = c:r }
+vocabulary cust  { permission self:read }
+rolestore admin {
+  assignments ra
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant impersonation at tenant
+  via edge impersonation_grants(grantee_id, tenant_id)
+  active revoked_at expires expires_at
+subject operator { anchor platform reach via grant impersonation identifies sub roles none }
+subject admin    { anchor tenant   reach descendants identifies sub roles configurable admin binds admin }
+subject customer { anchor project  reach self identifies customer_id roles configurable cust binds owner }
+object record {
+  table  records
+  scoped tenant > project
+  descriptor {
+    owner  customer via customer_id
+    mode   via access_mode
+    modes  private + list "customer"
+    grants via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
+  }
+  permission view = @descriptor @rls maps select
+  permission edit = @descriptor @rls maps update
+}
+object file {
+  table  files
+  scoped tenant > project
+  descriptor {
+    owner  customer via customer_id
+    mode   via access_mode
+    modes  private + list "customer"
+    grants via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "file"
+  }
+  permission view = @descriptor @rls maps select
+  permission edit = @descriptor @rls maps update
+}
+object resource_grant {
+  table  resource_acl
+  scoped tenant > project
+  permission view   = @store_manage @rls maps select
+  permission create = @store_manage @rls maps insert
+  permission delete = @store_manage @rls maps delete
+}
+`
+
+func TestStoreManage_DispatchPerKind(t *testing.T) {
+	s, err := Parse(storeManageSpec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	defs, err := s.EmitDefiners()
+	if err != nil {
+		t.Fatalf("emit definers: %v", err)
+	}
+	body := map[string]string{}
+	for _, d := range defs {
+		body[d.Name] = d.Body
+	}
+	// Per-kind can-edit definers exist (the dispatch targets).
+	for _, k := range []string{"record_can_edit", "file_can_edit"} {
+		if b, ok := body[k]; !ok || !strings.HasPrefix(b, "EXISTS (SELECT 1 FROM ") {
+			t.Errorf("missing/wrong %s definer: %q", k, b)
+		}
+	}
+	// The dispatch CASEs the discriminator to each kind's can-edit, fail-closed.
+	mng, ok := body["resource_acl_manage"]
+	if !ok {
+		t.Fatalf("no resource_acl_manage dispatch; have %v", grantKeys(body))
+	}
+	for _, want := range []string{
+		"CASE p_type",
+		"WHEN 'record' THEN auth.record_can_edit(p_id)",
+		"WHEN 'file' THEN auth.file_can_edit(p_id)",
+		"ELSE false END",
+	} {
+		if !strings.Contains(mng, want) {
+			t.Errorf("dispatch missing %q:\n%s", want, mng)
+		}
+	}
+	// The write-governance policies call the dispatch over the row's own columns.
+	res, err := s.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit rls: %v", err)
+	}
+	psql := res.PolicySQL("authenticated")
+	if !strings.Contains(psql, "auth.resource_acl_manage(resource_type, resource_id)") {
+		t.Errorf("resource_grant policies do not call the dispatch:\n%s", psql)
+	}
+}
+
+func TestStoreManage_Rejects(t *testing.T) {
+	const head = `topology { level a }
+vocabulary cust { permission self:read }
+subject customer { anchor a reach self identifies customer_id roles configurable cust binds owner }
+`
+	cases := []struct{ name, spec, want string }{
+		{
+			name: "no descriptor backs the store",
+			spec: head + `object g { table empty_acl scoped a permission create = @store_manage @rls maps insert }`,
+			want: "no descriptor uses its table",
+		},
+		{
+			name: "store not discriminated",
+			spec: head + `object rec {
+  table records scoped a
+  descriptor { owner customer via customer_id mode via access_mode modes private + list "customer" grants via edge resource_acl(resource_id, principal_kind, principal_id, access) }
+  permission view = @descriptor @rls maps select
+  permission edit = @descriptor @rls maps update
+}
+object g { table resource_acl scoped a permission create = @store_manage @rls maps insert }`,
+			want: "not discriminated",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := Parse(tc.spec)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(s); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
 func grantKeys(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
