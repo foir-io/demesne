@@ -381,7 +381,7 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 	}
 
 	if o.Descriptor != nil {
-		errs = append(errs, validateDescriptor(o))
+		errs = append(errs, validateDescriptor(s, o))
 	}
 
 	for _, pm := range o.Perms {
@@ -391,7 +391,7 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 }
 
 // validateDescriptor checks the access-descriptor primitive (§5.3).
-func validateDescriptor(o *Object) error {
+func validateDescriptor(s *Spec, o *Object) error {
 	var errs []error
 	d := o.Descriptor
 
@@ -420,6 +420,15 @@ func validateDescriptor(o *Object) error {
 		case "list":
 			if m.Value == "" {
 				errs = append(errs, fmt.Errorf("line %d: object %q descriptor list mode needs a principal kind (list '<kind>')", m.Pos.Line, o.Name))
+			} else if hasListMode {
+				// The PRIMARY list kind is read against the descriptor's owner principal
+				// and its value is a free principal_kind label (legacy). Each ADDITIONAL
+				// kind (2C multi-kind) is read against THAT kind's own subject claim, so
+				// it must name a claim-bearing subject — otherwise it would emit a term
+				// that can never match (fail-closed on misconfig).
+				if sub := s.subjectByName(m.Value); sub == nil || sub.Identifies == "" {
+					errs = append(errs, fmt.Errorf("line %d: object %q additional descriptor list kind %q is not a claim-bearing subject (no `subject %s { ... identifies <claim> }`)", m.Pos.Line, o.Name, m.Value, m.Value))
+				}
 			}
 			hasListMode = true
 		default:

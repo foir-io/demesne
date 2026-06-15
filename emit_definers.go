@@ -225,39 +225,37 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		if obj.Descriptor == nil || obj.Descriptor.Grants == nil {
 			continue
 		}
-		// The principal kind the grant list filters on is spec-declared by the
-		// descriptor's `list` mode (EID-265 WS2) — no list mode, no grants definer.
-		kind := descriptorListKind(obj.Descriptor)
-		if kind == "" {
-			continue
-		}
+		// The principal kinds the grant list filters on are spec-declared by the
+		// descriptor's `list` modes (EID-265 WS2 was single-kind; Increment 2C lets
+		// one resource be granted to SEVERAL kinds — e.g. a record to both customers
+		// and admins). One definer per kind: same reachability-grant shape, keyed on
+		// the kind's own grantee param + principal-kind gate.
 		g := obj.Descriptor.Grants
-		name := grantDefinerName(obj)
-		if seen[name] {
-			continue
+		for i, kind := range descriptorListKinds(obj.Descriptor) {
+			name, param, _ := s.grantKindBinding(obj, kind, i == 0)
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			// This grant's conjuncts are the row target, the principal-kind gate, the
+			// grantee match, and the access — plus a constant discriminator when
+			// several descriptors share this store.
+			conjuncts := []string{fmt.Sprintf("%s = p_%s_id", g.RecordCol, obj.Name)}
+			if g.DiscrimCol != "" {
+				conjuncts = append(conjuncts, fmt.Sprintf("%s = '%s'", g.DiscrimCol, g.DiscrimVal))
+			}
+			conjuncts = append(conjuncts,
+				fmt.Sprintf("%s = '%s'", g.KindCol, kind),
+				fmt.Sprintf("%s = p_%s_id", g.PrincipalCol, param),
+				fmt.Sprintf("%s = p_access", g.AccessCol),
+			)
+			body := grantEdgeExists(g.Table, conjuncts...)
+			out = append(out, GenFn{
+				Name: name,
+				Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", param, obj.Name),
+				Body: body,
+			})
 		}
-		seen[name] = true
-		// The grantee param + the owner-claim it is matched against name the spec's
-		// actual principal, not an assumed "customer".
-		principal := s.descriptorPrincipal(obj)
-		// Same reachability-grant shape as a level Grant; this grant's conjuncts are
-		// the row target, the principal-kind gate, the grantee match, and the access —
-		// plus a constant discriminator when several descriptors share this store.
-		conjuncts := []string{fmt.Sprintf("%s = p_%s_id", g.RecordCol, obj.Name)}
-		if g.DiscrimCol != "" {
-			conjuncts = append(conjuncts, fmt.Sprintf("%s = '%s'", g.DiscrimCol, g.DiscrimVal))
-		}
-		conjuncts = append(conjuncts,
-			fmt.Sprintf("%s = '%s'", g.KindCol, kind),
-			fmt.Sprintf("%s = p_%s_id", g.PrincipalCol, principal),
-			fmt.Sprintf("%s = p_access", g.AccessCol),
-		)
-		body := grantEdgeExists(g.Table, conjuncts...)
-		out = append(out, GenFn{
-			Name: name,
-			Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", principal, obj.Name),
-			Body: body,
-		})
 	}
 
 	// Closure-reachability lookups (WS3 Phase C): an indexed EXISTS over a

@@ -707,8 +707,13 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	}
 	// The explicit grant list applies to read/write/delete at the perm's access
 	// class — never to insert (you create your own rows, you aren't "granted" it).
-	if d.Grants != nil && descriptorHasList(d) && pm.Maps != "insert" {
-		frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), grantDefinerName(obj), s.claim(custClaim), obj.Table+".id", accessFor(pm.Maps)))
+	// One disjunct per granted principal kind, each read against that kind's own
+	// claim (customer→customer_id, admin→sub).
+	if d.Grants != nil && pm.Maps != "insert" {
+		for i, kind := range descriptorListKinds(d) {
+			name, _, claim := s.grantKindBinding(obj, kind, i == 0)
+			frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), name, s.claim(claim), obj.Table+".id", accessFor(pm.Maps)))
+		}
 	}
 	return frags, nil
 }
@@ -815,13 +820,66 @@ func contains(ss []string, want string) bool {
 // explicit record_acl grant list).
 func descriptorHasList(d *Descriptor) bool { return descriptorListKind(d) != "" }
 
-// descriptorListKind returns the principal kind of the descriptor's list mode
-// (the value the record_acl grant definer filters on), or "" if there is none.
+// descriptorListKind returns the principal kind of the descriptor's FIRST list
+// mode, or "" if there is none. Used as the has-list predicate; the full set is
+// descriptorListKinds.
 func descriptorListKind(d *Descriptor) string {
+	if ks := descriptorListKinds(d); len(ks) > 0 {
+		return ks[0]
+	}
+	return ""
+}
+
+// descriptorListKinds returns, in declaration order, EVERY principal kind named
+// by the descriptor's `list` modes. EID-265 WS2 was single-kind; the unified
+// resource grant (Increment 2C) lets one resource be granted to several principal
+// kinds at once — e.g. a record shared with BOTH customers and admins (operators).
+// The first kind is the byte-identical legacy path (the owner principal).
+func descriptorListKinds(d *Descriptor) []string {
+	var out []string
 	for _, m := range d.Modes {
 		if m.Kind == "list" {
-			return m.Value
+			out = append(out, m.Value)
 		}
+	}
+	return out
+}
+
+// grantKindBinding resolves one descriptor list kind to (a) the generated grant
+// definer's name, (b) its grantee parameter, and (c) the claim a caller of that
+// kind presents — the principal id the acl row's principal_id is matched against.
+//
+// The PRIMARY (first) list kind is the legacy single-kind path: the grant is read
+// against the descriptor's OWNER principal (claim + name), and the list value is
+// just the principal_kind LABEL stored in the acl — which need not name a subject
+// (the worked example labels it "customer" while owning via "member"). Unsuffixed
+// definer name → byte-identical for any pre-2C / single-kind spec.
+//
+// Each ADDITIONAL kind (Increment 2C) names a claim-bearing SUBJECT and is read
+// against THAT subject's claim (admin→sub), with a kind-suffixed, collision-free
+// definer over the shared store.
+func (s *Spec) grantKindBinding(obj *Object, kind string, primary bool) (name, param, claim string) {
+	if primary {
+		return grantDefinerName(obj), s.descriptorPrincipal(obj), s.descriptorOwnerClaim(obj)
+	}
+	name = grantDefinerName(obj) + "_" + kind
+	param = kind
+	if sub := s.subjectByName(kind); sub != nil {
+		claim = sub.Identifies
+	}
+	return
+}
+
+// descriptorOwnerClaim is the claim the descriptor's owner principal identifies
+// by (the legacy grant claim) — mirrors descriptorPrincipal's owner-subject lookup.
+func (s *Spec) descriptorOwnerClaim(obj *Object) string {
+	if len(obj.Scoped) > 0 {
+		if sub := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); sub != nil {
+			return sub.Identifies
+		}
+	}
+	if obj.Descriptor != nil && obj.Descriptor.Owner != nil {
+		return s.relationClaim(obj.Descriptor.Owner, "")
 	}
 	return ""
 }
