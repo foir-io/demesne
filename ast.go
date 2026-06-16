@@ -216,6 +216,12 @@ type Object struct {
 // (vs a sub-row carrying the level FK columns).
 func (o *Object) IsLevelEntity() bool { return o.Level != "" }
 
+// HasGrantStore reports whether the object is a content object with an access grant
+// store — a descriptor `grants` edge OR a `via grant` relation. Such objects get a
+// generated accessor enumerator (auth.<table>_accessors) and a ResourceAccessSurface.
+// Lets callers (handlers) enumerate grant objects without caring which form is used.
+func (o *Object) HasGrantStore() bool { return objectGrantEdge(o) != nil }
+
 // Descriptor is the per-record ownership / ACL primitive (RFC §5.3) that
 // subsumes sharing (EID-263). It declares:
 //   - Owner — who may EDIT the descriptor (owner-origination; an inline FK axis,

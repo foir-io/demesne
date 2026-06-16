@@ -53,33 +53,56 @@ func (s *Spec) ResourceAccessSurface(object string) (*ResourceAccessSurface, err
 	if obj == nil {
 		return nil, fmt.Errorf("ResourceAccessSurface: no object %q in the spec", object)
 	}
-	d := obj.Descriptor
-	if d == nil || d.Grants == nil {
-		return nil, fmt.Errorf("ResourceAccessSurface: object %q has no descriptor grant store", object)
+	// The grant store comes from EITHER a descriptor `grants` edge or a `via grant`
+	// relation (the pure-relation form) — objectGrantEdge unifies them, so the
+	// runtime surface is byte-identical whichever way the object models access.
+	edge := objectGrantEdge(obj)
+	if edge == nil {
+		return nil, fmt.Errorf("ResourceAccessSurface: object %q has no grant store (descriptor grants or a `via grant` relation)", object)
 	}
 	r := &ResourceAccessSurface{
 		Table:        obj.Table,
-		ModeCol:      d.ModeCol,
 		readModes:    map[string]bool{},
 		grantKinds:   map[string]bool{},
-		aclTable:     d.Grants.Table,
-		recordCol:    d.Grants.RecordCol,
-		kindCol:      d.Grants.KindCol,
-		principalCol: d.Grants.PrincipalCol,
-		accessCol:    d.Grants.AccessCol,
-		discrimCol:   d.Grants.DiscrimCol,
-		discrimVal:   d.Grants.DiscrimVal,
+		aclTable:     edge.Table,
+		recordCol:    edge.RecordCol,
+		kindCol:      edge.KindCol,
+		principalCol: edge.PrincipalCol,
+		accessCol:    edge.AccessCol,
+		discrimCol:   edge.DiscrimCol,
+		discrimVal:   edge.DiscrimVal,
 		accessorFn:   fmt.Sprintf("%s.%s_accessors", s.definerSchema(), obj.Table),
 	}
 	for _, lvl := range obj.Scoped {
 		r.ScopeCols = append(r.ScopeCols, scopeCol(obj, lvl))
 	}
-	for _, m := range d.Modes {
-		switch m.Kind {
-		case "read":
-			r.readModes[m.Value] = true
-		case "list":
-			r.grantKinds[m.Value] = true
+	if d := obj.Descriptor; d != nil {
+		// Descriptor form: the mode column + read/list modes are declared in the block.
+		r.ModeCol = d.ModeCol
+		for _, m := range d.Modes {
+			switch m.Kind {
+			case "read":
+				r.readModes[m.Value] = true
+			case "list":
+				r.grantKinds[m.Value] = true
+			}
+		}
+	} else {
+		// Pure-relation form: read modes come from the `mode <col> = "<v>"` terms in
+		// the object's permissions (the mode column + each sentinel), and the grant
+		// kinds from the grant relation's declared types.
+		for _, pm := range obj.Perms {
+			for _, t := range pm.Expr {
+				if t.ModeCol != "" {
+					r.ModeCol = t.ModeCol
+					r.readModes[t.ModeVal] = true
+				}
+			}
+		}
+		if rel, _ := grantRelation(obj); rel != nil {
+			for _, k := range rel.Types {
+				r.grantKinds[k] = true
+			}
 		}
 	}
 	return r, nil
