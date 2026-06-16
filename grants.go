@@ -197,14 +197,34 @@ func isGrantSelectorTerm(ident string, rels map[string]*Relation) bool {
 // store: auth.<store>_manage(p_type, p_id) → the matching kind's can-edit.
 func storeManageName(table string) string { return table + "_manage" }
 
-// storeDescriptors returns, in object order, the descriptor objects whose grant
-// list is backed by the given store table. For a discriminated (shared) store
-// these are the resource KINDS the store serves; the write-moat dispatch CASEs
-// over them.
+// objectGrantEdge returns the object's grant store — its descriptor `grants` edge
+// OR its `via grant` relation — as one ViaGrant-shaped view, or nil. It unifies the
+// two forms for the store-level helpers (@store_manage dispatch, store enumeration,
+// the accessor enumerator) so they work whether an object is descriptor-based or
+// pure-relation. An object has at most one (validation enforces it).
+func objectGrantEdge(o *Object) *ViaGrant {
+	if o.Descriptor != nil && o.Descriptor.Grants != nil {
+		g := o.Descriptor.Grants
+		return &ViaGrant{
+			Table: g.Table, RecordCol: g.RecordCol, KindCol: g.KindCol,
+			PrincipalCol: g.PrincipalCol, AccessCol: g.AccessCol,
+			DiscrimCol: g.DiscrimCol, DiscrimVal: g.DiscrimVal,
+		}
+	}
+	if _, vg := grantRelation(o); vg != nil {
+		return vg
+	}
+	return nil
+}
+
+// storeDescriptors returns, in object order, the objects whose grant list is backed
+// by the given store table — descriptor objects AND pure-relation objects alike. For
+// a discriminated (shared) store these are the resource KINDS the store serves; the
+// write-moat dispatch CASEs over them.
 func (s *Spec) storeDescriptors(table string) []*Object {
 	var out []*Object
 	for _, o := range s.Objects {
-		if o.Descriptor != nil && o.Descriptor.Grants != nil && o.Descriptor.Grants.Table == table {
+		if e := objectGrantEdge(o); e != nil && e.Table == table {
 			out = append(out, o)
 		}
 	}

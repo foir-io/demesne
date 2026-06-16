@@ -324,7 +324,9 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	// evaluator. SECURITY DEFINER + set-returning; the handler calls it under the
 	// caller's claims.
 	for _, obj := range s.Objects {
-		if obj.Descriptor == nil || obj.Descriptor.Grants == nil {
+		hasDesc := obj.Descriptor != nil && obj.Descriptor.Grants != nil
+		_, vg := grantRelation(obj)
+		if !hasDesc && vg == nil {
 			continue
 		}
 		name := obj.Table + "_accessors"
@@ -332,7 +334,11 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			continue
 		}
 		seen[name] = true
-		out = append(out, s.accessorDefiner(obj))
+		if hasDesc {
+			out = append(out, s.accessorDefiner(obj))
+		} else {
+			out = append(out, s.pureAccessorDefiner(obj))
+		}
 	}
 
 	// Structural accessor enumerators (Expand over the role/staff CONTROL plane):
@@ -472,7 +478,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 					Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.id = p_id AND (%s))", o.Table, o.Table, pred),
 				})
 			}
-			whens = append(whens, fmt.Sprintf("WHEN '%s' THEN %s.%s(p_id)", o.Descriptor.Grants.DiscrimVal, s.definerSchema(), canEdit))
+			whens = append(whens, fmt.Sprintf("WHEN '%s' THEN %s.%s(p_id)", objectGrantEdge(o).DiscrimVal, s.definerSchema(), canEdit))
 		}
 		name := storeManageName(store)
 		if seen[name] {
@@ -722,13 +728,10 @@ func (s *Spec) descriptorPrincipal(obj *Object) string {
 func (s *Spec) accessorDefiner(obj *Object) GenFn {
 	d := obj.Descriptor
 	owner, _ := d.Owner.Repr.(ViaColumn)
-	ownerKind := s.descriptorPrincipal(obj)
 
 	var branches []string
 	// OWNER — the (customer-plane) owner column; discriminated → gated by kind.
-	branches = append(branches, fmt.Sprintf(
-		"SELECT 'owner'::text AS source, '%s'::text AS principal_kind, %s AS principal_id, 'write'::text AS access\n    FROM %s WHERE id = p_id AND %s",
-		ownerKind, owner.Column, obj.Table, ownerColPresent(owner)))
+	branches = append(branches, ownerAccessorBranch(obj.Table, s.descriptorPrincipal(obj), owner, true))
 
 	// OWNER — the optional admin-plane owner axis (operator-private rows).
 	// adminExcl is the "not admin-owned" condition (r.-prefixed) used to gate the
@@ -740,68 +743,168 @@ func (s *Spec) accessorDefiner(obj *Object) GenFn {
 			if len(d.AdminOwner.Types) > 0 {
 				adminKind = d.AdminOwner.Types[0]
 			}
-			branches = append(branches, fmt.Sprintf(
-				"SELECT 'owner'::text, '%s'::text, %s, 'write'::text\n    FROM %s WHERE id = p_id AND %s",
-				adminKind, ac.Column, obj.Table, ownerColPresent(ac)))
-			if ac.DiscrimCol != "" {
-				adminExcl = fmt.Sprintf("r.%s IS DISTINCT FROM '%s'", ac.DiscrimCol, ac.DiscrimVal)
-			} else {
-				adminExcl = fmt.Sprintf("r.%s IS NULL", ac.Column)
+			branches = append(branches, ownerAccessorBranch(obj.Table, adminKind, ac, false))
+			adminExcl = ownerExclCond(ac)
+		}
+	}
+
+	// GRANT — the explicit acl rows (the only revocable accessors), filtered by the
+	// descriptor's discriminator when the store is shared.
+	branches = append(branches, grantAccessorBranch(objectGrantEdge(obj)))
+
+	// ROLE — the role plane (see roleAccessorBranch).
+	if rb, ok := s.roleAccessorBranch(obj, adminExcl); ok {
+		branches = append(branches, rb)
+	}
+
+	return accessorGenFn(obj.Table, branches)
+}
+
+// pureAccessorDefiner is the de-prescribed accessorDefiner: it sources the OWNER
+// axes from the SELECT permission's owner (ViaColumn) relation terms, the GRANT
+// rows from the object's `via grant` relation, and the admin-owner exclusion from
+// the `@app_scope(exclude <rel>)` term — emitting the SAME branches in the same
+// order as the descriptor form, so a pure-relation object's accessor enumerator is
+// byte-identical (proven by TestPureAccessor_ByteIdenticalToDescriptor).
+func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
+	rels := map[string]*Relation{}
+	for _, r := range obj.Relations {
+		rels[r.Name] = r
+	}
+	var sel *Perm
+	for _, pm := range obj.Perms {
+		if pm.Maps == "select" {
+			sel = pm
+			break
+		}
+	}
+
+	var branches []string
+	first := true
+	var adminExcl string
+	if sel != nil {
+		// OWNER — owner (ViaColumn) relation terms, in the perm's declared order.
+		for _, t := range sel.Expr {
+			if t == nil || t.Ident == "" {
+				continue
+			}
+			r := rels[t.Ident]
+			if r == nil {
+				continue
+			}
+			vc, ok := r.Repr.(ViaColumn)
+			if !ok {
+				continue
+			}
+			kind := ""
+			if len(r.Types) > 0 {
+				kind = r.Types[0]
+			}
+			branches = append(branches, ownerAccessorBranch(obj.Table, kind, vc, first))
+			first = false
+		}
+		// The admin-owner exclusion that gates the role plane: the relation excluded
+		// by @app_scope(exclude <rel>).
+		for _, t := range sel.Expr {
+			if t != nil && t.Builtin == "app_scope" && t.ExcludeRel != "" {
+				if r := rels[t.ExcludeRel]; r != nil {
+					if vc, ok := r.Repr.(ViaColumn); ok {
+						adminExcl = ownerExclCond(vc)
+					}
+				}
 			}
 		}
 	}
 
-	// GRANT — the explicit resource_acl rows (the only revocable accessors),
-	// filtered by the descriptor's discriminator when the store is shared.
-	g := d.Grants
-	grantConds := []string{fmt.Sprintf("%s = p_id", g.RecordCol)}
+	// GRANT — the `via grant` relation's acl rows.
+	if _, vg := grantRelation(obj); vg != nil {
+		branches = append(branches, grantAccessorBranch(vg))
+	}
+
+	// ROLE — the role plane (gated by @app_scope + the admin-owner exclusion).
+	if rb, ok := s.roleAccessorBranch(obj, adminExcl); ok {
+		branches = append(branches, rb)
+	}
+
+	return accessorGenFn(obj.Table, branches)
+}
+
+// ownerAccessorBranch renders one OWNER enumeration branch — the owner column's
+// value as a 'write' accessor of the given kind, for rows owned via that axis. The
+// FIRST branch of the UNION carries the column aliases (it names the result set).
+func ownerAccessorBranch(table, kind string, vc ViaColumn, first bool) string {
+	if first {
+		return fmt.Sprintf(
+			"SELECT 'owner'::text AS source, '%s'::text AS principal_kind, %s AS principal_id, 'write'::text AS access\n    FROM %s WHERE id = p_id AND %s",
+			kind, vc.Column, table, ownerColPresent(vc))
+	}
+	return fmt.Sprintf(
+		"SELECT 'owner'::text, '%s'::text, %s, 'write'::text\n    FROM %s WHERE id = p_id AND %s",
+		kind, vc.Column, table, ownerColPresent(vc))
+}
+
+// ownerExclCond is the "not owned via this axis" condition (r.-prefixed) the role
+// plane is gated by — mirroring @app_scope's exclusion of admin-owned rows.
+func ownerExclCond(vc ViaColumn) string {
+	if vc.DiscrimCol != "" {
+		return fmt.Sprintf("r.%s IS DISTINCT FROM '%s'", vc.DiscrimCol, vc.DiscrimVal)
+	}
+	return fmt.Sprintf("r.%s IS NULL", vc.Column)
+}
+
+// grantAccessorBranch renders the GRANT enumeration branch — the explicit acl rows
+// for the resource, filtered by the discriminator when the store is shared.
+func grantAccessorBranch(g *ViaGrant) string {
+	conds := []string{fmt.Sprintf("%s = p_id", g.RecordCol)}
 	if g.DiscrimCol != "" {
-		grantConds = append(grantConds, fmt.Sprintf("%s = '%s'", g.DiscrimCol, g.DiscrimVal))
+		conds = append(conds, fmt.Sprintf("%s = '%s'", g.DiscrimCol, g.DiscrimVal))
 	}
-	branches = append(branches, fmt.Sprintf(
+	return fmt.Sprintf(
 		"SELECT 'grant'::text, %s, %s, %s\n    FROM %s WHERE %s",
-		g.KindCol, g.PrincipalCol, g.AccessCol, g.Table, strings.Join(grantConds, " AND ")))
+		g.KindCol, g.PrincipalCol, g.AccessCol, g.Table, strings.Join(conds, " AND "))
+}
 
-	// ROLE — the role plane: admins holding a role that reaches the row's scope
-	// (ancestor-or-equal: every scope level above the leaf pinned to equality —
-	// which excludes platform roles whose scope is NULL — and the leaf NULL-or-equal
-	// so a tenant-level role reaches a project row). Gated by the admin-owner
-	// exclusion, mirroring @app_scope: an admin-owned row is operator-private, so it
-	// has no role accessors. This is the only branch over current+future holders;
-	// the handler/UI may collapse it into a single "via role" category.
-	//
-	// Only emitted when the object actually grants the broad operator reach
-	// (@app_scope). An admin-plane descriptor (e.g. notes) whose select is
-	// @descriptor-only does NOT admit role-holders qua role — its operator
-	// visibility flows solely through the actor-scoped public mode (a category
-	// flag) + owner + grants — so enumerating the role plane would over-report.
-	if rs := roleStoreByName(s); rs != nil && s.selectUsesAppScope(obj) {
-		var scopeConds []string
-		for i, lvl := range obj.Scoped {
-			if i >= len(rs.ScopeCols) {
-				break
-			}
-			rsCol := rs.ScopeCols[i]
-			rowCol := scopeCol(obj, lvl)
-			if i == len(obj.Scoped)-1 {
-				scopeConds = append(scopeConds, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = r.%s)", rsCol, rsCol, rowCol))
-			} else {
-				scopeConds = append(scopeConds, fmt.Sprintf("ra.%s = r.%s", rsCol, rowCol))
-			}
-		}
-		where := []string{"r.id = p_id"}
-		if adminExcl != "" {
-			where = append(where, adminExcl)
-		}
-		branches = append(branches, fmt.Sprintf(
-			"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s r\n    JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND %s\n    WHERE %s",
-			rs.KindVal, rs.SubjectCol, obj.Table, rs.Assignments,
-			rs.KindCol, rs.KindVal, rs.RevokedCol, strings.Join(scopeConds, " AND "),
-			strings.Join(where, " AND ")))
+// roleAccessorBranch renders the ROLE enumeration branch (and ok=false when none):
+// admins holding a role that reaches the row's scope (ancestor-or-equal — scope
+// levels above the leaf pinned to equality, the leaf NULL-or-equal so a tenant-level
+// role reaches a project row), gated by the admin-owner exclusion exactly as
+// @app_scope is. Only emitted when the object grants the broad operator reach
+// (@app_scope) on SELECT; an @descriptor-only / pure-no-app_scope read admits no
+// role-holders qua role, so enumerating them would over-report.
+func (s *Spec) roleAccessorBranch(obj *Object, adminExcl string) (string, bool) {
+	rs := roleStoreByName(s)
+	if rs == nil || !s.selectUsesAppScope(obj) {
+		return "", false
 	}
+	var scopeConds []string
+	for i, lvl := range obj.Scoped {
+		if i >= len(rs.ScopeCols) {
+			break
+		}
+		rsCol := rs.ScopeCols[i]
+		rowCol := scopeCol(obj, lvl)
+		if i == len(obj.Scoped)-1 {
+			scopeConds = append(scopeConds, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = r.%s)", rsCol, rsCol, rowCol))
+		} else {
+			scopeConds = append(scopeConds, fmt.Sprintf("ra.%s = r.%s", rsCol, rowCol))
+		}
+	}
+	where := []string{"r.id = p_id"}
+	if adminExcl != "" {
+		where = append(where, adminExcl)
+	}
+	return fmt.Sprintf(
+		"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s r\n    JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND %s\n    WHERE %s",
+		rs.KindVal, rs.SubjectCol, obj.Table, rs.Assignments,
+		rs.KindCol, rs.KindVal, rs.RevokedCol, strings.Join(scopeConds, " AND "),
+		strings.Join(where, " AND ")), true
+}
 
+// accessorGenFn wraps the UNION-ALL of accessor branches in the set-returning
+// SECURITY DEFINER shape shared by the descriptor and pure enumerators.
+func accessorGenFn(table string, branches []string) GenFn {
 	return GenFn{
-		Name:    obj.Table + "_accessors",
+		Name:    table + "_accessors",
 		Sig:     "p_id text",
 		Returns: "TABLE(source text, principal_kind text, principal_id text, access text)",
 		RawBody: true,

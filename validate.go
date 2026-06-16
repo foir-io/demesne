@@ -517,12 +517,12 @@ func validateStoreManage(s *Spec) error {
 		}
 		descs := s.storeDescriptors(o.Table)
 		if len(descs) == 0 {
-			errs = append(errs, fmt.Errorf("object %q uses @store_manage but no descriptor uses its table %q as a grant store", o.Name, o.Table))
+			errs = append(errs, fmt.Errorf("object %q uses @store_manage but no object uses its table %q as a grant store", o.Name, o.Table))
 			continue
 		}
 		for _, d := range descs {
-			if d.Descriptor.Grants.DiscrimCol == "" {
-				errs = append(errs, fmt.Errorf("object %q uses @store_manage but descriptor %q on store %q is not discriminated (`where <col> = \"<val>\"`)", o.Name, d.Name, o.Table))
+			if objectGrantEdge(d).DiscrimCol == "" {
+				errs = append(errs, fmt.Errorf("object %q uses @store_manage but grant store %q on object %q is not discriminated (`where <col> = \"<val>\"`)", o.Name, o.Table, d.Name))
 			}
 		}
 	}

@@ -302,7 +302,7 @@ subject customer { anchor a reach self identifies customer_id roles configurable
 		{
 			name: "no descriptor backs the store",
 			spec: head + `object g { table empty_acl scoped a permission create = @store_manage @rls maps insert }`,
-			want: "no descriptor uses its table",
+			want: "no object uses its table",
 		},
 		{
 			name: "store not discriminated",

@@ -607,9 +607,9 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		// the generated dispatch CASEs the discriminator to the kind's can-edit.
 		descs := s.storeDescriptors(obj.Table)
 		if len(descs) == 0 {
-			return nil, fmt.Errorf("@store_manage on %q: no descriptor uses table %q as a grant store", obj.Name, obj.Table)
+			return nil, fmt.Errorf("@store_manage on %q: no object uses table %q as a grant store", obj.Name, obj.Table)
 		}
-		g := descs[0].Descriptor.Grants
+		g := objectGrantEdge(descs[0])
 		if g.DiscrimCol == "" {
 			return nil, fmt.Errorf("@store_manage on %q: store %q is not discriminated (a single-kind store uses `via object <kind>->edit`)", obj.Name, obj.Table)
 		}

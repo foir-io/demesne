@@ -114,11 +114,36 @@ func TestPureRecord_ByteIdenticalToDescriptor(t *testing.T) {
 		t.Errorf("record RLS differs between descriptor and pure-relation forms:\n--- descriptor ---\n%s\n--- pure relations ---\n%s", c, tg)
 	}
 
-	// And the grant definers are byte-identical (the accessor enumerator is a
-	// separate primitive, so total definer sets are not compared here).
-	for _, name := range []string{"resource_acl_grants_record", "resource_acl_grants_record_admin"} {
+	// And the grant definers + the Expand accessor enumerator are byte-identical.
+	for _, name := range []string{"resource_acl_grants_record", "resource_acl_grants_record_admin", "records_accessors"} {
 		if c, tg := grantFnByName(t, ctrl, name), grantFnByName(t, target, name); c != tg {
-			t.Errorf("grant definer %q differs:\n--- descriptor ---\n%s\n--- pure ---\n%s", name, c, tg)
+			t.Errorf("definer %q differs:\n--- descriptor ---\n%s\n--- pure ---\n%s", name, c, tg)
+		}
+	}
+}
+
+// Primitive 5: the Expand accessor enumerator built from composed relations must be
+// byte-identical to the descriptor-built one, with and without an admin-owner axis
+// (the latter omits the second OWNER branch and the role-plane exclusion).
+func TestPureAccessor_ByteIdenticalToDescriptor(t *testing.T) {
+	// A customer-only object (no admin owner): file on a discriminated store.
+	desc, err := Parse(storeManageDescriptorSpec)
+	if err != nil {
+		t.Fatalf("parse descriptor: %v", err)
+	}
+	if err := Validate(desc); err != nil {
+		t.Fatalf("validate descriptor: %v", err)
+	}
+	pure, err := Parse(storeManagePureSpec)
+	if err != nil {
+		t.Fatalf("parse pure: %v", err)
+	}
+	if err := Validate(pure); err != nil {
+		t.Fatalf("validate pure: %v", err)
+	}
+	for _, name := range []string{"records_accessors", "files_accessors"} {
+		if d, p := grantFnByName(t, desc, name), grantFnByName(t, pure, name); d != p {
+			t.Errorf("accessor %q differs:\n--- descriptor ---\n%s\n--- pure ---\n%s", name, d, p)
 		}
 	}
 }
