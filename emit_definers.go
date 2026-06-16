@@ -640,12 +640,18 @@ func (s *Spec) isPlatformRoleSubject(sub *Subject) bool {
 // worked example: "member"), instead of assuming a customer principal. Falls back
 // to the first declared owner type — a descriptor with no claim-bearing subject is
 // rejected by reqClaim before any claim-bearing predicate is emitted.
-// objectUsesAppScope reports whether any of the object's permissions reference the
-// @app_scope builtin — the broad operator-plane reach. The accessor enumerator
-// uses this to decide whether to enumerate the role plane: only objects that grant
-// @app_scope admit role-holders qua role.
-func (s *Spec) objectUsesAppScope(obj *Object) bool {
+// selectUsesAppScope reports whether the object's SELECT permission references the
+// @app_scope builtin — the broad operator-plane read reach. The accessor
+// enumerator is the read-side dual of <table>_select, so it gates the role plane
+// on the SELECT perm specifically: an object may grant @app_scope on writes
+// (project-wide edit, e.g. collaborative note resolution) while keeping a tighter
+// @descriptor-only read — there the accessor must NOT enumerate role-holders, as
+// they cannot SELECT the row qua role.
+func (s *Spec) selectUsesAppScope(obj *Object) bool {
 	for _, pm := range obj.Perms {
+		if pm.Maps != "select" {
+			continue
+		}
 		for _, t := range pm.Expr {
 			if t != nil && t.Builtin == "app_scope" {
 				return true
@@ -729,7 +735,7 @@ func (s *Spec) accessorDefiner(obj *Object) GenFn {
 	// @descriptor-only does NOT admit role-holders qua role — its operator
 	// visibility flows solely through the actor-scoped public mode (a category
 	// flag) + owner + grants — so enumerating the role plane would over-report.
-	if rs := roleStoreByName(s); rs != nil && s.objectUsesAppScope(obj) {
+	if rs := roleStoreByName(s); rs != nil && s.selectUsesAppScope(obj) {
 		var scopeConds []string
 		for i, lvl := range obj.Scoped {
 			if i >= len(rs.ScopeCols) {

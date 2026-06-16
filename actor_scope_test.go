@@ -39,7 +39,10 @@ object note {
     modes  private + read "public" for admin + list "admin"
     grants via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "note"
   }
-  permission view = @descriptor @rls maps select
+  permission view   = @descriptor              @rls maps select
+  permission edit   = @app_scope + @descriptor @rls maps update
+  permission create = @app_scope + @descriptor @rls maps insert
+  permission delete = @app_scope + @descriptor @rls maps delete
 }
 `
 
