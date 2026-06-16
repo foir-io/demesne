@@ -83,6 +83,19 @@ func TestDescriptorAdminPlaneActorScoped(t *testing.T) {
 	if !strings.Contains(accessors, "'admin'") {
 		t.Errorf("accessor owner rows should be tagged with the admin kind:\n%s", accessors)
 	}
+	// The @descriptor-only note admits NO role-holders qua role (no @app_scope), so
+	// the accessor enumerator must NOT emit a role-plane branch — that would
+	// over-report vs notes_select.
+	if strings.Contains(accessors, "'role'") || strings.Contains(accessors, "role_assignments") {
+		t.Errorf("admin-plane @descriptor-only accessor leaked a role branch:\n%s", accessors)
+	}
+
+	// A descriptor that DOES grant @app_scope (record) still enumerates the role
+	// plane — the gating is opt-out only for objects without broad operator reach.
+	withAppScope := findAccessor(t, adminOwnerSpec, "records")
+	if !strings.Contains(withAppScope, "'role'") {
+		t.Errorf("an @app_scope descriptor should still enumerate the role plane:\n%s", withAppScope)
+	}
 }
 
 // An UNSCOPED public read (a public record served to the world) stays a bare

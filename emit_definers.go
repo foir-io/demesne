@@ -640,6 +640,21 @@ func (s *Spec) isPlatformRoleSubject(sub *Subject) bool {
 // worked example: "member"), instead of assuming a customer principal. Falls back
 // to the first declared owner type — a descriptor with no claim-bearing subject is
 // rejected by reqClaim before any claim-bearing predicate is emitted.
+// objectUsesAppScope reports whether any of the object's permissions reference the
+// @app_scope builtin — the broad operator-plane reach. The accessor enumerator
+// uses this to decide whether to enumerate the role plane: only objects that grant
+// @app_scope admit role-holders qua role.
+func (s *Spec) objectUsesAppScope(obj *Object) bool {
+	for _, pm := range obj.Perms {
+		for _, t := range pm.Expr {
+			if t != nil && t.Builtin == "app_scope" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Spec) descriptorPrincipal(obj *Object) string {
 	// Prefer the descriptor's DECLARED owner subject. For a customer-owned
 	// descriptor this equals the project leaf's owner subject (customer), so
@@ -708,7 +723,13 @@ func (s *Spec) accessorDefiner(obj *Object) GenFn {
 	// exclusion, mirroring @app_scope: an admin-owned row is operator-private, so it
 	// has no role accessors. This is the only branch over current+future holders;
 	// the handler/UI may collapse it into a single "via role" category.
-	if rs := roleStoreByName(s); rs != nil {
+	//
+	// Only emitted when the object actually grants the broad operator reach
+	// (@app_scope). An admin-plane descriptor (e.g. notes) whose select is
+	// @descriptor-only does NOT admit role-holders qua role — its operator
+	// visibility flows solely through the actor-scoped public mode (a category
+	// flag) + owner + grants — so enumerating the role plane would over-report.
+	if rs := roleStoreByName(s); rs != nil && s.objectUsesAppScope(obj) {
 		var scopeConds []string
 		for i, lvl := range obj.Scoped {
 			if i >= len(rs.ScopeCols) {
