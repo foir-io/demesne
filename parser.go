@@ -843,6 +843,31 @@ func (p *parser) parseRepr() (Repr, error) {
 			return nil, err
 		}
 		return ViaMemberIn{Level: level, Principal: principal, Scope: scope}, nil
+	case p.acceptKw("grant"):
+		// grant <Table>(record, kind, principal, access) [where <col> = "<v>"]
+		tbl, cols, err := p.parseTableCols()
+		if err != nil {
+			return nil, err
+		}
+		if len(cols) != 4 {
+			return nil, p.errf("via grant needs 4 columns (record, kind, principal, access), got %d", len(cols))
+		}
+		vg := ViaGrant{Table: tbl, RecordCol: cols[0], KindCol: cols[1], PrincipalCol: cols[2], AccessCol: cols[3]}
+		if p.acceptKw("where") {
+			col, err := p.ident()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(tEq); err != nil {
+				return nil, err
+			}
+			val, err := p.expect(tString)
+			if err != nil {
+				return nil, err
+			}
+			vg.DiscrimCol, vg.DiscrimVal = col, val.lit
+		}
+		return vg, nil
 	default:
 		// via <fk column>
 		col, err := p.ident()
@@ -1251,6 +1276,46 @@ func (p *parser) parseTerm() (*Term, error) {
 			if _, err := p.expect(tRParen); err != nil {
 				return nil, err
 			}
+		}
+		// `@app_scope(exclude <rel>)` — the broad reach minus rows owned via <rel>
+		// (operator-private admin-owned rows). The de-prescribed admin-owner exclusion.
+		if b == "app_scope" && p.peekKind() == tLParen {
+			p.advance()
+			if err := p.expectKw("exclude"); err != nil {
+				return nil, err
+			}
+			rel, err := p.ident()
+			if err != nil {
+				return nil, err
+			}
+			t.ExcludeRel = rel
+			if _, err := p.expect(tRParen); err != nil {
+				return nil, err
+			}
+		}
+		return t, nil
+	}
+	// `mode <col> = "<v>" [for <subject>]` — a column-condition (visibility) term.
+	if p.isKw("mode") {
+		p.advance()
+		col, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tEq); err != nil {
+			return nil, err
+		}
+		val, err := p.expect(tString)
+		if err != nil {
+			return nil, err
+		}
+		t.ModeCol, t.ModeVal = col, val.lit
+		if p.acceptKw("for") {
+			sub, err := p.ident()
+			if err != nil {
+				return nil, err
+			}
+			t.ModeScope = sub
 		}
 		return t, nil
 	}

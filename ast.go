@@ -384,6 +384,30 @@ type ViaObject struct {
 	Col    string // this object's FK column naming the related row
 }
 
+// ViaGrant: `via grant <Table>(record, kind, principal, access) [where <col> = "<v>"]`
+// — a 4-column access-class ACL edge as a GENERIC relation: the de-prescribed form
+// of the descriptor's `grants` block. The relation's TYPES name the principal
+// KINDS it may be granted to (`grantee: customer | admin via grant …`); a
+// permission references it with an access class (`grantee:read` / `:write` /
+// `:delete`, or bare `grantee` → the op's class). It compiles to one
+// EXISTS-over-the-edge SECURITY DEFINER per kind at the requested access —
+// auth.<Table>_grants[_<kind>](<principal>, record, access) — the SAME shape and
+// names the descriptor emits, discriminated by a constant when several relations
+// share one physical store (the unified resource_acl). This is what lets a content
+// object drop its `descriptor {}` for plain `owner`/`admin_owner`/`grantee`
+// relations with byte-identical generated SQL. Structurally mirrors AclEdge; kept
+// a distinct Repr value type so the grammar and emitters treat it as a first-class
+// relation, not a descriptor sub-part.
+type ViaGrant struct {
+	Table        string
+	RecordCol    string
+	KindCol      string
+	PrincipalCol string
+	AccessCol    string
+	DiscrimCol   string // "" when the store is not shared (single-kind store)
+	DiscrimVal   string // the constant this relation's rows carry in DiscrimCol
+}
+
 // ArgSrc is one argument of a ViaMemberIn check: either a claim key (`@sub`) or a
 // row column (a bare identifier). Exactly one field is set.
 type ArgSrc struct {
@@ -417,6 +441,7 @@ func (ViaComposition) isRepr() {}
 func (ViaGroup) isRepr()       {}
 func (ViaObject) isRepr()      {}
 func (ViaClosure) isRepr()     {}
+func (ViaGrant) isRepr()       {}
 
 // Perm is an object permission: a verb, a union expression, the layer tag(s),
 // and (optionally) the table-op / pdp-verb it maps to and a row guard.
@@ -479,7 +504,22 @@ type Term struct {
 	WalkVerb   string
 	Builtin    string
 	SessionRel string // for `@session(<rel>)` — a session-self-gated role grant
-	Pos        Pos
+	// ExcludeRel is set on an `@app_scope(exclude <rel>)` term (the de-prescribed
+	// operator-reach): the broad no-claim reach EXCLUDES rows owned via <rel> (an
+	// owner ViaColumn), so an admin-owned row stays operator-private. Generalises
+	// the descriptor's AdminOwner-coupled @app_scope exclusion into a composable,
+	// existence-based term. "" ⇒ plain @app_scope.
+	ExcludeRel string
+	// A column-condition (visibility) term — `mode <col> = "<v>" [for <subject>]`
+	// — the de-prescribed form of the descriptor's read modes. ModeCol != "" marks
+	// the term; it admits a row whose ModeCol equals ModeVal (a read-only grant,
+	// listed only on the read permission). ModeScope optionally confines it to a
+	// principal PLANE (`for admin` → operators only, never a customer / the public
+	// API).
+	ModeCol   string
+	ModeVal   string
+	ModeScope string
+	Pos       Pos
 }
 
 // Procedures binds RPC procedures to required permissions for one PDP emit-site

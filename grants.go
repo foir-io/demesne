@@ -107,6 +107,92 @@ func grantDefinerName(obj *Object) string {
 	return g.Table + "_grants"
 }
 
+// *ViaGrant is a per-row reachability grant expressed as a GENERIC relation (the
+// de-prescribed descriptor grant list). Same concept as an AclEdge, surfaced
+// through the relation grammar.
+func (e *ViaGrant) EdgeTable() string             { return e.Table }
+func (e *ViaGrant) GranteeColumn() string         { return e.PrincipalCol }
+func (e *ViaGrant) Granularity() GrantGranularity { return RowReach }
+
+// grantRelation returns the object's grant relation (`via grant`) and its repr,
+// or (nil, nil) — the de-prescribed form of the descriptor's grant list. An object
+// has at most one (validation enforces it).
+func grantRelation(o *Object) (*Relation, *ViaGrant) {
+	for _, r := range o.Relations {
+		if vg, ok := r.Repr.(ViaGrant); ok {
+			vg := vg
+			return r, &vg
+		}
+	}
+	return nil, nil
+}
+
+// grantRelDefinerBase is the base name of a grant relation's per-kind EXISTS
+// definers — <table>_grants, suffixed by the object when the store is
+// discriminated (shared across kinds), exactly like grantDefinerName does for a
+// descriptor. So a pure-relation object emits byte-identical grant definer names.
+func grantRelDefinerBase(o *Object, vg *ViaGrant) string {
+	if vg.DiscrimCol != "" {
+		return vg.Table + "_grants_" + o.Name
+	}
+	return vg.Table + "_grants"
+}
+
+// grantRelBinding resolves the i-th grantee kind of a grant relation to (a) its
+// generated definer name, (b) the principal-kind label stored in the acl, (c) the
+// grantee parameter name, and (d) the claim a caller of that kind presents.
+// Mirrors the descriptor's grantKindBinding: the FIRST (primary) kind takes the
+// unsuffixed (by-kind) definer; each additional kind a kind-suffixed, collision-
+// free definer over the shared store. Unlike the descriptor — where the primary
+// list value is a free label decoupled from the owner subject — a grant relation
+// unifies the kind label, the grantee parameter, and the claim subject as its
+// declared type, which is the cleaner pure-relation form (and equals the
+// descriptor's binding for Foir, where the list values name the subjects).
+func (s *Spec) grantRelBinding(o *Object, vg *ViaGrant, r *Relation, i int) (name, kind, param, claim string) {
+	kind = r.Types[i]
+	param = kind
+	if sub := s.subjectByName(kind); sub != nil {
+		claim = sub.Identifies
+	}
+	base := grantRelDefinerBase(o, vg)
+	if i == 0 {
+		name = base
+	} else {
+		name = base + "_" + kind
+	}
+	return
+}
+
+// grantSelector splits a `<rel>:<access>` grant term into the relation name and
+// access class, returning ok only when <rel> names a grant (ViaGrant) relation.
+// A bare permkey (content:read) or a non-grant relation returns ok=false, so such
+// a term falls through to the normal PDP-capability / relation handling. This is
+// how `grantee:read` (which lexes as a single permkey) is distinguished from a
+// real capability.
+func grantSelector(ident string, rels map[string]*Relation) (relName, access string, ok bool) {
+	i := strings.IndexByte(ident, ':')
+	if i < 0 {
+		return "", "", false
+	}
+	relName, access = ident[:i], ident[i+1:]
+	r := rels[relName]
+	if r == nil {
+		return "", "", false
+	}
+	if _, isGrant := r.Repr.(ViaGrant); !isGrant {
+		return "", "", false
+	}
+	return relName, access, true
+}
+
+// isGrantSelectorTerm reports whether a term ident is a grant relation referenced
+// with an access class (`grantee:read`) — used by validation to classify it as a
+// row-layer grant rather than a PDP capability.
+func isGrantSelectorTerm(ident string, rels map[string]*Relation) bool {
+	_, _, ok := grantSelector(ident, rels)
+	return ok
+}
+
 // storeManageName is the write-moat dispatch definer for a discriminated grant
 // store: auth.<store>_manage(p_type, p_id) → the matching kind's can-edit.
 func storeManageName(table string) string { return table + "_manage" }

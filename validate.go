@@ -385,7 +385,7 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 	}
 
 	for _, pm := range o.Perms {
-		errs = append(errs, validatePerm(o, pm, relByName))
+		errs = append(errs, validatePerm(s, o, pm, relByName))
 	}
 	return errors.Join(errs...)
 }
@@ -601,7 +601,7 @@ func permPositive(n *PermNode) bool {
 	return false
 }
 
-func validatePerm(o *Object, pm *Perm, rels map[string]*Relation) error {
+func validatePerm(s *Spec, o *Object, pm *Perm, rels map[string]*Relation) error {
 	var errs []error
 
 	// Polarity (v3 WS1): a permission must be POSITIVELY GATED — every path to a
@@ -663,6 +663,15 @@ func validatePerm(o *Object, pm *Perm, rels map[string]*Relation) error {
 	// PERMKEY term is only meaningful on a @pdp permission (a capability).
 	for _, t := range pm.Expr {
 		switch {
+		case t.ModeCol != "":
+			// A column-condition (visibility) term — a row-layer read grant. It must
+			// be on @rls; an actor-scoped form must name a real subject.
+			if !hasRLS {
+				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses a mode term but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
+			}
+			if t.ModeScope != "" && s.subjectByName(t.ModeScope) == nil {
+				errs = append(errs, fmt.Errorf("line %d: permission %s.%s mode term scope `for %s` names no subject", pm.Pos.Line, o.Name, pm.Verb, t.ModeScope))
+			}
 		case t.Builtin != "":
 			if !knownBuiltins[t.Builtin] {
 				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|descriptor)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
@@ -670,10 +679,32 @@ func validatePerm(o *Object, pm *Perm, rels map[string]*Relation) error {
 			if t.Builtin == "descriptor" && o.Descriptor == nil {
 				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @descriptor but object %q has no descriptor block (§5.3)", pm.Pos.Line, o.Name, pm.Verb, o.Name))
 			}
+			// `@app_scope(exclude <rel>)` — the excluded axis must be a declared owner
+			// column relation (its presence is what gets excluded).
+			if t.ExcludeRel != "" {
+				if r := rels[t.ExcludeRel]; r == nil {
+					errs = append(errs, fmt.Errorf("line %d: permission %s.%s @app_scope(exclude %q) names no relation", pm.Pos.Line, o.Name, pm.Verb, t.ExcludeRel))
+				} else if _, ok := r.Repr.(ViaColumn); !ok {
+					errs = append(errs, fmt.Errorf("line %d: permission %s.%s @app_scope(exclude %q) must exclude an owner column relation", pm.Pos.Line, o.Name, pm.Verb, t.ExcludeRel))
+				}
+			}
 			// @open is the unrestricted-INSERT bootstrap only — never a read/update/
 			// delete grant (that would be a blanket leak).
 			if t.Builtin == "open" && pm.Maps != "insert" {
 				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @open but maps to %q — @open is only valid on an insert (a bootstrap write the row engine cannot gate)", pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
+			}
+		case isGrantSelectorTerm(t.Ident, rels):
+			// A grant relation with an access class (`grantee:read`) — a row-layer
+			// (@rls) grant, NOT a PDP capability (it lexes as a permkey but resolves
+			// to a relation). It must be on a row layer and carry a non-empty class.
+			_, access, _ := grantSelector(t.Ident, rels)
+			if access == "" {
+				errs = append(errs, fmt.Errorf("line %d: permission %s.%s grant term %q has an empty access class (use grantee:read|write|delete)",
+					pm.Pos.Line, o.Name, pm.Verb, t.Ident))
+			}
+			if !hasRLS {
+				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses grant term %q but is not @rls (V3/V4)",
+					pm.Pos.Line, o.Name, pm.Verb, t.Ident))
 			}
 		case isPermKeyLit(t.Ident):
 			if !hasPDP || hasRLS || hasKernel {

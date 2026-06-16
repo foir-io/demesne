@@ -278,6 +278,40 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		}
 	}
 
+	// Access-class grant RELATION definers (the de-prescribed form of the descriptor
+	// grant list): an object with a `via grant` relation gets the SAME per-kind
+	// auth.<store>_grants[_<kind>](<principal>, record, access) EXISTS the descriptor
+	// emits — same names, same bodies — so a pure-relation object's grant definers
+	// are byte-identical. The `seen` map keeps a shared store from re-emitting a
+	// kind's definer (e.g. a discriminated store names them per object, so no clash).
+	for _, obj := range s.Objects {
+		r, vg := grantRelation(obj)
+		if r == nil {
+			continue
+		}
+		for i := range r.Types {
+			name, kind, param, _ := s.grantRelBinding(obj, vg, r, i)
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			conjuncts := []string{fmt.Sprintf("%s = p_%s_id", vg.RecordCol, obj.Name)}
+			if vg.DiscrimCol != "" {
+				conjuncts = append(conjuncts, fmt.Sprintf("%s = '%s'", vg.DiscrimCol, vg.DiscrimVal))
+			}
+			conjuncts = append(conjuncts,
+				fmt.Sprintf("%s = '%s'", vg.KindCol, kind),
+				fmt.Sprintf("%s = p_%s_id", vg.PrincipalCol, param),
+				fmt.Sprintf("%s = p_access", vg.AccessCol),
+			)
+			out = append(out, GenFn{
+				Name: name,
+				Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", param, obj.Name),
+				Body: grantEdgeExists(vg.Table, conjuncts...),
+			})
+		}
+	}
+
 	// Accessor enumerators (Expand — the read-side dual of the RLS predicate): for
 	// every descriptor object with a grant store, auth.<table>_accessors(p_id)
 	// returns the rows (source, principal_kind, principal_id, access) of every

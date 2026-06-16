@@ -146,6 +146,18 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 				// The FK column on this object; the other object's table is checked
 				// when that object is validated.
 				reqCol(o.Table, repr.Col, rc)
+			case ViaGrant:
+				// The 4-column access-class ACL store (+ a discriminator column when a
+				// shared store), like the descriptor grant store.
+				if reqTable(repr.Table, rc) {
+					cols := []string{repr.RecordCol, repr.KindCol, repr.PrincipalCol, repr.AccessCol}
+					if repr.DiscrimCol != "" {
+						cols = append(cols, repr.DiscrimCol)
+					}
+					for _, c := range cols {
+						reqCol(repr.Table, c, rc)
+					}
+				}
 			case ViaMemberIn:
 				// Column-sourced args reference this object's own table; the role
 				// store (where membership lives) is checked under "Role stores" below.
@@ -154,6 +166,15 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 				}
 				if repr.Scope.Col != "" {
 					reqCol(o.Table, repr.Scope.Col, rc)
+				}
+			}
+		}
+		// Column-condition (visibility) terms in permissions reference a column on
+		// this object's own table.
+		for _, pm := range o.Perms {
+			for _, t := range pm.Expr {
+				if t.ModeCol != "" {
+					reqCol(o.Table, t.ModeCol, oc+" mode term")
 				}
 			}
 		}

@@ -516,6 +516,17 @@ func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Re
 
 // emitTerm compiles one union term to one or more predicate fragments.
 func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, custClaim string) ([]string, error) {
+	if t.ModeCol != "" {
+		// Column-condition (visibility) term: `mode <col> = "<v>" [for <subject>]`.
+		// A row whose ModeCol equals the sentinel is admitted; an actor-scoped form
+		// confines it to a principal plane (operators-only for `for admin`). This is
+		// the de-prescribed form of emitDescriptor's read-mode disjuncts.
+		frag := fmt.Sprintf("%s = '%s'", t.ModeCol, t.ModeVal)
+		if t.ModeScope != "" {
+			frag = fmt.Sprintf("%s AND %s", frag, s.modePlaneScope(t.ModeScope, custClaim))
+		}
+		return []string{frag}, nil
+	}
 	if t.WalkVerb != "" {
 		// A role-walk into a parent relation (e.g. `tenant->owner`): the admin
 		// owns/administers the parent node → a tenant/ancestor-admin definer
@@ -531,6 +542,15 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		}
 		return []string{fmt.Sprintf("%s.is_%s_%s(%s, %s)", s.definerSchema(), parent.Types[0], s.adminName(), s.claim(s.adminIdentify()), col.Column)}, nil
 	}
+	// A grant relation referenced with an access class (`grantee:read`) lexes as a
+	// single permkey; resolve it before the capability/relation handling below. The
+	// access class names the acl `access` value (read|write|delete — but the engine
+	// does not bake a vocabulary; it is the app's).
+	if relName, access, ok := grantSelector(t.Ident, rels); ok {
+		r := rels[relName]
+		vg := r.Repr.(ViaGrant)
+		return s.emitGrantFrags(obj, r, &vg, access)
+	}
 	switch {
 	case t.Builtin == "open":
 		// @open (v3 WS6): an op deliberately unrestricted at the RLS layer (`true`).
@@ -544,21 +564,37 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 			return nil, err
 		}
 		base := s.claim(custClaim) + " IS NULL"
-		// When the object has an ADMIN owner axis, the broad app/service reach is
-		// gated to EXCLUDE admin-owned rows: an operator sees non-admin-owned
-		// records, but an admin-owned row is reachable only by its owning admin
-		// (the admin-owner term below) + grants — operator-private.
-		if obj.Descriptor != nil && obj.Descriptor.AdminOwner != nil {
+		// The broad app/service reach may EXCLUDE rows owned via an owner axis, so an
+		// admin-owned row stays reachable only by its owning admin + grants
+		// (operator-private). The excluded axis is named explicitly in the pure model
+		// (`@app_scope(exclude admin_owner)`); for a legacy descriptor object it is
+		// the descriptor's AdminOwner. Either resolves to the owner ViaColumn whose
+		// PRESENCE is excluded — emitted as existence-negation (NOT principal-match),
+		// the soundness invariant: one operator never sees another's admin-owned rows.
+		var exclVC *ViaColumn
+		if t.ExcludeRel != "" {
+			r := rels[t.ExcludeRel]
+			if r == nil {
+				return nil, fmt.Errorf("@app_scope(exclude %q): unknown relation", t.ExcludeRel)
+			}
+			vc, ok := r.Repr.(ViaColumn)
+			if !ok {
+				return nil, fmt.Errorf("@app_scope(exclude %q): excluded relation must be an owner column", t.ExcludeRel)
+			}
+			exclVC = &vc
+		} else if obj.Descriptor != nil && obj.Descriptor.AdminOwner != nil {
 			if ac, ok := obj.Descriptor.AdminOwner.Repr.(ViaColumn); ok {
-				// "Not admin-owned": for a discriminated owner that's the kind
-				// column distinct from the admin value (a NULL owner_kind = the
-				// unowned plane passes); for the legacy per-kind column it's the
-				// column being NULL.
-				if ac.DiscrimCol != "" {
-					base = fmt.Sprintf("(%s AND %s IS DISTINCT FROM '%s')", base, ac.DiscrimCol, ac.DiscrimVal)
-				} else {
-					base = fmt.Sprintf("(%s AND %s IS NULL)", base, ac.Column)
-				}
+				exclVC = &ac
+			}
+		}
+		if exclVC != nil {
+			// "Not owned via this axis": for a discriminated owner that's the kind
+			// column distinct from the value (a NULL kind = the unowned plane passes);
+			// for a plain per-kind column it's the column being NULL.
+			if exclVC.DiscrimCol != "" {
+				base = fmt.Sprintf("(%s AND %s IS DISTINCT FROM '%s')", base, exclVC.DiscrimCol, exclVC.DiscrimVal)
+			} else {
+				base = fmt.Sprintf("(%s AND %s IS NULL)", base, exclVC.Column)
 			}
 		}
 		return []string{base}, nil
@@ -660,6 +696,13 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		// generated definer runs that object's full predicate (claims read from the
 		// GUC inside it), so no claim is threaded through the call here.
 		return []string{fmt.Sprintf("%s.%s_can_%s(%s)", s.definerSchema(), repr.Object, repr.Verb, repr.Col)}, nil
+	case ViaGrant:
+		// A bare grant relation (`grantee`, no access class): the access defaults to
+		// the op's class (select→read, update/insert→write, delete→delete) — the same
+		// rule the descriptor uses. An explicit selector (`grantee:read`) is handled
+		// above; a bare reference on a create perm would emit a write-grant branch on
+		// insert, so omit it there (matching the descriptor, which never grants insert).
+		return s.emitGrantFrags(obj, r, &repr, accessFor(pm.Maps))
 	case ViaRole:
 		// Platform-staff plane (v3 WS6): a `via role` relation whose TYPE is the
 		// virtual-anchored role subject resolves to the root-plane role definer,
@@ -689,6 +732,23 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 	default:
 		return nil, fmt.Errorf("relation %q has an unknown representation", r.Name)
 	}
+}
+
+// emitGrantFrags renders a grant relation's RLS fragments at a given access class:
+// one auth.<store>_grants[_<kind>](<principal claim>, <table>.id, '<access>') EXISTS
+// per declared grantee kind, read against that kind's own claim. This is the
+// de-prescribed form of emitDescriptor's grant-list disjuncts (same definer names,
+// same args), so a pure-relation object reproduces the descriptor's grant SQL.
+func (s *Spec) emitGrantFrags(obj *Object, r *Relation, vg *ViaGrant, access string) ([]string, error) {
+	var frags []string
+	for i := range r.Types {
+		name, _, _, claim := s.grantRelBinding(obj, vg, r, i)
+		if claim == "" {
+			return nil, fmt.Errorf("grant relation %q kind %q: no subject resolves a claim", r.Name, r.Types[i])
+		}
+		frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), name, s.claim(claim), obj.Table+".id", access))
+	}
+	return frags, nil
 }
 
 // emitDescriptor expands @descriptor into the customer-plane predicate fragments
