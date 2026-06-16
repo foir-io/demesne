@@ -258,6 +258,13 @@ type Descriptor struct {
 type Mode struct {
 	Kind  string // "private" | "read" | "list"
 	Value string // read → the ModeCol sentinel; list → the principal kind; "" for private
+	// Scope (read mode only) optionally confines the public read to a principal
+	// PLANE: `read "<sentinel>" for <subject>`. Empty = world (the default, e.g. a
+	// public record served by the public API). A non-empty scope emits an extra
+	// plane predicate — `for admin` opens the sentinel to operators only (no
+	// customer claim), so e.g. a "public" note is visible project-wide to operators
+	// but never leaks to customers / the public API.
+	Scope string
 	Pos   Pos
 }
 
