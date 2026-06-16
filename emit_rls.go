@@ -550,7 +550,15 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		// (the admin-owner term below) + grants — operator-private.
 		if obj.Descriptor != nil && obj.Descriptor.AdminOwner != nil {
 			if ac, ok := obj.Descriptor.AdminOwner.Repr.(ViaColumn); ok {
-				base = fmt.Sprintf("(%s AND %s IS NULL)", base, ac.Column)
+				// "Not admin-owned": for a discriminated owner that's the kind
+				// column distinct from the admin value (a NULL owner_kind = the
+				// unowned plane passes); for the legacy per-kind column it's the
+				// column being NULL.
+				if ac.DiscrimCol != "" {
+					base = fmt.Sprintf("(%s AND %s IS DISTINCT FROM '%s')", base, ac.DiscrimCol, ac.DiscrimVal)
+				} else {
+					base = fmt.Sprintf("(%s AND %s IS NULL)", base, ac.Column)
+				}
 			}
 		}
 		return []string{base}, nil
@@ -687,6 +695,27 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 // (§5.3): the inline owner + public-mode column checks first, then the
 // record_acl definer tail. private/admins are the admin plane (not customer
 // terms).
+// ownerColTerm renders an owner-axis match: `<col> = <claim>`, or, when the
+// owner column is discriminated (the unified owner_id/owner_kind shape),
+// `(<col> = <claim> AND <kindCol> = '<kindVal>')`.
+func ownerColTerm(vc ViaColumn, claim string) string {
+	base := fmt.Sprintf("%s = %s", vc.Column, claim)
+	if vc.DiscrimCol == "" {
+		return base
+	}
+	return fmt.Sprintf("(%s AND %s = '%s')", base, vc.DiscrimCol, vc.DiscrimVal)
+}
+
+// ownerColPresent renders "this row is owned via this axis": `<col> IS NOT NULL`,
+// or `<col> IS NOT NULL AND <kindCol> = '<kindVal>'` for a discriminated owner.
+func ownerColPresent(vc ViaColumn) string {
+	base := vc.Column + " IS NOT NULL"
+	if vc.DiscrimCol == "" {
+		return base
+	}
+	return fmt.Sprintf("%s AND %s = '%s'", base, vc.DiscrimCol, vc.DiscrimVal)
+}
+
 func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string, error) {
 	d := obj.Descriptor
 	if d == nil {
@@ -703,7 +732,9 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	// customer_id, so this is byte-identical. For an admin-plane descriptor
 	// (`owner admin via created_by`) it resolves to `sub`, so the row is owned by
 	// the admin who authored it with no customer column in sight.
-	frags = append(frags, fmt.Sprintf("%s = %s", owner.Column, s.claim(s.relationClaim(d.Owner, custClaim))))
+	// A discriminated owner (`via owner_id where owner_kind = "customer"`) gates
+	// the id match by the kind column — the unified (owner_id, owner_kind) shape.
+	frags = append(frags, ownerColTerm(owner, s.claim(s.relationClaim(d.Owner, custClaim))))
 
 	// The ADMIN owner axis: a record owned by the admin who created it is reachable
 	// by that admin (its claim) for every op (read/write/delete/insert). The broad
@@ -711,7 +742,7 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	// admin-owned record is private to its owner + grants.
 	if d.AdminOwner != nil {
 		if ac, ok := d.AdminOwner.Repr.(ViaColumn); ok {
-			frags = append(frags, fmt.Sprintf("%s = %s", ac.Column, s.claim(s.relationClaim(d.AdminOwner, custClaim))))
+			frags = append(frags, ownerColTerm(ac, s.claim(s.relationClaim(d.AdminOwner, custClaim))))
 		}
 	}
 

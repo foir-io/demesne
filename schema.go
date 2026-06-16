@@ -162,11 +162,17 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 			if d.Owner != nil {
 				if vc, ok := d.Owner.Repr.(ViaColumn); ok {
 					reqCol(o.Table, vc.Column, oc+" descriptor owner")
+					if vc.DiscrimCol != "" {
+						reqCol(o.Table, vc.DiscrimCol, oc+" descriptor owner kind")
+					}
 				}
 			}
 			if d.AdminOwner != nil {
 				if vc, ok := d.AdminOwner.Repr.(ViaColumn); ok {
 					reqCol(o.Table, vc.Column, oc+" descriptor admin owner")
+					if vc.DiscrimCol != "" {
+						reqCol(o.Table, vc.DiscrimCol, oc+" descriptor admin owner kind")
+					}
 				}
 			}
 			if d.ModeCol != "" {

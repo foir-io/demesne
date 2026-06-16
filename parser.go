@@ -954,7 +954,25 @@ func (p *parser) parseDescriptorOwner() (*Relation, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.Repr = ViaColumn{Column: col}
+	vc := ViaColumn{Column: col}
+	// Optional discriminator: `where <kind_col> = "<val>"` — the owner reads
+	// <id_col> gated by <kind_col> = constant (the unified owner_id/owner_kind
+	// shape; mirrors the grants-edge `where`).
+	if p.acceptKw("where") {
+		dcol, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tEq); err != nil {
+			return nil, err
+		}
+		val, err := p.expect(tString)
+		if err != nil {
+			return nil, err
+		}
+		vc.DiscrimCol, vc.DiscrimVal = dcol, val.lit
+	}
+	r.Repr = vc
 	return r, nil
 }
 

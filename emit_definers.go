@@ -691,23 +691,29 @@ func (s *Spec) accessorDefiner(obj *Object) GenFn {
 	ownerKind := s.descriptorPrincipal(obj)
 
 	var branches []string
-	// OWNER — the customer-plane owner column.
+	// OWNER — the (customer-plane) owner column; discriminated → gated by kind.
 	branches = append(branches, fmt.Sprintf(
-		"SELECT 'owner'::text AS source, '%s'::text AS principal_kind, %s AS principal_id, 'write'::text AS access\n    FROM %s WHERE id = p_id AND %s IS NOT NULL",
-		ownerKind, owner.Column, obj.Table, owner.Column))
+		"SELECT 'owner'::text AS source, '%s'::text AS principal_kind, %s AS principal_id, 'write'::text AS access\n    FROM %s WHERE id = p_id AND %s",
+		ownerKind, owner.Column, obj.Table, ownerColPresent(owner)))
 
-	// OWNER — the optional admin-plane owner column (operator-private rows).
-	var adminOwnerCol string
+	// OWNER — the optional admin-plane owner axis (operator-private rows).
+	// adminExcl is the "not admin-owned" condition (r.-prefixed) used to gate the
+	// role plane below, mirroring @app_scope.
+	var adminExcl string
 	if d.AdminOwner != nil {
 		if ac, ok := d.AdminOwner.Repr.(ViaColumn); ok {
-			adminOwnerCol = ac.Column
 			adminKind := "admin"
 			if len(d.AdminOwner.Types) > 0 {
 				adminKind = d.AdminOwner.Types[0]
 			}
 			branches = append(branches, fmt.Sprintf(
-				"SELECT 'owner'::text, '%s'::text, %s, 'write'::text\n    FROM %s WHERE id = p_id AND %s IS NOT NULL",
-				adminKind, adminOwnerCol, obj.Table, adminOwnerCol))
+				"SELECT 'owner'::text, '%s'::text, %s, 'write'::text\n    FROM %s WHERE id = p_id AND %s",
+				adminKind, ac.Column, obj.Table, ownerColPresent(ac)))
+			if ac.DiscrimCol != "" {
+				adminExcl = fmt.Sprintf("r.%s IS DISTINCT FROM '%s'", ac.DiscrimCol, ac.DiscrimVal)
+			} else {
+				adminExcl = fmt.Sprintf("r.%s IS NULL", ac.Column)
+			}
 		}
 	}
 
@@ -750,8 +756,8 @@ func (s *Spec) accessorDefiner(obj *Object) GenFn {
 			}
 		}
 		where := []string{"r.id = p_id"}
-		if adminOwnerCol != "" {
-			where = append(where, fmt.Sprintf("r.%s IS NULL", adminOwnerCol))
+		if adminExcl != "" {
+			where = append(where, adminExcl)
 		}
 		branches = append(branches, fmt.Sprintf(
 			"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s r\n    JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND %s\n    WHERE %s",

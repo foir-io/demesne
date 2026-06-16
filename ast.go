@@ -303,7 +303,15 @@ type Relation struct {
 type Repr interface{ isRepr() }
 
 // ViaColumn: `via <fk_column>` — a foreign-key column on this object's table.
-type ViaColumn struct{ Column string }
+// An owner ViaColumn may carry an optional discriminator
+// (`via <id_col> where <kind_col> = "<val>"`) so several owner kinds share one
+// id column gated by a kind column — the unified (owner_id, owner_kind) shape,
+// mirroring the AclEdge grant discriminator. DiscrimCol == "" ⇒ plain column.
+type ViaColumn struct {
+	Column     string
+	DiscrimCol string
+	DiscrimVal string
+}
 
 // ViaEdge: `via edge <Table>(<from>,<to>[,<kind>])` — an edge/junction table.
 type ViaEdge struct {
