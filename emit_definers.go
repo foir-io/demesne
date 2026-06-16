@@ -641,11 +641,16 @@ func (s *Spec) isPlatformRoleSubject(sub *Subject) bool {
 // to the first declared owner type — a descriptor with no claim-bearing subject is
 // rejected by reqClaim before any claim-bearing predicate is emitted.
 func (s *Spec) descriptorPrincipal(obj *Object) string {
-	if sub := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); sub != nil {
-		return sub.Name
-	}
+	// Prefer the descriptor's DECLARED owner subject. For a customer-owned
+	// descriptor this equals the project leaf's owner subject (customer), so
+	// records/files stay byte-identical; for an admin-plane descriptor
+	// (`owner admin via created_by`) it correctly yields `admin` rather than the
+	// leaf's customer owner.
 	if obj.Descriptor != nil && obj.Descriptor.Owner != nil && len(obj.Descriptor.Owner.Types) > 0 {
 		return obj.Descriptor.Owner.Types[0]
+	}
+	if sub := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); sub != nil {
+		return sub.Name
 	}
 	return "principal"
 }

@@ -990,6 +990,15 @@ func (p *parser) parseModeItem() (Mode, error) {
 			return m, err
 		}
 		m.Kind, m.Value = "read", v.lit
+		// Optional plane scope: `read "<sentinel>" for <subject>` confines the
+		// public read to that principal plane (e.g. operators-only).
+		if p.acceptKw("for") {
+			sub, err := p.ident()
+			if err != nil {
+				return m, err
+			}
+			m.Scope = sub
+		}
 	case p.acceptKw("list"):
 		v, err := p.expect(tString)
 		if err != nil {

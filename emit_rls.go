@@ -376,6 +376,20 @@ func (s *Spec) relationClaim(r *Relation, fallback string) string {
 	return fallback
 }
 
+// modePlaneScope renders the plane predicate for an actor-scoped public read mode
+// (`read "<sentinel>" for <subject>`). The scope confines the sentinel to a
+// principal PLANE expressed against the customer-plane discriminator (custClaim):
+// a subject that itself identifies the customer claim (the owner plane) requires
+// the claim to be PRESENT; any other subject (operator/admin/service plane)
+// requires it ABSENT. So `for admin` → `<customer claim> IS NULL` (operators
+// only), the project-wide-operator-visible-but-customer-invisible shape.
+func (s *Spec) modePlaneScope(scope, custClaim string) string {
+	if sub := s.subjectByName(scope); sub != nil && sub.Identifies == custClaim {
+		return s.claim(custClaim) + " IS NOT NULL"
+	}
+	return s.claim(custClaim) + " IS NULL"
+}
+
 // objectReferencesStaff reports whether the object declares a relation targeting
 // a virtual-anchored role subject — the COMPOSABLE platform-staff plane. When it
 // does, rlsPredicate does NOT also auto-add the staff top branch (that would
@@ -683,7 +697,13 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	}
 	var frags []string
 	owner, _ := d.Owner.Repr.(ViaColumn)
-	frags = append(frags, fmt.Sprintf("%s = %s", owner.Column, s.claim(custClaim)))
+	// The owner term reads the owner column against the OWNER subject's claim, not
+	// blindly against the customer-plane discriminator. For a customer-owned
+	// descriptor (record/file) these coincide — relationClaim resolves to the same
+	// customer_id, so this is byte-identical. For an admin-plane descriptor
+	// (`owner admin via created_by`) it resolves to `sub`, so the row is owned by
+	// the admin who authored it with no customer column in sight.
+	frags = append(frags, fmt.Sprintf("%s = %s", owner.Column, s.claim(s.relationClaim(d.Owner, custClaim))))
 
 	// The ADMIN owner axis: a record owned by the admin who created it is reachable
 	// by that admin (its claim) for every op (read/write/delete/insert). The broad
@@ -700,9 +720,20 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	// They contribute only to the select policy.
 	if pm.Maps == "select" {
 		for _, m := range d.Modes {
-			if m.Kind == "read" {
-				frags = append(frags, fmt.Sprintf("%s = '%s'", d.ModeCol, m.Value))
+			if m.Kind != "read" {
+				continue
 			}
+			frag := fmt.Sprintf("%s = '%s'", d.ModeCol, m.Value)
+			// An actor-scoped public read (`read "<sentinel>" for <subject>`)
+			// confines the sentinel to that subject's PLANE: `for admin` opens it
+			// to operators (callers with no customer claim) only, so a "public"
+			// note is project-wide to operators yet never leaks to a customer /
+			// the public API. An unscoped read stays world-readable (a public
+			// record), so records remain byte-identical.
+			if m.Scope != "" {
+				frag = fmt.Sprintf("%s AND %s", frag, s.modePlaneScope(m.Scope, custClaim))
+			}
+			frags = append(frags, frag)
 		}
 	}
 	// The explicit grant list applies to read/write/delete at the perm's access
@@ -873,13 +904,18 @@ func (s *Spec) grantKindBinding(obj *Object, kind string, primary bool) (name, p
 // descriptorOwnerClaim is the claim the descriptor's owner principal identifies
 // by (the legacy grant claim) — mirrors descriptorPrincipal's owner-subject lookup.
 func (s *Spec) descriptorOwnerClaim(obj *Object) string {
+	// Prefer the descriptor's DECLARED owner claim (byte-identical for a
+	// customer-owned descriptor, where it resolves to the same customer_id the
+	// project leaf would; `sub` for an admin-plane descriptor).
+	if obj.Descriptor != nil && obj.Descriptor.Owner != nil {
+		if c := s.relationClaim(obj.Descriptor.Owner, ""); c != "" {
+			return c
+		}
+	}
 	if len(obj.Scoped) > 0 {
 		if sub := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); sub != nil {
 			return sub.Identifies
 		}
-	}
-	if obj.Descriptor != nil && obj.Descriptor.Owner != nil {
-		return s.relationClaim(obj.Descriptor.Owner, "")
 	}
 	return ""
 }

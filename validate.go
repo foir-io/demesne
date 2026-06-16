@@ -416,6 +416,14 @@ func validateDescriptor(s *Spec, o *Object) error {
 			if m.Value == "" {
 				errs = append(errs, fmt.Errorf("line %d: object %q descriptor read mode needs a sentinel value (read '<value>')", m.Pos.Line, o.Name))
 			}
+			// An actor-scoped read (`read '<value>' for <subject>`) must name a
+			// declared subject — its plane (owner-claim-bearing vs not) decides
+			// whether the sentinel requires the customer claim present or absent.
+			if m.Scope != "" {
+				if sub := s.subjectByName(m.Scope); sub == nil {
+					errs = append(errs, fmt.Errorf("line %d: object %q descriptor read mode scope %q is not a declared subject", m.Pos.Line, o.Name, m.Scope))
+				}
+			}
 			hasColumnMode = true
 		case "list":
 			if m.Value == "" {
