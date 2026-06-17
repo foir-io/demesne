@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// A discriminated grant edge lets several descriptors share ONE physical store,
-// each filtering its rows by a constant — the general capability behind a unified
-// resource_acl(resource_type, resource_id, …). The engine does not prescribe the
-// shape; the spec author opts in.
+// A discriminated grant edge lets several grant relations share ONE physical
+// store, each filtering its rows by a constant — the general capability behind a
+// unified resource_acl(resource_type, resource_id, …). The engine does not
+// prescribe the shape; the spec author opts in.
 const sharedAclSpec = `
 topology {
   level platform virtual
@@ -34,24 +34,16 @@ subject customer { anchor project  reach self identifies customer_id roles confi
 object doc {
   table  docs
   scoped tenant > project
-  descriptor {
-    owner  customer via customer_id
-    mode   via access_mode
-    modes  private + read "public_project" + list "customer"
-    grants via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "doc"
-  }
-  permission view = @descriptor @rls maps select
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "doc"
+  permission view = owner + mode access_mode = "public_project" + grantee:read @rls maps select
 }
 object note {
   table  notes
   scoped tenant > project
-  descriptor {
-    owner  customer via customer_id
-    mode   via access_mode
-    modes  private + list "customer"
-    grants via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "note"
-  }
-  permission view = @descriptor @rls maps select
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "note"
+  permission view = owner + grantee:read @rls maps select
 }
 `
 
@@ -144,13 +136,9 @@ subject customer { anchor a reach self identifies customer_id roles configurable
 		return `object ` + obj + ` {
   table ` + obj + `s
   scoped a
-  descriptor {
-    owner customer via customer_id
-    mode via access_mode
-    modes private + list "customer"
-    grants via edge resource_acl(resource_id, principal_kind, principal_id, access)` + where + `
-  }
-  permission view = @descriptor @rls maps select
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access)` + where + `
+  permission view = owner + grantee:read @rls maps select
 }
 `
 	}
@@ -215,26 +203,18 @@ subject customer { anchor project  reach self identifies customer_id roles confi
 object record {
   table  records
   scoped tenant > project
-  descriptor {
-    owner  customer via customer_id
-    mode   via access_mode
-    modes  private + list "customer"
-    grants via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
-  }
-  permission view = @descriptor @rls maps select
-  permission edit = @descriptor @rls maps update
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
+  permission view = @app_scope + owner + grantee:read  @rls maps select
+  permission edit = @app_scope + owner + grantee:write @rls maps update
 }
 object file {
   table  files
   scoped tenant > project
-  descriptor {
-    owner  customer via customer_id
-    mode   via access_mode
-    modes  private + list "customer"
-    grants via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "file"
-  }
-  permission view = @descriptor @rls maps select
-  permission edit = @descriptor @rls maps update
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "file"
+  permission view = @app_scope + owner + grantee:read  @rls maps select
+  permission edit = @app_scope + owner + grantee:write @rls maps update
 }
 object resource_grant {
   table  resource_acl
@@ -308,9 +288,10 @@ subject customer { anchor a reach self identifies customer_id roles configurable
 			name: "store not discriminated",
 			spec: head + `object rec {
   table records scoped a
-  descriptor { owner customer via customer_id mode via access_mode modes private + list "customer" grants via edge resource_acl(resource_id, principal_kind, principal_id, access) }
-  permission view = @descriptor @rls maps select
-  permission edit = @descriptor @rls maps update
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access)
+  permission view = owner + grantee:read  @rls maps select
+  permission edit = owner + grantee:write @rls maps update
 }
 object g { table resource_acl scoped a permission create = @store_manage @rls maps insert }`,
 			want: "not discriminated",

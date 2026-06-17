@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// WS3 convergence — a level-scoped Grant and a Descriptor's acl edge are the
-// SAME concept (a ReachGrant), enumerable as one, built from one shared shape —
-// but they keep SEPARATE physical stores and specialized SQL (the moat).
+// WS3 convergence — a level-scoped Grant and a per-row access-class grant relation
+// are the SAME concept (a ReachGrant), enumerable as one, built from one shared
+// shape — but they keep SEPARATE physical stores and specialized SQL (the moat).
 const reachGrantSpec = `
 topology {
   level platform virtual
@@ -33,13 +33,9 @@ subject customer { anchor project  reach self identifies customer_id roles confi
 object record {
   table  records
   scoped tenant > project
-  descriptor {
-    owner  customer via customer_id
-    mode   via access_mode
-    modes  private + read "public_project" + list "customer"
-    grants via edge record_acl(record_id, principal_kind, principal_id, access)
-  }
-  permission view = @descriptor @rls maps select
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant record_acl(record_id, principal_kind, principal_id, access)
+  permission view = owner + mode access_mode = "public_project" + grantee:read @rls maps select
 }
 `
 
@@ -56,7 +52,7 @@ func TestReachGrant_UnifiedConceptSeparateStores(t *testing.T) {
 	//     target granularity.
 	grants := s.ReachGrants()
 	if len(grants) != 2 {
-		t.Fatalf("ReachGrants = %d, want 2 (a level grant + a descriptor acl edge)", len(grants))
+		t.Fatalf("ReachGrants = %d, want 2 (a level grant + a per-row grant relation)", len(grants))
 	}
 	byEdge := map[string]ReachGrant{}
 	for _, g := range grants {

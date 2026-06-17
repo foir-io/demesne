@@ -26,14 +26,10 @@ subject owner { anchor project reach self        identifies owner_id roles confi
 object doc {
   table  docs
   scoped tenant > project
-  relation mgr:   staff via role
-  permission view = mgr + @descriptor @rls maps select
-  descriptor {
-    owner  owner via owner_id
-    mode   via visibility
-    modes  private + read "public" + list "cust"
-    grants via edge doc_acl(doc_id, principal_kind, principal_id, access)
-  }
+  relation mgr:     staff via role
+  relation owner:   owner via owner_id
+  relation grantee: owner via grant doc_acl(doc_id, principal_kind, principal_id, access)
+  permission view = mgr + owner + mode visibility = "public" + grantee:read @rls maps select
 }
 `
 

@@ -5,11 +5,44 @@ import (
 	"testing"
 )
 
-// An ADMIN-PLANE descriptor: the resource is owned by the admin who authored it
-// (`owner admin via created_by`, no customer column at all) and its public read
-// is actor-scoped to operators (`read "public" for admin` → visible project-wide
-// to callers with no customer claim, never to a customer / the public API). This
-// is the notes shape: operator-authored, project-wide-visible-to-operators, with
+// A pure-relation record with an ADMIN-owner axis and broad operator reach
+// (@app_scope(exclude admin_owner)): the customer/service owner plane, an
+// operator-private admin owner, a binary read mode, and a customer grant relation
+// over the discriminated resource_acl. Shared by the accessor + runtime tests.
+const adminOwnerSpec = `
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin { permission c:r  preset pa @ project = c:r }
+vocabulary cust  { permission self:read }
+rolestore admin {
+  assignments ra
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject admin    { anchor tenant  reach descendants identifies sub roles configurable admin binds admin }
+subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
+subject service  { anchor project reach self identifies sub roles none }
+object record {
+  table  records
+  scoped tenant > project
+  relation owner:       customer | service via customer_id
+  relation admin_owner: admin via admin_owner_id
+  relation grantee:     customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
+  permission view = @app_scope(exclude admin_owner) + owner + admin_owner + mode access_mode = "public_project" + grantee:read @rls maps select
+}
+`
+
+// An ADMIN-PLANE note: owned by the admin who authored it (`owner admin via
+// created_by`, no customer column at all) and its public read is actor-scoped to
+// operators (`mode access_mode = "public" for admin` → visible project-wide to
+// callers with no customer claim, never to a customer / the public API). The
+// notes shape: operator-authored, project-wide-visible-to-operators, with
 // per-resource private + @mention grants on the shared acl store.
 const adminPlaneNoteSpec = `
 topology {
@@ -33,20 +66,16 @@ subject service  { anchor project reach self identifies sub roles none }
 object note {
   table  notes
   scoped tenant > project
-  descriptor {
-    owner  admin via created_by
-    mode   via access_mode
-    modes  private + read "public" for admin + list "admin"
-    grants via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "note"
-  }
-  permission view   = @descriptor              @rls maps select
-  permission edit   = @app_scope + @descriptor @rls maps update
-  permission create = @app_scope + @descriptor @rls maps insert
-  permission delete = @app_scope + @descriptor @rls maps delete
+  relation owner:   admin via created_by
+  relation grantee: admin via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "note"
+  permission view   = owner + mode access_mode = "public" for admin + grantee:read   @rls maps select
+  permission edit   = @app_scope + owner + grantee:write                             @rls maps update
+  permission create = @app_scope + owner                                             @rls maps insert
+  permission delete = @app_scope + owner + grantee:delete                            @rls maps delete
 }
 `
 
-func TestDescriptorAdminPlaneActorScoped(t *testing.T) {
+func TestAdminPlaneActorScoped(t *testing.T) {
 	s, err := Parse(adminPlaneNoteSpec)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -60,19 +89,17 @@ func TestDescriptorAdminPlaneActorScoped(t *testing.T) {
 	}
 	sql := res.PolicySQL("authenticated")
 
-	// Capability 1 — admin-plane owner: the owner term reads created_by against
-	// the admin subject's claim (sub), NOT a customer column.
+	// Admin-plane owner: the owner term reads created_by against the admin subject's
+	// claim (sub), NOT a customer column.
 	if !strings.Contains(sql, "created_by = (current_setting('request.jwt.claims', true)::json ->> 'sub')") {
 		t.Errorf("missing admin-plane owner term (created_by = sub):\n%s", sql)
 	}
-	// Capability 2 — actor-scoped public: the "public" sentinel is gated to the
-	// operator plane (no customer claim), so it never opens to a customer.
+	// Actor-scoped public: the "public" sentinel is gated to the operator plane (no
+	// customer claim), so it never opens to a customer.
 	if !strings.Contains(sql, "access_mode = 'public' AND (current_setting('request.jwt.claims', true)::json ->> 'customer_id') IS NULL") {
 		t.Errorf("public read mode not scoped to the operator plane:\n%s", sql)
 	}
-
-	// The admin grant disjunct is read against the admin subject's own claim (sub),
-	// since the descriptor owner principal is admin (not customer).
+	// The admin grant disjunct is read against the admin subject's own claim (sub).
 	if !strings.Contains(sql, "(current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'read')") {
 		t.Errorf("admin grant disjunct not bound to the admin claim:\n%s", sql)
 	}
@@ -86,26 +113,25 @@ func TestDescriptorAdminPlaneActorScoped(t *testing.T) {
 	if !strings.Contains(accessors, "'admin'") {
 		t.Errorf("accessor owner rows should be tagged with the admin kind:\n%s", accessors)
 	}
-	// The @descriptor-only note admits NO role-holders qua role (no @app_scope), so
-	// the accessor enumerator must NOT emit a role-plane branch — that would
-	// over-report vs notes_select.
+	// The note's SELECT admits NO role-holders qua role (no @app_scope), so the
+	// accessor enumerator must NOT emit a role-plane branch — that would over-report
+	// vs notes_select.
 	if strings.Contains(accessors, "'role'") || strings.Contains(accessors, "role_assignments") {
-		t.Errorf("admin-plane @descriptor-only accessor leaked a role branch:\n%s", accessors)
+		t.Errorf("admin-plane @app_scope-free accessor leaked a role branch:\n%s", accessors)
 	}
 
-	// A descriptor that DOES grant @app_scope (record) still enumerates the role
-	// plane — the gating is opt-out only for objects without broad operator reach.
+	// An object that DOES grant @app_scope (record) still enumerates the role plane —
+	// the gating is opt-out only for objects without broad operator reach.
 	withAppScope := findAccessor(t, adminOwnerSpec, "records")
 	if !strings.Contains(withAppScope, "'role'") {
-		t.Errorf("an @app_scope descriptor should still enumerate the role plane:\n%s", withAppScope)
+		t.Errorf("an @app_scope object should still enumerate the role plane:\n%s", withAppScope)
 	}
 }
 
 // An UNSCOPED public read (a public record served to the world) stays a bare
-// sentinel check with no plane predicate — the capability is opt-in, so records
-// remain byte-identical.
-func TestDescriptorUnscopedReadUnchanged(t *testing.T) {
-	s, err := Parse(reachGrantSpec) // record descriptor: read "public_project", no `for`
+// sentinel check with no plane predicate — the capability is opt-in.
+func TestUnscopedReadUnchanged(t *testing.T) {
+	s, err := Parse(reachGrantSpec) // record: mode access_mode = "public_project", no `for`
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

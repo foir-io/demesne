@@ -5,11 +5,12 @@ import (
 	"testing"
 )
 
-// The unified owner shape: both owner axes read ONE id column (owner_id) gated by
-// a kind column (owner_kind) — `via owner_id where owner_kind = "<kind>"` — the
-// same (kind, id) principal reference the grant edge uses, instead of two
-// type-specific owner columns.
-const ownerDiscriminatedSpec = `
+// The ViaColumn discriminator (the unified owner_id/owner_kind shape) on PURE owner
+// relations: several owner kinds share one id column, each gated by a constant in a
+// kind column. `relation owner: customer via owner_id where owner_kind = "customer"`.
+// This is the owner-axis counterpart of the discriminated grant store, and what the
+// owner_id+owner_kind unification adopts.
+const discriminatedOwnerSpec = `
 topology {
   level platform virtual
   level tenant   parent platform
@@ -31,19 +32,16 @@ subject service  { anchor project reach self identifies sub roles none }
 object record {
   table  records
   scoped tenant > project
-  descriptor {
-    owner       customer | service via owner_id where owner_kind = "customer"
-    admin owner admin via owner_id where owner_kind = "admin"
-    mode        via access_mode
-    modes       private + read "public" + list "customer"
-    grants      via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
-  }
-  permission view = @app_scope + @descriptor @rls maps select
+  relation owner:       customer | service via owner_id where owner_kind = "customer"
+  relation admin_owner: admin via owner_id where owner_kind = "admin"
+  relation grantee:     customer | admin via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
+  permission view = @app_scope(exclude admin_owner) + owner + admin_owner + mode access_mode = "public" + grantee:read   @rls maps select
+  permission edit = @app_scope(exclude admin_owner) + owner + admin_owner + grantee:write                               @rls maps update
 }
 `
 
-func TestDescriptorOwnerDiscriminated(t *testing.T) {
-	s, err := Parse(ownerDiscriminatedSpec)
+func TestDiscriminatedOwnerColumn(t *testing.T) {
+	s, err := Parse(discriminatedOwnerSpec)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -54,34 +52,32 @@ func TestDescriptorOwnerDiscriminated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("emit rls: %v", err)
 	}
-	sql := res.PolicySQL("authenticated")
+	sel := policyByCmd(res, "records", "SELECT").Using
 
-	// Customer owner: owner_id matched against the customer claim, gated by kind.
-	if !strings.Contains(sql, "(owner_id = (current_setting('request.jwt.claims', true)::json ->> 'customer_id') AND owner_kind = 'customer')") {
-		t.Errorf("missing discriminated customer-owner term:\n%s", sql)
+	// The owner terms gate the shared owner_id column by the kind column.
+	for _, want := range []string{
+		"(owner_id = (current_setting('request.jwt.claims', true)::json ->> 'customer_id') AND owner_kind = 'customer')",
+		"(owner_id = (current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'admin')",
+	} {
+		if !strings.Contains(sel, want) {
+			t.Errorf("select policy missing owner term %q:\n%s", want, sel)
+		}
 	}
-	// Admin owner: the SAME owner_id column matched against the sub claim, kind 'admin'.
-	if !strings.Contains(sql, "(owner_id = (current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'admin')") {
-		t.Errorf("missing discriminated admin-owner term:\n%s", sql)
+	// @app_scope(exclude admin_owner) excludes admin-owned rows by the kind column —
+	// existence-negation (operator-private), NOT a principal match.
+	if !strings.Contains(sel, "owner_kind IS DISTINCT FROM 'admin'") {
+		t.Errorf("select policy missing the discriminated admin-owner exclusion:\n%s", sel)
 	}
-	// Broad operator reach excludes admin-owned rows via the kind column (a NULL
-	// owner_kind — the unowned plane — still passes).
-	if !strings.Contains(sql, "(current_setting('request.jwt.claims', true)::json ->> 'customer_id') IS NULL AND owner_kind IS DISTINCT FROM 'admin'") {
-		t.Errorf("@app_scope not gated by owner_kind IS DISTINCT FROM 'admin':\n%s", sql)
-	}
-	// No stale legacy owner columns.
-	if strings.Contains(sql, "customer_id = (current_setting") || strings.Contains(sql, "admin_owner_id") {
-		t.Errorf("leaked a legacy owner column:\n%s", sql)
-	}
-}
 
-// The accessor (Expand) enumerates both owner axes off owner_id, kind-gated.
-func TestDescriptorOwnerDiscriminated_Accessor(t *testing.T) {
-	defs := findAccessor(t, ownerDiscriminatedSpec, "records")
-	if !strings.Contains(defs, "owner_id IS NOT NULL AND owner_kind = 'customer'") {
-		t.Errorf("accessor missing kind-gated customer owner branch:\n%s", defs)
-	}
-	if !strings.Contains(defs, "owner_id IS NOT NULL AND owner_kind = 'admin'") {
-		t.Errorf("accessor missing kind-gated admin owner branch:\n%s", defs)
+	// The accessor enumerator reports both owner kinds, present-gated by the kind col.
+	acc := grantFnByName(t, s, "records_accessors")
+	for _, want := range []string{
+		"'customer'::text AS principal_kind, owner_id AS principal_id",
+		"owner_id IS NOT NULL AND owner_kind = 'customer'",
+		"owner_id IS NOT NULL AND owner_kind = 'admin'",
+	} {
+		if !strings.Contains(acc, want) {
+			t.Errorf("accessor missing %q:\n%s", want, acc)
+		}
 	}
 }

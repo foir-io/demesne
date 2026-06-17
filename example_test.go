@@ -57,22 +57,33 @@ func TestExample_ParseAndShape(t *testing.T) {
 	}
 
 	doc := findObject(s, "doc")
-	if doc == nil || doc.Descriptor == nil {
-		t.Fatal("missing doc object / descriptor")
+	if doc == nil {
+		t.Fatal("missing doc object")
 	}
-	d := doc.Descriptor
-	if vc, ok := d.Owner.Repr.(ViaColumn); !ok || vc.Column != "owner_id" {
-		t.Errorf("descriptor owner repr: %#v", d.Owner.Repr)
+	// The doc's access is composed from plain relations + terms (no descriptor).
+	if r := findRelation(doc, "owner"); r == nil {
+		t.Fatal("doc.owner relation missing")
+	} else if vc, ok := r.Repr.(ViaColumn); !ok || vc.Column != "owner_id" {
+		t.Errorf("doc.owner repr: %#v", r.Repr)
 	}
-	if d.ModeCol != "visibility" {
-		t.Errorf("descriptor mode column: %q", d.ModeCol)
+	if r := findRelation(doc, "grantee"); r == nil {
+		t.Fatal("doc.grantee relation missing")
+	} else if vg, ok := r.Repr.(ViaGrant); !ok || vg.Table != "doc_acl" || vg.RecordCol != "doc_id" {
+		t.Errorf("doc.grantee grant edge: %#v", r.Repr)
 	}
-	if !hasMode(d, "private", "") || !hasMode(d, "read", "public_project") ||
-		!hasMode(d, "read", "public_world") || !hasMode(d, "list", "customer") {
-		t.Errorf("descriptor modes: %+v", d.Modes)
+	// The read permission carries the two public visibility mode terms.
+	view := findPerm(doc, "view")
+	if view == nil {
+		t.Fatal("doc.view permission missing")
 	}
-	if d.Grants == nil || d.Grants.Table != "doc_acl" || d.Grants.RecordCol != "doc_id" {
-		t.Errorf("descriptor grants edge: %+v", d.Grants)
+	var modes []string
+	for _, term := range view.Expr {
+		if term.ModeCol == "visibility" {
+			modes = append(modes, term.ModeVal)
+		}
+	}
+	if !eqStrs(modes, []string{"public_project", "public_world"}) {
+		t.Errorf("doc.view visibility mode terms: %v", modes)
 	}
 
 	ws := findObject(s, "workspace")

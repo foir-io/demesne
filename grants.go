@@ -61,23 +61,18 @@ func (g *Grant) EdgeTable() string             { return g.Table }
 func (g *Grant) GranteeColumn() string         { return g.GranteeCol }
 func (g *Grant) Granularity() GrantGranularity { return LevelReach }
 
-// *AclEdge is a per-row reachability grant (the descriptor's grant list).
-func (e *AclEdge) EdgeTable() string             { return e.Table }
-func (e *AclEdge) GranteeColumn() string         { return e.PrincipalCol }
-func (e *AclEdge) Granularity() GrantGranularity { return RowReach }
-
 // ReachGrants enumerates every reachability grant in the spec as one concept —
-// level-scoped grants and descriptor acl edges alike — irrespective of target
-// granularity or physical store. Order: level grants (declaration order), then
-// descriptor edges (object order).
+// level-scoped grants and per-row access-class grant relations alike — irrespective
+// of target granularity or physical store. Order: level grants (declaration order),
+// then grant relations (object order).
 func (s *Spec) ReachGrants() []ReachGrant {
 	var out []ReachGrant
 	for _, g := range s.Grants {
 		out = append(out, g)
 	}
 	for _, o := range s.Objects {
-		if o.Descriptor != nil && o.Descriptor.Grants != nil {
-			out = append(out, o.Descriptor.Grants)
+		if _, vg := grantRelation(o); vg != nil {
+			out = append(out, vg)
 		}
 	}
 	return out
@@ -90,21 +85,6 @@ func (s *Spec) ReachGrants() []ReachGrant {
 // thus the specialized, sargable SQL — stay each grant's own.
 func grantEdgeExists(edge string, conjuncts ...string) string {
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s)", edge, strings.Join(conjuncts, " AND "))
-}
-
-// grantDefinerName is the name of an object descriptor's grant-list EXISTS
-// definer. A BARE edge (one descriptor per store) keeps the historical
-// <table>_grants — byte-identical for any spec not using a discriminator. A
-// DISCRIMINATED edge (several descriptors sharing one store) is suffixed by the
-// object, so each descriptor gets its own collision-free definer over the shared
-// table. Both emit sites (the definer body + the RLS call) MUST agree on this, so
-// it lives here, computed once.
-func grantDefinerName(obj *Object) string {
-	g := obj.Descriptor.Grants
-	if g.DiscrimCol != "" {
-		return g.Table + "_grants_" + obj.Name
-	}
-	return g.Table + "_grants"
 }
 
 // *ViaGrant is a per-row reachability grant expressed as a GENERIC relation (the
@@ -197,30 +177,17 @@ func isGrantSelectorTerm(ident string, rels map[string]*Relation) bool {
 // store: auth.<store>_manage(p_type, p_id) → the matching kind's can-edit.
 func storeManageName(table string) string { return table + "_manage" }
 
-// objectGrantEdge returns the object's grant store — its descriptor `grants` edge
-// OR its `via grant` relation — as one ViaGrant-shaped view, or nil. It unifies the
-// two forms for the store-level helpers (@store_manage dispatch, store enumeration,
-// the accessor enumerator) so they work whether an object is descriptor-based or
-// pure-relation. An object has at most one (validation enforces it).
+// objectGrantEdge returns the object's grant store — its `via grant` relation — as
+// a ViaGrant view, or nil. The store-level helpers (@store_manage dispatch, store
+// enumeration, the accessor enumerator) use it so they need not re-find the relation.
 func objectGrantEdge(o *Object) *ViaGrant {
-	if o.Descriptor != nil && o.Descriptor.Grants != nil {
-		g := o.Descriptor.Grants
-		return &ViaGrant{
-			Table: g.Table, RecordCol: g.RecordCol, KindCol: g.KindCol,
-			PrincipalCol: g.PrincipalCol, AccessCol: g.AccessCol,
-			DiscrimCol: g.DiscrimCol, DiscrimVal: g.DiscrimVal,
-		}
-	}
-	if _, vg := grantRelation(o); vg != nil {
-		return vg
-	}
-	return nil
+	_, vg := grantRelation(o)
+	return vg
 }
 
 // storeDescriptors returns, in object order, the objects whose grant list is backed
-// by the given store table — descriptor objects AND pure-relation objects alike. For
-// a discriminated (shared) store these are the resource KINDS the store serves; the
-// write-moat dispatch CASEs over them.
+// by the given store table. For a discriminated (shared) store these are the
+// resource KINDS the store serves; the write-moat dispatch CASEs over them.
 func (s *Spec) storeDescriptors(table string) []*Object {
 	var out []*Object
 	for _, o := range s.Objects {

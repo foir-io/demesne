@@ -5,19 +5,19 @@ import (
 	"strings"
 )
 
-// Access runtime layer (the read/write dual of the emit layer). A descriptor
-// object's RLS policies + read definers are GENERATED from its descriptor; a
-// runtime that sets visibility, grants / revokes / lists access, or runs Expand
-// needs the SAME descriptor layout to build its statements. ResourceAccessSurface
-// is that projection plus the SQL shapes — one source of truth for the layout, so
-// a handler never re-derives it (and can't drift from the emitted policies).
+// Access runtime layer (the read/write dual of the emit layer). A content object's
+// RLS policies + read definers are GENERATED from its owner / grant / mode relations;
+// a runtime that sets visibility, grants / revokes / lists access, or runs Expand
+// needs the SAME layout to build its statements. ResourceAccessSurface is that
+// projection plus the SQL shapes — one source of truth for the layout, so a handler
+// never re-derives it (and can't drift from the emitted policies).
 //
 // Like the rest of the runtime glue (PointCheckSQL, ClaimsSetSQL) these are
 // stdlib-pure: they return SQL strings + ordered args; the caller executes them
 // under the principal's claims (db.WithRLS), so the DATABASE still enforces — this
 // is NOT a second evaluator. Authorization stays in RLS (the @store_manage
 // write-moat on the grant store, the SELECT predicate on reads); this layer only
-// owns how the statements are SHAPED from the descriptor.
+// owns how the statements are SHAPED from the spec.
 //
 // `created_at` is treated as the grant edge's standard audit column (every grant
 // is a timestamped fact); GrantInsert returns it and ListGrants selects it.
@@ -43,11 +43,10 @@ type ResourceAccessSurface struct {
 	accessorFn   string // qualified, e.g. auth.records_accessors
 }
 
-// ResourceAccessSurface projects an object's access descriptor into the runtime
-// surface: its physical layout (table, scope/mode columns, the grant edge's
-// columns + discriminator, the allowed grant kinds + read modes) and the
-// generated accessor enumerator's qualified name. Errors if the object has no
-// descriptor grant store.
+// ResourceAccessSurface projects an object's access model into the runtime surface:
+// its physical layout (table, scope/mode columns, the grant edge's columns +
+// discriminator, the allowed grant kinds + read modes) and the generated accessor
+// enumerator's qualified name. Errors if the object has no grant store.
 func (s *Spec) ResourceAccessSurface(object string) (*ResourceAccessSurface, error) {
 	obj := s.objectByName(object)
 	if obj == nil {
@@ -76,33 +75,20 @@ func (s *Spec) ResourceAccessSurface(object string) (*ResourceAccessSurface, err
 	for _, lvl := range obj.Scoped {
 		r.ScopeCols = append(r.ScopeCols, scopeCol(obj, lvl))
 	}
-	if d := obj.Descriptor; d != nil {
-		// Descriptor form: the mode column + read/list modes are declared in the block.
-		r.ModeCol = d.ModeCol
-		for _, m := range d.Modes {
-			switch m.Kind {
-			case "read":
-				r.readModes[m.Value] = true
-			case "list":
-				r.grantKinds[m.Value] = true
+	// Read modes come from the `mode <col> = "<v>"` terms in the object's permissions
+	// (the mode column + each sentinel); the grant kinds from the grant relation's
+	// declared types.
+	for _, pm := range obj.Perms {
+		for _, t := range pm.Expr {
+			if t.ModeCol != "" {
+				r.ModeCol = t.ModeCol
+				r.readModes[t.ModeVal] = true
 			}
 		}
-	} else {
-		// Pure-relation form: read modes come from the `mode <col> = "<v>"` terms in
-		// the object's permissions (the mode column + each sentinel), and the grant
-		// kinds from the grant relation's declared types.
-		for _, pm := range obj.Perms {
-			for _, t := range pm.Expr {
-				if t.ModeCol != "" {
-					r.ModeCol = t.ModeCol
-					r.readModes[t.ModeVal] = true
-				}
-			}
-		}
-		if rel, _ := grantRelation(obj); rel != nil {
-			for _, k := range rel.Types {
-				r.grantKinds[k] = true
-			}
+	}
+	if rel, _ := grantRelation(obj); rel != nil {
+		for _, k := range rel.Types {
+			r.grantKinds[k] = true
 		}
 	}
 	return r, nil

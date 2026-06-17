@@ -22,7 +22,7 @@ import (
 // per-spec rule.
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true}
-var knownBuiltins = map[string]bool{"app_scope": true, "descriptor": true, "scoped": true, "session": true, "open": true, "store_manage": true}
+var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -111,13 +111,13 @@ func Validate(s *Spec) error {
 	// recursive and loop forever at query time.
 	add(validateCrossObjectAcyclic(s))
 
-	// Descriptor grant stores: descriptors sharing a physical store MUST all be
+	// Grant stores: grant relations sharing a physical store MUST all be
 	// discriminated with DISTINCT discriminator values — otherwise their rows are
 	// indistinguishable and one object's grant would leak onto another's reads.
 	add(validateGrantStores(s))
 
 	// @store_manage write-moat: the governance object's table must be a discriminated
-	// grant store with ≥1 descriptor (the kinds the dispatch CASEs over).
+	// grant store with ≥1 grant relation (the kinds the dispatch CASEs over).
 	add(validateStoreManage(s))
 
 	// V10 — every PDP block targets a declared vocabulary (emit-site).
@@ -380,8 +380,16 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 		}
 	}
 
-	if o.Descriptor != nil {
-		errs = append(errs, validateDescriptor(s, o))
+	// At most one grant relation per object — two would collide in the generated
+	// definer naming (both `<table>_grants[_<obj>]`).
+	grantRels := 0
+	for _, r := range o.Relations {
+		if _, ok := r.Repr.(ViaGrant); ok {
+			grantRels++
+		}
+	}
+	if grantRels > 1 {
+		errs = append(errs, fmt.Errorf("object %q declares %d `via grant` relations — at most one is allowed", o.Name, grantRels))
 	}
 
 	for _, pm := range o.Perms {
@@ -390,94 +398,37 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 	return errors.Join(errs...)
 }
 
-// validateDescriptor checks the access-descriptor primitive (§5.3).
-func validateDescriptor(s *Spec, o *Object) error {
-	var errs []error
-	d := o.Descriptor
-
-	// Owner-origination: a descriptor must name an owner, and the owner axis
-	// must be inline (a FK column) so it short-circuits the hot path (§7).
-	if d.Owner == nil {
-		errs = append(errs, fmt.Errorf("line %d: object %q descriptor has no owner — there is no owner-origination for grants (§5.3)", d.Pos.Line, o.Name))
-	} else if _, ok := d.Owner.Repr.(ViaColumn); !ok {
-		errs = append(errs, fmt.Errorf("line %d: object %q descriptor owner must be an inline column axis", d.Pos.Line, o.Name))
-	}
-
-	// Modes are spec-declared by structural KIND (EID-265 WS2) — no fixed name
-	// allowlist. A column-driven mode (private baseline / read sentinel) needs a
-	// per-record mode column; a list mode needs a record_acl grant store.
-	hasListMode := false
-	hasColumnMode := false
-	for _, m := range d.Modes {
-		switch m.Kind {
-		case "private":
-			hasColumnMode = true
-		case "read":
-			if m.Value == "" {
-				errs = append(errs, fmt.Errorf("line %d: object %q descriptor read mode needs a sentinel value (read '<value>')", m.Pos.Line, o.Name))
-			}
-			// An actor-scoped read (`read '<value>' for <subject>`) must name a
-			// declared subject — its plane (owner-claim-bearing vs not) decides
-			// whether the sentinel requires the customer claim present or absent.
-			if m.Scope != "" {
-				if sub := s.subjectByName(m.Scope); sub == nil {
-					errs = append(errs, fmt.Errorf("line %d: object %q descriptor read mode scope %q is not a declared subject", m.Pos.Line, o.Name, m.Scope))
-				}
-			}
-			hasColumnMode = true
-		case "list":
-			if m.Value == "" {
-				errs = append(errs, fmt.Errorf("line %d: object %q descriptor list mode needs a principal kind (list '<kind>')", m.Pos.Line, o.Name))
-			} else if hasListMode {
-				// The PRIMARY list kind is read against the descriptor's owner principal
-				// and its value is a free principal_kind label (legacy). Each ADDITIONAL
-				// kind (2C multi-kind) is read against THAT kind's own subject claim, so
-				// it must name a claim-bearing subject — otherwise it would emit a term
-				// that can never match (fail-closed on misconfig).
-				if sub := s.subjectByName(m.Value); sub == nil || sub.Identifies == "" {
-					errs = append(errs, fmt.Errorf("line %d: object %q additional descriptor list kind %q is not a claim-bearing subject (no `subject %s { ... identifies <claim> }`)", m.Pos.Line, o.Name, m.Value, m.Value))
-				}
-			}
-			hasListMode = true
-		default:
-			errs = append(errs, fmt.Errorf("line %d: object %q descriptor has unknown mode kind %q", m.Pos.Line, o.Name, m.Kind))
-		}
-	}
-
-	// The explicit-list modes need a record_acl edge to back them.
-	if hasListMode && d.Grants == nil {
-		errs = append(errs, fmt.Errorf("line %d: object %q descriptor declares a list mode but no `grants via edge record_acl(...)` store", d.Pos.Line, o.Name))
-	}
-	// Column-driven modes (private baseline / read sentinels) need a per-record
-	// mode column.
-	if hasColumnMode && d.ModeCol == "" {
-		errs = append(errs, fmt.Errorf("line %d: object %q descriptor uses column modes (private/read) but declares no `mode via <column>`", d.Pos.Line, o.Name))
-	}
-	return errors.Join(errs...)
-}
-
-// validateGrantStores enforces the discriminated-edge contract: when more than
-// one descriptor points its grant list at the SAME physical table, every such
-// descriptor must be discriminated (`where <col> = "<val>"`), all on the SAME
-// discriminator column, with DISTINCT values. Otherwise two object types' grant
-// rows are indistinguishable in the shared store and a grant on one would be read
-// as a grant on another (a cross-type leak). A table used by exactly one
-// descriptor may be bare or discriminated — both are fine.
+// validateGrantStores enforces the discriminated-store contract for the access-class
+// grant RELATIONS (`via grant`): when more than one object points its grant relation
+// at the SAME physical table, every such relation must be discriminated
+// (`where <col> = "<val>"`), all on the SAME discriminator column, with DISTINCT
+// values — otherwise two object types' grant rows are indistinguishable in the shared
+// store and a grant on one would be read as a grant on another (a cross-type leak). A
+// table used by exactly one grant relation may be bare or discriminated. Also: every
+// grantee KIND (the relation's types) must name a claim-bearing subject, else the
+// grant term it emits can never match (fail-closed on misconfig).
 func validateGrantStores(s *Spec) error {
 	type edgeRef struct {
 		obj *Object
-		g   *AclEdge
+		g   *ViaGrant
 	}
 	byTable := map[string][]edgeRef{}
 	var errs []error
 	for _, o := range s.Objects {
-		if o.Descriptor == nil || o.Descriptor.Grants == nil {
+		rel, g := grantRelation(o)
+		if g == nil {
 			continue
 		}
-		g := o.Descriptor.Grants
 		// A discriminator must be complete (both column and value).
 		if (g.DiscrimCol == "") != (g.DiscrimVal == "") {
-			errs = append(errs, fmt.Errorf("object %q descriptor grants: a discriminator needs both a column and a value (`where <col> = \"<val>\"`)", o.Name))
+			errs = append(errs, fmt.Errorf("object %q grant relation: a discriminator needs both a column and a value (`where <col> = \"<val>\"`)", o.Name))
+		}
+		// Every grantee kind must be a claim-bearing subject (the principal a grant of
+		// that kind is read against).
+		for _, k := range rel.Types {
+			if sub := s.subjectByName(k); sub == nil || sub.Identifies == "" {
+				errs = append(errs, fmt.Errorf("object %q grant relation kind %q is not a claim-bearing subject (no `subject %s { ... identifies <claim> }`)", o.Name, k, k))
+			}
 		}
 		byTable[g.Table] = append(byTable[g.Table], edgeRef{o, g})
 	}
@@ -489,11 +440,11 @@ func validateGrantStores(s *Spec) error {
 		seen := map[string]string{} // discrim value -> first object that used it
 		for _, r := range refs {
 			if r.g.DiscrimCol == "" {
-				errs = append(errs, fmt.Errorf("object %q shares grant store %q with another descriptor but is not discriminated — add `where <col> = \"<val>\"`", r.obj.Name, table))
+				errs = append(errs, fmt.Errorf("object %q shares grant store %q with another grant relation but is not discriminated — add `where <col> = \"<val>\"`", r.obj.Name, table))
 				continue
 			}
 			if r.g.DiscrimCol != col {
-				errs = append(errs, fmt.Errorf("descriptors sharing grant store %q must discriminate on the SAME column (%q vs %q)", table, col, r.g.DiscrimCol))
+				errs = append(errs, fmt.Errorf("grant relations sharing store %q must discriminate on the SAME column (%q vs %q)", table, col, r.g.DiscrimCol))
 			}
 			if prev, ok := seen[r.g.DiscrimVal]; ok {
 				errs = append(errs, fmt.Errorf("objects %q and %q share grant store %q with the SAME discriminator value %q — values must be distinct", prev, r.obj.Name, table, r.g.DiscrimVal))
@@ -505,9 +456,9 @@ func validateGrantStores(s *Spec) error {
 }
 
 // validateStoreManage checks the @store_manage write-moat builtin: the object
-// using it must be backed by a discriminated grant store with at least one
-// descriptor (the resource KINDS the generated dispatch CASEs over). Without a
-// discriminator the dispatch has no column to switch on; without descriptors it
+// using it must be backed by a discriminated grant store with at least one grant
+// relation (the resource KINDS the generated dispatch CASEs over). Without a
+// discriminator the dispatch has no column to switch on; without grant relations it
 // has nothing to dispatch to.
 func validateStoreManage(s *Spec) error {
 	var errs []error
@@ -674,10 +625,7 @@ func validatePerm(s *Spec, o *Object, pm *Perm, rels map[string]*Relation) error
 			}
 		case t.Builtin != "":
 			if !knownBuiltins[t.Builtin] {
-				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|descriptor)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
-			}
-			if t.Builtin == "descriptor" && o.Descriptor == nil {
-				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @descriptor but object %q has no descriptor block (§5.3)", pm.Pos.Line, o.Name, pm.Verb, o.Name))
+				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|scoped|session|open|store_manage)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
 			}
 			// `@app_scope(exclude <rel>)` — the excluded axis must be a declared owner
 			// column relation (its presence is what gets excluded).

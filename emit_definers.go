@@ -238,46 +238,6 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		}
 	}
 
-	// Access-descriptor grant fns: an object with a descriptor grant store gets
-	// auth.<store>_grants(<principal>, record, access) — EXISTS over the record_acl
-	// store for the spec-declared principal kind at the requested access.
-	for _, obj := range s.Objects {
-		if obj.Descriptor == nil || obj.Descriptor.Grants == nil {
-			continue
-		}
-		// The principal kinds the grant list filters on are spec-declared by the
-		// descriptor's `list` modes (EID-265 WS2 was single-kind; Increment 2C lets
-		// one resource be granted to SEVERAL kinds — e.g. a record to both customers
-		// and admins). One definer per kind: same reachability-grant shape, keyed on
-		// the kind's own grantee param + principal-kind gate.
-		g := obj.Descriptor.Grants
-		for i, kind := range descriptorListKinds(obj.Descriptor) {
-			name, param, _ := s.grantKindBinding(obj, kind, i == 0)
-			if seen[name] {
-				continue
-			}
-			seen[name] = true
-			// This grant's conjuncts are the row target, the principal-kind gate, the
-			// grantee match, and the access — plus a constant discriminator when
-			// several descriptors share this store.
-			conjuncts := []string{fmt.Sprintf("%s = p_%s_id", g.RecordCol, obj.Name)}
-			if g.DiscrimCol != "" {
-				conjuncts = append(conjuncts, fmt.Sprintf("%s = '%s'", g.DiscrimCol, g.DiscrimVal))
-			}
-			conjuncts = append(conjuncts,
-				fmt.Sprintf("%s = '%s'", g.KindCol, kind),
-				fmt.Sprintf("%s = p_%s_id", g.PrincipalCol, param),
-				fmt.Sprintf("%s = p_access", g.AccessCol),
-			)
-			body := grantEdgeExists(g.Table, conjuncts...)
-			out = append(out, GenFn{
-				Name: name,
-				Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", param, obj.Name),
-				Body: body,
-			})
-		}
-	}
-
 	// Access-class grant RELATION definers (the de-prescribed form of the descriptor
 	// grant list): an object with a `via grant` relation gets the SAME per-kind
 	// auth.<store>_grants[_<kind>](<principal>, record, access) EXISTS the descriptor
@@ -313,20 +273,17 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	}
 
 	// Accessor enumerators (Expand — the read-side dual of the RLS predicate): for
-	// every descriptor object with a grant store, auth.<table>_accessors(p_id)
-	// returns the rows (source, principal_kind, principal_id, access) of every
-	// NAMED accessor the SELECT predicate admits — owner column(s), the explicit
-	// grant rows, and the role plane (role-bearing admins reachable via @app_scope).
-	// "Public = everyone" is a category (the row's mode), not enumerated, so it is
-	// folded in by the caller as a flag, not a row. Built from the SAME descriptor
-	// the predicate compiles from (owner axes + grant edge + admin-owner gate + the
-	// role store), so Expand agrees with <table>_select by construction — no second
+	// every content object with a grant store, auth.<table>_accessors(p_id) returns
+	// the rows (source, principal_kind, principal_id, access) of every NAMED accessor
+	// the SELECT predicate admits — owner column(s), the explicit grant rows, and the
+	// role plane (role-bearing admins reachable via @app_scope). "Public = everyone"
+	// is a category (the row's mode), not enumerated, so it is folded in by the caller
+	// as a flag, not a row. Built from the SAME composed relations the predicate
+	// compiles from, so Expand agrees with <table>_select by construction — no second
 	// evaluator. SECURITY DEFINER + set-returning; the handler calls it under the
 	// caller's claims.
 	for _, obj := range s.Objects {
-		hasDesc := obj.Descriptor != nil && obj.Descriptor.Grants != nil
-		_, vg := grantRelation(obj)
-		if !hasDesc && vg == nil {
+		if _, vg := grantRelation(obj); vg == nil {
 			continue
 		}
 		name := obj.Table + "_accessors"
@@ -334,11 +291,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			continue
 		}
 		seen[name] = true
-		if hasDesc {
-			out = append(out, s.accessorDefiner(obj))
-		} else {
-			out = append(out, s.pureAccessorDefiner(obj))
-		}
+		out = append(out, s.pureAccessorDefiner(obj))
 	}
 
 	// Structural accessor enumerators (Expand over the role/staff CONTROL plane):
@@ -673,13 +626,6 @@ func (s *Spec) isPlatformRoleSubject(sub *Subject) bool {
 		sub.Reach != "grant" && s.levelIsVirtual(sub.Anchor)
 }
 
-// descriptorPrincipal returns the name of the claim-bearing owner principal for
-// an object's descriptor / owner axis — the `reach self` + roles subject at the
-// object's leaf level (EID-265 WS2). It drives the generated grant + realtime-gate
-// signatures so they name the spec's ACTUAL principal (Foir: "customer"; the
-// worked example: "member"), instead of assuming a customer principal. Falls back
-// to the first declared owner type — a descriptor with no claim-bearing subject is
-// rejected by reqClaim before any claim-bearing predicate is emitted.
 // selectUsesAppScope reports whether the object's SELECT permission references the
 // @app_scope builtin — the broad operator-plane read reach. The accessor
 // enumerator is the read-side dual of <table>_select, so it gates the role plane
@@ -701,14 +647,17 @@ func (s *Spec) selectUsesAppScope(obj *Object) bool {
 	return false
 }
 
-func (s *Spec) descriptorPrincipal(obj *Object) string {
-	// Prefer the descriptor's DECLARED owner subject. For a customer-owned
-	// descriptor this equals the project leaf's owner subject (customer), so
-	// records/files stay byte-identical; for an admin-plane descriptor
-	// (`owner admin via created_by`) it correctly yields `admin` rather than the
-	// leaf's customer owner.
-	if obj.Descriptor != nil && obj.Descriptor.Owner != nil && len(obj.Descriptor.Owner.Types) > 0 {
-		return obj.Descriptor.Owner.Types[0]
+// ownerPrincipalName returns the principal-kind name of the object's owner axis —
+// the first declared type of the relation named "owner" (an owner column), else the
+// leaf owner subject, else "principal". Drives the kernel reachability-gate
+// signature (auth.<principal>_can_access_<obj>).
+func (s *Spec) ownerPrincipalName(obj *Object) string {
+	for _, r := range obj.Relations {
+		if r.Name == "owner" && len(r.Types) > 0 {
+			if _, ok := r.Repr.(ViaColumn); ok {
+				return r.Types[0]
+			}
+		}
 	}
 	if sub := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); sub != nil {
 		return sub.Name
@@ -716,56 +665,11 @@ func (s *Spec) descriptorPrincipal(obj *Object) string {
 	return "principal"
 }
 
-// accessorDefiner builds the Expand enumerator auth.<table>_accessors(p_id) for a
-// descriptor object: a set-returning SECURITY DEFINER listing every NAMED
-// accessor the SELECT predicate admits, each tagged with its source. It is the
-// read-side inverse of emitDescriptor — owner column(s) → OWNER rows, the grant
-// edge → GRANT rows, the role store (gated by the admin-owner exclusion, exactly
-// as @app_scope is) → ROLE rows — so the enumerated set equals who <table>_select
-// admits (modulo the `public` category, surfaced as a flag, not a member list).
-// Owners report 'write' (full control), role-reachers 'read' (the category floor;
-// the grant rows carry their own revocable access verbatim).
-func (s *Spec) accessorDefiner(obj *Object) GenFn {
-	d := obj.Descriptor
-	owner, _ := d.Owner.Repr.(ViaColumn)
-
-	var branches []string
-	// OWNER — the (customer-plane) owner column; discriminated → gated by kind.
-	branches = append(branches, ownerAccessorBranch(obj.Table, s.descriptorPrincipal(obj), owner, true))
-
-	// OWNER — the optional admin-plane owner axis (operator-private rows).
-	// adminExcl is the "not admin-owned" condition (r.-prefixed) used to gate the
-	// role plane below, mirroring @app_scope.
-	var adminExcl string
-	if d.AdminOwner != nil {
-		if ac, ok := d.AdminOwner.Repr.(ViaColumn); ok {
-			adminKind := "admin"
-			if len(d.AdminOwner.Types) > 0 {
-				adminKind = d.AdminOwner.Types[0]
-			}
-			branches = append(branches, ownerAccessorBranch(obj.Table, adminKind, ac, false))
-			adminExcl = ownerExclCond(ac)
-		}
-	}
-
-	// GRANT — the explicit acl rows (the only revocable accessors), filtered by the
-	// descriptor's discriminator when the store is shared.
-	branches = append(branches, grantAccessorBranch(objectGrantEdge(obj)))
-
-	// ROLE — the role plane (see roleAccessorBranch).
-	if rb, ok := s.roleAccessorBranch(obj, adminExcl); ok {
-		branches = append(branches, rb)
-	}
-
-	return accessorGenFn(obj.Table, branches)
-}
-
 // pureAccessorDefiner is the de-prescribed accessorDefiner: it sources the OWNER
 // axes from the SELECT permission's owner (ViaColumn) relation terms, the GRANT
 // rows from the object's `via grant` relation, and the admin-owner exclusion from
 // the `@app_scope(exclude <rel>)` term — emitting the SAME branches in the same
-// order as the descriptor form, so a pure-relation object's accessor enumerator is
-// byte-identical (proven by TestPureAccessor_ByteIdenticalToDescriptor).
+// order the SELECT predicate composes — owner branch(es), then GRANT, then ROLE.
 func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 	rels := map[string]*Relation{}
 	for _, r := range obj.Relations {
@@ -1111,15 +1015,10 @@ func (s *Spec) kernelDefiner(obj *Object) (GenFn, error) {
 			}
 		}
 	}
-	if ownerCol == "" && obj.Descriptor != nil && obj.Descriptor.Owner != nil {
-		if vc, ok := obj.Descriptor.Owner.Repr.(ViaColumn); ok {
-			ownerCol = vc.Column
-		}
-	}
 	if ownerCol == "" {
 		return GenFn{}, fmt.Errorf("object %q has a @kernel perm but no owner column", obj.Name)
 	}
-	principal := s.descriptorPrincipal(obj)
+	principal := s.ownerPrincipalName(obj)
 	body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s r WHERE r.id = p_%s_id AND r.%s = p_%s_id)", obj.Table, obj.Name, ownerCol, principal)
 	return GenFn{
 		Name: fmt.Sprintf("%s_can_access_%s", principal, obj.Name),

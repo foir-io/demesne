@@ -5,16 +5,15 @@ import (
 	"testing"
 )
 
-// Primitive 1 of the descriptor→pure-relation epic: the access-class GRANT RELATION
-// (`via grant`). It is the de-prescribed form of the descriptor's `grants` list —
-// a generic relation over a 4-column ACL edge, referenced per-permission with an
-// access class (`grantee:read`). These tests prove it emits BYTE-IDENTICAL SQL to
-// the descriptor grant list, so a content object can drop the descriptor for plain
-// relations as a provable refactor.
+// The access-class GRANT RELATION (`via grant`): a generic relation over a
+// 4-column ACL edge, referenced per-permission with an access class
+// (`grantee:read`). These golden tests pin the emitted SQL: one EXISTS definer
+// per grantee kind (discriminated when several relations share one physical
+// store) and the per-class RLS calls.
 
-// The control: the descriptor grant list (customer + admin) over a discriminated
-// resource_acl store, with owner + admin-owner + a read mode.
-const grantRelControlSpec = `
+// A pure-relation record: owner + admin_owner + a customer|admin grant relation
+// over the discriminated resource_acl store, with a binary read mode.
+const grantRelPureSpec = `
 topology {
   level platform virtual
   level tenant   parent platform
@@ -36,56 +35,12 @@ subject service  { anchor project reach self identifies sub roles none }
 object record {
   table  records
   scoped tenant > project
-  descriptor {
-    owner       customer | service via customer_id
-    admin owner admin via admin_owner_id
-    mode        via access_mode
-    modes       private + read "public" + list "customer" + list "admin"
-    grants      via edge resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
-  }
-  permission view   = @app_scope + @descriptor @rls maps select
-  permission edit   = @app_scope + @descriptor @rls maps update
-  permission delete = @app_scope + @descriptor @rls maps delete
-}
-`
-
-// The hybrid: identical, except the grant LIST is expressed as a `via grant`
-// RELATION referenced with an access class. Owner/admin-owner/mode stay in the
-// descriptor (those are other primitives); only the grant is de-prescribed. Because
-// @descriptor (owner+admin-owner+read) flattens first and grantee:<class> appends
-// after, the final OR order matches the control's — so the policy is byte-identical.
-const grantRelHybridSpec = `
-topology {
-  level platform virtual
-  level tenant   parent platform
-  level project  parent tenant
-}
-vocabulary admin { permission c:r  preset pa @ project = c:r }
-vocabulary cust  { permission self:read }
-rolestore admin {
-  assignments ra
-  kind        principal_kind = "admin"
-  subject     principal_id
-  scope       tenant_id project_id
-  rolejoin    role_id roles id key
-  revoked     revoked_at
-}
-subject admin    { anchor tenant  reach descendants identifies sub roles configurable admin binds admin }
-subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
-subject service  { anchor project reach self identifies sub roles none }
-object record {
-  table  records
-  scoped tenant > project
-  relation grantee: customer | admin via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
-  descriptor {
-    owner       customer | service via customer_id
-    admin owner admin via admin_owner_id
-    mode        via access_mode
-    modes       private + read "public"
-  }
-  permission view   = @app_scope + @descriptor + grantee:read   @rls maps select
-  permission edit   = @app_scope + @descriptor + grantee:write  @rls maps update
-  permission delete = @app_scope + @descriptor + grantee:delete @rls maps delete
+  relation owner:       customer | service via customer_id
+  relation admin_owner: admin via admin_owner_id
+  relation grantee:     customer | admin via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
+  permission view   = @app_scope(exclude admin_owner) + owner + admin_owner + mode access_mode = "public" + grantee:read   @rls maps select
+  permission edit   = @app_scope(exclude admin_owner) + owner + admin_owner + grantee:write                               @rls maps update
+  permission delete = @app_scope(exclude admin_owner) + owner + admin_owner + grantee:delete                              @rls maps delete
 }
 `
 
@@ -113,54 +68,15 @@ func definerNames(dfns []GenFn) string {
 	return strings.Join(ns, ", ")
 }
 
-// The grant relation reproduces the descriptor grant list byte-for-byte: same RLS
-// policy SQL and the same per-kind grant definers. This is the refactor gate.
-func TestGrantRelation_ByteIdenticalToDescriptor(t *testing.T) {
-	ctrl, err := Parse(grantRelControlSpec)
-	if err != nil {
-		t.Fatalf("parse control: %v", err)
-	}
-	if err := Validate(ctrl); err != nil {
-		t.Fatalf("validate control: %v", err)
-	}
-	hyb, err := Parse(grantRelHybridSpec)
-	if err != nil {
-		t.Fatalf("parse hybrid: %v", err)
-	}
-	if err := Validate(hyb); err != nil {
-		t.Fatalf("validate hybrid: %v", err)
-	}
-
-	ctrlRLS, err := ctrl.EmitRLS()
-	if err != nil {
-		t.Fatalf("emit ctrl rls: %v", err)
-	}
-	hybRLS, err := hyb.EmitRLS()
-	if err != nil {
-		t.Fatalf("emit hyb rls: %v", err)
-	}
-	cSQL := ctrlRLS.PolicySQL("authenticated")
-	hSQL := hybRLS.PolicySQL("authenticated")
-	if cSQL != hSQL {
-		t.Errorf("policy SQL differs between descriptor and grant-relation forms:\n--- descriptor ---\n%s\n--- grant relation ---\n%s", cSQL, hSQL)
-	}
-
-	// The per-kind grant definers must be byte-identical too (same names, bodies).
-	for _, name := range []string{"resource_acl_grants_record", "resource_acl_grants_record_admin"} {
-		c := grantFnByName(t, ctrl, name)
-		h := grantFnByName(t, hyb, name)
-		if c != h {
-			t.Errorf("grant definer %q differs:\n--- descriptor ---\n%s\n--- grant relation ---\n%s", name, c, h)
-		}
-	}
-}
-
-// The grant relation emits the expected SQL on its own (not just relative to the
-// descriptor): one EXISTS definer per kind, discriminated, and per-class RLS calls.
+// The grant relation emits the expected SQL: one EXISTS definer per kind,
+// discriminated, and per-class RLS calls.
 func TestGrantRelation_EmitsPerKindDefinersAndCalls(t *testing.T) {
-	s, err := Parse(grantRelHybridSpec)
+	s, err := Parse(grantRelPureSpec)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
 	}
 	dfns, err := s.EmitDefiners()
 	if err != nil {
@@ -201,13 +117,13 @@ func TestGrantRelation_EmitsPerKindDefinersAndCalls(t *testing.T) {
 }
 
 // A bare `grantee` (no access class) defaults to the op's class — read on select,
-// write on update — exactly as the descriptor grant list does.
+// write on update.
 func TestGrantRelation_BareDefaultsToOpClass(t *testing.T) {
 	spec := strings.NewReplacer(
-		"@app_scope + @descriptor + grantee:read", "@app_scope + @descriptor + grantee",
-		"@app_scope + @descriptor + grantee:write", "@app_scope + @descriptor + grantee",
-		"@app_scope + @descriptor + grantee:delete", "@app_scope + @descriptor + grantee",
-	).Replace(grantRelHybridSpec)
+		"grantee:read", "grantee",
+		"grantee:write", "grantee",
+		"grantee:delete", "grantee",
+	).Replace(grantRelPureSpec)
 	s, err := Parse(spec)
 	if err != nil {
 		t.Fatalf("parse: %v", err)

@@ -5,6 +5,38 @@ import (
 	"testing"
 )
 
+// findAccessor returns the CreateSQL of the auth.<table>_accessors definer, or
+// fails if the spec didn't emit one.
+func findAccessor(t *testing.T, spec string, table string) string {
+	t.Helper()
+	s, err := Parse(spec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	defs, err := s.EmitDefiners()
+	if err != nil {
+		t.Fatalf("emit definers: %v", err)
+	}
+	for _, d := range defs {
+		if d.Name == table+"_accessors" {
+			return d.CreateSQL()
+		}
+	}
+	t.Fatalf("no %s_accessors definer emitted; definers: %v", table, defNames(defs))
+	return ""
+}
+
+func defNames(defs []GenFn) []string {
+	out := make([]string, len(defs))
+	for i, d := range defs {
+		out[i] = d.Name
+	}
+	return out
+}
+
 // A faithful subset of Foir's control plane: the platform/admin role planes, the
 // impersonation grant, and the project + tenant level entities.
 const structAccessorSpec = `

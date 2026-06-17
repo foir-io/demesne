@@ -205,11 +205,10 @@ type Object struct {
 	Level      string   // non-empty if this object IS a topology level node (its
 	                     // own pk = the level; self column is `id`, operator is
 	                     // ungated) — the admin/level-entity plane (e.g. projects)
-	Scoped     []string // levelchain — the root-anchored prefix of the chain
-	Relations  []*Relation
-	Descriptor *Descriptor // optional per-record access descriptor (§5.3)
-	Perms      []*Perm
-	Pos        Pos
+	Scoped    []string // levelchain — the root-anchored prefix of the chain
+	Relations []*Relation
+	Perms     []*Perm
+	Pos       Pos
 }
 
 // IsLevelEntity reports whether the object is the entity for a topology level
@@ -221,79 +220,6 @@ func (o *Object) IsLevelEntity() bool { return o.Level != "" }
 // generated accessor enumerator (auth.<table>_accessors) and a ResourceAccessSurface.
 // Lets callers (handlers) enumerate grant objects without caring which form is used.
 func (o *Object) HasGrantStore() bool { return objectGrantEdge(o) != nil }
-
-// Descriptor is the per-record ownership / ACL primitive (RFC §5.3) that
-// subsumes sharing (EID-263). It declares:
-//   - Owner — who may EDIT the descriptor (owner-origination; an inline FK axis,
-//     distinct from the grantees);
-//   - Modes — the spec-declared access modes the object supports (an owner-only
-//     baseline, column read-gates, and explicit principal-kind grant lists), with
-//     the per-record selection stored in ModeCol;
-//   - Grants — the record_acl edge backing the explicit lists, principal-kind-
-//     tagged so admins and customers coexist without merging their stores.
-//
-// A permission references the whole descriptor via the `@descriptor` term; the
-// RLS emitter (step 3) expands it to inline (owner, public) + definer (the
-// list) predicates resolved at the permission's access class.
-type Descriptor struct {
-	Owner   *Relation // the owner axis (typeref via a FK column)
-	ModeCol string    // per-record mode column; "" if modes aren't column-driven
-	Modes   []Mode    // supported modes
-	Grants  *AclEdge  // record_acl edge; nil if no explicit list
-	// AdminOwner is an OPTIONAL second owner axis for the ADMIN plane: a record
-	// owned by the admin who created it (admin_owner_id = the admin's claim),
-	// operator-PRIVATE — the broad app/service reach (@app_scope) is gated to
-	// EXCLUDE admin-owned rows so one operator can't see another's. nil when the
-	// object has no admin-owned records (byte-identical to before).
-	AdminOwner *Relation
-	Pos        Pos
-}
-
-// Mode is one supported access mode of a descriptor. Modes are spec-declared
-// (EID-265 WS2) — the engine carries NO fixed vocabulary (no private/public/
-// customers/admins allowlist, no project/world scope words):
-//   - "private": the owner-only baseline. Emits no extra predicate (the owner
-//     axis already covers it); decorative — documents that the mode column's
-//     default value is a recognised mode.
-//   - "read":    a column read-gate. Opens READ when ModeCol = Value (the declared
-//     sentinel). Generalises the former public(project)/public(world) — the
-//     "scope" was only ever a second sentinel string, so it is one now.
-//   - "list":    an explicit grant list over the record_acl edge, filtered to the
-//     principal kind Value. Opens read/write/delete at the permission's access
-//     class. Generalises the former customers/admins list modes.
-type Mode struct {
-	Kind  string // "private" | "read" | "list"
-	Value string // read → the ModeCol sentinel; list → the principal kind; "" for private
-	// Scope (read mode only) optionally confines the public read to a principal
-	// PLANE: `read "<sentinel>" for <subject>`. Empty = world (the default, e.g. a
-	// public record served by the public API). A non-empty scope emits an extra
-	// plane predicate — `for admin` opens the sentinel to operators only (no
-	// customer claim), so e.g. a "public" note is visible project-wide to operators
-	// but never leaks to customers / the public API.
-	Scope string
-	Pos   Pos
-}
-
-// AclEdge is the `record_acl(record_col, kind_col, principal_col, access_col)`
-// grant store: one row per (record, principal-kind, principal, access level).
-//
-// An OPTIONAL discriminator (`where <col> = "<val>"`) lets MULTIPLE descriptors
-// share ONE physical store, each filtering its rows by a constant — the general
-// capability behind a unified resource_acl(resource_type, resource_id, …). The
-// engine does NOT prescribe one-table-vs-many: a bare edge is one store per
-// object (byte-identical to before), a discriminated edge is a shared store; the
-// spec author chooses. When set, every generated grant predicate ANDs
-// `<DiscrimCol> = '<DiscrimVal>'`, and the grant definer is named per object so a
-// shared table yields one collision-free definer per descriptor.
-type AclEdge struct {
-	Table        string
-	RecordCol    string
-	KindCol      string
-	PrincipalCol string
-	AccessCol    string
-	DiscrimCol   string // "" when the edge is not discriminated (single-object store)
-	DiscrimVal   string // the constant this descriptor's rows carry in DiscrimCol
-}
 
 // Relation is an edge declaration: a name, the target type(s), how it is
 // physically represented, and (for record→record edges) its kind.

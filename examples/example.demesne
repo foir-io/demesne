@@ -9,7 +9,7 @@
 //
 // Topology: org (virtual root) → tenant → workspace. A document lives in a
 // workspace; staff hold ranked roles; members own documents and share them via
-// an access descriptor.
+// generic owner / grant / mode relations (no prescriptive descriptor block).
 // =============================================================================
 
 topology {
@@ -65,23 +65,19 @@ object workspace {
   permission edit = tenant->owner + @session(admin)     @rls maps update
 }
 
-// A document: owner-origination + per-record mode + an app-managed grant store
-// (the access descriptor). @kernel adds the realtime/collab reachability gate.
+// A document: owner-origination + per-record visibility modes + an app-managed
+// grant store — composed from plain relations + terms (no prescriptive descriptor
+// block). @kernel adds the realtime/collab reachability gate.
 object doc {
   table  docs
   scoped tenant > workspace
-  relation tenant: tenant via tenant_id
-  relation owner:  member via owner_id
-  descriptor {
-    owner  member via owner_id
-    mode   via visibility
-    modes  private + read "public_project" + read "public_world" + list "customer"
-    grants via edge doc_acl(doc_id, principal_kind, principal_id, access)
-  }
-  permission view    = @descriptor   @rls,kernel maps select
-  permission edit    = @descriptor   @rls        maps update
-  permission create  = @descriptor   @rls        maps insert
-  permission delete  = @descriptor   @rls        maps delete
+  relation tenant:  tenant via tenant_id
+  relation owner:   member via owner_id
+  relation grantee: member via grant doc_acl(doc_id, principal_kind, principal_id, access)
+  permission view    = owner + mode visibility = "public_project" + mode visibility = "public_world" + grantee:read   @rls,kernel maps select
+  permission edit    = owner + grantee:write   @rls maps update
+  permission create  = owner                   @rls maps insert
+  permission delete  = owner + grantee:delete  @rls maps delete
   permission publish = docs:publish  @pdp
 }
 

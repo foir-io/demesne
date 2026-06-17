@@ -564,14 +564,12 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 			return nil, err
 		}
 		base := s.claim(custClaim) + " IS NULL"
-		// The broad app/service reach may EXCLUDE rows owned via an owner axis, so an
-		// admin-owned row stays reachable only by its owning admin + grants
-		// (operator-private). The excluded axis is named explicitly in the pure model
-		// (`@app_scope(exclude admin_owner)`); for a legacy descriptor object it is
-		// the descriptor's AdminOwner. Either resolves to the owner ViaColumn whose
-		// PRESENCE is excluded — emitted as existence-negation (NOT principal-match),
-		// the soundness invariant: one operator never sees another's admin-owned rows.
-		var exclVC *ViaColumn
+		// The broad app/service reach may EXCLUDE rows owned via an owner axis
+		// (`@app_scope(exclude admin_owner)`), so an admin-owned row stays reachable
+		// only by its owning admin + grants (operator-private). The excluded axis is an
+		// owner ViaColumn whose PRESENCE is excluded — emitted as existence-negation
+		// (NOT principal-match), the soundness invariant: one operator never sees
+		// another's admin-owned rows.
 		if t.ExcludeRel != "" {
 			r := rels[t.ExcludeRel]
 			if r == nil {
@@ -581,25 +579,16 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 			if !ok {
 				return nil, fmt.Errorf("@app_scope(exclude %q): excluded relation must be an owner column", t.ExcludeRel)
 			}
-			exclVC = &vc
-		} else if obj.Descriptor != nil && obj.Descriptor.AdminOwner != nil {
-			if ac, ok := obj.Descriptor.AdminOwner.Repr.(ViaColumn); ok {
-				exclVC = &ac
-			}
-		}
-		if exclVC != nil {
-			// "Not owned via this axis": for a discriminated owner that's the kind
-			// column distinct from the value (a NULL kind = the unowned plane passes);
-			// for a plain per-kind column it's the column being NULL.
-			if exclVC.DiscrimCol != "" {
-				base = fmt.Sprintf("(%s AND %s IS DISTINCT FROM '%s')", base, exclVC.DiscrimCol, exclVC.DiscrimVal)
+			// "Not owned via this axis": a discriminated owner excludes the kind column
+			// distinct from the value (NULL kind = unowned, passes); a plain column
+			// excludes the column being non-NULL.
+			if vc.DiscrimCol != "" {
+				base = fmt.Sprintf("(%s AND %s IS DISTINCT FROM '%s')", base, vc.DiscrimCol, vc.DiscrimVal)
 			} else {
-				base = fmt.Sprintf("(%s AND %s IS NULL)", base, exclVC.Column)
+				base = fmt.Sprintf("(%s AND %s IS NULL)", base, vc.Column)
 			}
 		}
 		return []string{base}, nil
-	case t.Builtin == "descriptor":
-		return s.emitDescriptor(obj, pm, custClaim)
 	case t.Builtin == "store_manage":
 		// Write-moat for a discriminated grant store (v0.28.0): the caller may
 		// write/list/revoke a row iff it can EDIT the resource the row points at.
@@ -653,7 +642,13 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		if err := reqClaim(claimKey, obj, "owner relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("%s = %s", repr.Column, s.claim(claimKey))}, nil
+		base := fmt.Sprintf("%s = %s", repr.Column, s.claim(claimKey))
+		// A discriminated owner (`via owner_id where owner_kind = "customer"`) gates
+		// the id match by the kind column — the unified (owner_id, owner_kind) shape.
+		if repr.DiscrimCol != "" {
+			base = fmt.Sprintf("(%s AND %s = '%s')", base, repr.DiscrimCol, repr.DiscrimVal)
+		}
+		return []string{base}, nil
 	case ViaEdge:
 		// Definer tail: the compiler owns auth.<edgeTable>(...).
 		if err := reqClaim(custClaim, obj, "edge relation "+t.Ident); err != nil {
@@ -751,21 +746,6 @@ func (s *Spec) emitGrantFrags(obj *Object, r *Relation, vg *ViaGrant, access str
 	return frags, nil
 }
 
-// emitDescriptor expands @descriptor into the customer-plane predicate fragments
-// (§5.3): the inline owner + public-mode column checks first, then the
-// record_acl definer tail. private/admins are the admin plane (not customer
-// terms).
-// ownerColTerm renders an owner-axis match: `<col> = <claim>`, or, when the
-// owner column is discriminated (the unified owner_id/owner_kind shape),
-// `(<col> = <claim> AND <kindCol> = '<kindVal>')`.
-func ownerColTerm(vc ViaColumn, claim string) string {
-	base := fmt.Sprintf("%s = %s", vc.Column, claim)
-	if vc.DiscrimCol == "" {
-		return base
-	}
-	return fmt.Sprintf("(%s AND %s = '%s')", base, vc.DiscrimCol, vc.DiscrimVal)
-}
-
 // ownerColPresent renders "this row is owned via this axis": `<col> IS NOT NULL`,
 // or `<col> IS NOT NULL AND <kindCol> = '<kindVal>'` for a discriminated owner.
 func ownerColPresent(vc ViaColumn) string {
@@ -774,70 +754,6 @@ func ownerColPresent(vc ViaColumn) string {
 		return base
 	}
 	return fmt.Sprintf("%s AND %s = '%s'", base, vc.DiscrimCol, vc.DiscrimVal)
-}
-
-func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string, error) {
-	d := obj.Descriptor
-	if d == nil {
-		return nil, fmt.Errorf("@descriptor used but object has no descriptor")
-	}
-	if err := reqClaim(custClaim, obj, "@descriptor"); err != nil {
-		return nil, err
-	}
-	var frags []string
-	owner, _ := d.Owner.Repr.(ViaColumn)
-	// The owner term reads the owner column against the OWNER subject's claim, not
-	// blindly against the customer-plane discriminator. For a customer-owned
-	// descriptor (record/file) these coincide — relationClaim resolves to the same
-	// customer_id, so this is byte-identical. For an admin-plane descriptor
-	// (`owner admin via created_by`) it resolves to `sub`, so the row is owned by
-	// the admin who authored it with no customer column in sight.
-	// A discriminated owner (`via owner_id where owner_kind = "customer"`) gates
-	// the id match by the kind column — the unified (owner_id, owner_kind) shape.
-	frags = append(frags, ownerColTerm(owner, s.claim(s.relationClaim(d.Owner, custClaim))))
-
-	// The ADMIN owner axis: a record owned by the admin who created it is reachable
-	// by that admin (its claim) for every op (read/write/delete/insert). The broad
-	// operator reach is gated to exclude these rows (see @app_scope), so an
-	// admin-owned record is private to its owner + grants.
-	if d.AdminOwner != nil {
-		if ac, ok := d.AdminOwner.Repr.(ViaColumn); ok {
-			frags = append(frags, ownerColTerm(ac, s.claim(s.relationClaim(d.AdminOwner, custClaim))))
-		}
-	}
-
-	// Column read-gate modes are READ-only disjuncts: a row whose ModeCol equals
-	// the declared sentinel may be VIEWed by any in-scope reader, never written.
-	// They contribute only to the select policy.
-	if pm.Maps == "select" {
-		for _, m := range d.Modes {
-			if m.Kind != "read" {
-				continue
-			}
-			frag := fmt.Sprintf("%s = '%s'", d.ModeCol, m.Value)
-			// An actor-scoped public read (`read "<sentinel>" for <subject>`)
-			// confines the sentinel to that subject's PLANE: `for admin` opens it
-			// to operators (callers with no customer claim) only, so a "public"
-			// note is project-wide to operators yet never leaks to a customer /
-			// the public API. An unscoped read stays world-readable (a public
-			// record), so records remain byte-identical.
-			if m.Scope != "" {
-				frag = fmt.Sprintf("%s AND %s", frag, s.modePlaneScope(m.Scope, custClaim))
-			}
-			frags = append(frags, frag)
-		}
-	}
-	// The explicit grant list applies to read/write/delete at the perm's access
-	// class — never to insert (you create your own rows, you aren't "granted" it).
-	// One disjunct per granted principal kind, each read against that kind's own
-	// claim (customer→customer_id, admin→sub).
-	if d.Grants != nil && pm.Maps != "insert" {
-		for i, kind := range descriptorListKinds(d) {
-			name, _, claim := s.grantKindBinding(obj, kind, i == 0)
-			frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), name, s.claim(claim), obj.Table+".id", accessFor(pm.Maps)))
-		}
-	}
-	return frags, nil
 }
 
 // GovernedTables returns the sorted, de-duplicated set of tables the emitted
@@ -936,79 +852,6 @@ func contains(ss []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// descriptorHasList reports whether the descriptor declares any `list` mode (an
-// explicit record_acl grant list).
-func descriptorHasList(d *Descriptor) bool { return descriptorListKind(d) != "" }
-
-// descriptorListKind returns the principal kind of the descriptor's FIRST list
-// mode, or "" if there is none. Used as the has-list predicate; the full set is
-// descriptorListKinds.
-func descriptorListKind(d *Descriptor) string {
-	if ks := descriptorListKinds(d); len(ks) > 0 {
-		return ks[0]
-	}
-	return ""
-}
-
-// descriptorListKinds returns, in declaration order, EVERY principal kind named
-// by the descriptor's `list` modes. EID-265 WS2 was single-kind; the unified
-// resource grant (Increment 2C) lets one resource be granted to several principal
-// kinds at once — e.g. a record shared with BOTH customers and admins (operators).
-// The first kind is the byte-identical legacy path (the owner principal).
-func descriptorListKinds(d *Descriptor) []string {
-	var out []string
-	for _, m := range d.Modes {
-		if m.Kind == "list" {
-			out = append(out, m.Value)
-		}
-	}
-	return out
-}
-
-// grantKindBinding resolves one descriptor list kind to (a) the generated grant
-// definer's name, (b) its grantee parameter, and (c) the claim a caller of that
-// kind presents — the principal id the acl row's principal_id is matched against.
-//
-// The PRIMARY (first) list kind is the legacy single-kind path: the grant is read
-// against the descriptor's OWNER principal (claim + name), and the list value is
-// just the principal_kind LABEL stored in the acl — which need not name a subject
-// (the worked example labels it "customer" while owning via "member"). Unsuffixed
-// definer name → byte-identical for any pre-2C / single-kind spec.
-//
-// Each ADDITIONAL kind (Increment 2C) names a claim-bearing SUBJECT and is read
-// against THAT subject's claim (admin→sub), with a kind-suffixed, collision-free
-// definer over the shared store.
-func (s *Spec) grantKindBinding(obj *Object, kind string, primary bool) (name, param, claim string) {
-	if primary {
-		return grantDefinerName(obj), s.descriptorPrincipal(obj), s.descriptorOwnerClaim(obj)
-	}
-	name = grantDefinerName(obj) + "_" + kind
-	param = kind
-	if sub := s.subjectByName(kind); sub != nil {
-		claim = sub.Identifies
-	}
-	return
-}
-
-// descriptorOwnerClaim is the claim the descriptor's owner principal identifies
-// by (the legacy grant claim) — mirrors descriptorPrincipal's owner-subject lookup.
-func (s *Spec) descriptorOwnerClaim(obj *Object) string {
-	// Prefer the descriptor's DECLARED owner claim (byte-identical for a
-	// customer-owned descriptor, where it resolves to the same customer_id the
-	// project leaf would; `sub` for an admin-plane descriptor).
-	if obj.Descriptor != nil && obj.Descriptor.Owner != nil {
-		if c := s.relationClaim(obj.Descriptor.Owner, ""); c != "" {
-			return c
-		}
-	}
-	if len(obj.Scoped) > 0 {
-		if sub := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); sub != nil {
-			return sub.Identifies
-		}
-	}
-	return ""
 }
 
 // scanDefiners extracts `<schema>.<name>(` references from a predicate.

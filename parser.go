@@ -501,15 +501,6 @@ func (p *parser) parseObject() (*Object, error) {
 				return nil, err
 			}
 			o.Relations = append(o.Relations, r)
-		case p.isKw("descriptor"):
-			if o.Descriptor != nil {
-				return nil, p.errf("object %q has more than one descriptor block", o.Name)
-			}
-			d, err := p.parseDescriptor()
-			if err != nil {
-				return nil, err
-			}
-			o.Descriptor = d
 		case p.isKw("permission"):
 			pm, err := p.parseObjectPerm()
 			if err != nil {
@@ -869,12 +860,30 @@ func (p *parser) parseRepr() (Repr, error) {
 		}
 		return vg, nil
 	default:
-		// via <fk column>
+		// via <fk column> [where <kind_col> = "<val>"]
 		col, err := p.ident()
 		if err != nil {
 			return nil, err
 		}
-		return ViaColumn{Column: col}, nil
+		vc := ViaColumn{Column: col}
+		// Optional discriminator: an owner column gated by a kind column — the unified
+		// (owner_id, owner_kind) shape, mirroring the grant-edge `where`. Several owner
+		// kinds share one id column, each gated by a constant in the kind column.
+		if p.acceptKw("where") {
+			dcol, err := p.ident()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(tEq); err != nil {
+				return nil, err
+			}
+			val, err := p.expect(tString)
+			if err != nil {
+				return nil, err
+			}
+			vc.DiscrimCol, vc.DiscrimVal = dcol, val.lit
+		}
+		return vc, nil
 	}
 }
 
@@ -894,217 +903,6 @@ func (p *parser) parseArgSrc() (ArgSrc, error) {
 		return ArgSrc{}, err
 	}
 	return ArgSrc{Col: c}, nil
-}
-
-func (p *parser) parseDescriptor() (*Descriptor, error) {
-	d := &Descriptor{Pos: Pos{p.cur().line}}
-	p.advance() // 'descriptor'
-	if _, err := p.expect(tLBrace); err != nil {
-		return nil, err
-	}
-	for p.peekKind() != tRBrace && p.peekKind() != tEOF {
-		switch {
-		case p.acceptKw("owner"):
-			if d.Owner != nil {
-				return nil, p.errf("descriptor has more than one owner")
-			}
-			o, err := p.parseDescriptorOwner()
-			if err != nil {
-				return nil, err
-			}
-			d.Owner = o
-		case p.acceptKw("admin"):
-			if err := p.expectKw("owner"); err != nil {
-				return nil, err
-			}
-			if d.AdminOwner != nil {
-				return nil, p.errf("descriptor has more than one admin owner")
-			}
-			ao, err := p.parseDescriptorOwner()
-			if err != nil {
-				return nil, err
-			}
-			ao.Name = "admin_owner"
-			d.AdminOwner = ao
-		case p.acceptKw("mode"):
-			if err := p.expectKw("via"); err != nil {
-				return nil, err
-			}
-			col, err := p.ident()
-			if err != nil {
-				return nil, err
-			}
-			d.ModeCol = col
-		case p.acceptKw("modes"):
-			modes, err := p.parseModes()
-			if err != nil {
-				return nil, err
-			}
-			d.Modes = modes
-		case p.acceptKw("grants"):
-			g, err := p.parseAclEdge()
-			if err != nil {
-				return nil, err
-			}
-			d.Grants = g
-		default:
-			return nil, p.errf("unexpected %s %q in descriptor", p.peekKind(), p.cur().lit)
-		}
-	}
-	if _, err := p.expect(tRBrace); err != nil {
-		return nil, err
-	}
-	return d, nil
-}
-
-func (p *parser) parseDescriptorOwner() (*Relation, error) {
-	r := &Relation{Name: "owner", Pos: Pos{p.cur().line}}
-	first, err := p.ident()
-	if err != nil {
-		return nil, err
-	}
-	r.Types = []string{first}
-	for p.peekKind() == tPipe {
-		p.advance()
-		nm, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		r.Types = append(r.Types, nm)
-	}
-	if err := p.expectKw("via"); err != nil {
-		return nil, err
-	}
-	col, err := p.ident()
-	if err != nil {
-		return nil, err
-	}
-	vc := ViaColumn{Column: col}
-	// Optional discriminator: `where <kind_col> = "<val>"` — the owner reads
-	// <id_col> gated by <kind_col> = constant (the unified owner_id/owner_kind
-	// shape; mirrors the grants-edge `where`).
-	if p.acceptKw("where") {
-		dcol, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		if _, err := p.expect(tEq); err != nil {
-			return nil, err
-		}
-		val, err := p.expect(tString)
-		if err != nil {
-			return nil, err
-		}
-		vc.DiscrimCol, vc.DiscrimVal = dcol, val.lit
-	}
-	r.Repr = vc
-	return r, nil
-}
-
-func (p *parser) parseModes() ([]Mode, error) {
-	var modes []Mode
-	first, err := p.parseModeItem()
-	if err != nil {
-		return nil, err
-	}
-	modes = append(modes, first)
-	for p.peekKind() == tPlus || p.peekKind() == tComma {
-		p.advance()
-		m, err := p.parseModeItem()
-		if err != nil {
-			return nil, err
-		}
-		modes = append(modes, m)
-	}
-	return modes, nil
-}
-
-// parseModeItem parses one descriptor mode: `private`, `read '<sentinel>'`, or
-// `list '<kind>'`. The sentinel/kind are spec-declared strings — the engine has
-// no baked mode vocabulary (EID-265 WS2).
-func (p *parser) parseModeItem() (Mode, error) {
-	m := Mode{Pos: Pos{p.cur().line}}
-	switch {
-	case p.acceptKw("private"):
-		m.Kind = "private"
-	case p.acceptKw("read"):
-		v, err := p.expect(tString)
-		if err != nil {
-			return m, err
-		}
-		m.Kind, m.Value = "read", v.lit
-		// Optional plane scope: `read "<sentinel>" for <subject>` confines the
-		// public read to that principal plane (e.g. operators-only).
-		if p.acceptKw("for") {
-			sub, err := p.ident()
-			if err != nil {
-				return m, err
-			}
-			m.Scope = sub
-		}
-	case p.acceptKw("list"):
-		v, err := p.expect(tString)
-		if err != nil {
-			return m, err
-		}
-		m.Kind, m.Value = "list", v.lit
-	default:
-		return m, p.errf("descriptor mode must be private | read '<sentinel>' | list '<kind>', got %s %q", p.peekKind(), p.cur().lit)
-	}
-	return m, nil
-}
-
-func (p *parser) parseAclEdge() (*AclEdge, error) {
-	if err := p.expectKw("via"); err != nil {
-		return nil, err
-	}
-	if err := p.expectKw("edge"); err != nil {
-		return nil, err
-	}
-	tbl, err := p.ident()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(tLParen); err != nil {
-		return nil, err
-	}
-	var cols []string
-	for {
-		c, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		cols = append(cols, c)
-		if p.peekKind() == tComma {
-			p.advance()
-			continue
-		}
-		break
-	}
-	if _, err := p.expect(tRParen); err != nil {
-		return nil, err
-	}
-	if len(cols) != 4 {
-		return nil, p.errf("grants edge needs 4 columns (record, kind, principal, access), got %d", len(cols))
-	}
-	e := &AclEdge{Table: tbl, RecordCol: cols[0], KindCol: cols[1], PrincipalCol: cols[2], AccessCol: cols[3]}
-	// Optional discriminator: `where <col> = "<val>"` — lets several descriptors
-	// share one store, each gated by a constant (the unified-resource_acl shape).
-	if p.acceptKw("where") {
-		col, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		if _, err := p.expect(tEq); err != nil {
-			return nil, err
-		}
-		val, err := p.expect(tString)
-		if err != nil {
-			return nil, err
-		}
-		e.DiscrimCol, e.DiscrimVal = col, val.lit
-	}
-	return e, nil
 }
 
 func (p *parser) parseObjectPerm() (*Perm, error) {

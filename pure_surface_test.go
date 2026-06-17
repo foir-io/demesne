@@ -1,50 +1,61 @@
 package demesne
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The runtime ResourceAccessSurface (the handler's grant/visibility/expand SQL
-// source) must project byte-identically from a pure-relation object as from the
-// descriptor form — so dropping the descriptor needs no handler change.
-func TestResourceAccessSurface_PureMatchesDescriptor(t *testing.T) {
-	desc, err := Parse(storeManageDescriptorSpec)
-	if err != nil {
-		t.Fatalf("parse descriptor: %v", err)
-	}
+// source) projects from a pure-relation object: its layout, the discriminated
+// grant-store shape, the allowed kinds + read modes, and the generated SQL.
+func TestResourceAccessSurface_PureProjection(t *testing.T) {
 	pure, err := Parse(storeManagePureSpec)
 	if err != nil {
 		t.Fatalf("parse pure: %v", err)
 	}
-	for _, obj := range []string{"record", "file"} {
-		ds, err := desc.ResourceAccessSurface(obj)
+	if err := Validate(pure); err != nil {
+		t.Fatalf("validate pure: %v", err)
+	}
+	for _, tc := range []struct{ obj, table, discrim string }{
+		{"record", "records", "record"},
+		{"file", "files", "file"},
+	} {
+		ps, err := pure.ResourceAccessSurface(tc.obj)
 		if err != nil {
-			t.Fatalf("descriptor surface %s: %v", obj, err)
-		}
-		ps, err := pure.ResourceAccessSurface(obj)
-		if err != nil {
-			t.Fatalf("pure surface %s: %v", obj, err)
+			t.Fatalf("pure surface %s: %v", tc.obj, err)
 		}
 		// Layout + projected vocab.
-		if ds.Table != ps.Table || ds.ModeCol != ps.ModeCol {
-			t.Errorf("%s: Table/ModeCol differ: %+v vs %+v", obj, ds, ps)
+		if ps.Table != tc.table || ps.ModeCol != "access_mode" {
+			t.Errorf("%s: Table/ModeCol wrong: %+v", tc.obj, ps)
 		}
-		if !ds.IsReadMode("public") || !ps.IsReadMode("public") {
-			t.Errorf("%s: both should report 'public' as a read mode", obj)
+		if !ps.IsReadMode("public") || ps.IsReadMode("private") {
+			t.Errorf("%s: read-mode projection wrong", tc.obj)
 		}
-		if ds.GrantKindAllowed("customer") != ps.GrantKindAllowed("customer") {
-			t.Errorf("%s: customer grant-kind mismatch", obj)
+		if !ps.GrantKindAllowed("customer") || ps.GrantKindAllowed("nobody") {
+			t.Errorf("%s: grant-kind projection wrong", tc.obj)
 		}
-		// The generated SQL shapes must be identical (string-for-string).
-		scope := []string{"t1", "p1"}
-		dIns, _ := ds.GrantInsert(scope, "r1", "customer", "c1", "read")
-		pIns, _ := ps.GrantInsert(scope, "r1", "customer", "c1", "read")
-		if dIns != pIns {
-			t.Errorf("%s GrantInsert differs:\n%s\n%s", obj, dIns, pIns)
+
+		// The generated SQL shapes, carrying the discriminator constant.
+		ins, args := ps.GrantInsert([]string{"t1", "p1"}, "r1", "customer", "c1", "read")
+		wantIns := "INSERT INTO resource_acl (tenant_id, project_id, resource_type, resource_id, principal_kind, principal_id, access) " +
+			"VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (resource_type, resource_id, principal_kind, principal_id, access) DO NOTHING RETURNING created_at"
+		if ins != wantIns {
+			t.Errorf("%s GrantInsert sql:\n got %q\nwant %q", tc.obj, ins, wantIns)
 		}
-		if ds.SetVisibilitySQL() != ps.SetVisibilitySQL() ||
-			ds.ListGrantsSQL() != ps.ListGrantsSQL() ||
-			ds.AccessorsSQL() != ps.AccessorsSQL() ||
-			ds.ModeSQL() != ps.ModeSQL() {
-			t.Errorf("%s: a generated SQL shape differs", obj)
+		if strings.Join(toStr(args), ",") != "t1,p1,"+tc.discrim+",r1,customer,c1,read" {
+			t.Errorf("%s GrantInsert args = %v", tc.obj, args)
+		}
+		if got, want := ps.ModeSQL(), "SELECT access_mode FROM "+tc.table+" WHERE id = $1"; got != want {
+			t.Errorf("%s ModeSQL = %q, want %q", tc.obj, got, want)
+		}
+		if got, want := ps.SetVisibilitySQL(), "UPDATE "+tc.table+" SET access_mode = $1 WHERE id = $2"; got != want {
+			t.Errorf("%s SetVisibilitySQL = %q, want %q", tc.obj, got, want)
+		}
+		if got, want := ps.ListGrantsSQL(), "SELECT principal_kind, principal_id, access, created_at FROM resource_acl WHERE resource_id = $1 AND resource_type = $2 ORDER BY created_at"; got != want {
+			t.Errorf("%s ListGrantsSQL = %q, want %q", tc.obj, got, want)
+		}
+		if got, want := ps.AccessorsSQL(), "SELECT source, principal_kind, principal_id, access FROM auth."+tc.table+"_accessors($1)"; got != want {
+			t.Errorf("%s AccessorsSQL = %q, want %q", tc.obj, got, want)
 		}
 	}
 }

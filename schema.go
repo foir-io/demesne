@@ -114,6 +114,9 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 			switch repr := r.Repr.(type) {
 			case ViaColumn:
 				reqCol(o.Table, repr.Column, rc)
+				if repr.DiscrimCol != "" {
+					reqCol(o.Table, repr.DiscrimCol, rc+" kind")
+				}
 			case ViaEdge:
 				if reqTable(repr.Table, rc) {
 					for _, c := range repr.Cols {
@@ -175,37 +178,6 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 			for _, t := range pm.Expr {
 				if t.ModeCol != "" {
 					reqCol(o.Table, t.ModeCol, oc+" mode term")
-				}
-			}
-		}
-		// Descriptor: owner axis, mode column, grant store.
-		if d := o.Descriptor; d != nil {
-			if d.Owner != nil {
-				if vc, ok := d.Owner.Repr.(ViaColumn); ok {
-					reqCol(o.Table, vc.Column, oc+" descriptor owner")
-					if vc.DiscrimCol != "" {
-						reqCol(o.Table, vc.DiscrimCol, oc+" descriptor owner kind")
-					}
-				}
-			}
-			if d.AdminOwner != nil {
-				if vc, ok := d.AdminOwner.Repr.(ViaColumn); ok {
-					reqCol(o.Table, vc.Column, oc+" descriptor admin owner")
-					if vc.DiscrimCol != "" {
-						reqCol(o.Table, vc.DiscrimCol, oc+" descriptor admin owner kind")
-					}
-				}
-			}
-			if d.ModeCol != "" {
-				reqCol(o.Table, d.ModeCol, oc+" descriptor mode")
-			}
-			if g := d.Grants; g != nil && reqTable(g.Table, oc+" descriptor grants") {
-				cols := []string{g.RecordCol, g.KindCol, g.PrincipalCol, g.AccessCol}
-				if g.DiscrimCol != "" {
-					cols = append(cols, g.DiscrimCol)
-				}
-				for _, c := range cols {
-					reqCol(g.Table, c, oc+" descriptor grants")
 				}
 			}
 		}
