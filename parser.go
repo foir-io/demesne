@@ -1124,6 +1124,20 @@ func (p *parser) parseTerm() (*Term, error) {
 				return nil, err
 			}
 		}
+		// `@kind("<value>")` — a typed-subject match on the caller's principal-kind claim.
+		if b == "kind" {
+			if _, err := p.expect(tLParen); err != nil {
+				return nil, err
+			}
+			val, err := p.expect(tString)
+			if err != nil {
+				return nil, err
+			}
+			t.KindVal = val.lit
+			if _, err := p.expect(tRParen); err != nil {
+				return nil, err
+			}
+		}
 		return t, nil
 	}
 	// `mode <col> = "<v>" [for <subject>]` — a column-condition (visibility) term.

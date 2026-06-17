@@ -23,7 +23,7 @@ import (
 // per-spec rule.
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true}
-var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true}
+var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -653,6 +653,15 @@ func validatePerm(s *Spec, o *Object, pm *Perm, rels map[string]*Relation) error
 			// @public is a world-READ grant only — never a write.
 			if t.Builtin == "public" && pm.Maps != "select" {
 				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @public but maps to %q — @public is a world-read grant, valid only on select", pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
+			}
+			// @kind("<value>") needs a non-empty kind value and is a row-layer grant.
+			if t.Builtin == "kind" {
+				if t.KindVal == "" {
+					errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @kind with an empty value — `@kind(\"<value>\")`", pm.Pos.Line, o.Name, pm.Verb))
+				}
+				if !hasRLS {
+					errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @kind but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
+				}
 			}
 		case isGrantSelectorTerm(t.Ident, rels):
 			// A grant relation with an access class (`grantee:read`) — a row-layer

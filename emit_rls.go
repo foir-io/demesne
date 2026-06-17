@@ -684,6 +684,11 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 			return nil, err
 		}
 		return []string{fmt.Sprintf("%s AND %s", self, roleFrag[0])}, nil
+	case t.Builtin == "kind":
+		// Typed-subject match: the caller's principal-kind claim equals the declared
+		// value (the RLS form of a typed wildcard, e.g. `serviceaccount:*`). A
+		// containment-scoped grant — `kind = '<value>'` over the request claims.
+		return []string{fmt.Sprintf("%s = '%s'", s.claim("kind"), t.KindVal)}, nil
 	case t.Builtin != "":
 		return nil, fmt.Errorf("builtin @%s is not emittable in RLS", t.Builtin)
 	case isPermKeyLit(t.Ident):

@@ -173,6 +173,79 @@ object plan_catalog {
 	}
 }
 
+// `@kind("<value>")` — a typed-subject match on the caller's principal-kind claim
+// (the RLS form of a Zanzibar typed wildcard). Models the customers fold: a customer
+// reads its own row (self via id), an in-project admin reads (role), and a service
+// principal reads (@kind), all within containment + the operator reach — replacing
+// the legacy `sub LIKE 'service:%'` subject-string hack.
+func TestKindTerm(t *testing.T) {
+	const spec = `
+topology { level platform virtual  level tenant parent platform  level project parent tenant }
+vocabulary admin {
+  permission content:read
+  preset project_viewer @ project = content:read
+  preset project_admin  @ project = project_viewer + content:read
+  rank project_admin > project_viewer
+}
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant impersonation at tenant via edge impersonation_grants(grantee_id, tenant_id) active revoked_at expires expires_at
+subject operator { anchor platform; reach via grant impersonation; identifies sub; roles none }
+subject admin    { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+subject customer { anchor project;  reach self; identifies customer_id; roles none; binds owner }
+subject service  { anchor project;  reach self; identifies sub; roles none }
+
+object customers {
+  table  customers
+  scoped tenant > project
+  relation self:   customer via id
+  relation member: admin via role(rank >= project_viewer)
+  permission view = self + member + @kind("service")  @rls maps select
+}
+`
+	s, err := Parse(spec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	rls, _ := s.EmitRLS()
+	var sel string
+	for _, p := range rls.Policies {
+		if p.Name == "customers_select" {
+			sel = p.Using
+		}
+	}
+	for _, want := range []string{
+		"(current_setting('request.jwt.claims', true)::json ->> 'kind') = 'service'", // typed service match
+		"id = (current_setting('request.jwt.claims', true)::json ->> 'customer_id')", // self
+		"auth.is_project_viewer(",          // in-project admin role
+		"auth.impersonation_grants_reach(", // operator
+	} {
+		if !strings.Contains(sel, want) {
+			t.Errorf("customers_select missing %q:\n%s", want, sel)
+		}
+	}
+	if strings.Contains(sel, "LIKE") || strings.Contains(sel, "'service:%'") {
+		t.Errorf("customers_select still pattern-matches the subject string:\n%s", sel)
+	}
+
+	// @kind must be @rls (a row-layer grant), and needs a value.
+	bad := strings.Replace(spec, "@kind(\"service\")  @rls maps select", "@kind(\"service\")  @pdp", 1)
+	if s2, err := Parse(bad); err == nil {
+		if err := Validate(s2); err == nil {
+			t.Fatal("@kind on a @pdp permission should fail validation")
+		}
+	}
+}
+
 func TestViaGrantPerm_Errors(t *testing.T) {
 	cases := []struct{ name, find, repl string }{
 		{"unknown grant", "via grant impersonation  @rls maps insert", "via grant nope  @rls maps insert"},

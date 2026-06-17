@@ -486,7 +486,14 @@ type Term struct {
 	// grant + its reaching subject are app-defined, so no framework domain word leaks
 	// in. "" for any other term form.
 	GrantRef string
-	Pos      Pos
+	// KindVal is set on a `@kind("<value>")` term — a TYPED-SUBJECT match on the
+	// caller's principal-kind claim (the RLS compilation of Zanzibar's typed wildcard,
+	// e.g. `serviceaccount:*`). It admits a caller whose `kind` claim equals KindVal
+	// (an app-defined value such as "service"). A containment-scoped grant term, like
+	// owner — it replaces ad-hoc subject-string matching (`sub LIKE 'service:%'`) with
+	// an exact match on a first-class kind dimension. "" otherwise.
+	KindVal string
+	Pos     Pos
 }
 
 // Procedures binds RPC procedures to required permissions for one PDP emit-site
