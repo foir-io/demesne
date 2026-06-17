@@ -166,7 +166,7 @@ func scopeCol(obj *Object, lvl string) string {
 
 // reqClaim fails closed when an owner / customer-plane term needs the per-record
 // owner claim but no owner subject resolved one. Without this guard the emitter
-// would substitute an empty claim key and produce `(... ->> '')`, which is
+// would substitute an empty claim key and produce `(... ->> ”)`, which is
 // silently NULL and would match (or fail to constrain) every row — a soundness
 // hole. The spec must declare a `reach self` subject (with roles) at the
 // object's leaf level for any object whose policy references the owner axis.
@@ -271,6 +271,26 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			scopedGrant = true
 		}
 	}
+	// `via grant <name>` permission terms: the verb is conferred by a declared grant's
+	// reach (e.g. the operator's scoped impersonation), emitted as a TOP-level branch —
+	// not folded into containment. Deduped against the auto-added subject reach (a
+	// tenant-leaf object already carries the operator grant in `top`). When a
+	// permission's ONLY grant is grant-references (no @scoped / owner / role term), the
+	// containment block is suppressed below — so the verb is granted ONLY to the grant's
+	// holders, never to in-scope members (e.g. an operator-only write that excludes the
+	// tenant's own admins).
+	for _, t := range pm.Expr {
+		if t.GrantRef == "" {
+			continue
+		}
+		reach, err := s.grantRefReach(obj, t.GrantRef)
+		if err != nil {
+			return "", err
+		}
+		if !contains(top, reach) {
+			top = append(top, reach)
+		}
+	}
 	// The grant block: the permission's boolean expression (union / intersection /
 	// negation) over the leaf-term fragments. A union-only tree flattens to the
 	// historical `f1 OR f2 …`.
@@ -323,7 +343,13 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 		}
 	}
 
-	if len(top) == 0 && len(blockTerms) == 0 && !scopedGrant {
+	// Containment is a GRANT branch only when the permission has a containment-bearing
+	// term (@scoped, or any owner/role/grant-acl/mode block term). A permission whose
+	// only grant is `via grant <name>` is NOT containment-bearing → the containment
+	// block is emitted as neither a grant nor a scope (the grant reach alone governs).
+	// Every pre-existing permission has such a term, so this is byte-identical for them.
+	containmentBearing := scopedGrant || len(blockTerms) > 0
+	if len(top) == 0 && !containmentBearing {
 		return "", fmt.Errorf("no emittable grant terms")
 	}
 	// A GLOBAL object (virtual leaf) carries no containment columns, so its block is
@@ -331,13 +357,40 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 	// never a bare `OR ()`, which is a syntax error. Every non-global object always
 	// has a non-empty containment block, so this is byte-identical for them.
 	branches := top
-	if block != "" {
+	if block != "" && containmentBearing {
 		branches = append(branches, "("+block+")")
 	}
 	if len(branches) == 0 {
 		return "", fmt.Errorf("object %q permission %q: no emittable grant — a global object needs a platform-role subject", obj.Name, pm.Verb)
 	}
 	return strings.Join(branches, " OR "), nil
+}
+
+// grantRefReach renders the reach predicate for a `via grant <name>` permission
+// term: the grant's SECURITY DEFINER reach (auth.<edge>_reach) over the object's
+// column for the grant's level, read against the claim of the subject that reaches
+// via that grant. The object must be scoped under the grant's level (else the level
+// column is absent). This is the GENERIC mechanism for "a permission conferred by a
+// named grant" — the grant + its subject are app-defined (no framework domain word).
+func (s *Spec) grantRefReach(obj *Object, grantName string) (string, error) {
+	g := s.grantByName(grantName)
+	if g == nil {
+		return "", fmt.Errorf("object %q: permission references unknown grant %q (via grant)", obj.Name, grantName)
+	}
+	if !contains(obj.Scoped, g.Level) {
+		return "", fmt.Errorf("object %q: `via grant %s` confers reach at level %q, not in the object's scope %v", obj.Name, grantName, g.Level, obj.Scoped)
+	}
+	claim := ""
+	for _, sub := range s.Subjects {
+		if sub.Reach == "grant" && sub.ReachGrant == grantName {
+			claim = sub.Identifies
+			break
+		}
+	}
+	if claim == "" {
+		return "", fmt.Errorf("object %q: grant %q has no reaching subject (a `subject … reach via grant %s`) to supply a claim", obj.Name, grantName, grantName)
+	}
+	return fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(claim), scopeCol(obj, g.Level)), nil
 }
 
 // objectVerbPredicate returns the full RLS predicate of an object's @rls
@@ -455,6 +508,11 @@ func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Re
 	switch n.Op {
 	case "leaf":
 		if n.Term.Builtin == "scoped" {
+			return nil, nil
+		}
+		// A `via grant <name>` term is emitted as a top-level reach branch in
+		// rlsPredicate, not as a containment block fragment — skip it here.
+		if n.Term.GrantRef != "" {
 			return nil, nil
 		}
 		frags, err := s.emitTerm(obj, pm, n.Term, rels, custClaim)

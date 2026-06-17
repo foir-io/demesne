@@ -1150,6 +1150,21 @@ func (p *parser) parseTerm() (*Term, error) {
 		}
 		return t, nil
 	}
+	// `via grant <name>` — reference a declared grant's reach as a permission term
+	// (the same `via grant <name>` a subject uses for its reach), conferring the verb
+	// to that grant's holders.
+	if p.isKw("via") {
+		p.advance()
+		if err := p.expectKw("grant"); err != nil {
+			return nil, err
+		}
+		name, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		t.GrantRef = name
+		return t, nil
+	}
 	// A term is normally a relation IDENT, but a @pdp permission maps to a
 	// capability PERMKEY (e.g. `publish = content:publish @pdp`); accept both.
 	switch p.peekKind() {
@@ -1400,6 +1415,8 @@ func (p *parser) parseFieldScopes() (*FieldScopes, error) {
 // String renders a Term back to its source form (for diagnostics/tests).
 func (t *Term) String() string {
 	switch {
+	case t.GrantRef != "":
+		return "via grant " + t.GrantRef
 	case t.Builtin != "":
 		return "@" + t.Builtin
 	case t.WalkVerb != "":

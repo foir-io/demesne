@@ -162,7 +162,11 @@ Beyond this: **permission templates** (`template <name> { … }` + `object … u
 <name>` — a named, reusable permission set the app composes from the generic terms
 and applies uniformly; a using object may `omit` a verb or override one with its
 own permission line), **level-scoped grants** (`grant … at <level> via edge …` — a
-scoped, revocable operator/impersonation reach), **unbounded-depth hierarchies**
+scoped, revocable operator/impersonation reach; a subject reaches via it
+(`reach via grant <name>`), and a **permission** may be conferred by it directly
+(`permission create = via grant <name>` — granted only to the grant's holders, with
+the containment branch suppressed, e.g. an operator-only write that excludes a
+tenant's own admins)), **unbounded-depth hierarchies**
 (`relation … via closure <C>(anc,desc) base <B>(id,parent) on <col>` — the
 compiler generates a trigger-maintained transitive-closure table + an indexed
 reachability lookup, an explicit write-amplification cost), **nested groups**

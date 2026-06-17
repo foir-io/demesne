@@ -18,6 +18,7 @@ import (
 //   - V8 — PDP coverage exhaustiveness needs reflecting each service's proto
 //     descriptor; the engine checks block well-formedness, the oracle checks
 //     "every write RPC is classified".
+//
 // V7 (generative isolation) is a property test (isolation_test.go), not a
 // per-spec rule.
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
@@ -614,6 +615,14 @@ func validatePerm(s *Spec, o *Object, pm *Perm, rels map[string]*Relation) error
 	// PERMKEY term is only meaningful on a @pdp permission (a capability).
 	for _, t := range pm.Expr {
 		switch {
+		case t.GrantRef != "":
+			// `via grant <name>` — a row-layer term conferred by a declared grant.
+			if s.grantByName(t.GrantRef) == nil {
+				errs = append(errs, fmt.Errorf("line %d: permission %s.%s references unknown grant %q (via grant)", pm.Pos.Line, o.Name, pm.Verb, t.GrantRef))
+			}
+			if !hasRLS {
+				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses `via grant %s` but is not @rls", pm.Pos.Line, o.Name, pm.Verb, t.GrantRef))
+			}
 		case t.ModeCol != "":
 			// A column-condition (visibility) term — a row-layer read grant. It must
 			// be on @rls; an actor-scoped form must name a real subject.

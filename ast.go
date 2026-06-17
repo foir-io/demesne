@@ -477,7 +477,16 @@ type Term struct {
 	ModeCol   string
 	ModeVal   string
 	ModeScope string
-	Pos       Pos
+	// GrantRef names a declared Grant (`via grant <name>`) referenced as a PERMISSION
+	// term: the verb is conferred by that grant's reach (e.g. the operator's scoped
+	// impersonation), emitted as a top-level branch. When a permission's only grant is
+	// grant-references (no @scoped / owner / role term), the containment block is
+	// suppressed — so the verb is granted ONLY to the grant's holders, not in-scope
+	// members (e.g. an operator-only write that excludes the tenant's own admins). The
+	// grant + its reaching subject are app-defined, so no framework domain word leaks
+	// in. "" for any other term form.
+	GrantRef string
+	Pos      Pos
 }
 
 // Procedures binds RPC procedures to required permissions for one PDP emit-site
