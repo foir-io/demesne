@@ -150,8 +150,15 @@ object plan_catalog {
 	for _, p := range rls.Policies {
 		pol[p.Name] = p
 	}
-	if pol["billing_plans_select"].Using != "true" {
-		t.Errorf("@public read should be exactly `true` (everyone), got: %q", pol["billing_plans_select"].Using)
+	// Everyone reads: the @public `true` branch is present at top level (a global
+	// object also carries the redundant staff auto-branch, so the predicate is
+	// `has_platform_role OR true` = true), and it is NOT containment-gated.
+	sel := pol["billing_plans_select"].Using
+	if !strings.Contains(sel, "true") {
+		t.Errorf("@public read should grant everyone (a top-level `true`), got: %q", sel)
+	}
+	if strings.Contains(sel, "tenant_id") {
+		t.Errorf("@public read must not be containment-gated, got: %q", sel)
 	}
 	if !strings.Contains(pol["billing_plans_insert"].Check, "auth.has_platform_role(") {
 		t.Errorf("write should stay staff-gated, got: %q", pol["billing_plans_insert"].Check)
