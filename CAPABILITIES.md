@@ -57,15 +57,16 @@ the matrix already uses, lifted to the schema root:
    `EXISTS role_assignment WHERE tenant_id IS NULL AND project_id IS NULL AND
    role = '<role>' AND NOT revoked` — a revocable, audited platform role, the same
    role-resolution EXISTS as `is_tenant_admin` / `is_project_admin`.
-2. **Global objects** — the `platform <table>` shorthand declares an object scoped
-   at the virtual root (no containment columns). A virtual-anchored *role* subject
+2. **Global objects** — an object scoped at the **virtual root** (no containment
+   columns; e.g. `object admin_users { table admin_users; scoped platform; use
+   contained }`). A virtual-anchored *role* subject
    (`isPlatformRoleSubject`) contributes the platform-role definer as the policy's
    whole top branch; there is no containment to AND against, and `rlsPredicate`
    emits exactly that branch (never a bare `OR ()`).
 
 So `is_platform_admin` retires the **general** way (the generated definer is named `has_platform_role`, not the legacy flag): the god-flag column and its
-hand-written function are dropped, the global tables become `platform <table>`
-objects, and their staff-access definer is *generated* — a revocable
+hand-written function are dropped, the global tables become objects scoped at the
+virtual root, and their staff-access definer is *generated* — a revocable
 `platform_admin` role in `role_assignments`, identical in shape to every other
 role in the system. No bespoke hand-written one-off; the generated
 `has_platform_role` is the same role primitive that governs tenant and project
@@ -73,6 +74,6 @@ roles, lifted to the platform root. The blunt
 virtual-anchored **membership** operator stays in the engine as a valid option
 for other adopters, but it is the pattern Foir is leaving.
 
-Proof: `platform_plane_test.go` (a `platform <table>` object compiles to the
-generated `has_platform_role` role branch; the grant operator and the platform
+Proof: `platform_plane_test.go` (a global object scoped at the virtual root compiles
+to the generated `has_platform_role` role branch; the grant operator and the platform
 role do not bleed across the tenancy boundary — forward isolation).

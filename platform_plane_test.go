@@ -57,8 +57,26 @@ object record {
   permission view = owner @rls maps select
 }
 
-platform admin_users
-platform tenants
+// The app-defined containment/global template (the generic replacement for the
+// removed settings/platform sugar): four @scoped CRUD permissions. On a
+// global (virtual-leaf) object it composes to the platform-role branch.
+template contained {
+  permission view   = @scoped @rls maps select
+  permission create = @scoped @rls maps insert
+  permission edit   = @scoped @rls maps update
+  permission delete = @scoped @rls maps delete
+}
+
+object admin_users {
+  table  admin_users
+  scoped platform
+  use    contained
+}
+object tenants {
+  table  tenants
+  scoped platform
+  use    contained
+}
 `
 
 func TestPlatformPlane_GlobalObjectGovernedByPlatformRole(t *testing.T) {
@@ -184,7 +202,17 @@ rolestore admin {
   revoked     revoked_at
 }
 subject admin { anchor tenant; reach descendants; identifies sub; roles configurable admin; binds admin }
-platform admin_users
+template contained {
+  permission view   = @scoped @rls maps select
+  permission create = @scoped @rls maps insert
+  permission edit   = @scoped @rls maps update
+  permission delete = @scoped @rls maps delete
+}
+object admin_users {
+  table  admin_users
+  scoped platform
+  use    contained
+}
 `
 	s, err := Parse(noStaff)
 	if err != nil {
@@ -192,17 +220,6 @@ platform admin_users
 	}
 	if err := Validate(s); err == nil {
 		t.Fatal("a global object with no platform-role subject must not validate — it would emit an unreachable (or empty) policy")
-	}
-}
-
-// `platform <table>` requires a virtual root to anchor the global object.
-func TestPlatformPlane_RequiresVirtualRoot(t *testing.T) {
-	const noVirtual = `
-topology { level tenant }
-platform admin_users
-`
-	if _, err := Parse(noVirtual); err == nil {
-		t.Fatal("`platform <table>` without a virtual root level should be a parse error")
 	}
 }
 

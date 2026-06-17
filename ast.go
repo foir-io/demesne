@@ -20,6 +20,7 @@ type Spec struct {
 	FieldScopes []*FieldScopes
 	RoleStores  []*RoleStore
 	Grants      []*Grant
+	Templates   []*Template
 	Claims      *ClaimsAccessor
 	// DefinerSchema is the Postgres schema the generated SECURITY DEFINER kernel
 	// lives in (and that the emitted policies qualify their calls with). ""
@@ -198,17 +199,41 @@ type Membership struct {
 	ActiveVal string
 }
 
+// Template is a named, reusable set of object permissions — the GENERIC,
+// app-defined replacement for the removed `settings`/`platform` sugar. An object
+// applies it with `use <name>` and inherits its permission lines; the object
+// supplies its OWN table / scope / relations. A template carries ZERO table,
+// scope, relation or domain detail — only permission lines built from the generic
+// terms (@scoped, @open, owner/grant/role relations, mode, boolean algebra) — so
+// the engine stays domain-word-free and the APP composes and names its own
+// access patterns (`contained`, `customer_owned`, …) and applies them uniformly.
+// Templates are resolved into the using object's Perms at parse time
+// (expandTemplates), so every downstream pass (validation, emission) sees an
+// ordinary Object — a template is pure sugar with no effect on emission.
+type Template struct {
+	Name  string
+	Perms []*Perm
+	Pos   Pos
+}
+
 // Object is a governed table + its object-relative permissions.
 type Object struct {
-	Name       string
-	Table      string
-	Level      string   // non-empty if this object IS a topology level node (its
-	                     // own pk = the level; self column is `id`, operator is
-	                     // ungated) — the admin/level-entity plane (e.g. projects)
+	Name  string
+	Table string
+	Level string // non-empty if this object IS a topology level node (its
+	// own pk = the level; self column is `id`, operator is
+	// ungated) — the admin/level-entity plane (e.g. projects)
 	Scoped    []string // levelchain — the root-anchored prefix of the chain
 	Relations []*Relation
 	Perms     []*Perm
-	Pos       Pos
+	// Use names a Template whose permission lines this object inherits ("" = none).
+	// Omit drops named verbs from the inherited template (e.g. an append-only table
+	// that wants no update/delete policy). The object's OWN permission lines override
+	// the template's same-verb line. All three are reconciled in expandTemplates,
+	// which materialises the final Perms before validation/emission.
+	Use  string
+	Omit []string
+	Pos  Pos
 }
 
 // IsLevelEntity reports whether the object is the entity for a topology level
@@ -356,6 +381,7 @@ type ArgSrc struct {
 //   - "the row's admin is in MY session tenant" (admin_users co-tenant, the modern
 //     session-scoped replacement for the legacy admins_share_tenant peer rule):
 //     principal the row's id, scope @tenant_id — admin_memberin_tenant(id, <tenant_id claim>).
+//
 // Compiles to a SECURITY DEFINER EXISTS over the role store (assignment with the
 // scope column = the scope arg, principal = the principal arg, kind = admin, not
 // revoked). Cost class Definer.

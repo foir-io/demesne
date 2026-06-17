@@ -16,19 +16,24 @@ func Parse(src string) (*Spec, error) {
 		return nil, err
 	}
 	p := &parser{toks: toks}
-	return p.parseSpec()
+	s, err := p.parseSpec()
+	if err != nil {
+		return nil, err
+	}
+	// Resolve `use <template>` into each object's Perms before any downstream pass
+	// sees the AST — a template is pure parse-time sugar (no effect on emission).
+	if err := s.expandTemplates(); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 type parser struct {
 	toks []token
 	i    int
-	// virtualRoot is the name of the topology's virtual root level, captured when
-	// the topology block is parsed so the `platform <table>` shorthand can anchor a
-	// global object there without restating it. "" until the topology is seen.
-	virtualRoot string
 }
 
-func (p *parser) cur() token  { return p.toks[p.i] }
+func (p *parser) cur() token        { return p.toks[p.i] }
 func (p *parser) peekKind() tokKind { return p.toks[p.i].kind }
 func (p *parser) advance() token {
 	t := p.toks[p.i]
@@ -93,11 +98,6 @@ func (p *parser) parseSpec() (*Spec, error) {
 				return nil, p.errf("duplicate topology block")
 			}
 			s.Topology = t
-			for _, l := range t.Levels {
-				if l.isRoot() && l.Virtual {
-					p.virtualRoot = l.Name
-				}
-			}
 		case "vocabulary":
 			v, err := p.parseVocabulary()
 			if err != nil {
@@ -116,18 +116,12 @@ func (p *parser) parseSpec() (*Spec, error) {
 				return nil, err
 			}
 			s.Objects = append(s.Objects, o)
-		case "settings":
-			o, err := p.parseSettings()
+		case "template":
+			t, err := p.parseTemplate()
 			if err != nil {
 				return nil, err
 			}
-			s.Objects = append(s.Objects, o)
-		case "platform":
-			o, err := p.parsePlatform()
-			if err != nil {
-				return nil, err
-			}
-			s.Objects = append(s.Objects, o)
+			s.Templates = append(s.Templates, t)
 		case "procedures":
 			pr, err := p.parseProcedures()
 			if err != nil {
@@ -507,6 +501,21 @@ func (p *parser) parseObject() (*Object, error) {
 				return nil, err
 			}
 			o.Perms = append(o.Perms, pm)
+		case p.isKw("use"):
+			p.advance()
+			if o.Use != "" {
+				return nil, p.errf("object %q declares `use` more than once", o.Name)
+			}
+			if o.Use, err = p.ident(); err != nil {
+				return nil, err
+			}
+		case p.isKw("omit"):
+			p.advance()
+			v, err := p.ident()
+			if err != nil {
+				return nil, err
+			}
+			o.Omit = append(o.Omit, v)
 		default:
 			return nil, p.errf("unexpected %s %q in object %q", p.peekKind(), p.cur().lit, o.Name)
 		}
@@ -517,69 +526,93 @@ func (p *parser) parseObject() (*Object, error) {
 	return o, nil
 }
 
-// parseSettings is the compact admin-config form: `settings <table> scoped
-// <chain>` expands to a containment-only object (the §5.3 settings pattern —
-// operator OR tenant+project containment, no grants; verb authority is the PDP).
-func (p *parser) parseSettings() (*Object, error) {
-	o := &Object{Pos: Pos{p.cur().line}}
-	p.advance() // 'settings'
-	tbl, err := p.ident()
+// parseTemplate parses a `template <name> { <permission lines> }` block — a named,
+// reusable permission set the APP defines and applies to objects with `use <name>`.
+// Only permission lines are allowed: a template carries no table/scope/relations
+// (those belong to the using object), so it stays a pure, composable bundle of the
+// generic permission terms. This is the generic replacement for the removed
+// `settings`/`platform` Foir-domain-named sugar.
+func (p *parser) parseTemplate() (*Template, error) {
+	t := &Template{Pos: Pos{p.cur().line}}
+	p.advance() // 'template'
+	name, err := p.ident()
 	if err != nil {
 		return nil, err
 	}
-	o.Name = tbl
-	o.Table = tbl
-	if err := p.expectKw("scoped"); err != nil {
+	t.Name = name
+	if _, err := p.expect(tLBrace); err != nil {
 		return nil, err
 	}
-	if o.Scoped, err = p.parseLevelChain(); err != nil {
+	for p.peekKind() != tRBrace && p.peekKind() != tEOF {
+		if !p.isKw("permission") {
+			return nil, p.errf("template %q: only permission lines are allowed, got %s %q", t.Name, p.peekKind(), p.cur().lit)
+		}
+		pm, err := p.parseObjectPerm()
+		if err != nil {
+			return nil, err
+		}
+		t.Perms = append(t.Perms, pm)
+	}
+	if _, err := p.expect(tRBrace); err != nil {
 		return nil, err
 	}
-	line := o.Pos
-	scoped := func(verb, op string) *Perm {
-		return &Perm{Verb: verb, Expr: []*Term{{Builtin: "scoped", Pos: line}}, Layers: []string{"rls"}, Maps: op, Pos: line}
-	}
-	o.Perms = []*Perm{
-		scoped("view", "select"),
-		scoped("create", "insert"),
-		scoped("edit", "update"),
-		scoped("delete", "delete"),
-	}
-	return o, nil
+	return t, nil
 }
 
-// parsePlatform is the compact GLOBAL-object form (v3 WS6): `platform <table>`
-// expands to an object scoped at the virtual root level — a table ABOVE tenancy,
-// with no containment columns, governed entirely by the platform-role subject
-// branch. It is the platform-plane analogue of `settings <table> scoped …`: the
-// same four @scoped (plane-only) permissions, but the "plane" is the platform
-// role rather than a tenant/project containment chain. The general retirement of
-// is_platform_admin lives here — these objects' staff-access definer is generated
-// (is_platform_<role>), not hand-written.
-func (p *parser) parsePlatform() (*Object, error) {
-	o := &Object{Pos: Pos{p.cur().line}}
-	p.advance() // 'platform'
-	tbl, err := p.ident()
-	if err != nil {
-		return nil, err
+// expandTemplates resolves every object's `use <template>` into its Perms, so all
+// downstream passes see an ordinary Object (a template has NO effect on emission —
+// it is pure parse-time sugar). Reconciliation, in order: take the template's
+// permission lines, DROP any verb the object lists in `omit`, DROP any verb the
+// object declares ITSELF (the object's own line overrides the template's), then
+// append the object's own lines. The merged Perms keep template order followed by
+// the object's own lines; emission sorts policies, so order is immaterial.
+func (s *Spec) expandTemplates() error {
+	byName := map[string]*Template{}
+	for _, t := range s.Templates {
+		if byName[t.Name] != nil {
+			return fmt.Errorf("duplicate template %q", t.Name)
+		}
+		byName[t.Name] = t
 	}
-	o.Name = tbl
-	o.Table = tbl
-	if p.virtualRoot == "" {
-		return nil, p.errf("`platform %s` needs a virtual root level in the topology (e.g. `level platform virtual`) to anchor a global object", tbl)
+	for _, o := range s.Objects {
+		if o.Use == "" {
+			if len(o.Omit) > 0 {
+				return fmt.Errorf("object %q declares `omit` without `use`", o.Name)
+			}
+			continue
+		}
+		t := byName[o.Use]
+		if t == nil {
+			return fmt.Errorf("object %q uses unknown template %q", o.Name, o.Use)
+		}
+		tmplVerbs := map[string]bool{}
+		for _, pm := range t.Perms {
+			tmplVerbs[pm.Verb] = true
+		}
+		for _, v := range o.Omit {
+			if !tmplVerbs[v] {
+				return fmt.Errorf("object %q omits verb %q which template %q does not define", o.Name, v, o.Use)
+			}
+		}
+		omit := map[string]bool{}
+		for _, v := range o.Omit {
+			omit[v] = true
+		}
+		own := map[string]bool{}
+		for _, pm := range o.Perms {
+			own[pm.Verb] = true
+		}
+		var merged []*Perm
+		for _, pm := range t.Perms {
+			if omit[pm.Verb] || own[pm.Verb] {
+				continue
+			}
+			cp := *pm // shallow copy: Tree/Expr/Guard are immutable, sharing is safe
+			merged = append(merged, &cp)
+		}
+		o.Perms = append(merged, o.Perms...)
 	}
-	o.Scoped = []string{p.virtualRoot}
-	line := o.Pos
-	scoped := func(verb, op string) *Perm {
-		return &Perm{Verb: verb, Expr: []*Term{{Builtin: "scoped", Pos: line}}, Layers: []string{"rls"}, Maps: op, Pos: line}
-	}
-	o.Perms = []*Perm{
-		scoped("view", "select"),
-		scoped("create", "insert"),
-		scoped("edit", "update"),
-		scoped("delete", "delete"),
-	}
-	return o, nil
+	return nil
 }
 
 func (p *parser) parseLevelChain() ([]string, error) {
@@ -1277,7 +1310,8 @@ func (p *parser) parseClaims() (*ClaimsAccessor, error) {
 }
 
 // parseGrant: grant IDENT at LEVEL via edge TABLE(grantee_col, level_col)
-//             [active COL] [expires COL]
+//
+//	[active COL] [expires COL]
 func (p *parser) parseGrant() (*Grant, error) {
 	g := &Grant{Pos: Pos{p.cur().line}}
 	p.advance() // 'grant'

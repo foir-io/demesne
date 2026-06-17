@@ -125,20 +125,28 @@ rolestore admin {
 subject admin    { anchor tenant  reach descendants identifies sub          roles configurable admin    binds admin }
 subject customer { anchor project reach self        identifies customer_id  roles configurable customer binds owner }
 
-// A governed table + its object-relative permissions.
+// A named, reusable permission set the APP defines and applies with `use` — the
+// generic way to name an access pattern (containment-only here) and reuse it.
+template contained {
+  permission view   = @scoped @rls maps select
+  permission create = @scoped @rls maps insert
+  permission edit   = @scoped @rls maps update
+  permission delete = @scoped @rls maps delete
+}
+
+// A containment-only config table: inherits the template; supplies its own scope.
+object configs { table configs; scoped tenant > project; use contained }
+
+// A governed content table — composed from plain relations + terms (owner-
+// origination, a per-record visibility mode, an app-managed grant store / ACL).
+// owner is the unified (owner_id, owner_kind) principal reference.
 object record {
   table  records
   scoped tenant > project
-  // The access descriptor: owner-origination + per-record mode + an app-managed
-  // grant list (ACLs). Modes are spec-declared, no baked vocabulary.
-  descriptor {
-    owner  customer via customer_id
-    mode   via access_mode
-    modes  private + read "public_project" + list "customer"
-    grants via edge record_acl(record_id, principal_kind, principal_id, access)
-  }
-  permission view = @descriptor @rls maps select
-  permission edit = @descriptor @rls maps update
+  relation owner:   customer via owner_id where owner_kind = "customer"
+  relation grantee: customer via grant record_acl(record_id, principal_kind, principal_id, access)
+  permission view = @app_scope + owner + mode access_mode = "public" + grantee:read   @rls maps select
+  permission edit = @app_scope + owner + grantee:write                                @rls maps update
 }
 ```
 
@@ -150,7 +158,10 @@ banned` all compile to RLS. Negation is **fail-closed**: an exclusion whose
 condition can't be determined (a NULL claim) denies. A union-only expression is
 unchanged.
 
-Beyond this: **level-scoped grants** (`grant … at <level> via edge …` — a
+Beyond this: **permission templates** (`template <name> { … }` + `object … use
+<name>` — a named, reusable permission set the app composes from the generic terms
+and applies uniformly; a using object may `omit` a verb or override one with its
+own permission line), **level-scoped grants** (`grant … at <level> via edge …` — a
 scoped, revocable operator/impersonation reach), **unbounded-depth hierarchies**
 (`relation … via closure <C>(anc,desc) base <B>(id,parent) on <col>` — the
 compiler generates a trigger-maintained transitive-closure table + an indexed
