@@ -291,6 +291,15 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			top = append(top, reach)
 		}
 	}
+	// `@public` — a read grant for everyone (any authenticated principal): a top-level
+	// `true` branch, NOT gated by containment. The sanctioned use is a world-readable
+	// catalog / reference table (e.g. the platform billing-plan catalog). Validation
+	// confines @public to @rls select.
+	for _, t := range pm.Expr {
+		if t.Builtin == "public" && !contains(top, "true") {
+			top = append(top, "true")
+		}
+	}
 	// The grant block: the permission's boolean expression (union / intersection /
 	// negation) over the leaf-term fragments. A union-only tree flattens to the
 	// historical `f1 OR f2 …`.
@@ -510,9 +519,9 @@ func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Re
 		if n.Term.Builtin == "scoped" {
 			return nil, nil
 		}
-		// A `via grant <name>` term is emitted as a top-level reach branch in
-		// rlsPredicate, not as a containment block fragment — skip it here.
-		if n.Term.GrantRef != "" {
+		// A `via grant <name>` term and `@public` are emitted as top-level branches in
+		// rlsPredicate, not as containment block fragments — skip them here.
+		if n.Term.GrantRef != "" || n.Term.Builtin == "public" {
 			return nil, nil
 		}
 		frags, err := s.emitTerm(obj, pm, n.Term, rels, custClaim)

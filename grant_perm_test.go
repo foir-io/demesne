@@ -109,6 +109,63 @@ func TestViaGrantPerm_DedupesWithAutoReach(t *testing.T) {
 	}
 }
 
+// `@public` — a world-read grant for a catalog/reference table: emits a top-level
+// `true`, so everyone reads; writes stay gated (here, platform staff).
+func TestPublicRead(t *testing.T) {
+	const spec = `
+topology {
+  level platform virtual
+  level tenant   parent platform
+}
+vocabulary admin    { permission content:read  preset tenant_owner @ tenant = content:read }
+vocabulary platform { permission platform:manage  preset platform_admin @ platform = platform:manage }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject staff { anchor platform; reach descendants; identifies sub; roles configurable platform }
+subject admin { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+
+object plan_catalog {
+  table  billing_plans
+  scoped platform
+  relation staff: staff via role
+  permission view   = @public  @rls maps select
+  permission create = staff    @rls maps insert
+}
+`
+	s, err := Parse(spec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	rls, _ := s.EmitRLS()
+	pol := map[string]Policy{}
+	for _, p := range rls.Policies {
+		pol[p.Name] = p
+	}
+	if pol["billing_plans_select"].Using != "true" {
+		t.Errorf("@public read should be exactly `true` (everyone), got: %q", pol["billing_plans_select"].Using)
+	}
+	if !strings.Contains(pol["billing_plans_insert"].Check, "auth.has_platform_role(") {
+		t.Errorf("write should stay staff-gated, got: %q", pol["billing_plans_insert"].Check)
+	}
+
+	// @public on a write verb is rejected.
+	bad := strings.Replace(spec, "permission create = staff    @rls maps insert", "permission create = @public  @rls maps insert", 1)
+	if s2, err := Parse(bad); err == nil {
+		if err := Validate(s2); err == nil {
+			t.Fatal("@public on insert should fail validation (world-read only)")
+		}
+	}
+}
+
 func TestViaGrantPerm_Errors(t *testing.T) {
 	cases := []struct{ name, find, repl string }{
 		{"unknown grant", "via grant impersonation  @rls maps insert", "via grant nope  @rls maps insert"},
