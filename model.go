@@ -1,9 +1,6 @@
 package demesne
 
-import (
-	"fmt"
-	"sort"
-)
+import "fmt"
 
 // Computed model over a parsed Spec: the linear topology chain, the derived
 // claims contract, scope-column pinning per the §6.2 templates, and relation
@@ -252,26 +249,18 @@ func (s *Spec) nonVirtualChain() ([]*Level, error) {
 // ClaimsContract is the set of JWT claim keys the spec implies (V5): one claim
 // key per non-virtual level (its declared `claim`, else `<level>_id`), plus each
 // subject's `identifies` key. Sorted + de-duplicated. WithRLS / session minting
-// are generated from this set.
+// are generated from this set. It is the flat KEY view of ClaimsContractEntries()
+// (the structured contract that also carries each key's source); both stay in
+// lockstep because this delegates to it.
 func (s *Spec) ClaimsContract() ([]string, error) {
-	chain, err := s.nonVirtualChain()
+	entries, err := s.ClaimsContractEntries()
 	if err != nil {
 		return nil, err
 	}
-	set := map[string]bool{}
-	for _, l := range chain {
-		set[l.claimKey()] = true
+	out := make([]string, len(entries)) // entries are sorted by key
+	for i, e := range entries {
+		out[i] = e.Key
 	}
-	for _, sub := range s.Subjects {
-		if sub.Identifies != "" {
-			set[sub.Identifies] = true
-		}
-	}
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	sort.Strings(out)
 	return out, nil
 }
 

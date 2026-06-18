@@ -126,3 +126,47 @@ fail-close; the scope-containment matrix; materialized vs key-expansion union). 
 no-drift proof — the generated resolver reproducing Foir's two hand-written ones over
 the real `foir.demesne` spec — lives consumer-side (`demesne_holds_test.go`), where
 the database and Foir's code are.
+
+## Layer 2 — the session/claims wrapper (closing the compiler→framework gap, EID-334)
+
+The other Layer-2 glue every adopter re-writes: going from a principal to an
+in-force RLS session. The engine emits the claims *contract* and ships `MintClaims`/
+`ClaimsSetSQL`, but never the principal→claims mapping nor the session envelope — so
+Foir hand-maps the blob (`db.BuildRLSClaims`: `UserID→sub`, `TenantID→tenant_id`, …)
+and hand-writes the `SET LOCAL ROLE authenticated` + `set_config` sequence
+(`db.WithRLS`). Both are now derived from the spec (`session.go`):
+
+- **Contract (structured)** — `ClaimsContractEntries()` enriches the flat
+  `ClaimsContract()` into `[{Key, Level, Subjects}]`: each key plus its source — the
+  topology level whose scope id feeds it, and/or the subjects whose `identifies`
+  feeds it. `ClaimsContract()` now delegates to it, so the flat key list is
+  byte-identical (the generated artifact is unchanged).
+- **Build** — `BuildClaims(Principal{Subject, ID, Scopes})` maps a principal onto the
+  contract: the subject id → its `identifies` key, each presented scope id → that
+  level's claim key (the override or the `<level>_id` convention). Fail-closed: an
+  unknown subject, a subject with no identity key, or a scope for an unknown/virtual
+  level is rejected (never mint a claim no policy reads). `MintClaimsFor` pairs it
+  with `MintClaims`; a session with non-contract keys adds them to the map first.
+- **Envelope** — `SetRoleSQL(local)` + `SessionSetupSQL(local)` build the
+  WithRLS-shaped statement sequence (`SET [LOCAL] ROLE <role>` then the claims
+  `set_config`); the caller runs them in its tx (no driver in the engine — the moat).
+  The RLS connection role is spec-declared (`claims … role <r>`), defaulting to
+  `authenticated` exactly as the GUC defaults to `request.jwt.claims` and the definer
+  schema to `auth` — so the engine bakes in no role name and Foir renders identically.
+
+Pure stdlib and target-neutral: `ClaimEntry`/`Principal` are plain data, `BuildClaims`
+is a pure transform over the spec's levels + subjects, the SQL builders return strings.
+Nothing is Foir-specific (EID-267 / EID-315). Parity is scoped precisely: `BuildClaims`
+reproduces `BuildRLSClaims` for every key it emits (the scope keys + the subject
+identity); the keys `BuildRLSClaims` adds — `role` (vestigial), `kind` (the
+principal-kind discriminator, read by `@kind` but outside the topology+subject
+contract), `owner_kind`/`owner_id` (secrets-DB only), and `sub` for a customer (Foir
+mirrors the id; the spec attributes a customer's identity to `customer_id`) — are
+documented deltas an adopter layers on, not spec-contract keys.
+
+Proof: `session_test.go` (structured contract; BuildClaims mapping + claim-key
+overrides + fail-closed rejections; the envelope shape, default and spec-declared
+role). The no-drift proof — `BuildClaims`/`SessionSetupSQL` reproducing
+`BuildRLSClaims`/`db.WithRLS` over the real `foir.demesne` spec, the deltas pinned,
+and a dev-DB forward proof that the derived blob yields the same RLS row visibility as
+the hand-mapped one — lives consumer-side (`demesne_session_test.go`).
