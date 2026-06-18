@@ -81,12 +81,16 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 | `demesne validate <spec>` | no | parse + validate the spec |
 | `demesne emit <spec> [rls\|definers\|triggers\|claims\|pdp\|all]` | no | print the generated SQL/Go |
 | `demesne introspect <dsn>` | yes | summarise the live schema |
-| `demesne scaffold <dsn>` | yes | generate a starter spec from the schema |
-| `demesne check <spec> <dsn>` | yes | validate, then bind the spec to the live schema |
-| `demesne diff <spec> <dsn>` | yes | generated-vs-live policy drift |
+| `demesne scaffold [-i] <dsn>` | yes | generate a starter spec from the schema (`-i`: interactive — asks for the RLS role + definer/table schemas, lists ungoverned tables as TODO stubs) |
+| `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, AND verify the RLS role is not `BYPASSRLS` |
+| `demesne diff <spec> <dsn>` | yes | generated-vs-live policy drift (on governed tables) |
+| `demesne coverage <spec> <dsn>` | yes | list live tables with NO governing object (ungoverned → no RLS) — the drift/gap check |
 
 `<dsn>` defaults to `$DATABASE_URL`. The engine package never touches a database;
 only the CLI links a Postgres driver, for the live-database subcommands.
+
+Editor support: a VS Code syntax-highlighting extension for `.demesne` lives in
+`editors/vscode/` (a TextMate grammar — no build step).
 
 ---
 
