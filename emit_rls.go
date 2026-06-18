@@ -223,99 +223,17 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 
 	objIsGlobal := virtual[objLeaf] // a virtual-leaf object lives above tenancy
 	objHasStaffTerm := s.objectReferencesStaff(obj)
-	var top []string
-	// Grant reaches to fold INTO the containment block at a given ancestor level
-	// (keyed by level name), rather than as a top-level disjunct. For a sub-row
-	// object deeper than the grant's level, the grant admits the operator into the
-	// granted level but the SELECTED deeper scope (e.g. the project claim) still
-	// applies — so the grant ORs with that level's containment column and ANDs
-	// with the rest, keeping a project-scoped surface project-scoped for operators.
-	grantInject := map[string][]string{}
-	for _, sub := range s.Subjects {
-		switch {
-		case sub.Membership != nil && virtual[sub.Anchor]:
-			// Legacy unconditional membership operator (a god-flag): reaches every
-			// row, gated only by `<leaf>_id IS NULL` (no scope selected).
-			fn := fmt.Sprintf("%s.%s(%s)", s.definerSchema(), membershipFn(sub.Membership), s.claim(sub.Identifies))
-			if obj.IsLevelEntity() || objIsGlobal {
-				top = append(top, fn)
-			} else {
-				top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, s.claim(s.claimKeyForLevel(objLeaf))))
-			}
-		case s.isPlatformRoleSubject(sub) && (objHasStaffTerm || (objIsGlobal && sub.Anchor == objLeaf)):
-			// Platform-anchored ROLE subject on a PURE-GLOBAL object (the `platform
-			// <table>` shorthand, v3 WS6): a table above tenancy whose ONLY grant is
-			// the platform plane. The platform-role definer is the whole top branch —
-			// has_<anchor>_role(<claim>) over role_assignments with NULL scope. The
-			// general retirement of the is_platform_admin god-flag. Skipped when the
-			// object references the staff plane EXPLICITLY (a composable `staff` term,
-			// for objects that mix staff with self/role/session) — that term emits the
-			// same call, so auto-adding here too would duplicate it.
-			top = append(top, fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(sub.Anchor), s.claim(sub.Identifies)))
-		case sub.Reach == "grant":
-			// Scoped grant operator (the general replacement for the god-flag):
-			// reach is gated by an ACTIVE grant edge at the grant's level — not
-			// unconditional — and cascades to the whole subtree via the object's
-			// level-scope column. No `<leaf>_id IS NULL` ambient view. A grant
-			// reaches DOWN into its level's subtree, so it contributes nothing to a
-			// GLOBAL object above that level (which carries no such scope column).
-			if g := s.grantByName(sub.ReachGrant); g != nil && contains(obj.Scoped, g.Level) {
-				reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), s.scopeCol(obj, g.Level))
-				if g.Level != objLeaf && !obj.IsLevelEntity() && !objIsGlobal {
-					// Sub-row object deeper than the grant's level: fold the grant into
-					// the grant-level containment column so the deeper scope (the
-					// selected project) still constrains the operator's view. An
-					// operator reaches OTHER projects in the granted tenant by selecting
-					// them, exactly like a normal admin — never tenant-wide at once.
-					grantInject[g.Level] = append(grantInject[g.Level], reach)
-				} else {
-					// Object AT the grant's level (a level-entity selector, e.g. the
-					// project/tenant lists) or a global object: the grant is a top-level
-					// reach so the operator can see — and pick — every node in the
-					// granted level's subtree.
-					top = append(top, reach)
-				}
-			}
-		}
+
+	// Subject-derived top branches, plus grant reaches to fold INTO the containment
+	// block at a given ancestor level (keyed by level name).
+	top, grantInject := s.rlsSubjectBranches(obj, virtual, objLeaf, objIsGlobal, objHasStaffTerm)
+
+	// Permission-expression top branches (@scoped flag, `via grant`, @public).
+	top, scopedGrant, err := s.rlsExprTopBranches(obj, pm, top)
+	if err != nil {
+		return "", err
 	}
 
-	// @scoped (containment alone grants — the admin-config plane) is a flag on the
-	// permission, not a boolean operand; detect it across the leaves.
-	scopedGrant := false
-	for _, t := range pm.Expr {
-		if t.Builtin == "scoped" {
-			scopedGrant = true
-		}
-	}
-	// `via grant <name>` permission terms: the verb is conferred by a declared grant's
-	// reach (e.g. the operator's scoped impersonation), emitted as a TOP-level branch —
-	// not folded into containment. Deduped against the auto-added subject reach (a
-	// tenant-leaf object already carries the operator grant in `top`). When a
-	// permission's ONLY grant is grant-references (no @scoped / owner / role term), the
-	// containment block is suppressed below — so the verb is granted ONLY to the grant's
-	// holders, never to in-scope members (e.g. an operator-only write that excludes the
-	// tenant's own admins).
-	for _, t := range pm.Expr {
-		if t.GrantRef == "" {
-			continue
-		}
-		reach, err := s.grantRefReach(obj, t.GrantRef)
-		if err != nil {
-			return "", err
-		}
-		if !contains(top, reach) {
-			top = append(top, reach)
-		}
-	}
-	// `@public` — a read grant for everyone (any authenticated principal): a top-level
-	// `true` branch, NOT gated by containment. The sanctioned use is a world-readable
-	// catalog / reference table (e.g. the platform billing-plan catalog). Validation
-	// confines @public to @rls select.
-	for _, t := range pm.Expr {
-		if t.Builtin == "public" && !contains(top, "true") {
-			top = append(top, "true")
-		}
-	}
 	// The grant block: the permission's boolean expression (union / intersection /
 	// negation) over the leaf-term fragments. A union-only tree flattens to the
 	// historical `f1 OR f2 …`.
@@ -324,41 +242,10 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 		return "", err
 	}
 
-	// Containment: pin every ancestor scope column along the object's root→leaf
-	// path(s). A single-parent leaf has ONE path → a plain AND-chain (identical to
-	// the chain/tree case). A multi-parent leaf (WS3 Phase B) has one path per
-	// lineage → an OR of per-path AND-chains (column-backed, sargable). A
-	// level-entity object excludes its own node column (that is a grant axis, not
-	// containment); virtual levels carry no column.
-	paths, err := s.Topology.AncestorPaths(objLeaf)
+	// Containment: pin every ancestor scope column along the object's root→leaf path(s).
+	block, err := s.rlsContainmentBlock(obj, objLeaf, grantInject)
 	if err != nil {
 		return "", err
-	}
-	var pathPreds []string
-	for _, path := range paths {
-		var cols []string
-		for _, lvl := range path {
-			if lvl.Virtual || (obj.IsLevelEntity() && lvl.Name == obj.Level) {
-				continue
-			}
-			colPred := fmt.Sprintf("%s = %s", s.scopeCol(obj, lvl.Name), s.claim(lvl.claimKey()))
-			if reaches := grantInject[lvl.Name]; len(reaches) > 0 {
-				// (<col> = <claim> OR grant_reach(...)) — the grant admits the operator
-				// at this level; deeper levels still AND in, keeping it scoped.
-				colPred = "(" + colPred + " OR " + strings.Join(reaches, " OR ") + ")"
-			}
-			cols = append(cols, colPred)
-		}
-		pathPreds = append(pathPreds, strings.Join(cols, " AND "))
-	}
-	var block string
-	if len(pathPreds) == 1 {
-		block = pathPreds[0]
-	} else {
-		for i := range pathPreds {
-			pathPreds[i] = "(" + pathPreds[i] + ")"
-		}
-		block = strings.Join(pathPreds, " OR ")
 	}
 	if len(blockTerms) > 0 {
 		if block != "" {
@@ -389,6 +276,146 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 		return "", fmt.Errorf("object %q permission %q: no emittable grant — a global object needs a platform-role subject", obj.Name, pm.Verb)
 	}
 	return strings.Join(branches, " OR "), nil
+}
+
+// rlsSubjectBranches derives the subject-level top branches and the grant reaches
+// to fold into containment. The OPERATOR (a virtual-root membership subject) is the
+// only containment-independent branch; a scoped-grant operator either rides a
+// top-level reach (object at/above the grant's level) or folds into the grant-level
+// containment column (a deeper sub-row object), keyed in grantInject by level name.
+func (s *Spec) rlsSubjectBranches(obj *Object, virtual map[string]bool, objLeaf string, objIsGlobal, objHasStaffTerm bool) ([]string, map[string][]string) {
+	var top []string
+	grantInject := map[string][]string{}
+	for _, sub := range s.Subjects {
+		switch {
+		case sub.Membership != nil && virtual[sub.Anchor]:
+			// Legacy unconditional membership operator (a god-flag): reaches every
+			// row, gated only by `<leaf>_id IS NULL` (no scope selected).
+			fn := fmt.Sprintf("%s.%s(%s)", s.definerSchema(), membershipFn(sub.Membership), s.claim(sub.Identifies))
+			if obj.IsLevelEntity() || objIsGlobal {
+				top = append(top, fn)
+			} else {
+				top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, s.claim(s.claimKeyForLevel(objLeaf))))
+			}
+		case s.isPlatformRoleSubject(sub) && (objHasStaffTerm || (objIsGlobal && sub.Anchor == objLeaf)):
+			// Platform-anchored ROLE subject on a PURE-GLOBAL object (the `platform
+			// <table>` shorthand, v3 WS6): a table above tenancy whose ONLY grant is
+			// the platform plane. The platform-role definer is the whole top branch —
+			// has_<anchor>_role(<claim>) over role_assignments with NULL scope. The
+			// general retirement of the is_platform_admin god-flag. Skipped when the
+			// object references the staff plane EXPLICITLY (a composable `staff` term,
+			// for objects that mix staff with self/role/session) — that term emits the
+			// same call, so auto-adding here too would duplicate it.
+			top = append(top, fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(sub.Anchor), s.claim(sub.Identifies)))
+		case sub.Reach == "grant":
+			// Scoped grant operator (the general replacement for the god-flag):
+			// reach is gated by an ACTIVE grant edge at the grant's level — not
+			// unconditional — and cascades to the whole subtree via the object's
+			// level-scope column. No `<leaf>_id IS NULL` ambient view. A grant
+			// reaches DOWN into its level's subtree, so it contributes nothing to a
+			// GLOBAL object above that level (which carries no such scope column).
+			top, grantInject = s.rlsApplyGrantReach(obj, sub, objLeaf, objIsGlobal, top, grantInject)
+		}
+	}
+	return top, grantInject
+}
+
+// rlsApplyGrantReach routes a scoped-grant subject's reach either to a top-level
+// branch (object AT the grant's level — a level-entity selector — or a global
+// object) or, for a deeper sub-row object, folds it into the grant-level containment
+// column so the selected deeper scope still constrains the operator's view.
+func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, objIsGlobal bool, top []string, grantInject map[string][]string) ([]string, map[string][]string) {
+	g := s.grantByName(sub.ReachGrant)
+	if g == nil || !contains(obj.Scoped, g.Level) {
+		return top, grantInject
+	}
+	reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), s.scopeCol(obj, g.Level))
+	if g.Level != objLeaf && !obj.IsLevelEntity() && !objIsGlobal {
+		// Sub-row object deeper than the grant's level: fold the grant into
+		// the grant-level containment column so the deeper scope (the
+		// selected project) still constrains the operator's view. An
+		// operator reaches OTHER projects in the granted tenant by selecting
+		// them, exactly like a normal admin — never tenant-wide at once.
+		grantInject[g.Level] = append(grantInject[g.Level], reach)
+	} else {
+		// Object AT the grant's level (a level-entity selector, e.g. the
+		// project/tenant lists) or a global object: the grant is a top-level
+		// reach so the operator can see — and pick — every node in the
+		// granted level's subtree.
+		top = append(top, reach)
+	}
+	return top, grantInject
+}
+
+// rlsExprTopBranches appends the permission-expression top branches to top and
+// reports whether @scoped is present. `via grant <name>` terms emit a TOP-level
+// reach (deduped against the auto-added subject reach); @public emits a `true`
+// branch (a world-readable catalog). When a permission's only grant is
+// grant-references, the containment block is suppressed in rlsPredicate.
+func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string) ([]string, bool, error) {
+	// @scoped (containment alone grants — the admin-config plane) is a flag on the
+	// permission, not a boolean operand; detect it across the leaves.
+	scopedGrant := false
+	for _, t := range pm.Expr {
+		if t.Builtin == "scoped" {
+			scopedGrant = true
+		}
+	}
+	for _, t := range pm.Expr {
+		if t.GrantRef == "" {
+			continue
+		}
+		reach, err := s.grantRefReach(obj, t.GrantRef)
+		if err != nil {
+			return nil, false, err
+		}
+		if !contains(top, reach) {
+			top = append(top, reach)
+		}
+	}
+	for _, t := range pm.Expr {
+		if t.Builtin == "public" && !contains(top, "true") {
+			top = append(top, "true")
+		}
+	}
+	return top, scopedGrant, nil
+}
+
+// rlsContainmentBlock builds the containment predicate: pin every ancestor scope
+// column along the object's root→leaf path(s). A single-parent leaf has ONE path →
+// a plain AND-chain (identical to the chain/tree case). A multi-parent leaf (WS3
+// Phase B) has one path per lineage → an OR of per-path AND-chains (column-backed,
+// sargable). A level-entity object excludes its own node column (that is a grant
+// axis, not containment); virtual levels carry no column.
+func (s *Spec) rlsContainmentBlock(obj *Object, objLeaf string, grantInject map[string][]string) (string, error) {
+	paths, err := s.Topology.AncestorPaths(objLeaf)
+	if err != nil {
+		return "", err
+	}
+	var pathPreds []string
+	for _, path := range paths {
+		var cols []string
+		for _, lvl := range path {
+			if lvl.Virtual || (obj.IsLevelEntity() && lvl.Name == obj.Level) {
+				continue
+			}
+			colPred := fmt.Sprintf("%s = %s", s.scopeCol(obj, lvl.Name), s.claim(lvl.claimKey()))
+			if reaches := grantInject[lvl.Name]; len(reaches) > 0 {
+				// (<col> = <claim> OR grant_reach(...)) — the grant admits the operator
+				// at this level; deeper levels still AND in, keeping it scoped.
+				colPred = "(" + colPred + " OR " + strings.Join(reaches, " OR ") + ")"
+			}
+			cols = append(cols, colPred)
+		}
+		pathPreds = append(pathPreds, strings.Join(cols, " AND "))
+	}
+	if len(pathPreds) == 1 {
+		return pathPreds[0], nil
+	}
+	for i := range pathPreds {
+		pathPreds[i] = "(" + pathPreds[i] + ")"
+	}
+	return strings.Join(pathPreds, " OR "), nil
 }
 
 // grantRefReach renders the reach predicate for a `via grant <name>` permission
@@ -526,32 +553,38 @@ func (s *Spec) guardable(t *Term, rels map[string]*Relation) bool {
 // OR'd); for `not` a single fail-closed `NOT COALESCE(<pred>, true)` (an
 // indeterminate exclusion denies). The `@scoped` flag is not a predicate and
 // contributes nothing here.
+// rlsLeafFrags compiles a leaf permission node into its guard-wrapped fragments.
+// The `@scoped` flag, `via grant <name>` terms and `@public` are emitted as
+// top-level branches in rlsPredicate, not as containment block fragments — so they
+// contribute nothing here.
+func (s *Spec) rlsLeafFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Relation, custClaim string) ([]string, error) {
+	if n.Term.Builtin == "scoped" {
+		return nil, nil
+	}
+	if n.Term.GrantRef != "" || n.Term.Builtin == "public" {
+		return nil, nil
+	}
+	frags, err := s.emitTerm(obj, pm, n.Term, rels, custClaim)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, f := range frags {
+		if pm.Guard != nil && s.guardable(n.Term, rels) {
+			f = fmt.Sprintf("(%s AND %s)", f, guardSQL(pm.Guard))
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
 func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Relation, custClaim string) ([]string, error) {
 	if n == nil {
 		return nil, nil
 	}
 	switch n.Op {
 	case "leaf":
-		if n.Term.Builtin == "scoped" {
-			return nil, nil
-		}
-		// A `via grant <name>` term and `@public` are emitted as top-level branches in
-		// rlsPredicate, not as containment block fragments — skip them here.
-		if n.Term.GrantRef != "" || n.Term.Builtin == "public" {
-			return nil, nil
-		}
-		frags, err := s.emitTerm(obj, pm, n.Term, rels, custClaim)
-		if err != nil {
-			return nil, err
-		}
-		var out []string
-		for _, f := range frags {
-			if pm.Guard != nil && s.guardable(n.Term, rels) {
-				f = fmt.Sprintf("(%s AND %s)", f, guardSQL(pm.Guard))
-			}
-			out = append(out, f)
-		}
-		return out, nil
+		return s.rlsLeafFrags(obj, pm, n, rels, custClaim)
 	case "or":
 		var out []string
 		for _, k := range n.Kids {
@@ -600,30 +633,10 @@ func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Re
 // emitTerm compiles one union term to one or more predicate fragments.
 func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, custClaim string) ([]string, error) {
 	if t.ModeCol != "" {
-		// Column-condition (visibility) term: `mode <col> = "<v>" [for <subject>]`.
-		// A row whose ModeCol equals the sentinel is admitted; an actor-scoped form
-		// confines it to a principal plane (operators-only for `for admin`). This is
-		// the de-prescribed form of emitDescriptor's read-mode disjuncts.
-		frag := fmt.Sprintf("%s = '%s'", t.ModeCol, t.ModeVal)
-		if t.ModeScope != "" {
-			frag = fmt.Sprintf("%s AND %s", frag, s.modePlaneScope(t.ModeScope, custClaim))
-		}
-		return []string{frag}, nil
+		return s.rlsEmitMode(t, custClaim), nil
 	}
 	if t.WalkVerb != "" {
-		// A role-walk into a parent relation (e.g. `tenant->owner`): the admin
-		// owns/administers the parent node → a tenant/ancestor-admin definer
-		// call. Convention reproduces the live names: walk into relation R (to
-		// object/level X via column C) → auth.is_<X>_admin(<admin sub claim>, C).
-		parent := rels[t.Ident]
-		if parent == nil {
-			return nil, fmt.Errorf("role-walk references unknown relation %q", t.Ident)
-		}
-		col, ok := parent.Repr.(ViaColumn)
-		if !ok {
-			return nil, fmt.Errorf("role-walk parent %q must be a column relation", t.Ident)
-		}
-		return []string{fmt.Sprintf("%s.is_%s_%s(%s, %s)", s.definerSchema(), parent.Types[0], s.adminName(), s.claim(s.adminIdentify()), col.Column)}, nil
+		return s.rlsEmitWalk(t, rels)
 	}
 	// A grant relation referenced with an access class (`grantee:read`) lexes as a
 	// single permkey; resolve it before the capability/relation handling below. The
@@ -634,6 +647,45 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		vg := r.Repr.(ViaGrant)
 		return s.emitGrantFrags(obj, r, &vg, access)
 	}
+	if frags, handled, err := s.rlsEmitBuiltin(obj, pm, t, rels, custClaim); handled {
+		return frags, err
+	}
+	return s.rlsEmitRelation(obj, pm, t, rels, custClaim)
+}
+
+// rlsEmitMode compiles a column-condition (visibility) term: `mode <col> = "<v>"
+// [for <subject>]`. A row whose ModeCol equals the sentinel is admitted; an
+// actor-scoped form confines it to a principal plane (operators-only for `for
+// admin`). This is the de-prescribed form of emitDescriptor's read-mode disjuncts.
+func (s *Spec) rlsEmitMode(t *Term, custClaim string) []string {
+	frag := fmt.Sprintf("%s = '%s'", t.ModeCol, t.ModeVal)
+	if t.ModeScope != "" {
+		frag = fmt.Sprintf("%s AND %s", frag, s.modePlaneScope(t.ModeScope, custClaim))
+	}
+	return []string{frag}
+}
+
+// rlsEmitWalk compiles a role-walk into a parent relation (e.g. `tenant->owner`):
+// the admin owns/administers the parent node → a tenant/ancestor-admin definer
+// call. Convention reproduces the live names: walk into relation R (to object/level
+// X via column C) → auth.is_<X>_admin(<admin sub claim>, C).
+func (s *Spec) rlsEmitWalk(t *Term, rels map[string]*Relation) ([]string, error) {
+	parent := rels[t.Ident]
+	if parent == nil {
+		return nil, fmt.Errorf("role-walk references unknown relation %q", t.Ident)
+	}
+	col, ok := parent.Repr.(ViaColumn)
+	if !ok {
+		return nil, fmt.Errorf("role-walk parent %q must be a column relation", t.Ident)
+	}
+	return []string{fmt.Sprintf("%s.is_%s_%s(%s, %s)", s.definerSchema(), parent.Types[0], s.adminName(), s.claim(s.adminIdentify()), col.Column)}, nil
+}
+
+// rlsEmitBuiltin compiles a builtin term (@open / @app_scope / @store_manage /
+// @session / @kind). The handled flag is false (and frags/err nil) when the term is
+// not a builtin and not a capability literal — the caller then resolves it as a
+// relation.
+func (s *Spec) rlsEmitBuiltin(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, custClaim string) ([]string, bool, error) {
 	switch {
 	case t.Builtin == "open":
 		// @open (v3 WS6): an op deliberately unrestricted at the RLS layer (`true`).
@@ -641,76 +693,98 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		// login session / credential row written before any session claim exists
 		// (the trusted auth code sets the owner column). Validation confines @open to
 		// @rls insert; it is never a read/update/delete grant.
-		return []string{"true"}, nil
+		return []string{"true"}, true, nil
 	case t.Builtin == "app_scope":
-		if err := reqClaim(custClaim, obj, "@app_scope"); err != nil {
-			return nil, err
-		}
-		base := s.claim(custClaim) + " IS NULL"
-		// The broad app/service reach may EXCLUDE rows owned via an owner axis
-		// (`@app_scope(exclude admin_owner)`), so an admin-owned row stays reachable
-		// only by its owning admin + grants (operator-private). The excluded axis is an
-		// owner ViaColumn whose PRESENCE is excluded — emitted as existence-negation
-		// (NOT principal-match), the soundness invariant: one operator never sees
-		// another's admin-owned rows.
-		if t.ExcludeRel != "" {
-			r := rels[t.ExcludeRel]
-			if r == nil {
-				return nil, fmt.Errorf("@app_scope(exclude %q): unknown relation", t.ExcludeRel)
-			}
-			vc, ok := r.Repr.(ViaColumn)
-			if !ok {
-				return nil, fmt.Errorf("@app_scope(exclude %q): excluded relation must be an owner column", t.ExcludeRel)
-			}
-			// "Not owned via this axis": a discriminated owner excludes the kind column
-			// distinct from the value (NULL kind = unowned, passes); a plain column
-			// excludes the column being non-NULL.
-			if vc.DiscrimCol != "" {
-				base = fmt.Sprintf("(%s AND %s IS DISTINCT FROM '%s')", base, vc.DiscrimCol, vc.DiscrimVal)
-			} else {
-				base = fmt.Sprintf("(%s AND %s IS NULL)", base, vc.Column)
-			}
-		}
-		return []string{base}, nil
+		frags, err := s.rlsEmitAppScope(obj, t, rels, custClaim)
+		return frags, true, err
 	case t.Builtin == "store_manage":
-		// Write-moat for a discriminated grant store (v0.28.0): the caller may
-		// write/list/revoke a row iff it can EDIT the resource the row points at.
-		// Emits auth.<store>_manage(<discrim>, <record>) over the row's own columns;
-		// the generated dispatch CASEs the discriminator to the kind's can-edit.
-		descs := s.storeDescriptors(obj.Table)
-		if len(descs) == 0 {
-			return nil, fmt.Errorf("@store_manage on %q: no object uses table %q as a grant store", obj.Name, obj.Table)
-		}
-		g := objectGrantEdge(descs[0])
-		if g.DiscrimCol == "" {
-			return nil, fmt.Errorf("@store_manage on %q: store %q is not discriminated (a single-kind store uses `via object <kind>->edit`)", obj.Name, obj.Table)
-		}
-		return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), storeManageName(obj.Table), g.DiscrimCol, g.RecordCol)}, nil
+		frags, err := s.rlsEmitStoreManage(obj, t)
+		return frags, true, err
 	case t.Builtin == "session":
-		// The caller's session-selected node: the entity's own column = the
-		// leaf claim. `@session(<rel>)` gates it by a role (e.g. project-admin
-		// of your selected project).
-		leaf := obj.Scoped[len(obj.Scoped)-1]
-		self := fmt.Sprintf("%s = %s", s.scopeCol(obj, leaf), s.claim(s.claimKeyForLevel(leaf)))
-		if t.SessionRel == "" {
-			return []string{self}, nil
-		}
-		roleFrag, err := s.emitTerm(obj, pm, &Term{Ident: t.SessionRel}, rels, custClaim)
-		if err != nil {
-			return nil, err
-		}
-		return []string{fmt.Sprintf("%s AND %s", self, roleFrag[0])}, nil
+		frags, err := s.rlsEmitSession(obj, pm, t, rels, custClaim)
+		return frags, true, err
 	case t.Builtin == "kind":
 		// Typed-subject match: the caller's principal-kind claim equals the declared
 		// value (the RLS form of a typed wildcard, e.g. `serviceaccount:*`). A
 		// containment-scoped grant — `kind = '<value>'` over the request claims.
-		return []string{fmt.Sprintf("%s = '%s'", s.claim("kind"), t.KindVal)}, nil
+		return []string{fmt.Sprintf("%s = '%s'", s.claim("kind"), t.KindVal)}, true, nil
 	case t.Builtin != "":
-		return nil, fmt.Errorf("builtin @%s is not emittable in RLS", t.Builtin)
+		return nil, true, fmt.Errorf("builtin @%s is not emittable in RLS", t.Builtin)
 	case isPermKeyLit(t.Ident):
-		return nil, fmt.Errorf("capability term %q belongs to the PDP, not RLS", t.Ident)
+		return nil, true, fmt.Errorf("capability term %q belongs to the PDP, not RLS", t.Ident)
 	}
+	return nil, false, nil
+}
 
+// rlsEmitAppScope compiles @app_scope: the broad app/service reach
+// (`<owner claim> IS NULL`), which may EXCLUDE rows owned via an owner axis
+// (`@app_scope(exclude admin_owner)`), so an admin-owned row stays reachable only by
+// its owning admin + grants (operator-private). The excluded axis is an owner
+// ViaColumn whose PRESENCE is excluded — emitted as existence-negation (NOT
+// principal-match), the soundness invariant: one operator never sees another's
+// admin-owned rows.
+func (s *Spec) rlsEmitAppScope(obj *Object, t *Term, rels map[string]*Relation, custClaim string) ([]string, error) {
+	if err := reqClaim(custClaim, obj, "@app_scope"); err != nil {
+		return nil, err
+	}
+	base := s.claim(custClaim) + " IS NULL"
+	if t.ExcludeRel != "" {
+		r := rels[t.ExcludeRel]
+		if r == nil {
+			return nil, fmt.Errorf("@app_scope(exclude %q): unknown relation", t.ExcludeRel)
+		}
+		vc, ok := r.Repr.(ViaColumn)
+		if !ok {
+			return nil, fmt.Errorf("@app_scope(exclude %q): excluded relation must be an owner column", t.ExcludeRel)
+		}
+		// "Not owned via this axis": a discriminated owner excludes the kind column
+		// distinct from the value (NULL kind = unowned, passes); a plain column
+		// excludes the column being non-NULL.
+		if vc.DiscrimCol != "" {
+			base = fmt.Sprintf("(%s AND %s IS DISTINCT FROM '%s')", base, vc.DiscrimCol, vc.DiscrimVal)
+		} else {
+			base = fmt.Sprintf("(%s AND %s IS NULL)", base, vc.Column)
+		}
+	}
+	return []string{base}, nil
+}
+
+// rlsEmitStoreManage compiles @store_manage: the write-moat for a discriminated
+// grant store (v0.28.0). The caller may write/list/revoke a row iff it can EDIT the
+// resource the row points at. Emits auth.<store>_manage(<discrim>, <record>) over the
+// row's own columns; the generated dispatch CASEs the discriminator to the kind's
+// can-edit.
+func (s *Spec) rlsEmitStoreManage(obj *Object, t *Term) ([]string, error) {
+	descs := s.storeDescriptors(obj.Table)
+	if len(descs) == 0 {
+		return nil, fmt.Errorf("@store_manage on %q: no object uses table %q as a grant store", obj.Name, obj.Table)
+	}
+	g := objectGrantEdge(descs[0])
+	if g.DiscrimCol == "" {
+		return nil, fmt.Errorf("@store_manage on %q: store %q is not discriminated (a single-kind store uses `via object <kind>->edit`)", obj.Name, obj.Table)
+	}
+	return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), storeManageName(obj.Table), g.DiscrimCol, g.RecordCol)}, nil
+}
+
+// rlsEmitSession compiles @session: the caller's session-selected node (the entity's
+// own column = the leaf claim). `@session(<rel>)` gates it by a role (e.g.
+// project-admin of your selected project).
+func (s *Spec) rlsEmitSession(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, custClaim string) ([]string, error) {
+	leaf := obj.Scoped[len(obj.Scoped)-1]
+	self := fmt.Sprintf("%s = %s", s.scopeCol(obj, leaf), s.claim(s.claimKeyForLevel(leaf)))
+	if t.SessionRel == "" {
+		return []string{self}, nil
+	}
+	roleFrag, err := s.emitTerm(obj, pm, &Term{Ident: t.SessionRel}, rels, custClaim)
+	if err != nil {
+		return nil, err
+	}
+	return []string{fmt.Sprintf("%s AND %s", self, roleFrag[0])}, nil
+}
+
+// rlsEmitRelation compiles a relation term to its predicate fragments, dispatching
+// on the relation's representation.
+func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, custClaim string) ([]string, error) {
 	r := rels[t.Ident]
 	if r == nil {
 		return nil, fmt.Errorf("unknown relation %q", t.Ident)
@@ -787,34 +861,43 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		// insert, so omit it there (matching the descriptor, which never grants insert).
 		return s.emitGrantFrags(obj, r, &repr, accessFor(pm.Maps))
 	case ViaRole:
-		// Platform-staff plane (v3 WS6): a `via role` relation whose TYPE is the
-		// virtual-anchored role subject resolves to the root-plane role definer,
-		// has_<anchor>_role(<claim>) — no scope columns (a platform role pins none).
-		// This is the COMPOSABLE form of the staff plane: a mixed object (tenants,
-		// admin_users) lists `staff` alongside self/role/session, and it OR-composes
-		// like any other term. It is NOT guard-ridden (see guardable): staff is the
-		// operator plane, so it sees a CHURNED tenant just like the impersonation
-		// operator does.
-		if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
-			return []string{fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(st.Anchor), s.claim(st.Identifies))}, nil
-		}
-		// A role membership on this object → a project-role definer call over
-		// the object's scope columns. Convention: auth.admin_has_<obj>_role(
-		// <admin sub claim>, <scope cols>). A rank threshold narrows the fn.
-		var cols []string
-		for _, lvl := range obj.Scoped {
-			cols = append(cols, s.scopeCol(obj, lvl))
-		}
-		// No rank → "has any role" (auth.<admin>_has_<obj>_role); a rank threshold
-		// → the named rank predicate (auth.is_<rank>, e.g. is_project_admin).
-		fn := fmt.Sprintf("%s_has_%s_role", s.adminName(), obj.Name)
-		if repr.HasRank {
-			fn = "is_" + repr.RankMin
-		}
-		return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), fn, s.claim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
+		return s.rlsEmitRole(obj, r, repr)
 	default:
 		return nil, fmt.Errorf("relation %q has an unknown representation", r.Name)
 	}
+}
+
+// rlsEmitRole compiles a ViaRole relation. A `via role` relation whose TYPE is the
+// virtual-anchored role subject resolves to the platform-staff plane (the root-plane
+// role definer has_<anchor>_role(<claim>) — no scope columns, NOT guard-ridden);
+// otherwise it is a role membership on this object → a project-role definer call over
+// the object's scope columns (a rank threshold narrows the fn).
+func (s *Spec) rlsEmitRole(obj *Object, r *Relation, repr ViaRole) ([]string, error) {
+	// Platform-staff plane (v3 WS6): a `via role` relation whose TYPE is the
+	// virtual-anchored role subject resolves to the root-plane role definer,
+	// has_<anchor>_role(<claim>) — no scope columns (a platform role pins none).
+	// This is the COMPOSABLE form of the staff plane: a mixed object (tenants,
+	// admin_users) lists `staff` alongside self/role/session, and it OR-composes
+	// like any other term. It is NOT guard-ridden (see guardable): staff is the
+	// operator plane, so it sees a CHURNED tenant just like the impersonation
+	// operator does.
+	if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
+		return []string{fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(st.Anchor), s.claim(st.Identifies))}, nil
+	}
+	// A role membership on this object → a project-role definer call over
+	// the object's scope columns. Convention: auth.admin_has_<obj>_role(
+	// <admin sub claim>, <scope cols>). A rank threshold narrows the fn.
+	var cols []string
+	for _, lvl := range obj.Scoped {
+		cols = append(cols, s.scopeCol(obj, lvl))
+	}
+	// No rank → "has any role" (auth.<admin>_has_<obj>_role); a rank threshold
+	// → the named rank predicate (auth.is_<rank>, e.g. is_project_admin).
+	fn := fmt.Sprintf("%s_has_%s_role", s.adminName(), obj.Name)
+	if repr.HasRank {
+		fn = "is_" + repr.RankMin
+	}
+	return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), fn, s.claim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
 }
 
 // emitGrantFrags renders a grant relation's RLS fragments at a given access class:

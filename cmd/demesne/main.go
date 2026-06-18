@@ -127,40 +127,13 @@ func cmdEmit(args []string) error {
 	if len(args) > 1 {
 		kind = args[1]
 	}
-	emitDefiners := func() error {
-		defs, err := s.EmitDefiners()
-		if err != nil {
-			return err
-		}
-		fmt.Print(demesne.DefinersSQL(defs))
-		return nil
-	}
-	emitRLS := func() error {
-		res, err := s.EmitRLS()
-		if err != nil {
-			return err
-		}
-		if len(res.Unsupported) > 0 {
-			return fmt.Errorf("spec has uncompilable @rls permissions: %s", strings.Join(res.Unsupported, "; "))
-		}
-		fmt.Print(res.PolicySQL("authenticated"))
-		return nil
-	}
-	emitEnablement := func() error {
-		res, err := s.EmitRLS()
-		if err != nil {
-			return err
-		}
-		fmt.Print(res.EnablementSQL())
-		return nil
-	}
 	switch kind {
 	case "definers":
-		return emitDefiners()
+		return emitDefinersSQL(s)
 	case "rls", "policies":
-		return emitRLS()
+		return emitRLSSQL(s)
 	case "enablement":
-		return emitEnablement()
+		return emitEnablementSQL(s)
 	case "triggers":
 		fmt.Print(s.TriggersSQL())
 		return nil
@@ -172,47 +145,85 @@ func cmdEmit(args []string) error {
 		fmt.Print(out)
 		return nil
 	case "pdp":
-		pdps, err := s.EmitPDP()
-		if err != nil {
-			return err
-		}
-		sites := make([]string, 0, len(pdps))
-		for k := range pdps {
-			sites = append(sites, k)
-		}
-		sort.Strings(sites)
-		for _, site := range sites {
-			p := pdps[site]
-			fmt.Printf("# PDP %q: %d governed, %d ungoverned\n", site, len(p.Policy), len(p.Ungoverned))
-			procs := make([]string, 0, len(p.Policy))
-			for k := range p.Policy {
-				procs = append(procs, k)
-			}
-			sort.Strings(procs)
-			for _, pr := range procs {
-				fmt.Printf("%s -> %s\n", pr, p.Policy[pr])
-			}
-		}
-		return nil
+		return emitPDPReport(s)
 	case "all":
-		if err := emitDefiners(); err != nil {
-			return err
-		}
-		fmt.Print("\n")
-		if err := emitEnablement(); err != nil {
-			return err
-		}
-		fmt.Print("\n")
-		if err := emitRLS(); err != nil {
-			return err
-		}
-		if t := s.TriggersSQL(); t != "" {
-			fmt.Print("\n" + t)
-		}
-		return nil
+		return emitAllSQL(s)
 	default:
 		return fmt.Errorf("unknown emit kind %q (rls|definers|enablement|triggers|claims|pdp|all)", kind)
 	}
+}
+
+func emitDefinersSQL(s *demesne.Spec) error {
+	defs, err := s.EmitDefiners()
+	if err != nil {
+		return err
+	}
+	fmt.Print(demesne.DefinersSQL(defs))
+	return nil
+}
+
+func emitRLSSQL(s *demesne.Spec) error {
+	res, err := s.EmitRLS()
+	if err != nil {
+		return err
+	}
+	if len(res.Unsupported) > 0 {
+		return fmt.Errorf("spec has uncompilable @rls permissions: %s", strings.Join(res.Unsupported, "; "))
+	}
+	fmt.Print(res.PolicySQL("authenticated"))
+	return nil
+}
+
+func emitEnablementSQL(s *demesne.Spec) error {
+	res, err := s.EmitRLS()
+	if err != nil {
+		return err
+	}
+	fmt.Print(res.EnablementSQL())
+	return nil
+}
+
+func emitPDPReport(s *demesne.Spec) error {
+	pdps, err := s.EmitPDP()
+	if err != nil {
+		return err
+	}
+	sites := make([]string, 0, len(pdps))
+	for k := range pdps {
+		sites = append(sites, k)
+	}
+	sort.Strings(sites)
+	for _, site := range sites {
+		p := pdps[site]
+		fmt.Printf("# PDP %q: %d governed, %d ungoverned\n", site, len(p.Policy), len(p.Ungoverned))
+		procs := make([]string, 0, len(p.Policy))
+		for k := range p.Policy {
+			procs = append(procs, k)
+		}
+		sort.Strings(procs)
+		for _, pr := range procs {
+			fmt.Printf("%s -> %s\n", pr, p.Policy[pr])
+		}
+	}
+	return nil
+}
+
+func emitAllSQL(s *demesne.Spec) error {
+	if err := emitDefinersSQL(s); err != nil {
+		return err
+	}
+	fmt.Print("\n")
+	if err := emitEnablementSQL(s); err != nil {
+		return err
+	}
+	fmt.Print("\n")
+	if err := emitRLSSQL(s); err != nil {
+		return err
+	}
+	if t := s.TriggersSQL(); t != "" {
+		fmt.Print("\n" + t)
+	}
+	return nil
 }
 
 func cmdIntrospect(args []string) error {

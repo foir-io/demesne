@@ -91,12 +91,63 @@ func DefinersSQL(defs []GenFn) string {
 }
 
 // EmitDefiners generates every definer the spec's policies reference, in
-// dependency order (a fn appears after the fns it calls).
+// dependency order (a fn appears after the fns it calls). The body is a fixed
+// sequence of emitter blocks, each appending its definers to `out`; the shared
+// `seen` map (introduced at the role block) keeps a definer named two ways from
+// being emitted twice. Splitting the blocks into helpers keeps each one small
+// while preserving the exact emission order (and therefore the byte-identical
+// SQL).
 func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	var out []GenFn
 
 	// The virtual-level set, for re-deriving an object's predicate (cross-object
 	// references below).
+	virtual := s.defVirtualLevels()
+
+	if err := s.defEmitMembership(&out); err != nil {
+		return nil, err
+	}
+	s.defEmitGrantReach(&out)
+
+	// Role-resolution fns, derived from each object's role relations + walks.
+	rs := roleStoreByName(s)
+	rankIdx := rankIndex(s)
+	presetLevels := presetLevelMap(s)
+	seen := map[string]bool{}
+
+	if err := s.defEmitRoleDefiners(&out, seen, rs, rankIdx, presetLevels); err != nil {
+		return nil, err
+	}
+	s.defEmitPlatformRoles(&out, seen, rs, presetLevels)
+	s.defEmitScopedMemberin(&out, seen, rs)
+	if err := s.defEmitKernel(&out, seen); err != nil {
+		return nil, err
+	}
+	s.defEmitGrantRelations(&out, seen)
+	s.defEmitAccessors(&out, seen)
+	if err := s.defEmitStructuralAccessors(&out, seen); err != nil {
+		return nil, err
+	}
+	s.defEmitClosure(&out, seen)
+	s.defEmitGroup(&out, seen)
+	if err := s.defEmitCrossObject(&out, seen, virtual); err != nil {
+		return nil, err
+	}
+	if err := s.defEmitStoreManage(&out, seen, virtual); err != nil {
+		return nil, err
+	}
+
+	// Stamp the configured definer schema on every generated function so CreateSQL
+	// qualifies them consistently (default "auth" keeps Foir's SQL byte-identical).
+	for i := range out {
+		out[i].Schema = s.definerSchema()
+	}
+	return out, nil
+}
+
+// defVirtualLevels returns the set of virtual topology level names, used when
+// re-deriving an object's predicate for cross-object references.
+func (s *Spec) defVirtualLevels() map[string]bool {
 	vchain, _ := s.Topology.Chain()
 	virtual := map[string]bool{}
 	for _, l := range vchain {
@@ -104,31 +155,37 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			virtual[l.Name] = true
 		}
 	}
+	return virtual
+}
 
-	// Membership operator fn (e.g. is_platform_admin) — a LEGACY unconditional
-	// god-flag. The general, scoped form is a `grant` (below); a spec uses at most
-	// one of the two as its operator.
+// defEmitMembership emits the membership operator fn (e.g. is_platform_admin) — a
+// LEGACY unconditional god-flag. The general, scoped form is a `grant` (below); a
+// spec uses at most one of the two as its operator.
+func (s *Spec) defEmitMembership(out *[]GenFn) error {
 	for _, sub := range s.Subjects {
 		m := sub.Membership
 		if m == nil {
 			continue
 		}
 		if m.IDCol == "" || m.FlagCol == "" {
-			return nil, fmt.Errorf("subject %q membership needs (idcol, flagcol)", sub.Name)
+			return fmt.Errorf("subject %q membership needs (idcol, flagcol)", sub.Name)
 		}
 		body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = user_id AND %s", m.Table, m.IDCol, m.FlagCol)
 		if m.ActiveCol != "" {
 			body += fmt.Sprintf(" AND %s = '%s'", m.ActiveCol, m.ActiveVal)
 		}
 		body += ")"
-		out = append(out, GenFn{Name: m.FlagCol, Sig: "user_id text", Body: body})
+		*out = append(*out, GenFn{Name: m.FlagCol, Sig: "user_id text", Body: body})
 	}
+	return nil
+}
 
-	// Level-scoped grant-reach fns: an active grant edge confers reach into a
-	// topology level. auth.<table>_reach(user_id, check_<level>_id) EXISTS over
-	// the grant store. These are BOTH a disjunct of the level's role definer AND a
-	// top-level OR branch on objects scoped under that level, so they are emitted
-	// before the role definers that call them (callee before caller).
+// defEmitGrantReach emits the level-scoped grant-reach fns: an active grant edge
+// confers reach into a topology level. auth.<table>_reach(user_id, check_<level>_id)
+// EXISTS over the grant store. These are BOTH a disjunct of the level's role definer
+// AND a top-level OR branch on objects scoped under that level, so they are emitted
+// before the role definers that call them (callee before caller).
+func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 	gseen := map[string]bool{}
 	for _, g := range s.Grants {
 		name := g.Table + "_reach"
@@ -148,15 +205,13 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		if g.ExpiresCol != "" {
 			conj = append(conj, fmt.Sprintf("%s > now()", g.ExpiresCol))
 		}
-		out = append(out, GenFn{Name: name, Sig: fmt.Sprintf("user_id text, check_%s_id text", g.Level), Body: grantEdgeExists(g.Table, conj...)})
+		*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("user_id text, check_%s_id text", g.Level), Body: grantEdgeExists(g.Table, conj...)})
 	}
+}
 
-	// Role-resolution fns, derived from each object's role relations + walks.
-	rs := roleStoreByName(s)
-	rankIdx := rankIndex(s)
-	presetLevels := presetLevelMap(s)
-
-	seen := map[string]bool{}
+// defEmitRoleDefiners emits the role-resolution fns, derived from each object's role
+// relations + walks.
+func (s *Spec) defEmitRoleDefiners(out *[]GenFn, seen map[string]bool, rs *RoleStore, rankIdx map[string]int, presetLevels map[string][]string) error {
 	for _, obj := range s.Objects {
 		rels := map[string]*Relation{}
 		for _, r := range obj.Relations {
@@ -166,25 +221,28 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			for _, t := range pm.Expr {
 				d, ok, err := s.roleDefinerForTerm(obj, pm, t, rels, rs, rankIdx, presetLevels)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				if ok && !seen[d.Name] {
 					seen[d.Name] = true
-					out = append(out, d)
+					*out = append(*out, d)
 				}
 			}
 		}
 	}
+	return nil
+}
 
-	// Platform-anchored role definers (v3 WS6 — the platform plane). A role-bearing
-	// subject anchored at the VIRTUAL root governs the global objects (the tables
-	// above tenancy). Its definer is the SAME role-resolution EXISTS every other
-	// role uses, lifted to the schema root: has_<anchor>_role(user_id) over the role
-	// store with every scope column NULL. The name is DELIBERATELY not the legacy
-	// `is_platform_admin` — the god-flag retires in full, so the policy text itself
-	// must read as a revocable role check (a `role_assignments` row), not a renamed
-	// standing boolean. No bespoke hand-written function: same primitive as every
-	// tenant/project role, lifted to the platform root.
+// defEmitPlatformRoles emits the platform-anchored role definers (v3 WS6 — the
+// platform plane). A role-bearing subject anchored at the VIRTUAL root governs the
+// global objects (the tables above tenancy). Its definer is the SAME role-resolution
+// EXISTS every other role uses, lifted to the schema root: has_<anchor>_role(user_id)
+// over the role store with every scope column NULL. The name is DELIBERATELY not the
+// legacy `is_platform_admin` — the god-flag retires in full, so the policy text itself
+// must read as a revocable role check (a `role_assignments` row), not a renamed
+// standing boolean. No bespoke hand-written function: same primitive as every
+// tenant/project role, lifted to the platform root.
+func (s *Spec) defEmitPlatformRoles(out *[]GenFn, seen map[string]bool, rs *RoleStore, presetLevels map[string][]string) {
 	for _, sub := range s.Subjects {
 		if !s.isPlatformRoleSubject(sub) || rs == nil {
 			continue
@@ -194,14 +252,17 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			continue
 		}
 		seen[name] = true
-		out = append(out, s.roleDefiner(name, rs, sub.Anchor, presetLevels[sub.Anchor], ""))
+		*out = append(*out, s.roleDefiner(name, rs, sub.Anchor, presetLevels[sub.Anchor], ""))
 	}
+}
 
-	// Scoped role-membership definers (v3 WS6): admin_memberin_<level>(principal,
-	// scope) = does the principal hold ANY admin role assignment at that scope
-	// level (not revoked)? One definer per (adminName, level); the RLS term supplies
-	// the principal/scope args (claim or row column). Powers the tenant picker
-	// ("tenants I administer") and admin_users co-tenant visibility from one shape.
+// defEmitScopedMemberin emits the scoped role-membership definers (v3 WS6):
+// admin_memberin_<level>(principal, scope) = does the principal hold ANY admin role
+// assignment at that scope level (not revoked)? One definer per (adminName, level);
+// the RLS term supplies the principal/scope args (claim or row column). Powers the
+// tenant picker ("tenants I administer") and admin_users co-tenant visibility from
+// one shape.
+func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *RoleStore) {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
 			mi, ok := r.Repr.(ViaMemberIn)
@@ -216,12 +277,14 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			sCol := s.scopeColForLevel(rs, mi.Level)
 			body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_principal AND %s = p_%s AND %s = '%s' AND %s IS NULL)",
 				rs.Assignments, rs.SubjectCol, sCol, mi.Level, rs.KindCol, rs.KindVal, rs.RevokedCol)
-			out = append(out, GenFn{Name: name, Sig: fmt.Sprintf("p_principal text, p_%s text", mi.Level), Body: body})
+			*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("p_principal text, p_%s text", mi.Level), Body: body})
 		}
 	}
+}
 
-	// Realtime gate fn(s): an object with a @kernel permission gets a
-	// reachability function over its own table (owner axis).
+// defEmitKernel emits the realtime gate fn(s): an object with a @kernel permission
+// gets a reachability function over its own table (owner axis).
+func (s *Spec) defEmitKernel(out *[]GenFn, seen map[string]bool) error {
 	for _, obj := range s.Objects {
 		for _, pm := range obj.Perms {
 			if !contains(pm.Layers, "kernel") {
@@ -229,21 +292,25 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			}
 			d, err := s.kernelDefiner(obj)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if !seen[d.Name] {
 				seen[d.Name] = true
-				out = append(out, d)
+				*out = append(*out, d)
 			}
 		}
 	}
+	return nil
+}
 
-	// Access-class grant RELATION definers (the de-prescribed form of the descriptor
-	// grant list): an object with a `via grant` relation gets the SAME per-kind
-	// auth.<store>_grants[_<kind>](<principal>, record, access) EXISTS the descriptor
-	// emits — same names, same bodies — so a pure-relation object's grant definers
-	// are byte-identical. The `seen` map keeps a shared store from re-emitting a
-	// kind's definer (e.g. a discriminated store names them per object, so no clash).
+// defEmitGrantRelations emits the access-class grant RELATION definers (the
+// de-prescribed form of the descriptor grant list): an object with a `via grant`
+// relation gets the SAME per-kind auth.<store>_grants[_<kind>](<principal>, record,
+// access) EXISTS the descriptor emits — same names, same bodies — so a pure-relation
+// object's grant definers are byte-identical. The `seen` map keeps a shared store
+// from re-emitting a kind's definer (e.g. a discriminated store names them per
+// object, so no clash).
+func (s *Spec) defEmitGrantRelations(out *[]GenFn, seen map[string]bool) {
 	for _, obj := range s.Objects {
 		r, vg := grantRelation(obj)
 		if r == nil {
@@ -264,24 +331,26 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 				fmt.Sprintf("%s = p_%s_id", vg.PrincipalCol, param),
 				fmt.Sprintf("%s = p_access", vg.AccessCol),
 			)
-			out = append(out, GenFn{
+			*out = append(*out, GenFn{
 				Name: name,
 				Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", param, obj.Name),
 				Body: grantEdgeExists(vg.Table, conjuncts...),
 			})
 		}
 	}
+}
 
-	// Accessor enumerators (Expand — the read-side dual of the RLS predicate): for
-	// every content object with a grant store, auth.<table>_accessors(p_id) returns
-	// the rows (source, principal_kind, principal_id, access) of every NAMED accessor
-	// the SELECT predicate admits — owner column(s), the explicit grant rows, and the
-	// role plane (role-bearing admins reachable via @app_scope). "Public = everyone"
-	// is a category (the row's mode), not enumerated, so it is folded in by the caller
-	// as a flag, not a row. Built from the SAME composed relations the predicate
-	// compiles from, so Expand agrees with <table>_select by construction — no second
-	// evaluator. SECURITY DEFINER + set-returning; the handler calls it under the
-	// caller's claims.
+// defEmitAccessors emits the accessor enumerators (Expand — the read-side dual of
+// the RLS predicate): for every content object with a grant store,
+// auth.<table>_accessors(p_id) returns the rows (source, principal_kind,
+// principal_id, access) of every NAMED accessor the SELECT predicate admits — owner
+// column(s), the explicit grant rows, and the role plane (role-bearing admins
+// reachable via @app_scope). "Public = everyone" is a category (the row's mode), not
+// enumerated, so it is folded in by the caller as a flag, not a row. Built from the
+// SAME composed relations the predicate compiles from, so Expand agrees with
+// <table>_select by construction — no second evaluator. SECURITY DEFINER +
+// set-returning; the handler calls it under the caller's claims.
+func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) {
 	for _, obj := range s.Objects {
 		if _, vg := grantRelation(obj); vg == nil {
 			continue
@@ -291,18 +360,20 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			continue
 		}
 		seen[name] = true
-		out = append(out, s.pureAccessorDefiner(obj))
+		*out = append(*out, s.pureAccessorDefiner(obj))
 	}
+}
 
-	// Structural accessor enumerators (Expand over the role/staff CONTROL plane):
-	// for every level-entity object (project, tenant, …), auth.<table>_accessors(p_id)
-	// enumerates who can administer the node — role-holders (ROLE), platform staff
-	// (STAFF), and the impersonation operators (IMPERSONATION). The control plane has
-	// no owner/grant/visibility axes; every accessor is a NAMED principal (no
-	// "everyone" category) read from the role store + impersonation grant the SELECT
-	// predicate compiles from. Settings tables defer to their containing project/
-	// tenant (containment-only access = the level's accessors), so only the level
-	// entities get an enumerator.
+// defEmitStructuralAccessors emits the structural accessor enumerators (Expand over
+// the role/staff CONTROL plane): for every level-entity object (project, tenant, …),
+// auth.<table>_accessors(p_id) enumerates who can administer the node — role-holders
+// (ROLE), platform staff (STAFF), and the impersonation operators (IMPERSONATION).
+// The control plane has no owner/grant/visibility axes; every accessor is a NAMED
+// principal (no "everyone" category) read from the role store + impersonation grant
+// the SELECT predicate compiles from. Settings tables defer to their containing
+// project/tenant (containment-only access = the level's accessors), so only the
+// level entities get an enumerator.
+func (s *Spec) defEmitStructuralAccessors(out *[]GenFn, seen map[string]bool) error {
 	for _, obj := range s.Objects {
 		if !obj.IsLevelEntity() {
 			continue
@@ -313,18 +384,21 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		}
 		d, ok, err := s.structuralAccessorDefiner(obj)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if ok {
 			seen[name] = true
-			out = append(out, d)
+			*out = append(*out, d)
 		}
 	}
+	return nil
+}
 
-	// Closure-reachability lookups (WS3 Phase C): an indexed EXISTS over a
-	// trigger-maintained transitive-closure table — the row's node is reachable
-	// from the subject's granted ancestor. The maintenance trigger is generated
-	// separately (EmitTriggers); this is the read side the RLS term calls.
+// defEmitClosure emits the closure-reachability lookups (WS3 Phase C): an indexed
+// EXISTS over a trigger-maintained transitive-closure table — the row's node is
+// reachable from the subject's granted ancestor. The maintenance trigger is
+// generated separately (EmitTriggers); this is the read side the RLS term calls.
+func (s *Spec) defEmitClosure(out *[]GenFn, seen map[string]bool) {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
 			c, ok := r.Repr.(ViaClosure)
@@ -336,16 +410,19 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 				continue
 			}
 			seen[name] = true
-			out = append(out, GenFn{
+			*out = append(*out, GenFn{
 				Name: name,
 				Sig:  "p_ancestor text, p_descendant text",
 				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_ancestor AND %s = p_descendant)", c.Closure, c.AncestorCol, c.DescendantCol),
 			})
 		}
 	}
+}
 
-	// Nested-group membership lookups (v3 WS2): is a principal a transitive member
-	// of a group? An indexed EXISTS over the membership closure (group, member).
+// defEmitGroup emits the nested-group membership lookups (v3 WS2): is a principal a
+// transitive member of a group? An indexed EXISTS over the membership closure
+// (group, member).
+func (s *Spec) defEmitGroup(out *[]GenFn, seen map[string]bool) {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
 			g, ok := r.Repr.(ViaGroup)
@@ -357,18 +434,21 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 				continue
 			}
 			seen[name] = true
-			out = append(out, GenFn{
+			*out = append(*out, GenFn{
 				Name: name,
 				Sig:  "p_group text, p_member text",
 				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_group AND %s = p_member)", g.Closure, g.GroupCol, g.MemberCol),
 			})
 		}
 	}
+}
 
-	// Cross-object permission references (v3 WS3): `auth.<Other>_can_<verb>(id)` runs
-	// the OTHER object's full <verb> predicate for the related row — so a comment's
-	// reader can be "the parent document's reader", borrowing whatever roles / ACLs
-	// / groups / boolean that object's policy uses, evaluated at the related row.
+// defEmitCrossObject emits the cross-object permission references (v3 WS3):
+// `auth.<Other>_can_<verb>(id)` runs the OTHER object's full <verb> predicate for the
+// related row — so a comment's reader can be "the parent document's reader",
+// borrowing whatever roles / ACLs / groups / boolean that object's policy uses,
+// evaluated at the related row.
+func (s *Spec) defEmitCrossObject(out *[]GenFn, seen map[string]bool, virtual map[string]bool) error {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
 			vo, ok := r.Repr.(ViaObject)
@@ -382,28 +462,31 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			seen[name] = true
 			other := s.objectByName(vo.Object)
 			if other == nil {
-				return nil, fmt.Errorf("relation %q references unknown object %q", r.Name, vo.Object)
+				return fmt.Errorf("relation %q references unknown object %q", r.Name, vo.Object)
 			}
 			pred, err := s.objectVerbPredicate(other, vo.Verb, virtual)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			out = append(out, GenFn{
+			*out = append(*out, GenFn{
 				Name: name,
 				Sig:  fmt.Sprintf("p_%s_id text", vo.Object),
 				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = p_%s_id AND (%s))", other.Table, other.Table, other.pk(), vo.Object, pred),
 			})
 		}
 	}
+	return nil
+}
 
-	// Write-moat dispatch (v0.28.0): for every discriminated grant store named by a
-	// @store_manage write-governance object, auth.<store>_manage(p_type, p_id) CASEs
-	// the discriminator to the matching KIND's can-edit predicate — fail-closed
-	// (ELSE false). Each kind's auth.<O>_can_edit(p_id) runs that object's full edit
-	// predicate AT the row (the same EXISTS-over-table shape as a cross-object
-	// borrow). The set of kinds is the spec's descriptor objects on the store
-	// (compile-time platform STRUCTURE); per-model access config is a runtime-data
-	// layer the edit predicate reads, never baked here.
+// defEmitStoreManage emits the write-moat dispatch (v0.28.0): for every discriminated
+// grant store named by a @store_manage write-governance object,
+// auth.<store>_manage(p_type, p_id) CASEs the discriminator to the matching KIND's
+// can-edit predicate — fail-closed (ELSE false). Each kind's auth.<O>_can_edit(p_id)
+// runs that object's full edit predicate AT the row (the same EXISTS-over-table shape
+// as a cross-object borrow). The set of kinds is the spec's descriptor objects on the
+// store (compile-time platform STRUCTURE); per-model access config is a runtime-data
+// layer the edit predicate reads, never baked here.
+func (s *Spec) defEmitStoreManage(out *[]GenFn, seen map[string]bool, virtual map[string]bool) error {
 	manageStores := map[string]bool{}
 	for _, obj := range s.Objects {
 		if objectUsesStoreManage(obj) {
@@ -416,41 +499,45 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	}
 	sort.Strings(storeNames)
 	for _, store := range storeNames {
-		var whens []string
-		for _, o := range s.storeDescriptors(store) {
-			canEdit := o.Name + "_can_edit"
-			if !seen[canEdit] {
-				seen[canEdit] = true
-				pred, err := s.objectVerbPredicate(o, "edit", virtual)
-				if err != nil {
-					return nil, fmt.Errorf("@store_manage dispatch for %q: %w", store, err)
-				}
-				out = append(out, GenFn{
-					Name: canEdit,
-					Sig:  "p_id text",
-					Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = p_id AND (%s))", o.Table, o.Table, o.pk(), pred),
-				})
-			}
-			whens = append(whens, fmt.Sprintf("WHEN '%s' THEN %s.%s(p_id)", objectGrantEdge(o).DiscrimVal, s.definerSchema(), canEdit))
+		whens, err := s.defStoreManageWhens(out, seen, virtual, store)
+		if err != nil {
+			return err
 		}
 		name := storeManageName(store)
 		if seen[name] {
 			continue
 		}
 		seen[name] = true
-		out = append(out, GenFn{
+		*out = append(*out, GenFn{
 			Name: name,
 			Sig:  "p_type text, p_id text",
 			Body: fmt.Sprintf("(CASE p_type %s ELSE false END)", strings.Join(whens, " ")),
 		})
 	}
+	return nil
+}
 
-	// Stamp the configured definer schema on every generated function so CreateSQL
-	// qualifies them consistently (default "auth" keeps Foir's SQL byte-identical).
-	for i := range out {
-		out[i].Schema = s.definerSchema()
+// defStoreManageWhens emits each descriptor's can-edit definer for a store (once,
+// guarded by `seen`) and returns the CASE WHEN clauses the store's dispatch CASEs on.
+func (s *Spec) defStoreManageWhens(out *[]GenFn, seen map[string]bool, virtual map[string]bool, store string) ([]string, error) {
+	var whens []string
+	for _, o := range s.storeDescriptors(store) {
+		canEdit := o.Name + "_can_edit"
+		if !seen[canEdit] {
+			seen[canEdit] = true
+			pred, err := s.objectVerbPredicate(o, "edit", virtual)
+			if err != nil {
+				return nil, fmt.Errorf("@store_manage dispatch for %q: %w", store, err)
+			}
+			*out = append(*out, GenFn{
+				Name: canEdit,
+				Sig:  "p_id text",
+				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = p_id AND (%s))", o.Table, o.Table, o.pk(), pred),
+			})
+		}
+		whens = append(whens, fmt.Sprintf("WHEN '%s' THEN %s.%s(p_id)", objectGrantEdge(o).DiscrimVal, s.definerSchema(), canEdit))
 	}
-	return out, nil
+	return whens, nil
 }
 
 // roleDefinerForTerm returns the definer a role-bearing term needs (a walk into
@@ -684,40 +771,13 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 	}
 
 	var branches []string
-	first := true
 	var adminExcl string
 	if sel != nil {
 		// OWNER — owner (ViaColumn) relation terms, in the perm's declared order.
-		for _, t := range sel.Expr {
-			if t == nil || t.Ident == "" {
-				continue
-			}
-			r := rels[t.Ident]
-			if r == nil {
-				continue
-			}
-			vc, ok := r.Repr.(ViaColumn)
-			if !ok {
-				continue
-			}
-			kind := ""
-			if len(r.Types) > 0 {
-				kind = r.Types[0]
-			}
-			branches = append(branches, ownerAccessorBranch(obj.Table, obj.pk(), kind, vc, first))
-			first = false
-		}
+		branches = append(branches, defOwnerAccessorBranches(obj, sel, rels)...)
 		// The admin-owner exclusion that gates the role plane: the relation excluded
 		// by @app_scope(exclude <rel>).
-		for _, t := range sel.Expr {
-			if t != nil && t.Builtin == "app_scope" && t.ExcludeRel != "" {
-				if r := rels[t.ExcludeRel]; r != nil {
-					if vc, ok := r.Repr.(ViaColumn); ok {
-						adminExcl = ownerExclCond(vc)
-					}
-				}
-			}
-		}
+		adminExcl = defAdminExclCond(sel, rels)
 	}
 
 	// GRANT — the `via grant` relation's acl rows.
@@ -731,6 +791,50 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 	}
 
 	return accessorGenFn(obj.Table, branches)
+}
+
+// defOwnerAccessorBranches renders the OWNER enumeration branches — the owner
+// (ViaColumn) relation terms of the SELECT permission, in the perm's declared order.
+// The first emitted branch carries the result-set column aliases (first=true).
+func defOwnerAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+	var branches []string
+	first := true
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		vc, ok := r.Repr.(ViaColumn)
+		if !ok {
+			continue
+		}
+		kind := ""
+		if len(r.Types) > 0 {
+			kind = r.Types[0]
+		}
+		branches = append(branches, ownerAccessorBranch(obj.Table, obj.pk(), kind, vc, first))
+		first = false
+	}
+	return branches
+}
+
+// defAdminExclCond returns the admin-owner exclusion that gates the role plane: the
+// relation excluded by @app_scope(exclude <rel>), as an r.-prefixed condition (""
+// when there is none).
+func defAdminExclCond(sel *Perm, rels map[string]*Relation) string {
+	for _, t := range sel.Expr {
+		if t != nil && t.Builtin == "app_scope" && t.ExcludeRel != "" {
+			if r := rels[t.ExcludeRel]; r != nil {
+				if vc, ok := r.Repr.(ViaColumn); ok {
+					return ownerExclCond(vc)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // ownerAccessorBranch renders one OWNER enumeration branch — the owner column's

@@ -19,3 +19,24 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test -race ./...
+
+  lint:
+    name: Go Lint
+    # Hard cognitive-complexity gate (gocognit min-complexity 30), matching
+    # foir-platform. Covers both the root engine module and the nested
+    # cmd/demesne module (separate go.mod, so it needs its own invocation).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: lint engine
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
+        with:
+          version: v2.11.4
+      - name: lint cmd/demesne
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
+        with:
+          version: v2.11.4
+          working-directory: cmd/demesne

@@ -88,97 +88,164 @@ func (p *parser) parseSpec() (*Spec, error) {
 		if p.peekKind() != tIdent {
 			return nil, p.errf("expected a declaration keyword, got %s %q", p.peekKind(), p.cur().lit)
 		}
-		switch p.cur().lit {
-		case "topology":
-			t, err := p.parseTopology()
-			if err != nil {
-				return nil, err
-			}
-			if s.Topology != nil {
-				return nil, p.errf("duplicate topology block")
-			}
-			s.Topology = t
-		case "vocabulary":
-			v, err := p.parseVocabulary()
-			if err != nil {
-				return nil, err
-			}
-			s.Vocabs = append(s.Vocabs, v)
-		case "subject":
-			sub, err := p.parseSubject()
-			if err != nil {
-				return nil, err
-			}
-			s.Subjects = append(s.Subjects, sub)
-		case "object":
-			o, err := p.parseObject()
-			if err != nil {
-				return nil, err
-			}
-			s.Objects = append(s.Objects, o)
-		case "template":
-			t, err := p.parseTemplate()
-			if err != nil {
-				return nil, err
-			}
-			s.Templates = append(s.Templates, t)
-		case "procedures":
-			pr, err := p.parseProcedures()
-			if err != nil {
-				return nil, err
-			}
-			s.Procedures = append(s.Procedures, pr)
-		case "ungoverned":
-			u, err := p.parseUngoverned()
-			if err != nil {
-				return nil, err
-			}
-			s.Ungoverned = append(s.Ungoverned, u)
-		case "fieldscopes":
-			fs, err := p.parseFieldScopes()
-			if err != nil {
-				return nil, err
-			}
-			s.FieldScopes = append(s.FieldScopes, fs)
-		case "rolestore":
-			rs, err := p.parseRoleStore()
-			if err != nil {
-				return nil, err
-			}
-			s.RoleStores = append(s.RoleStores, rs)
-		case "grant":
-			g, err := p.parseGrant()
-			if err != nil {
-				return nil, err
-			}
-			s.Grants = append(s.Grants, g)
-		case "claims":
-			c, err := p.parseClaims()
-			if err != nil {
-				return nil, err
-			}
-			if s.Claims != nil {
-				return nil, p.errf("duplicate claims block")
-			}
-			s.Claims = c
-		case "definers":
-			p.advance() // 'definers'
-			if err := p.expectKw("schema"); err != nil {
-				return nil, err
-			}
-			sch, err := p.expect(tString)
-			if err != nil {
-				return nil, err
-			}
-			if s.DefinerSchema != "" {
-				return nil, p.errf("duplicate definers block")
-			}
-			s.DefinerSchema = sch.lit
-		default:
-			return nil, p.errf("unknown declaration %q", p.cur().lit)
+		if err := p.parseDecl(s); err != nil {
+			return nil, err
 		}
 	}
 	return s, nil
+}
+
+// parseDecl parses one top-level declaration and folds it into s.
+func (p *parser) parseDecl(s *Spec) error {
+	switch p.cur().lit {
+	case "topology":
+		return p.ppDeclTopology(s)
+	case "vocabulary":
+		return p.ppDeclVocabulary(s)
+	case "subject":
+		return p.ppDeclSubject(s)
+	case "object":
+		return p.ppDeclObject(s)
+	case "template":
+		return p.ppDeclTemplate(s)
+	case "procedures":
+		return p.ppDeclProcedures(s)
+	case "ungoverned":
+		return p.ppDeclUngoverned(s)
+	case "fieldscopes":
+		return p.ppDeclFieldScopes(s)
+	case "rolestore":
+		return p.ppDeclRoleStore(s)
+	case "grant":
+		return p.ppDeclGrant(s)
+	case "claims":
+		return p.ppDeclClaims(s)
+	case "definers":
+		return p.ppDeclDefiners(s)
+	default:
+		return p.errf("unknown declaration %q", p.cur().lit)
+	}
+}
+
+func (p *parser) ppDeclTopology(s *Spec) error {
+	t, err := p.parseTopology()
+	if err != nil {
+		return err
+	}
+	if s.Topology != nil {
+		return p.errf("duplicate topology block")
+	}
+	s.Topology = t
+	return nil
+}
+
+func (p *parser) ppDeclVocabulary(s *Spec) error {
+	v, err := p.parseVocabulary()
+	if err != nil {
+		return err
+	}
+	s.Vocabs = append(s.Vocabs, v)
+	return nil
+}
+
+func (p *parser) ppDeclSubject(s *Spec) error {
+	sub, err := p.parseSubject()
+	if err != nil {
+		return err
+	}
+	s.Subjects = append(s.Subjects, sub)
+	return nil
+}
+
+func (p *parser) ppDeclObject(s *Spec) error {
+	o, err := p.parseObject()
+	if err != nil {
+		return err
+	}
+	s.Objects = append(s.Objects, o)
+	return nil
+}
+
+func (p *parser) ppDeclTemplate(s *Spec) error {
+	t, err := p.parseTemplate()
+	if err != nil {
+		return err
+	}
+	s.Templates = append(s.Templates, t)
+	return nil
+}
+
+func (p *parser) ppDeclProcedures(s *Spec) error {
+	pr, err := p.parseProcedures()
+	if err != nil {
+		return err
+	}
+	s.Procedures = append(s.Procedures, pr)
+	return nil
+}
+
+func (p *parser) ppDeclUngoverned(s *Spec) error {
+	u, err := p.parseUngoverned()
+	if err != nil {
+		return err
+	}
+	s.Ungoverned = append(s.Ungoverned, u)
+	return nil
+}
+
+func (p *parser) ppDeclFieldScopes(s *Spec) error {
+	fs, err := p.parseFieldScopes()
+	if err != nil {
+		return err
+	}
+	s.FieldScopes = append(s.FieldScopes, fs)
+	return nil
+}
+
+func (p *parser) ppDeclRoleStore(s *Spec) error {
+	rs, err := p.parseRoleStore()
+	if err != nil {
+		return err
+	}
+	s.RoleStores = append(s.RoleStores, rs)
+	return nil
+}
+
+func (p *parser) ppDeclGrant(s *Spec) error {
+	g, err := p.parseGrant()
+	if err != nil {
+		return err
+	}
+	s.Grants = append(s.Grants, g)
+	return nil
+}
+
+func (p *parser) ppDeclClaims(s *Spec) error {
+	c, err := p.parseClaims()
+	if err != nil {
+		return err
+	}
+	if s.Claims != nil {
+		return p.errf("duplicate claims block")
+	}
+	s.Claims = c
+	return nil
+}
+
+func (p *parser) ppDeclDefiners(s *Spec) error {
+	p.advance() // 'definers'
+	if err := p.expectKw("schema"); err != nil {
+		return err
+	}
+	sch, err := p.expect(tString)
+	if err != nil {
+		return err
+	}
+	if s.DefinerSchema != "" {
+		return p.errf("duplicate definers block")
+	}
+	s.DefinerSchema = sch.lit
+	return nil
 }
 
 func (p *parser) parseTopology() (*Topology, error) {
@@ -189,61 +256,9 @@ func (p *parser) parseTopology() (*Topology, error) {
 	}
 	t := &Topology{Pos: pos}
 	for p.isKw("level") {
-		lv := &Level{Pos: Pos{p.cur().line}}
-		p.advance() // 'level'
-		name, err := p.ident()
+		lv, err := p.parseLevel()
 		if err != nil {
 			return nil, err
-		}
-		lv.Name = name
-		// ('parent' IDENT | 'parents' IDENT (',' IDENT)*)? ('virtual')?
-		// ('col' IDENT)? ('claim' IDENT)? — any order, all optional. `parents`
-		// (plural) declares a multi-parent DAG level; `col`/`claim` override the
-		// `<name>_id` scope-column / claim-key conventions independently (EID-278).
-		for {
-			if p.acceptKw("parent") {
-				par, err := p.ident()
-				if err != nil {
-					return nil, err
-				}
-				lv.Parents = append(lv.Parents, par)
-				continue
-			}
-			if p.acceptKw("parents") {
-				for {
-					par, err := p.ident()
-					if err != nil {
-						return nil, err
-					}
-					lv.Parents = append(lv.Parents, par)
-					if p.peekKind() != tComma {
-						break
-					}
-					p.advance() // ','
-				}
-				continue
-			}
-			if p.acceptKw("virtual") {
-				lv.Virtual = true
-				continue
-			}
-			if p.acceptKw("col") {
-				c, err := p.ident()
-				if err != nil {
-					return nil, err
-				}
-				lv.ScopeCol = c
-				continue
-			}
-			if p.acceptKw("claim") {
-				c, err := p.ident()
-				if err != nil {
-					return nil, err
-				}
-				lv.ClaimKey = c
-				continue
-			}
-			break
 		}
 		t.Levels = append(t.Levels, lv)
 	}
@@ -251,6 +266,71 @@ func (p *parser) parseTopology() (*Topology, error) {
 		return nil, err
 	}
 	return t, nil
+}
+
+// parseLevel parses one `level <name> ...` entry inside a topology block.
+func (p *parser) parseLevel() (*Level, error) {
+	lv := &Level{Pos: Pos{p.cur().line}}
+	p.advance() // 'level'
+	name, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	lv.Name = name
+	// ('parent' IDENT | 'parents' IDENT (',' IDENT)*)? ('virtual')?
+	// ('col' IDENT)? ('claim' IDENT)? — any order, all optional. `parents`
+	// (plural) declares a multi-parent DAG level; `col`/`claim` override the
+	// `<name>_id` scope-column / claim-key conventions independently (EID-278).
+	for {
+		if p.acceptKw("parent") {
+			par, err := p.ident()
+			if err != nil {
+				return nil, err
+			}
+			lv.Parents = append(lv.Parents, par)
+			continue
+		}
+		if p.acceptKw("parents") {
+			if err := p.parseLevelParents(lv); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if p.acceptKw("virtual") {
+			lv.Virtual = true
+			continue
+		}
+		if p.acceptKw("col") {
+			if lv.ScopeCol, err = p.ident(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if p.acceptKw("claim") {
+			if lv.ClaimKey, err = p.ident(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		break
+	}
+	return lv, nil
+}
+
+// parseLevelParents parses the `parents IDENT (',' IDENT)*` list into lv.
+func (p *parser) parseLevelParents(lv *Level) error {
+	for {
+		par, err := p.ident()
+		if err != nil {
+			return err
+		}
+		lv.Parents = append(lv.Parents, par)
+		if p.peekKind() != tComma {
+			break
+		}
+		p.advance() // ','
+	}
+	return nil
 }
 
 func (p *parser) parseVocabulary() (*Vocabulary, error) {
@@ -510,43 +590,53 @@ func (p *parser) parseObject() (*Object, error) {
 	if o.Scoped, err = p.parseLevelChain(); err != nil {
 		return nil, err
 	}
-	for p.peekKind() != tRBrace && p.peekKind() != tEOF {
-		switch {
-		case p.isKw("relation"):
-			r, err := p.parseRelation()
-			if err != nil {
-				return nil, err
-			}
-			o.Relations = append(o.Relations, r)
-		case p.isKw("permission"):
-			pm, err := p.parseObjectPerm()
-			if err != nil {
-				return nil, err
-			}
-			o.Perms = append(o.Perms, pm)
-		case p.isKw("use"):
-			p.advance()
-			if o.Use != "" {
-				return nil, p.errf("object %q declares `use` more than once", o.Name)
-			}
-			if o.Use, err = p.ident(); err != nil {
-				return nil, err
-			}
-		case p.isKw("omit"):
-			p.advance()
-			v, err := p.ident()
-			if err != nil {
-				return nil, err
-			}
-			o.Omit = append(o.Omit, v)
-		default:
-			return nil, p.errf("unexpected %s %q in object %q", p.peekKind(), p.cur().lit, o.Name)
-		}
+	if err := p.parseObjectBody(o); err != nil {
+		return nil, err
 	}
 	if _, err := p.expect(tRBrace); err != nil {
 		return nil, err
 	}
 	return o, nil
+}
+
+// parseObjectBody parses the relation/permission/use/omit members of an object
+// up to (but not consuming) the closing brace.
+func (p *parser) parseObjectBody(o *Object) error {
+	for p.peekKind() != tRBrace && p.peekKind() != tEOF {
+		switch {
+		case p.isKw("relation"):
+			r, err := p.parseRelation()
+			if err != nil {
+				return err
+			}
+			o.Relations = append(o.Relations, r)
+		case p.isKw("permission"):
+			pm, err := p.parseObjectPerm()
+			if err != nil {
+				return err
+			}
+			o.Perms = append(o.Perms, pm)
+		case p.isKw("use"):
+			p.advance()
+			if o.Use != "" {
+				return p.errf("object %q declares `use` more than once", o.Name)
+			}
+			var err error
+			if o.Use, err = p.ident(); err != nil {
+				return err
+			}
+		case p.isKw("omit"):
+			p.advance()
+			v, err := p.ident()
+			if err != nil {
+				return err
+			}
+			o.Omit = append(o.Omit, v)
+		default:
+			return p.errf("unexpected %s %q in object %q", p.peekKind(), p.cur().lit, o.Name)
+		}
+	}
+	return nil
 }
 
 // parseTemplate parses a `template <name> { <permission lines> }` block — a named,
@@ -731,216 +821,255 @@ func (p *parser) parseTableCols() (string, []string, error) {
 func (p *parser) parseRepr() (Repr, error) {
 	switch {
 	case p.acceptKw("edge"):
-		tbl, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		if _, err := p.expect(tLParen); err != nil {
-			return nil, err
-		}
-		var cols []string
-		for {
-			c, err := p.ident()
-			if err != nil {
-				return nil, err
-			}
-			cols = append(cols, c)
-			if p.peekKind() == tComma {
-				p.advance()
-				continue
-			}
-			break
-		}
-		if _, err := p.expect(tRParen); err != nil {
-			return nil, err
-		}
-		if len(cols) < 2 || len(cols) > 3 {
-			return nil, p.errf("via edge needs 2 or 3 columns, got %d", len(cols))
-		}
-		return ViaEdge{Table: tbl, Cols: cols}, nil
+		return p.parseReprEdge()
 	case p.acceptKw("role"):
-		vr := ViaRole{}
-		if p.peekKind() == tLParen {
-			p.advance()
-			if err := p.expectKw("rank"); err != nil {
-				return nil, err
-			}
-			if _, err := p.expect(tGE); err != nil {
-				return nil, err
-			}
-			rm, err := p.ident()
-			if err != nil {
-				return nil, err
-			}
-			vr.HasRank = true
-			vr.RankMin = rm
-			if _, err := p.expect(tRParen); err != nil {
-				return nil, err
-			}
-		}
-		return vr, nil
+		return p.parseReprRole()
 	case p.acceptKw("composition"):
-		tbl, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		return ViaComposition{Table: tbl}, nil
+		return p.parseReprComposition()
 	case p.acceptKw("closure"):
-		// closure <Closure>(<anc>,<desc>) base <Base>(<id>,<parent>) on <col>
-		clo, cloCols, err := p.parseTableCols()
-		if err != nil {
-			return nil, err
-		}
-		if len(cloCols) != 2 {
-			return nil, p.errf("via closure needs a closure table with 2 columns (ancestor, descendant), got %d", len(cloCols))
-		}
-		if err := p.expectKw("base"); err != nil {
-			return nil, err
-		}
-		base, baseCols, err := p.parseTableCols()
-		if err != nil {
-			return nil, err
-		}
-		if len(baseCols) != 2 {
-			return nil, p.errf("via closure base needs 2 columns (id, parent), got %d", len(baseCols))
-		}
-		if err := p.expectKw("on"); err != nil {
-			return nil, err
-		}
-		col, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		return ViaClosure{
-			Closure: clo, AncestorCol: cloCols[0], DescendantCol: cloCols[1],
-			Base: base, BaseID: baseCols[0], BaseParent: baseCols[1], Col: col,
-		}, nil
+		return p.parseReprClosure()
 	case p.acceptKw("group"):
-		// group <Closure>(<group>,<member>) edge <Edge>(<member>,<group>) on <col>
-		clo, cloCols, err := p.parseTableCols()
-		if err != nil {
-			return nil, err
-		}
-		if len(cloCols) != 2 {
-			return nil, p.errf("via group needs a closure table with 2 columns (group, member), got %d", len(cloCols))
-		}
-		if err := p.expectKw("edge"); err != nil {
-			return nil, err
-		}
-		edge, edgeCols, err := p.parseTableCols()
-		if err != nil {
-			return nil, err
-		}
-		if len(edgeCols) != 2 {
-			return nil, p.errf("via group edge needs 2 columns (member, group), got %d", len(edgeCols))
-		}
-		if err := p.expectKw("on"); err != nil {
-			return nil, err
-		}
-		col, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		return ViaGroup{
-			Closure: clo, GroupCol: cloCols[0], MemberCol: cloCols[1],
-			Edge: edge, EdgeMember: edgeCols[0], EdgeGroup: edgeCols[1], Col: col,
-		}, nil
+		return p.parseReprGroup()
 	case p.acceptKw("object"):
-		// object <Other>-><verb> on <col>
-		other, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		if _, err := p.expect(tArrow); err != nil {
-			return nil, err
-		}
-		verb, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		if err := p.expectKw("on"); err != nil {
-			return nil, err
-		}
-		col, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		return ViaObject{Object: other, Verb: verb, Col: col}, nil
+		return p.parseReprObject()
 	case p.acceptKw("memberin"):
-		// memberin <level>(<principal-src>, <scope-src>) ; src = @<claim> | <col>
-		level, err := p.ident()
+		return p.parseReprMemberIn()
+	case p.acceptKw("grant"):
+		return p.parseReprGrant()
+	default:
+		return p.parseReprColumn()
+	}
+}
+
+// parseReprEdge: edge <Table>(<col>, <col>[, <col>])
+func (p *parser) parseReprEdge() (Repr, error) {
+	tbl, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	var cols []string
+	for {
+		c, err := p.ident()
 		if err != nil {
 			return nil, err
 		}
-		if _, err := p.expect(tLParen); err != nil {
+		cols = append(cols, c)
+		if p.peekKind() == tComma {
+			p.advance()
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return nil, err
+	}
+	if len(cols) < 2 || len(cols) > 3 {
+		return nil, p.errf("via edge needs 2 or 3 columns, got %d", len(cols))
+	}
+	return ViaEdge{Table: tbl, Cols: cols}, nil
+}
+
+// parseReprRole: role [(rank >= <min>)]
+func (p *parser) parseReprRole() (Repr, error) {
+	vr := ViaRole{}
+	if p.peekKind() == tLParen {
+		p.advance()
+		if err := p.expectKw("rank"); err != nil {
 			return nil, err
 		}
-		principal, err := p.parseArgSrc()
+		if _, err := p.expect(tGE); err != nil {
+			return nil, err
+		}
+		rm, err := p.ident()
 		if err != nil {
 			return nil, err
 		}
-		if _, err := p.expect(tComma); err != nil {
-			return nil, err
-		}
-		scope, err := p.parseArgSrc()
-		if err != nil {
-			return nil, err
-		}
+		vr.HasRank = true
+		vr.RankMin = rm
 		if _, err := p.expect(tRParen); err != nil {
 			return nil, err
 		}
-		return ViaMemberIn{Level: level, Principal: principal, Scope: scope}, nil
-	case p.acceptKw("grant"):
-		// grant <Table>(record, kind, principal, access) [where <col> = "<v>"]
-		tbl, cols, err := p.parseTableCols()
-		if err != nil {
-			return nil, err
-		}
-		if len(cols) != 4 {
-			return nil, p.errf("via grant needs 4 columns (record, kind, principal, access), got %d", len(cols))
-		}
-		vg := ViaGrant{Table: tbl, RecordCol: cols[0], KindCol: cols[1], PrincipalCol: cols[2], AccessCol: cols[3]}
-		if p.acceptKw("where") {
-			col, err := p.ident()
-			if err != nil {
-				return nil, err
-			}
-			if _, err := p.expect(tEq); err != nil {
-				return nil, err
-			}
-			val, err := p.expect(tString)
-			if err != nil {
-				return nil, err
-			}
-			vg.DiscrimCol, vg.DiscrimVal = col, val.lit
-		}
-		return vg, nil
-	default:
-		// via <fk column> [where <kind_col> = "<val>"]
+	}
+	return vr, nil
+}
+
+// parseReprComposition: composition <Table>
+func (p *parser) parseReprComposition() (Repr, error) {
+	tbl, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	return ViaComposition{Table: tbl}, nil
+}
+
+// parseReprClosure: closure <Closure>(<anc>,<desc>) base <Base>(<id>,<parent>) on <col>
+func (p *parser) parseReprClosure() (Repr, error) {
+	clo, cloCols, err := p.parseTableCols()
+	if err != nil {
+		return nil, err
+	}
+	if len(cloCols) != 2 {
+		return nil, p.errf("via closure needs a closure table with 2 columns (ancestor, descendant), got %d", len(cloCols))
+	}
+	if err := p.expectKw("base"); err != nil {
+		return nil, err
+	}
+	base, baseCols, err := p.parseTableCols()
+	if err != nil {
+		return nil, err
+	}
+	if len(baseCols) != 2 {
+		return nil, p.errf("via closure base needs 2 columns (id, parent), got %d", len(baseCols))
+	}
+	if err := p.expectKw("on"); err != nil {
+		return nil, err
+	}
+	col, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	return ViaClosure{
+		Closure: clo, AncestorCol: cloCols[0], DescendantCol: cloCols[1],
+		Base: base, BaseID: baseCols[0], BaseParent: baseCols[1], Col: col,
+	}, nil
+}
+
+// parseReprGroup: group <Closure>(<group>,<member>) edge <Edge>(<member>,<group>) on <col>
+func (p *parser) parseReprGroup() (Repr, error) {
+	clo, cloCols, err := p.parseTableCols()
+	if err != nil {
+		return nil, err
+	}
+	if len(cloCols) != 2 {
+		return nil, p.errf("via group needs a closure table with 2 columns (group, member), got %d", len(cloCols))
+	}
+	if err := p.expectKw("edge"); err != nil {
+		return nil, err
+	}
+	edge, edgeCols, err := p.parseTableCols()
+	if err != nil {
+		return nil, err
+	}
+	if len(edgeCols) != 2 {
+		return nil, p.errf("via group edge needs 2 columns (member, group), got %d", len(edgeCols))
+	}
+	if err := p.expectKw("on"); err != nil {
+		return nil, err
+	}
+	col, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	return ViaGroup{
+		Closure: clo, GroupCol: cloCols[0], MemberCol: cloCols[1],
+		Edge: edge, EdgeMember: edgeCols[0], EdgeGroup: edgeCols[1], Col: col,
+	}, nil
+}
+
+// parseReprObject: object <Other>-><verb> on <col>
+func (p *parser) parseReprObject() (Repr, error) {
+	other, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tArrow); err != nil {
+		return nil, err
+	}
+	verb, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expectKw("on"); err != nil {
+		return nil, err
+	}
+	col, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	return ViaObject{Object: other, Verb: verb, Col: col}, nil
+}
+
+// parseReprMemberIn: memberin <level>(<principal-src>, <scope-src>) ; src = @<claim> | <col>
+func (p *parser) parseReprMemberIn() (Repr, error) {
+	level, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	principal, err := p.parseArgSrc()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tComma); err != nil {
+		return nil, err
+	}
+	scope, err := p.parseArgSrc()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return nil, err
+	}
+	return ViaMemberIn{Level: level, Principal: principal, Scope: scope}, nil
+}
+
+// parseReprGrant: grant <Table>(record, kind, principal, access) [where <col> = "<v>"]
+func (p *parser) parseReprGrant() (Repr, error) {
+	tbl, cols, err := p.parseTableCols()
+	if err != nil {
+		return nil, err
+	}
+	if len(cols) != 4 {
+		return nil, p.errf("via grant needs 4 columns (record, kind, principal, access), got %d", len(cols))
+	}
+	vg := ViaGrant{Table: tbl, RecordCol: cols[0], KindCol: cols[1], PrincipalCol: cols[2], AccessCol: cols[3]}
+	if p.acceptKw("where") {
 		col, err := p.ident()
 		if err != nil {
 			return nil, err
 		}
-		vc := ViaColumn{Column: col}
-		// Optional discriminator: an owner column gated by a kind column — the unified
-		// (owner_id, owner_kind) shape, mirroring the grant-edge `where`. Several owner
-		// kinds share one id column, each gated by a constant in the kind column.
-		if p.acceptKw("where") {
-			dcol, err := p.ident()
-			if err != nil {
-				return nil, err
-			}
-			if _, err := p.expect(tEq); err != nil {
-				return nil, err
-			}
-			val, err := p.expect(tString)
-			if err != nil {
-				return nil, err
-			}
-			vc.DiscrimCol, vc.DiscrimVal = dcol, val.lit
+		if _, err := p.expect(tEq); err != nil {
+			return nil, err
 		}
-		return vc, nil
+		val, err := p.expect(tString)
+		if err != nil {
+			return nil, err
+		}
+		vg.DiscrimCol, vg.DiscrimVal = col, val.lit
 	}
+	return vg, nil
+}
+
+// parseReprColumn: via <fk column> [where <kind_col> = "<val>"]
+func (p *parser) parseReprColumn() (Repr, error) {
+	col, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	vc := ViaColumn{Column: col}
+	// Optional discriminator: an owner column gated by a kind column — the unified
+	// (owner_id, owner_kind) shape, mirroring the grant-edge `where`. Several owner
+	// kinds share one id column, each gated by a constant in the kind column.
+	if p.acceptKw("where") {
+		dcol, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tEq); err != nil {
+			return nil, err
+		}
+		val, err := p.expect(tString)
+		if err != nil {
+			return nil, err
+		}
+		vc.DiscrimCol, vc.DiscrimVal = dcol, val.lit
+	}
+	return vc, nil
 }
 
 // parseArgSrc parses a ViaMemberIn argument: `@<claim>` (a claim key) or `<col>`
@@ -1119,71 +1248,15 @@ func (p *parser) parseTerm() (*Term, error) {
 			return nil, err
 		}
 		t.Builtin = b
-		// `@session(<rel>)` — a session-self-gated role grant.
-		if b == "session" && p.peekKind() == tLParen {
-			p.advance()
-			rel, err := p.ident()
-			if err != nil {
-				return nil, err
-			}
-			t.SessionRel = rel
-			if _, err := p.expect(tRParen); err != nil {
-				return nil, err
-			}
-		}
-		// `@app_scope(exclude <rel>)` — the broad reach minus rows owned via <rel>
-		// (operator-private admin-owned rows). The de-prescribed admin-owner exclusion.
-		if b == "app_scope" && p.peekKind() == tLParen {
-			p.advance()
-			if err := p.expectKw("exclude"); err != nil {
-				return nil, err
-			}
-			rel, err := p.ident()
-			if err != nil {
-				return nil, err
-			}
-			t.ExcludeRel = rel
-			if _, err := p.expect(tRParen); err != nil {
-				return nil, err
-			}
-		}
-		// `@kind("<value>")` — a typed-subject match on the caller's principal-kind claim.
-		if b == "kind" {
-			if _, err := p.expect(tLParen); err != nil {
-				return nil, err
-			}
-			val, err := p.expect(tString)
-			if err != nil {
-				return nil, err
-			}
-			t.KindVal = val.lit
-			if _, err := p.expect(tRParen); err != nil {
-				return nil, err
-			}
+		if err := p.parseTermBuiltin(t); err != nil {
+			return nil, err
 		}
 		return t, nil
 	}
 	// `mode <col> = "<v>" [for <subject>]` — a column-condition (visibility) term.
 	if p.isKw("mode") {
-		p.advance()
-		col, err := p.ident()
-		if err != nil {
+		if err := p.parseTermMode(t); err != nil {
 			return nil, err
-		}
-		if _, err := p.expect(tEq); err != nil {
-			return nil, err
-		}
-		val, err := p.expect(tString)
-		if err != nil {
-			return nil, err
-		}
-		t.ModeCol, t.ModeVal = col, val.lit
-		if p.acceptKw("for") {
-			sub, err := p.ident()
-			if err != nil {
-				return nil, err
-			}
-			t.ModeScope = sub
 		}
 		return t, nil
 	}
@@ -1219,6 +1292,80 @@ func (p *parser) parseTerm() (*Term, error) {
 		t.WalkVerb = v
 	}
 	return t, nil
+}
+
+// parseTermBuiltin parses the optional argument list of an `@<builtin>` term
+// (t.Builtin already set): @session(<rel>), @app_scope(exclude <rel>), @kind("<v>").
+func (p *parser) parseTermBuiltin(t *Term) error {
+	b := t.Builtin
+	// `@session(<rel>)` — a session-self-gated role grant.
+	if b == "session" && p.peekKind() == tLParen {
+		p.advance()
+		rel, err := p.ident()
+		if err != nil {
+			return err
+		}
+		t.SessionRel = rel
+		if _, err := p.expect(tRParen); err != nil {
+			return err
+		}
+	}
+	// `@app_scope(exclude <rel>)` — the broad reach minus rows owned via <rel>
+	// (operator-private admin-owned rows). The de-prescribed admin-owner exclusion.
+	if b == "app_scope" && p.peekKind() == tLParen {
+		p.advance()
+		if err := p.expectKw("exclude"); err != nil {
+			return err
+		}
+		rel, err := p.ident()
+		if err != nil {
+			return err
+		}
+		t.ExcludeRel = rel
+		if _, err := p.expect(tRParen); err != nil {
+			return err
+		}
+	}
+	// `@kind("<value>")` — a typed-subject match on the caller's principal-kind claim.
+	if b == "kind" {
+		if _, err := p.expect(tLParen); err != nil {
+			return err
+		}
+		val, err := p.expect(tString)
+		if err != nil {
+			return err
+		}
+		t.KindVal = val.lit
+		if _, err := p.expect(tRParen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// parseTermMode parses `mode <col> = "<v>" [for <subject>]` into t.
+func (p *parser) parseTermMode(t *Term) error {
+	p.advance() // 'mode'
+	col, err := p.ident()
+	if err != nil {
+		return err
+	}
+	if _, err := p.expect(tEq); err != nil {
+		return err
+	}
+	val, err := p.expect(tString)
+	if err != nil {
+		return err
+	}
+	t.ModeCol, t.ModeVal = col, val.lit
+	if p.acceptKw("for") {
+		sub, err := p.ident()
+		if err != nil {
+			return err
+		}
+		t.ModeScope = sub
+	}
+	return nil
 }
 
 func (p *parser) parseProcedures() (*Procedures, error) {
@@ -1303,16 +1450,7 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 		case p.acceptKw("assignments"):
 			rs.Assignments, err = p.ident()
 		case p.acceptKw("kind"):
-			if rs.KindCol, err = p.ident(); err == nil {
-				if _, e := p.expect(tEq); e != nil {
-					return nil, e
-				}
-				v, e := p.expect(tString)
-				if e != nil {
-					return nil, e
-				}
-				rs.KindVal = v.lit
-			}
+			err = p.parseRoleStoreKind(rs)
 		case p.acceptKw("subject"):
 			rs.SubjectCol, err = p.ident()
 		case p.acceptKw("scope"):
@@ -1320,13 +1458,7 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 				rs.ScopeCols = append(rs.ScopeCols, p.advance().lit)
 			}
 		case p.acceptKw("rolejoin"):
-			if rs.RoleCol, err = p.ident(); err == nil {
-				if rs.RolesTable, err = p.ident(); err == nil {
-					if rs.RolesID, err = p.ident(); err == nil {
-						rs.KeyCol, err = p.ident()
-					}
-				}
-			}
+			err = p.parseRoleStoreJoin(rs)
 		case p.acceptKw("revoked"):
 			rs.RevokedCol, err = p.ident()
 		default:
@@ -1340,6 +1472,41 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 		return nil, err
 	}
 	return rs, nil
+}
+
+// parseRoleStoreKind parses `kind <col> = "<val>"` into rs.
+func (p *parser) parseRoleStoreKind(rs *RoleStore) error {
+	col, err := p.ident()
+	if err != nil {
+		return err
+	}
+	rs.KindCol = col
+	if _, err := p.expect(tEq); err != nil {
+		return err
+	}
+	v, err := p.expect(tString)
+	if err != nil {
+		return err
+	}
+	rs.KindVal = v.lit
+	return nil
+}
+
+// parseRoleStoreJoin parses `rolejoin <col> <table> <id> <key>` into rs.
+func (p *parser) parseRoleStoreJoin(rs *RoleStore) error {
+	col, err := p.ident()
+	if err != nil {
+		return err
+	}
+	rs.RoleCol = col
+	if rs.RolesTable, err = p.ident(); err != nil {
+		return err
+	}
+	if rs.RolesID, err = p.ident(); err != nil {
+		return err
+	}
+	rs.KeyCol, err = p.ident()
+	return err
 }
 
 // parseClaims: claims via "<setting>" [json|jsonb] — declares the request-context

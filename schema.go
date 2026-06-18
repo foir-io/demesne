@@ -106,168 +106,201 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 	if sc == nil {
 		return fmt.Errorf("ValidateAgainst: nil schema")
 	}
-	var errs []error
-	// req records a needed (table, column); table=="" requires only the table.
-	reqTable := func(table, ctx string) bool {
-		if !sc.hasTable(table) {
-			errs = append(errs, fmt.Errorf("%s: table %q not found in the database", ctx, table))
-			return false
-		}
-		return true
-	}
-	reqCol := func(table, col, ctx string) {
-		if !sc.hasTable(table) {
-			errs = append(errs, fmt.Errorf("%s: table %q (for column %q) not found in the database", ctx, table, col))
-			return
-		}
-		if !sc.hasColumn(table, col) {
-			errs = append(errs, fmt.Errorf("%s: table %q has no column %q", ctx, table, col))
-		}
-	}
+	b := &schBinder{sc: sc}
 
 	for _, o := range s.Objects {
-		oc := "object " + o.Name
-		if !reqTable(o.Table, oc) {
-			continue // no point checking columns of a missing table
-		}
-		// The object's primary-key column must exist — but ONLY when emission
-		// actually references it (a grant/edge/composition predicate, the @kernel
-		// gate, or a cross-object borrow at this row); a pure containment-scoped
-		// table never names its PK, so requiring `id` there would wrongly reject a
-		// table whose key is composite or differently named. The level-entity's PK
-		// is checked below as its leaf scope column. Declared `pk`, else `id`
-		// (de-Foirs the `id` assumption, EID-278).
-		if s.emissionReferencesPK(o) {
-			reqCol(o.Table, o.pk(), oc+" pk")
-		}
-		// Scope columns (every ancestor level the object pins; the level-entity
-		// uses its own primary key). A VIRTUAL level carries no scope column (a
-		// global object scoped at the platform root has no containment column), so
-		// skip it.
-		for _, lvl := range o.Scoped {
-			if s.levelIsVirtual(lvl) {
-				continue
-			}
-			reqCol(o.Table, s.scopeCol(o, lvl), oc+" scope")
-		}
-		// Relations.
-		for _, r := range o.Relations {
-			rc := fmt.Sprintf("%s relation %q", oc, r.Name)
-			switch repr := r.Repr.(type) {
-			case ViaColumn:
-				reqCol(o.Table, repr.Column, rc)
-				if repr.DiscrimCol != "" {
-					reqCol(o.Table, repr.DiscrimCol, rc+" kind")
-				}
-			case ViaEdge:
-				if reqTable(repr.Table, rc) {
-					for _, c := range repr.Cols {
-						reqCol(repr.Table, c, rc)
-					}
-				}
-			case ViaComposition:
-				reqTable(repr.Table, rc)
-			case ViaClosure:
-				reqCol(o.Table, repr.Col, rc)
-				if reqTable(repr.Closure, rc) {
-					reqCol(repr.Closure, repr.AncestorCol, rc)
-					reqCol(repr.Closure, repr.DescendantCol, rc)
-				}
-				if reqTable(repr.Base, rc) {
-					reqCol(repr.Base, repr.BaseID, rc)
-					reqCol(repr.Base, repr.BaseParent, rc)
-				}
-			case ViaGroup:
-				reqCol(o.Table, repr.Col, rc)
-				if reqTable(repr.Closure, rc) {
-					reqCol(repr.Closure, repr.GroupCol, rc)
-					reqCol(repr.Closure, repr.MemberCol, rc)
-				}
-				if reqTable(repr.Edge, rc) {
-					reqCol(repr.Edge, repr.EdgeMember, rc)
-					reqCol(repr.Edge, repr.EdgeGroup, rc)
-				}
-			case ViaObject:
-				// The FK column on this object; the other object's table is checked
-				// when that object is validated.
-				reqCol(o.Table, repr.Col, rc)
-			case ViaGrant:
-				// The 4-column access-class ACL store (+ a discriminator column when a
-				// shared store), like the descriptor grant store.
-				if reqTable(repr.Table, rc) {
-					cols := []string{repr.RecordCol, repr.KindCol, repr.PrincipalCol, repr.AccessCol}
-					if repr.DiscrimCol != "" {
-						cols = append(cols, repr.DiscrimCol)
-					}
-					for _, c := range cols {
-						reqCol(repr.Table, c, rc)
-					}
-				}
-			case ViaMemberIn:
-				// Column-sourced args reference this object's own table; the role
-				// store (where membership lives) is checked under "Role stores" below.
-				if repr.Principal.Col != "" {
-					reqCol(o.Table, repr.Principal.Col, rc)
-				}
-				if repr.Scope.Col != "" {
-					reqCol(o.Table, repr.Scope.Col, rc)
-				}
-			}
-		}
-		// Column-condition (visibility) terms in permissions reference a column on
-		// this object's own table.
-		for _, pm := range o.Perms {
-			for _, t := range pm.Expr {
-				if t.ModeCol != "" {
-					reqCol(o.Table, t.ModeCol, oc+" mode term")
-				}
-			}
-		}
+		s.schCheckObjectRefs(b, o)
 	}
-
-	// Role stores.
 	for _, rs := range s.RoleStores {
-		rc := "rolestore " + rs.Name
-		if reqTable(rs.Assignments, rc) {
-			for _, c := range append([]string{rs.KindCol, rs.SubjectCol, rs.RoleCol, rs.RevokedCol}, rs.ScopeCols...) {
-				reqCol(rs.Assignments, c, rc)
-			}
-		}
-		if reqTable(rs.RolesTable, rc+" roles") {
-			reqCol(rs.RolesTable, rs.RolesID, rc+" roles")
-			reqCol(rs.RolesTable, rs.KeyCol, rc+" roles")
-		}
+		schCheckRoleStoreRefs(b, rs)
 	}
-
-	// Level-scoped grants.
 	for _, g := range s.Grants {
-		gc := "grant " + g.Name
-		if reqTable(g.Table, gc) {
-			reqCol(g.Table, g.GranteeCol, gc)
-			reqCol(g.Table, g.LevelCol, gc)
-			if g.ActiveCol != "" {
-				reqCol(g.Table, g.ActiveCol, gc)
-			}
-			if g.ExpiresCol != "" {
-				reqCol(g.Table, g.ExpiresCol, gc)
-			}
-		}
+		schCheckGrantRefs(b, g)
 	}
-
-	// Membership subjects (the legacy god-flag form).
 	for _, sub := range s.Subjects {
-		if m := sub.Membership; m != nil {
-			mc := "subject " + sub.Name + " membership"
-			if reqTable(m.Table, mc) {
-				reqCol(m.Table, m.IDCol, mc)
-				reqCol(m.Table, m.FlagCol, mc)
-				if m.ActiveCol != "" {
-					reqCol(m.Table, m.ActiveCol, mc)
-				}
+		schCheckSubjectRefs(b, sub)
+	}
+
+	sort.Slice(b.errs, func(i, j int) bool { return b.errs[i].Error() < b.errs[j].Error() })
+	return errors.Join(b.errs...)
+}
+
+// schBinder accumulates reference-check failures while ValidateAgainst walks a
+// spec against a Schema. reqTable/reqCol mirror the original closures exactly so
+// the reported errors (text and set) are unchanged.
+type schBinder struct {
+	sc   *Schema
+	errs []error
+}
+
+// reqTable records a needed table; returns whether it exists.
+func (b *schBinder) reqTable(table, ctx string) bool {
+	if !b.sc.hasTable(table) {
+		b.errs = append(b.errs, fmt.Errorf("%s: table %q not found in the database", ctx, table))
+		return false
+	}
+	return true
+}
+
+// reqCol records a needed (table, column).
+func (b *schBinder) reqCol(table, col, ctx string) {
+	if !b.sc.hasTable(table) {
+		b.errs = append(b.errs, fmt.Errorf("%s: table %q (for column %q) not found in the database", ctx, table, col))
+		return
+	}
+	if !b.sc.hasColumn(table, col) {
+		b.errs = append(b.errs, fmt.Errorf("%s: table %q has no column %q", ctx, table, col))
+	}
+}
+
+// schCheckObjectRefs checks an object's table, primary key, scope columns,
+// relations and permission mode terms.
+func (s *Spec) schCheckObjectRefs(b *schBinder, o *Object) {
+	oc := "object " + o.Name
+	if !b.reqTable(o.Table, oc) {
+		return // no point checking columns of a missing table
+	}
+	// The object's primary-key column must exist — but ONLY when emission
+	// actually references it (a grant/edge/composition predicate, the @kernel
+	// gate, or a cross-object borrow at this row); a pure containment-scoped
+	// table never names its PK, so requiring `id` there would wrongly reject a
+	// table whose key is composite or differently named. The level-entity's PK
+	// is checked below as its leaf scope column. Declared `pk`, else `id`
+	// (de-Foirs the `id` assumption, EID-278).
+	if s.emissionReferencesPK(o) {
+		b.reqCol(o.Table, o.pk(), oc+" pk")
+	}
+	// Scope columns (every ancestor level the object pins; the level-entity
+	// uses its own primary key). A VIRTUAL level carries no scope column (a
+	// global object scoped at the platform root has no containment column), so
+	// skip it.
+	for _, lvl := range o.Scoped {
+		if s.levelIsVirtual(lvl) {
+			continue
+		}
+		b.reqCol(o.Table, s.scopeCol(o, lvl), oc+" scope")
+	}
+	for _, r := range o.Relations {
+		schCheckRelationRefs(b, o, r)
+	}
+	// Column-condition (visibility) terms in permissions reference a column on
+	// this object's own table.
+	for _, pm := range o.Perms {
+		for _, t := range pm.Expr {
+			if t.ModeCol != "" {
+				b.reqCol(o.Table, t.ModeCol, oc+" mode term")
 			}
 		}
 	}
+}
 
-	sort.Slice(errs, func(i, j int) bool { return errs[i].Error() < errs[j].Error() })
-	return errors.Join(errs...)
+// schCheckRelationRefs checks the tables/columns a single relation references,
+// dispatching on its representation.
+func schCheckRelationRefs(b *schBinder, o *Object, r *Relation) {
+	rc := fmt.Sprintf("object %s relation %q", o.Name, r.Name)
+	switch repr := r.Repr.(type) {
+	case ViaColumn:
+		b.reqCol(o.Table, repr.Column, rc)
+		if repr.DiscrimCol != "" {
+			b.reqCol(o.Table, repr.DiscrimCol, rc+" kind")
+		}
+	case ViaEdge:
+		if b.reqTable(repr.Table, rc) {
+			for _, c := range repr.Cols {
+				b.reqCol(repr.Table, c, rc)
+			}
+		}
+	case ViaComposition:
+		b.reqTable(repr.Table, rc)
+	case ViaClosure:
+		b.reqCol(o.Table, repr.Col, rc)
+		if b.reqTable(repr.Closure, rc) {
+			b.reqCol(repr.Closure, repr.AncestorCol, rc)
+			b.reqCol(repr.Closure, repr.DescendantCol, rc)
+		}
+		if b.reqTable(repr.Base, rc) {
+			b.reqCol(repr.Base, repr.BaseID, rc)
+			b.reqCol(repr.Base, repr.BaseParent, rc)
+		}
+	case ViaGroup:
+		b.reqCol(o.Table, repr.Col, rc)
+		if b.reqTable(repr.Closure, rc) {
+			b.reqCol(repr.Closure, repr.GroupCol, rc)
+			b.reqCol(repr.Closure, repr.MemberCol, rc)
+		}
+		if b.reqTable(repr.Edge, rc) {
+			b.reqCol(repr.Edge, repr.EdgeMember, rc)
+			b.reqCol(repr.Edge, repr.EdgeGroup, rc)
+		}
+	case ViaObject:
+		// The FK column on this object; the other object's table is checked
+		// when that object is validated.
+		b.reqCol(o.Table, repr.Col, rc)
+	case ViaGrant:
+		// The 4-column access-class ACL store (+ a discriminator column when a
+		// shared store), like the descriptor grant store.
+		if b.reqTable(repr.Table, rc) {
+			cols := []string{repr.RecordCol, repr.KindCol, repr.PrincipalCol, repr.AccessCol}
+			if repr.DiscrimCol != "" {
+				cols = append(cols, repr.DiscrimCol)
+			}
+			for _, c := range cols {
+				b.reqCol(repr.Table, c, rc)
+			}
+		}
+	case ViaMemberIn:
+		// Column-sourced args reference this object's own table; the role
+		// store (where membership lives) is checked under "Role stores" below.
+		if repr.Principal.Col != "" {
+			b.reqCol(o.Table, repr.Principal.Col, rc)
+		}
+		if repr.Scope.Col != "" {
+			b.reqCol(o.Table, repr.Scope.Col, rc)
+		}
+	}
+}
+
+// schCheckRoleStoreRefs checks a role store's assignment and roles tables.
+func schCheckRoleStoreRefs(b *schBinder, rs *RoleStore) {
+	rc := "rolestore " + rs.Name
+	if b.reqTable(rs.Assignments, rc) {
+		for _, c := range append([]string{rs.KindCol, rs.SubjectCol, rs.RoleCol, rs.RevokedCol}, rs.ScopeCols...) {
+			b.reqCol(rs.Assignments, c, rc)
+		}
+	}
+	if b.reqTable(rs.RolesTable, rc+" roles") {
+		b.reqCol(rs.RolesTable, rs.RolesID, rc+" roles")
+		b.reqCol(rs.RolesTable, rs.KeyCol, rc+" roles")
+	}
+}
+
+// schCheckGrantRefs checks a level-scoped grant's edge table and columns.
+func schCheckGrantRefs(b *schBinder, g *Grant) {
+	gc := "grant " + g.Name
+	if b.reqTable(g.Table, gc) {
+		b.reqCol(g.Table, g.GranteeCol, gc)
+		b.reqCol(g.Table, g.LevelCol, gc)
+		if g.ActiveCol != "" {
+			b.reqCol(g.Table, g.ActiveCol, gc)
+		}
+		if g.ExpiresCol != "" {
+			b.reqCol(g.Table, g.ExpiresCol, gc)
+		}
+	}
+}
+
+// schCheckSubjectRefs checks a membership subject (the legacy god-flag form).
+func schCheckSubjectRefs(b *schBinder, sub *Subject) {
+	m := sub.Membership
+	if m == nil {
+		return
+	}
+	mc := "subject " + sub.Name + " membership"
+	if b.reqTable(m.Table, mc) {
+		b.reqCol(m.Table, m.IDCol, mc)
+		b.reqCol(m.Table, m.FlagCol, mc)
+		if m.ActiveCol != "" {
+			b.reqCol(m.Table, m.ActiveCol, mc)
+		}
+	}
 }
