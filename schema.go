@@ -271,6 +271,11 @@ func schCheckRoleStoreRefs(b *schBinder, rs *RoleStore) {
 	if b.reqTable(rs.RolesTable, rc+" roles") {
 		b.reqCol(rs.RolesTable, rs.RolesID, rc+" roles")
 		b.reqCol(rs.RolesTable, rs.KeyCol, rc+" roles")
+		// The optional materialized permissions column (holds-resolver, EID-334) is
+		// checked only when declared; "" means the rolestore has none.
+		if rs.PermsCol != "" {
+			b.reqCol(rs.RolesTable, rs.PermsCol, rc+" roles")
+		}
 	}
 }
 

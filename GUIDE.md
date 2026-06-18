@@ -196,6 +196,28 @@ policy in app code):
   role>`.
 - `PDP.Authorize(procedure, holds) → Allow | Deny | NotGoverned` — the verb gate
   at your request boundary (RLS can't see verbs).
+- `Spec.HoldsResolver(rolestore)` — the **holds-resolver**: it produces the `holds`
+  callback `PDP.Authorize` takes, so you never hand-write "given a principal + scope,
+  what permissions do they hold?".
+  - `HoldsResolver.AssignmentsSQL()` builds the GENERIC active-assignment read —
+    every role a principal holds across all scopes (`$1` = principal id; kind +
+    subject + not-revoked) — that **you** execute (under the principal's claims, or
+    as a trusted read for another subject); the engine never runs it. Adopter-
+    specific admission rules (a disabled role, a client/RP-scoped grant) stay your
+    policy: compose them around this read; the engine bakes in none.
+  - `HoldsResolver.Resolve(rows, scope) → EffectivePerms` folds those rows into the
+    effective permission set at a query scope: it keeps each assignment whose scope
+    *contains* the query (the root column is a strict tenancy boundary; a grant
+    pinned deeper covers that subtree, so a higher-level grant answers a lower-level
+    query but never the reverse — derived from the rolestore's scope columns) and
+    unions their permissions. `EffectivePerms.Holds` is the `PDP.Authorize` callback.
+    A role's permissions come from a materialized `permissions` column when the
+    rolestore declares one (so operator-configured *custom* roles resolve verbatim),
+    otherwise from expanding its key through the vocabulary.
+  - `Vocabulary.PresetPermissions(name)` — the preset → flat permission set
+    expansion (`*`, nested preset refs, fail-closed on cycles); the same logic seeds
+    or validates a materialized `permissions` column. `RankOf` / `PresetsAtOrAbove`
+    expose the rank ladder for delegation.
 - `Spec.PointCheckSQL(object)` — a read-check **query** you run *under* the
   principal's claims; the **database** answers "can this principal see this row?"
   via the real policy. For UI affordances, never as a substitute for enforcement.

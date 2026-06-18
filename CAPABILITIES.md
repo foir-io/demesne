@@ -77,3 +77,52 @@ for other adopters, but it is the pattern Foir is leaving.
 Proof: `platform_plane_test.go` (a global object scoped at the virtual root compiles
 to the generated `has_platform_role` role branch; the grant operator and the platform
 role do not bleed across the tenancy boundary — forward isolation).
+
+## Layer 2 — the holds-resolver (closing the compiler→framework gap, EID-334)
+
+Rows 1–14 are **enforcement** (Layer 1): generated RLS + the SECURITY DEFINER
+kernel, where the database is both the source of truth and the runtime check. But
+`PDP.Authorize(proc, holds)` and the emitted verb map take a `holds(perm) → bool`
+callback the engine never computed — so every adopter hand-wrote "given a principal
++ scope, what permission set do they hold?" from the same rolestore + vocabulary the
+engine already compiles the role definers from. That is now generated
+(`holds.go`):
+
+- **Read** — `HoldsResolver.AssignmentsSQL()` builds the GENERIC active-assignment
+  query for a principal across all scopes (`$1` = principal id, filtered by
+  kind + subject + not-revoked); the **caller** executes it (under the principal's
+  claims, or as a trusted read for another subject). Same read/compute split, and the
+  same moat, as the `access_runtime.go` grant template — the engine shapes the
+  statement, the database returns the rows. It deliberately omits adopter-specific
+  *admission* policy (a disabled role, an RP/client-scoped grant, a role-key
+  allowlist): those are the adopter's policy, not the rolestore grammar, so a caller
+  that needs them composes them itself (the engine bakes in no policy).
+- **Compute** — `HoldsResolver.Resolve(rows, scope)` keeps each assignment whose
+  scope **contains** the query scope (the containment match derived from the
+  rolestore's scope columns: the **root** column is a strict tenancy boundary — an
+  unpinned root never matches a real query — while a grant pinned at a deeper level
+  covers that level's whole subtree, so a higher-level grant answers a lower-level
+  query but never the reverse) and unions their permissions into an `EffectivePerms`
+  whose `Holds(perm)` method **is** the `PDP.Authorize` callback. This compute
+  reproduces the hand-written effective-permission resolver exactly.
+- **Expand** — `Vocabulary.PresetPermissions` turns a preset into its flat
+  permission set (`*`, nested refs, fail-closed on cycles) + rank helpers. A role's
+  permissions come from a materialized `permissions` column when the rolestore
+  declares one (so operator-configured **custom** roles resolve verbatim, not only
+  vocabulary presets), else from this expansion.
+
+Pure stdlib and target-neutral: `AssignmentsSQL` is a plain statement and the
+materialized-column compute is a small transform over the resolver's plain-data
+projection, so a TypeScript target reproduces it from the same projection (a non-Go
+target reproducing the *expand* path must also project the vocabulary). Nothing is
+Foir-specific — the rolestore, scope columns and vocabulary are all spec-declared
+(EID-267 / EID-315). The **compute** replaces the effective-permission logic the
+**two** hand-written resolvers a real adopter (Foir) carried share
+(`session.AdminEffectivePermissions` + `AdminEffectivePermissionsForUser`); their
+read-time *admission* filters stay adopter policy (the documented read-filter delta).
+
+Proof: `holds_test.go` (preset/rank expansion incl. star, nested refs, cycle
+fail-close; the scope-containment matrix; materialized vs key-expansion union). The
+no-drift proof — the generated resolver reproducing Foir's two hand-written ones over
+the real `foir.demesne` spec — lives consumer-side (`demesne_holds_test.go`), where
+the database and Foir's code are.
