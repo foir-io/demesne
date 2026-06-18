@@ -233,6 +233,20 @@ policy in app code):
     expansion (`*`, nested preset refs, fail-closed on cycles); the same logic seeds
     or validates a materialized `permissions` column. `RankOf` / `PresetsAtOrAbove`
     expose the rank ladder for delegation.
+- `Spec.RoleAssignmentSurface(rolestore)` — the control-plane **write** side of the
+  rolestore (the dual of the holds-resolver's read), so you never hand-write the
+  assign/revoke/list statements either:
+  - `AssignInsert(id, subject, role, scope, grantedBy)` — the `INSERT … RETURNING`
+    that confers a role at a scope (kind inlined; scope + grantor bound).
+  - `RevokeSQL()` — the soft-revoke (`UPDATE <revoked> = now()[, <revoked_by>] WHERE
+    <pk> = $1 AND <revoked> IS NULL`), idempotent.
+  - `ListForRoleSQL()` / `ListForPrincipalSQL()` — the by-role audit view and the
+    by-principal active view (joined to the role's key + permissions).
+  These **build** SQL + ordered args you execute under `WithRLS`; the
+  `role_assignments` table's own RLS is the write moat (an out-of-scope write is
+  denied), so the engine never re-checks. The audit columns (`pk`, `granted … by`,
+  `revoked … by`) are optional rolestore declarations; the intersection-cap
+  delegation guard ("can't grant a role you don't hold") is a separate primitive.
 - `Spec.PointCheckSQL(object)` — a read-check **query** you run *under* the
   principal's claims; the **database** answers "can this principal see this row?"
   via the real policy. For UI affordances, never as a substitute for enforcement.

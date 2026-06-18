@@ -1426,7 +1426,7 @@ func (p *parser) parseUngoverned() (*Ungoverned, error) {
 
 func roleStoreKeyword(s string) bool {
 	switch s {
-	case "assignments", "kind", "subject", "scope", "rolejoin", "revoked", "permissions":
+	case "assignments", "kind", "subject", "scope", "rolejoin", "revoked", "permissions", "pk", "granted":
 		return true
 	}
 	return false
@@ -1462,9 +1462,13 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 		case p.acceptKw("rolejoin"):
 			err = p.parseRoleStoreJoin(rs)
 		case p.acceptKw("revoked"):
-			rs.RevokedCol, err = p.ident()
+			err = p.parseRoleStoreRevoked(rs)
 		case p.acceptKw("permissions"):
 			rs.PermsCol, err = p.ident()
+		case p.acceptKw("pk"):
+			rs.IDCol, err = p.ident()
+		case p.acceptKw("granted"):
+			err = p.parseRoleStoreGranted(rs)
 		default:
 			return nil, p.errf("unexpected %s %q in rolestore", p.peekKind(), p.cur().lit)
 		}
@@ -1497,6 +1501,34 @@ func (p *parser) parseRoleStoreKind(rs *RoleStore) error {
 }
 
 // parseRoleStoreJoin parses `rolejoin <col> <table> <id> <key>` into rs.
+// parseRoleStoreRevoked: revoked <col> [by <col>] — the active-filter column and
+// its optional revoker-audit companion (Layer 3 write surface).
+func (p *parser) parseRoleStoreRevoked(rs *RoleStore) error {
+	col, err := p.ident()
+	if err != nil {
+		return err
+	}
+	rs.RevokedCol = col
+	if p.acceptKw("by") {
+		rs.RevokedByCol, err = p.ident()
+	}
+	return err
+}
+
+// parseRoleStoreGranted: granted <at-col> [by <col>] — the grant-audit timestamp
+// column and its optional grantor-audit companion (Layer 3 write surface).
+func (p *parser) parseRoleStoreGranted(rs *RoleStore) error {
+	col, err := p.ident()
+	if err != nil {
+		return err
+	}
+	rs.GrantedAtCol = col
+	if p.acceptKw("by") {
+		rs.GrantedByCol, err = p.ident()
+	}
+	return err
+}
+
 func (p *parser) parseRoleStoreJoin(rs *RoleStore) error {
 	col, err := p.ident()
 	if err != nil {

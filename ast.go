@@ -139,7 +139,30 @@ type RoleStore struct {
 	// definers, accessor enumerators, RLS) references it, so declaring it leaves all
 	// generated output byte-identical.
 	PermsCol string
-	Pos      Pos
+	// IDCol / GrantedAtCol / GrantedByCol / RevokedByCol describe the
+	// role-ASSIGNMENT-management write surface (Layer 3, EID-334) — the columns the
+	// generated assign / revoke / list ops touch beyond the read-resolution columns
+	// above. IDCol is the assignment's primary key ("" ⇒ the "id" convention, see
+	// assignmentPK); GrantedAtCol/GrantedByCol are the grant-audit columns (timestamp
+	// + grantor); RevokedByCol is the revoker companion to RevokedCol. Each is
+	// OPTIONAL — when "" the generated write simply omits that column — and all are
+	// PURELY ADDITIVE: no read emitter (role definers, RLS, accessor enumerators)
+	// references them, so declaring them leaves all generated authz output
+	// byte-identical (the write builders are a separate, opt-in surface).
+	IDCol        string
+	GrantedAtCol string
+	GrantedByCol string
+	RevokedByCol string
+	Pos          Pos
+}
+
+// assignmentPK returns the role-assignment table's primary-key column — the
+// declared override, else the "id" convention.
+func (rs *RoleStore) assignmentPK() string {
+	if rs.IDCol != "" {
+		return rs.IDCol
+	}
+	return "id"
 }
 
 // Topology is the containment chain. Exactly one root (V1) — enforced in

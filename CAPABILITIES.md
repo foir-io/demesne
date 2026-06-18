@@ -170,3 +170,41 @@ role). The no-drift proof — `BuildClaims`/`SessionSetupSQL` reproducing
 `BuildRLSClaims`/`db.WithRLS` over the real `foir.demesne` spec, the deltas pinned,
 and a dev-DB forward proof that the derived blob yields the same RLS row visibility as
 the hand-mapped one — lives consumer-side (`demesne_session_test.go`).
+
+## Layer 3 — role-assignment management (closing the compiler→framework gap, EID-334)
+
+The control-plane WRITE side of the rolestore — the dual of the holds-resolver's read.
+The engine compiles the role-resolution READ definers from the rolestore but never the
+writes that MAINTAIN it, so every adopter hand-writes assign / revoke / list (Foir:
+`AssignRole`/`RevokeRoleAssignment`/`ListRoleAssignments*` over hand-authored sqlc).
+They are derivable from the same rolestore declaration, exactly as the per-object ACL
+writes are in `access_runtime.go` (the template this mirrors). `RoleAssignmentSurface`
+(`role_assignment_runtime.go`) projects the store and builds:
+
+- **AssignInsert** — the `INSERT … RETURNING` that confers a role at a scope (kind
+  inlined as the compile-time constant; the supplied id, subject, role, scope and — when
+  declared — grantor bound; `granted_at` left to the table default).
+- **RevokeSQL** — the idempotent soft-revoke (`UPDATE <revoked> = now()[, <revoked_by> =
+  $2] WHERE <pk> = $1 AND <revoked> IS NULL`).
+- **ListForRoleSQL / ListForPrincipalSQL** — the by-role audit view (active + revoked)
+  and the by-principal active view joined to the role's key + materialized permissions.
+
+Same read/compute boundary and moat as the rest: these BUILD SQL + ordered args; the
+caller executes them under `WithRLS`, and the **`role_assignments` object's own RLS is
+the write moat** (an out-of-scope `INSERT`/`UPDATE` is denied — the engine never
+re-checks). The write surface's columns are optional, additive rolestore declarations
+(`pk`, `granted <at> [by <by>]`, `revoked <col> [by <by>]`) — no read emitter references
+them, so declaring them leaves all generated authz byte-identical. GENERIC by
+construction: it bakes in no RP/client secondary scope, no reactivate-on-reassign upsert
+over an adopter unique index, and no disabled-role admission filter — those are adopter
+policy composed around the statements (the management delta, the write-side analogue of
+the holds-resolver's read-filter delta). The intersection-cap delegation guard ("can't
+grant a role you don't hold") is a separate primitive (EID-334 #4).
+
+Target-neutral: `RoleAssignmentSurface` is plain data and the builders return strings +
+ordered args. Proof: `role_assignment_runtime_test.go` (full + minimal surface, pk
+override, short-scope, no-rolestore). The no-drift proof — the generated builders
+reproducing Foir's hand-written queries over the real `foir.demesne` rolestore (Revoke
+byte-identical; Assign/List column tuples minus the pinned `client_id` + `ON CONFLICT`
+deltas) plus a dev-DB assign→list→revoke round-trip under RLS with an out-of-scope DENY —
+lives consumer-side (`demesne_role_assignment_test.go`).
