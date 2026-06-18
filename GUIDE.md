@@ -93,8 +93,9 @@ only the CLI links a Postgres driver, for the live-database subcommands.
 ## The spec language, briefly
 
 ```demesne
-// How a claim is read from the session (default shown; omit to use it).
-claims via "request.jwt.claims" json
+// How a claim is read from the session, and the RLS connection role a session
+// assumes (defaults shown; omit the block to use them). `role` is optional.
+claims via "request.jwt.claims" json role authenticated
 
 // The tenancy shape: a DAG of levels. One parent = a chain/tree; `parents A, B`
 // = a multi-parent DAG; `virtual` = a synthetic root with no scope column.
@@ -190,10 +191,24 @@ Enforcement is in the DB; a little runtime still mints claims, enforces verbs, a
 answers point-checks. The engine ships it as pure helpers (it never re-evaluates
 policy in app code):
 
-- `Spec.MintClaims(values)` + `Spec.ClaimsSetSQL(local)` — build the
-  `request.jwt.claims` blob a session presents (validated against the contract)
-  and the `set_config` statement that installs it. Pair with `SET ROLE <your RLS
-  role>`.
+- **The session/claims wrapper** — go from a principal to an in-force RLS session
+  without hand-mapping field names:
+  - `Spec.ClaimsContractEntries()` — the **structured** claims contract: each key +
+    its source (the topology level whose scope id feeds it, and/or the subjects whose
+    `identifies` feeds it). `ClaimsContract()` is the flat key list (its keys).
+  - `Spec.BuildClaims(Principal{Subject, ID, Scopes})` — maps a principal's typed
+    inputs (which subject it is, that subject's id, the scope id per topology level)
+    onto the contract: the subject id → its `identifies` key, each scope id → that
+    level's claim key. The spec-derived replacement for a hand-written field map; a
+    contract key added to the spec flows through with no code change. A session that
+    also carries non-contract keys adds them to the returned map before minting.
+  - `Spec.MintClaims(values)` / `Spec.MintClaimsFor(principal)` + `Spec.ClaimsSetSQL(local)`
+    — render the validated `request.jwt.claims` blob (MintClaimsFor = BuildClaims then
+    MintClaims) and the `set_config` statement that installs it.
+  - `Spec.SetRoleSQL(local)` + `Spec.SessionSetupSQL(local)` — the WithRLS-shaped
+    statement sequence: `SET [LOCAL] ROLE <role>` then the claims `set_config`, run in
+    order in your tx (the second binds the minted blob to `$1`). The RLS role is
+    spec-declared (`claims … role <r>`), defaulting to `authenticated`.
 - `PDP.Authorize(procedure, holds) → Allow | Deny | NotGoverned` — the verb gate
   at your request boundary (RLS can't see verbs).
 - `Spec.HoldsResolver(rolestore)` — the **holds-resolver**: it produces the `holds`

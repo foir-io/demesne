@@ -1513,8 +1513,10 @@ func (p *parser) parseRoleStoreJoin(rs *RoleStore) error {
 	return err
 }
 
-// parseClaims: claims via "<setting>" [json|jsonb] — declares the request-context
-// claim accessor (the GUC name + cast). Cast defaults to json.
+// parseClaims: claims via "<setting>" [json|jsonb] [role <ident>] — declares the
+// request-context claim accessor (the GUC name + cast) and, optionally, the RLS
+// connection role a session assumes. Cast defaults to json; role defaults (via
+// claimRole) to "authenticated".
 func (p *parser) parseClaims() (*ClaimsAccessor, error) {
 	c := &ClaimsAccessor{Cast: "json", Pos: Pos{p.cur().line}}
 	p.advance() // 'claims'
@@ -1526,8 +1528,15 @@ func (p *parser) parseClaims() (*ClaimsAccessor, error) {
 		return nil, err
 	}
 	c.Setting = setting.lit
-	if p.peekKind() == tIdent {
+	// Optional cast (json|jsonb): any trailing ident that is NOT the `role` keyword.
+	if p.peekKind() == tIdent && !p.isKw("role") {
 		c.Cast = p.advance().lit
+	}
+	// Optional RLS connection role.
+	if p.acceptKw("role") {
+		if c.Role, err = p.ident(); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }

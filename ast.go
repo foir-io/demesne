@@ -49,7 +49,15 @@ func (s *Spec) definerSchema() string {
 type ClaimsAccessor struct {
 	Setting string // GUC name, e.g. "request.jwt.claims"
 	Cast    string // "json" | "jsonb"
-	Pos     Pos
+	// Role is the Postgres connection role a session assumes so RLS is in force
+	// (the LHS of `SET [LOCAL] ROLE <role>`, the first statement of the WithRLS-
+	// shaped session envelope — see SessionSetupSQL). It is the RLS-runtime sibling
+	// of Setting/Cast: those say HOW claims are read, this says under WHICH role the
+	// policies evaluate. "" ⇒ the default ("authenticated", via claimRole), so a spec
+	// that omits it (or omits the whole `claims` block) renders byte-identically and
+	// the engine bakes in no role name (EID-267 / EID-315 defaulting-fallback rule).
+	Role string
+	Pos  Pos
 }
 
 // Grant is a level-scoped reachability grant store: an edge table whose rows
