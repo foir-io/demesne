@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"sort"
@@ -24,7 +25,7 @@ USAGE:
   demesne emit     <spec.demesne> [kind]       print generated SQL/Go
                                                kind: rls|definers|enablement|triggers|claims|pdp|all (default all)
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
-  demesne scaffold   <dsn>                     generate a STARTER spec from the schema
+  demesne scaffold   [-i] <dsn>                generate a STARTER spec from the schema (-i: interactive)
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role
   demesne diff     <spec.demesne> <dsn>        report generated-vs-live policy drift (surface)
   demesne coverage <spec.demesne> <dsn>        list live tables with NO governing object (ungoverned → no RLS)
@@ -244,7 +245,16 @@ func cmdIntrospect(args []string) error {
 }
 
 func cmdScaffold(args []string) error {
-	dsn, err := dsnArg(args, 0)
+	interactive := false
+	rest := args[:0:0]
+	for _, a := range args {
+		if a == "-i" || a == "--interactive" {
+			interactive = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	dsn, err := dsnArg(rest, 0)
 	if err != nil {
 		return err
 	}
@@ -252,11 +262,73 @@ func cmdScaffold(args []string) error {
 	if err != nil {
 		return err
 	}
+	if interactive {
+		return scaffoldInteractive(sc)
+	}
 	out, err := sc.Scaffold(demesne.ScaffoldOptions{})
 	if err != nil {
 		return err
 	}
 	fmt.Print(out)
+	return nil
+}
+
+// scaffoldInteractive runs the FK-graph scaffold, then asks for the deployment
+// details the inference can't know (the RLS role + the definer/table schemas — what
+// the engine de-Foired into spec-declared bindings) and surfaces the ungoverned
+// tables as fill-in stubs. The combo: introspect (DB) + a short Q&A (you) →
+// a more deployment-ready starter spec. Prompts go to stderr so stdout is the spec
+// alone (`demesne scaffold -i <dsn> > my.demesne`); empty stdin → all defaults.
+func scaffoldInteractive(sc *demesne.Schema) error {
+	r := bufio.NewReader(os.Stdin)
+	ask := func(label, def string) string {
+		fmt.Fprintf(os.Stderr, "%s [%s]: ", label, def)
+		line, _ := r.ReadString('\n')
+		if line = strings.TrimSpace(line); line == "" {
+			return def
+		}
+		return line
+	}
+	fmt.Fprintf(os.Stderr, "Introspected %d tables. A few deployment questions (Enter = default):\n", len(sc.Tables()))
+	role := ask("RLS connection role", "authenticated")
+	defSchema := ask("definer (function) schema", "auth")
+	tblSchema := ask("governed-table schema", "public")
+
+	body, err := sc.Scaffold(demesne.ScaffoldOptions{})
+	if err != nil {
+		return err
+	}
+
+	var b strings.Builder
+	// Emit the deployment bindings only when they differ from the engine defaults
+	// (so a default run stays byte-identical to plain `scaffold`).
+	if role != "authenticated" {
+		fmt.Fprintf(&b, "claims via \"request.jwt.claims\" json role %s\n", role)
+	}
+	if defSchema != "auth" {
+		fmt.Fprintf(&b, "definers schema %q\n", defSchema)
+	}
+	if tblSchema != "public" {
+		fmt.Fprintf(&b, "tables schema %q\n", tblSchema)
+	}
+	if b.Len() > 0 {
+		b.WriteString("\n")
+	}
+	b.WriteString(body)
+
+	// The scaffold output re-parses; run coverage on it to list the tables it could
+	// NOT place (no FK path to a container) as TODO object stubs — the operator fills
+	// or deletes them.
+	if spec, perr := demesne.Parse(body); perr == nil {
+		cov := spec.TableCoverage(sc.Tables())
+		if len(cov.Ungoverned) > 0 {
+			b.WriteString("\n// ── Ungoverned tables (no object → no RLS). Model each, or delete this block. ──\n")
+			for _, t := range cov.Ungoverned {
+				fmt.Fprintf(&b, "// object %s { table %s; scoped <levels>; use contained }\n", t, t)
+			}
+		}
+	}
+	fmt.Print(b.String())
 	return nil
 }
 
