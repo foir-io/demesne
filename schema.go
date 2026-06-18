@@ -64,6 +64,37 @@ func (s *Schema) hasColumn(table, col string) bool {
 	return ok
 }
 
+// emissionReferencesPK reports whether the object's GENERATED SQL names its own
+// primary-key column — so the bind-check must verify that column exists. It
+// mirrors exactly the emit sites that use obj.pk(): a grant/edge/composition
+// relation predicate (`<table>.<pk>`), a @kernel reachability gate (`r.<pk>`),
+// and being the TARGET of another object's cross-object borrow (`<O>_can_<verb>`
+// runs at this row). A pure containment-scoped object (only @scoped / owner-column
+// / role terms) never names its PK, so it is NOT required to have one — the key
+// may be composite or arbitrarily named. (The level-entity self column is the PK
+// too, but it is checked as the object's leaf scope column, not here.)
+func (s *Spec) emissionReferencesPK(o *Object) bool {
+	for _, pm := range o.Perms {
+		if contains(pm.Layers, "kernel") {
+			return true // kernelDefiner: EXISTS(... WHERE r.<pk> = p_<obj>_id)
+		}
+	}
+	for _, r := range o.Relations {
+		switch r.Repr.(type) {
+		case ViaGrant, ViaEdge, ViaComposition:
+			return true // the predicate / grant fragments reference <table>.<pk>
+		}
+	}
+	for _, other := range s.Objects {
+		for _, r := range other.Relations {
+			if vo, ok := r.Repr.(ViaObject); ok && vo.Object == o.Name {
+				return true // <O>_can_<verb>(id): runs o's predicate at o.<pk>
+			}
+		}
+	}
+	return false
+}
+
 // ValidateAgainst checks that every table and column the spec references exists
 // in the supplied schema — object tables and their scope/owner/mode columns,
 // relation edges (column / edge / closure / composition) + their columns, the
@@ -99,10 +130,16 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 		if !reqTable(o.Table, oc) {
 			continue // no point checking columns of a missing table
 		}
-		// The object's primary-key column must exist — it carries the row identity
-		// the edge/grant/kernel predicates and the point-check reference (declared
-		// `pk`, else `id`). De-Foirs the `id` assumption (EID-278).
-		reqCol(o.Table, o.pk(), oc+" pk")
+		// The object's primary-key column must exist — but ONLY when emission
+		// actually references it (a grant/edge/composition predicate, the @kernel
+		// gate, or a cross-object borrow at this row); a pure containment-scoped
+		// table never names its PK, so requiring `id` there would wrongly reject a
+		// table whose key is composite or differently named. The level-entity's PK
+		// is checked below as its leaf scope column. Declared `pk`, else `id`
+		// (de-Foirs the `id` assumption, EID-278).
+		if s.emissionReferencesPK(o) {
+			reqCol(o.Table, o.pk(), oc+" pk")
+		}
 		// Scope columns (every ancestor level the object pins; the level-entity
 		// uses its own primary key). A VIRTUAL level carries no scope column (a
 		// global object scoped at the platform root has no containment column), so
