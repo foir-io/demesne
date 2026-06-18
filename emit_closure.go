@@ -17,13 +17,14 @@ import (
 // ClosureTrigger is the generated maintenance for one closure table: a plpgsql
 // trigger function plus its AFTER INSERT/UPDATE/DELETE bindings on the base table.
 type ClosureTrigger struct {
-	Schema     string
-	Closure    string
-	Ancestor   string
-	Descendant string
-	Base       string
-	BaseID     string
-	BaseParent string
+	Schema      string
+	TableSchema string // schema of the base table the trigger binds ON ("" ⇒ "public")
+	Closure     string
+	Ancestor    string
+	Descendant  string
+	Base        string
+	BaseID      string
+	BaseParent  string
 }
 
 func (c ClosureTrigger) schema() string {
@@ -31,6 +32,15 @@ func (c ClosureTrigger) schema() string {
 		return c.Schema
 	}
 	return "auth"
+}
+
+// tableSchema returns the base table's schema (default "public") — the trigger binds
+// ON the adopter's table, which may live outside the definer schema.
+func (c ClosureTrigger) tableSchema() string {
+	if c.TableSchema != "" {
+		return c.TableSchema
+	}
+	return "public"
 }
 
 func (c ClosureTrigger) fnName() string { return c.schema() + "." + c.Closure + "_maintain" }
@@ -85,8 +95,8 @@ func (c ClosureTrigger) TriggerSQL() string {
 	var b strings.Builder
 	for _, op := range []string{"INSERT", "UPDATE", "DELETE"} {
 		name := fmt.Sprintf("%s_maintain_%s", c.Closure, strings.ToLower(op[:3]))
-		fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON public.%s;\n", name, c.Base)
-		fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER %s ON public.%s FOR EACH ROW EXECUTE FUNCTION %s();\n", name, op, c.Base, c.fnName())
+		fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON %s.%s;\n", name, c.tableSchema(), c.Base)
+		fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER %s ON %s.%s FOR EACH ROW EXECUTE FUNCTION %s();\n", name, op, c.tableSchema(), c.Base, c.fnName())
 	}
 	return b.String()
 }
@@ -106,7 +116,7 @@ func (s *Spec) EmitTriggers() []ClosureTrigger {
 			}
 			seen[c.Closure] = true
 			out = append(out, ClosureTrigger{
-				Schema: s.definerSchema(), Closure: c.Closure,
+				Schema: s.definerSchema(), TableSchema: s.tableSchema(), Closure: c.Closure,
 				Ancestor: c.AncestorCol, Descendant: c.DescendantCol,
 				Base: c.Base, BaseID: c.BaseID, BaseParent: c.BaseParent,
 			})
@@ -153,13 +163,14 @@ func (s *Spec) TriggersSQL() string {
 // write-amplification is the explicit, opt-in price (group memberships are
 // low-write relative to the data they gate).
 type GroupTrigger struct {
-	Schema     string
-	Closure    string
-	GroupCol   string
-	MemberCol  string
-	Edge       string
-	EdgeMember string
-	EdgeGroup  string
+	Schema      string
+	TableSchema string // schema of the edge table the trigger binds ON ("" ⇒ "public")
+	Closure     string
+	GroupCol    string
+	MemberCol   string
+	Edge        string
+	EdgeMember  string
+	EdgeGroup   string
 }
 
 func (g GroupTrigger) schema() string {
@@ -167,6 +178,15 @@ func (g GroupTrigger) schema() string {
 		return g.Schema
 	}
 	return "auth"
+}
+
+// tableSchema returns the edge table's schema (default "public") — the trigger binds
+// ON the adopter's edge table, which may live outside the definer schema.
+func (g GroupTrigger) tableSchema() string {
+	if g.TableSchema != "" {
+		return g.TableSchema
+	}
+	return "public"
 }
 
 func (g GroupTrigger) fnName() string { return g.schema() + "." + g.Closure + "_rebuild" }
@@ -195,8 +215,8 @@ $$;`, g.fnName(), g.Closure, g.GroupCol, g.MemberCol, g.EdgeMember, g.EdgeGroup,
 func (g GroupTrigger) TriggerSQL() string {
 	name := g.Closure + "_rebuild"
 	var b strings.Builder
-	fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON public.%s;\n", name, g.Edge)
-	fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE ON public.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, g.Edge, g.fnName())
+	fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON %s.%s;\n", name, g.tableSchema(), g.Edge)
+	fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, g.tableSchema(), g.Edge, g.fnName())
 	return b.String()
 }
 
@@ -213,7 +233,7 @@ func (s *Spec) EmitGroupTriggers() []GroupTrigger {
 			}
 			seen[g.Closure] = true
 			out = append(out, GroupTrigger{
-				Schema: s.definerSchema(), Closure: g.Closure,
+				Schema: s.definerSchema(), TableSchema: s.tableSchema(), Closure: g.Closure,
 				GroupCol: g.GroupCol, MemberCol: g.MemberCol,
 				Edge: g.Edge, EdgeMember: g.EdgeMember, EdgeGroup: g.EdgeGroup,
 			})

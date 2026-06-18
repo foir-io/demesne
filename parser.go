@@ -122,6 +122,8 @@ func (p *parser) parseDecl(s *Spec) error {
 		return p.ppDeclClaims(s)
 	case "definers":
 		return p.ppDeclDefiners(s)
+	case "tables":
+		return p.ppDeclTables(s)
 	default:
 		return p.errf("unknown declaration %q", p.cur().lit)
 	}
@@ -245,6 +247,24 @@ func (p *parser) ppDeclDefiners(s *Spec) error {
 		return p.errf("duplicate definers block")
 	}
 	s.DefinerSchema = sch.lit
+	return nil
+}
+
+// ppDeclTables parses `tables schema "<name>"` — the Postgres schema the adopter's
+// governed tables live in (qualifies the emitted ENABLE/FORCE/policy/trigger DDL).
+func (p *parser) ppDeclTables(s *Spec) error {
+	p.advance() // 'tables'
+	if err := p.expectKw("schema"); err != nil {
+		return err
+	}
+	sch, err := p.expect(tString)
+	if err != nil {
+		return err
+	}
+	if s.TableSchema != "" {
+		return p.errf("duplicate tables block")
+	}
+	s.TableSchema = sch.lit
 	return nil
 }
 

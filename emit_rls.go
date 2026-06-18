@@ -33,6 +33,17 @@ type Policy struct {
 type RLSResult struct {
 	Policies    []Policy
 	Unsupported []string
+	// TableSchema qualifies the governed tables in the emitted DDL ("" ⇒ "public",
+	// the EmitRLS default). Set from the spec's `tables schema` block.
+	TableSchema string
+}
+
+// tableSchema returns the governed-table schema (default "public").
+func (r *RLSResult) tableSchema() string {
+	if r.TableSchema != "" {
+		return r.TableSchema
+	}
+	return "public"
 }
 
 // claim renders the claim accessor for a key — the SQL that reads a claim from
@@ -79,7 +90,7 @@ func (s *Spec) EmitRLS() (*RLSResult, error) {
 		}
 	}
 
-	res := &RLSResult{}
+	res := &RLSResult{TableSchema: s.tableSchema()}
 	for _, obj := range s.Objects {
 		objLeaf := obj.Scoped[len(obj.Scoped)-1]
 		custSubj := s.ownerSubject(objLeaf)
@@ -952,9 +963,10 @@ func (r *RLSResult) GovernedTables() []string {
 // tables that were missing it.
 func (r *RLSResult) EnablementSQL() string {
 	var b strings.Builder
+	sch := r.tableSchema()
 	for _, t := range r.GovernedTables() {
-		fmt.Fprintf(&b, "ALTER TABLE public.%s ENABLE ROW LEVEL SECURITY;\n", t)
-		fmt.Fprintf(&b, "ALTER TABLE public.%s FORCE ROW LEVEL SECURITY;\n", t)
+		fmt.Fprintf(&b, "ALTER TABLE %s.%s ENABLE ROW LEVEL SECURITY;\n", sch, t)
+		fmt.Fprintf(&b, "ALTER TABLE %s.%s FORCE ROW LEVEL SECURITY;\n", sch, t)
 	}
 	return b.String()
 }
@@ -976,9 +988,10 @@ func (r *RLSResult) PolicySQL(role string) string {
 		return pols[i].Name < pols[j].Name
 	})
 	var b strings.Builder
+	sch := r.tableSchema()
 	for _, p := range pols {
-		fmt.Fprintf(&b, "DROP POLICY IF EXISTS %s ON public.%s;\n", p.Name, p.Table)
-		fmt.Fprintf(&b, "CREATE POLICY %s ON public.%s FOR %s TO %s", p.Name, p.Table, p.Cmd, role)
+		fmt.Fprintf(&b, "DROP POLICY IF EXISTS %s ON %s.%s;\n", p.Name, sch, p.Table)
+		fmt.Fprintf(&b, "CREATE POLICY %s ON %s.%s FOR %s TO %s", p.Name, sch, p.Table, p.Cmd, role)
 		if p.Using != "" {
 			fmt.Fprintf(&b, "\n    USING (%s)", p.Using)
 		}

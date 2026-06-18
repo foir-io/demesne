@@ -28,6 +28,14 @@ type Spec struct {
 	// schema` block emits byte-identically. De-Foirs the assumption that trusted
 	// functions live in a schema literally named `auth`.
 	DefinerSchema string
+	// TableSchema is the Postgres schema the adopter's GOVERNED tables live in — the
+	// schema qualifying every `ALTER TABLE … ENABLE/FORCE RLS`, `CREATE POLICY … ON`,
+	// and closure/group `CREATE TRIGGER … ON` in the emitted DDL. "" defaults to
+	// "public" — Postgres' default schema — so a spec that omits the `tables schema`
+	// block emits byte-identically. De-Foirs the assumption that governed tables live
+	// in `public` (the table-side sibling of DefinerSchema); declared INDEPENDENTLY,
+	// since the trusted functions and the governed tables may sit in different schemas.
+	TableSchema string
 }
 
 // definerSchema returns the schema for the generated definer kernel (default
@@ -37,6 +45,15 @@ func (s *Spec) definerSchema() string {
 		return s.DefinerSchema
 	}
 	return "auth"
+}
+
+// tableSchema returns the schema the adopter's governed tables live in (default
+// "public"). Every governed-table reference in the emitted DDL is qualified with it.
+func (s *Spec) tableSchema() string {
+	if s.TableSchema != "" {
+		return s.TableSchema
+	}
+	return "public"
 }
 
 // ClaimsAccessor declares HOW a claim key is read from the request context — the

@@ -177,8 +177,12 @@ compiler maintains the membership closure and the RLS term tests transitive
 membership), **cross-object references** (`relation … via object <Other>-><verb>
 on <col>` — the general *tuple-to-userset*: this object's grant is "the caller
 passes the related object's `<verb>` permission," borrowing whatever that object's
-policy expresses, evaluated at the related row), and a spec-declared
-**definer schema** (`definers schema "<name>"`). A level grant and a descriptor's
+policy expresses, evaluated at the related row), and spec-declared deployment
+schemas — the **definer schema** (`definers schema "<name>"`, where the generated
+SECURITY DEFINER kernel lives) and the **table schema** (`tables schema "<name>"`,
+where the adopter's governed tables live — qualifies the emitted ENABLE/FORCE,
+policy and trigger DDL; both default to `auth`/`public` so an omitting spec emits
+byte-identically). A level grant and a descriptor's
 ACL edge are the *same* reachability-grant concept at different granularities
 (level subtree vs one row) — unified declaratively, kept as separate physical
 stores (never one generic tuple table).
