@@ -15,6 +15,14 @@ const tableSchemaSpec = `
 tables schema "app"
 topology { level tenant level project parent tenant }
 vocabulary v { permission a:read  preset r @ project = a:read }
+rolestore v {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
 subject member { anchor tenant reach descendants identifies sub roles configurable v binds admin }
 object thing {
   table  things
@@ -43,6 +51,21 @@ func TestTableSchema_EnablementAndPolicy(t *testing.T) {
 	}
 	if strings.Contains(pol, "public.") {
 		t.Errorf("PolicySQL still references public.:\n%s", pol)
+	}
+
+	// The SECURITY DEFINER functions pin search_path to the declared table schema —
+	// otherwise their bare table references would resolve against public and fail.
+	defs, err := s.EmitDefiners()
+	if err != nil {
+		t.Fatalf("emit definers: %v", err)
+	}
+	if len(defs) == 0 {
+		t.Fatal("no definers emitted")
+	}
+	for _, d := range defs {
+		if !strings.Contains(d.CreateSQL(), "SET search_path = app") {
+			t.Errorf("definer %s did not pin search_path to the declared schema:\n%s", d.Name, d.CreateSQL())
+		}
 	}
 }
 

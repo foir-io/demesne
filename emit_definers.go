@@ -23,8 +23,15 @@ import (
 type GenFn struct {
 	Name   string // unqualified function name
 	Schema string // the schema the function lives in ("" → "auth")
-	Sig    string // argument signature, e.g. "user_id text, check_tenant_id text"
-	Body   string // the SELECT expression (a boolean), or a full query when RawBody
+	// TableSchema is the schema the function's bare table references resolve against —
+	// the pinned `SET search_path`. "" → "public". A SECURITY DEFINER function pins its
+	// search_path (so a caller cannot redirect its table lookups — the security
+	// reason), and that pin must name the schema the GOVERNED tables actually live in;
+	// hardcoding "public" would break (and is the table-side twin of the DDL's table
+	// schema). Set to the spec's tableSchema(), so it stays "public" for Foir.
+	TableSchema string
+	Sig         string // argument signature, e.g. "user_id text, check_tenant_id text"
+	Body        string // the SELECT expression (a boolean), or a full query when RawBody
 	// Returns is the function's return type. Empty means "boolean" — the
 	// canonical predicate definer (the body is a boolean SELECT expression). A
 	// non-empty value (e.g. "TABLE(source text, principal_id text)") makes the
@@ -45,6 +52,15 @@ func (d GenFn) schema() string {
 		return d.Schema
 	}
 	return "auth"
+}
+
+// tableSchema returns the schema the function's bare table references resolve against
+// (the pinned search_path), defaulting to "public".
+func (d GenFn) tableSchema() string {
+	if d.TableSchema != "" {
+		return d.TableSchema
+	}
+	return "public"
 }
 
 // ArgTypes returns the comma-joined argument types of the signature (for a
@@ -73,8 +89,8 @@ func (d GenFn) CreateSQL() string {
 		body = d.Body
 	}
 	return fmt.Sprintf(
-		"CREATE OR REPLACE FUNCTION %s.%s(%s)\nRETURNS %s\nLANGUAGE sql\nSTABLE\nSECURITY DEFINER\nSET search_path = public\nAS $$\n%s\n$$;",
-		d.schema(), d.Name, d.Sig, returns, body)
+		"CREATE OR REPLACE FUNCTION %s.%s(%s)\nRETURNS %s\nLANGUAGE sql\nSTABLE\nSECURITY DEFINER\nSET search_path = %s\nAS $$\n%s\n$$;",
+		d.schema(), d.Name, d.Sig, returns, d.tableSchema(), body)
 }
 
 // DefinersSQL renders the full CREATE OR REPLACE FUNCTION set for the generated
@@ -137,10 +153,12 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		return nil, err
 	}
 
-	// Stamp the configured definer schema on every generated function so CreateSQL
-	// qualifies them consistently (default "auth" keeps Foir's SQL byte-identical).
+	// Stamp the configured definer schema + table schema on every generated function
+	// so CreateSQL qualifies the function and pins its search_path consistently
+	// (defaults "auth"/"public" keep Foir's SQL byte-identical).
 	for i := range out {
 		out[i].Schema = s.definerSchema()
+		out[i].TableSchema = s.tableSchema()
 	}
 	return out, nil
 }
