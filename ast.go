@@ -103,7 +103,37 @@ type Grant struct {
 	LevelCol   string // the level-scope column (e.g. tenant_id)
 	ActiveCol  string // revoked/active filter column; "" if none (NULL ⇒ active)
 	ExpiresCol string // expiry column; "" if none (> now() ⇒ active)
-	Pos        Pos
+	// IDCol / GrantedByCol / RevokedByCol / CreatedAtCol describe the level-grant
+	// MANAGEMENT write surface (Layer 3, EID-334) — the columns the generated
+	// grant / revoke / list ops touch beyond the reach columns above. IDCol is the
+	// grant's primary key ("" ⇒ the "id" convention, see grantPK); GrantedByCol /
+	// RevokedByCol are the grantor / revoker audit columns; CreatedAtCol is the audit
+	// timestamp the list orders by. Each is OPTIONAL and PURELY ADDITIVE: no read
+	// emitter (the reach definer, RLS, accessor enumerators) references them, so
+	// declaring them leaves all generated authz output byte-identical (the write
+	// builders are a separate, opt-in surface). An adopter's other edge columns (e.g.
+	// an audited justification) are passed to GrantInsert as ad-hoc extras, not modelled.
+	IDCol        string
+	GrantedByCol string
+	RevokedByCol string
+	CreatedAtCol string
+	// ExtraCols are adopter edge columns the grammar does not model semantically (e.g.
+	// an audited justification) but that the management surface must still WRITE and
+	// PROJECT — declared `column <col>` (repeatable), in declaration order. They are
+	// written by GrantInsert (value supplied per-call) and included in every projection
+	// (GrantInsert / RevokeSQL RETURNING, ListSQL SELECT), so a response that echoes
+	// them is not silently emptied. Also additive: read by no read emitter.
+	ExtraCols []string
+	Pos       Pos
+}
+
+// grantPK returns the grant edge's primary-key column — the declared override, else
+// the "id" convention.
+func (g *Grant) grantPK() string {
+	if g.IDCol != "" {
+		return g.IDCol
+	}
+	return "id"
 }
 
 // RoleStore declares where a subject's role assignments live, so the compiler

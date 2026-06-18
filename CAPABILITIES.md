@@ -238,3 +238,46 @@ admin vocabulary, plus a **full reconstruction of `AuthorizeAdminRoleGrant`** (C
 + the rank ladder + the kind/bypass glue) matching the live function's allow/deny + error
 code across its own matrix — lives consumer-side (`demesne_delegation_test.go`),
 demonstrating the Foir swap is mechanical.
+
+## Layer 3 — level-grant management (closing the compiler→framework gap, EID-334)
+
+The control-plane WRITE side of a `grant … via edge` store (operator / impersonation
+reach) — the dual of the reach definer. The engine compiles the READ
+(`auth.<table>_reach`, a SECURITY DEFINER EXISTS over the edge with the active/expiry
+predicate) but never the writes that MAINTAIN the edge — issue / revoke / list — so
+every adopter hand-writes them (Foir: `GrantImpersonation` / `RevokeImpersonation` /
+`ListImpersonationGrants`). They are derivable from the same grant declaration, exactly
+as the role-assignment writes are (the sibling this mirrors). `GrantSurface`
+(`grant_runtime.go`) projects the grant and builds:
+
+- **GrantInsert** — issue a grant (the grantee reaches the level node): writes pk /
+  grantee / level / grantor / expiry, leaves created-at to the table default and the
+  active/revoker columns NULL. Adopter edge columns the grammar doesn't model
+  semantically (e.g. an audited justification) are declared `column <col>` and are both
+  WRITTEN (value from GrantInsert's `extra`) and PROJECTED in every RETURNING/SELECT —
+  so a response that echoes them is not silently emptied (the drop-in requirement).
+- **RevokeSQL** — a SOFT-revoke (stamp the active column + revoker, idempotent) when the
+  grant declares an active column, else a hard `DELETE`.
+- **ListSQL** — three optional filters ($1 grantee, $2 level, $3 active-only). The
+  active predicate is built from the grant's own `ActiveCol`/`ExpiresCol` — **byte-for-
+  byte the conjuncts the reach definer uses** (`<active> IS NULL`, `<expires> > now()`)
+  — so management and enforcement agree on "active" by construction.
+
+The level-grant moat differs from the role-assignment one: the edge is the
+root-of-trust and deliberately exposes NO app-role write policy (a self-grant must be
+impossible), so its writes run on the privileged pool behind an **eligibility gate the
+adopter owns** (Foir: "is staff"). This layer shapes the statements and never decides
+who may call them. The write-surface columns (`pk`, `granted by`, `revoked by`,
+`created`, `column <col>`) are optional, additive grant declarations — read by no
+emitter, so byte-identical for Foir. Target-neutral; nothing names a tenant/operator
+(the table, columns and level are spec-declared, EID-267 / EID-315).
+
+Proof: `grant_runtime_test.go` (full + minimal surface, multi-`column` projection in
+declaration order, the active-predicate degradations, hard-DELETE fallback, no-grant
+error). The no-drift proof — the generated builders reproducing Foir's hand-written
+`impersonation_grants` queries (full column-set parity incl. the declared `reason`
+extra; the list filter/predicate/order byte-identical; the only revoke delta a
+placeholder-order swap) **plus a dev-DB round-trip where the generated issue makes
+`auth.impersonation_grants_reach` TRUE and the generated revoke makes it FALSE** (writes
+maintain exactly what the reach definer reads, and the projected `reason` is echoed
+back) — lives consumer-side (`demesne_grant_test.go`).
