@@ -181,6 +181,11 @@ func (s *Spec) claimRole() string {
 	return "authenticated"
 }
 
+// ConnectionRole returns the Postgres role a session assumes so RLS is in force —
+// the spec-declared `claims … role`, default "authenticated". Exposed for tooling
+// (e.g. verifying the role is not BYPASSRLS, which would silently bypass the moat).
+func (s *Spec) ConnectionRole() string { return s.claimRole() }
+
 // SetRoleSQL renders the role switch a session runs so RLS evaluates under the
 // (non-superuser, non-BYPASSRLS) connection role: `SET [LOCAL] ROLE <role>`, the
 // role from claimRole(). local=true scopes it to the current transaction (the

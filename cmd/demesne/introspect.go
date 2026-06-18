@@ -73,6 +73,26 @@ func introspect(dsn string) (*demesne.Schema, introspectMeta, error) {
 	return sc, meta, nil
 }
 
+// roleBypassesRLS reports whether the named Postgres role exists and has the
+// BYPASSRLS attribute (which would let it read past every policy, including FORCE'd
+// ones — defeating the moat). Used by `check` to verify the session role is safe.
+func roleBypassesRLS(dsn, role string) (exists, bypass bool, err error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return false, false, err
+	}
+	defer db.Close()
+	row := db.QueryRow(`SELECT rolbypassrls FROM pg_roles WHERE rolname = $1`, role)
+	switch err := row.Scan(&bypass); err {
+	case nil:
+		return true, bypass, nil
+	case sql.ErrNoRows:
+		return false, false, nil
+	default:
+		return false, false, err
+	}
+}
+
 // livePolicySurface returns the set of "<table>.<policy>" RLS policies live on the
 // given governed tables (for the diff surface check).
 func livePolicySurface(dsn string, governed []string) (map[string]bool, error) {

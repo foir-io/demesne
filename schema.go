@@ -55,6 +55,17 @@ func (s *Schema) hasTable(table string) bool {
 	return ok
 }
 
+// Tables returns every table name recorded in the schema, sorted. Exposed for
+// tooling (e.g. TableCoverage, which classifies the live tables against the spec).
+func (s *Schema) Tables() []string {
+	out := make([]string, 0, len(s.tables))
+	for t := range s.tables {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *Schema) hasColumn(table, col string) bool {
 	cols, ok := s.tables[table]
 	if !ok {

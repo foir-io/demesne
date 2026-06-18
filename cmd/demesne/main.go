@@ -25,8 +25,9 @@ USAGE:
                                                kind: rls|definers|enablement|triggers|claims|pdp|all (default all)
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
   demesne scaffold   <dsn>                     generate a STARTER spec from the schema
-  demesne check    <spec.demesne> <dsn>        validate the spec, then bind it to the live schema
+  demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role
   demesne diff     <spec.demesne> <dsn>        report generated-vs-live policy drift (surface)
+  demesne coverage <spec.demesne> <dsn>        list live tables with NO governing object (ungoverned → no RLS)
 
 <dsn> may be omitted to use $DATABASE_URL. A Postgres connection string, e.g.
   postgres://user:pass@host:5432/db
@@ -51,6 +52,8 @@ func main() {
 		err = cmdCheck(os.Args[2:])
 	case "diff":
 		err = cmdDiff(os.Args[2:])
+	case "coverage":
+		err = cmdCoverage(os.Args[2:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
@@ -277,6 +280,50 @@ func cmdCheck(args []string) error {
 		return fmt.Errorf("spec does not bind to the live schema:\n%w", err)
 	}
 	fmt.Println("ok: spec is valid AND binds to the live schema (every referenced table/column exists)")
+
+	// The moat assumes the RLS connection role is NOT BYPASSRLS — a BYPASSRLS role
+	// ignores every policy (incl. FORCE'd ones), silently defeating enforcement.
+	role := s.ConnectionRole()
+	exists, bypass, err := roleBypassesRLS(dsn, role)
+	switch {
+	case err != nil:
+		fmt.Printf("warning: could not verify the RLS role %q: %v\n", role, err)
+	case !exists:
+		fmt.Printf("warning: the RLS connection role %q does not exist on this database\n", role)
+	case bypass:
+		fmt.Printf("DANGER: the RLS connection role %q has BYPASSRLS — it ignores every policy, defeating the moat. Use a non-BYPASSRLS role for sessions.\n", role)
+		return fmt.Errorf("RLS role %q is BYPASSRLS", role)
+	default:
+		fmt.Printf("ok: the RLS connection role %q is not BYPASSRLS\n", role)
+	}
+	return nil
+}
+
+func cmdCoverage(args []string) error {
+	if err := need(args, 1, "<spec.demesne>"); err != nil {
+		return err
+	}
+	s, err := loadSpec(args[0])
+	if err != nil {
+		return err
+	}
+	dsn, err := dsnArg(args, 1)
+	if err != nil {
+		return err
+	}
+	sc, _, err := introspect(dsn)
+	if err != nil {
+		return err
+	}
+	cov := s.TableCoverage(sc.Tables())
+	fmt.Printf("%d governed (RLS), %d referenced (policy-free stores), %d UNGOVERNED\n",
+		len(cov.Governed), len(cov.Referenced), len(cov.Ungoverned))
+	for _, t := range cov.Ungoverned {
+		fmt.Printf("UNGOVERNED  %s — no object in the spec, so no RLS. Model it with an object, or confirm it is intentionally exempt.\n", t)
+	}
+	if len(cov.Ungoverned) == 0 {
+		fmt.Println("ok: every live table is governed by an object or referenced as a policy-free store")
+	}
 	return nil
 }
 
