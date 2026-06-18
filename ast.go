@@ -121,7 +121,17 @@ type RoleStore struct {
 	RolesID     string // PK column on RolesTable
 	KeyCol      string // role-key column on RolesTable
 	RevokedCol  string
-	Pos         Pos
+	// PermsCol is an OPTIONAL array column on RolesTable holding a role's
+	// MATERIALIZED effective permission set (`permissions <col>`). It is the read
+	// source the holds-resolver (Layer 2, EID-334) selects so a CUSTOM role — whose
+	// permission set is operator-configured, not a vocabulary preset — resolves
+	// correctly. "" ⇒ the rolestore carries no materialized column and the
+	// holds-resolver expands each assignment's role KEY through the vocabulary
+	// (preset → permissions) instead. PURELY ADDITIVE: no SQL emitter (role
+	// definers, accessor enumerators, RLS) references it, so declaring it leaves all
+	// generated output byte-identical.
+	PermsCol string
+	Pos      Pos
 }
 
 // Topology is the containment chain. Exactly one root (V1) — enforced in

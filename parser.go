@@ -1426,14 +1426,16 @@ func (p *parser) parseUngoverned() (*Ungoverned, error) {
 
 func roleStoreKeyword(s string) bool {
 	switch s {
-	case "assignments", "kind", "subject", "scope", "rolejoin", "revoked":
+	case "assignments", "kind", "subject", "scope", "rolejoin", "revoked", "permissions":
 		return true
 	}
 	return false
 }
 
 // parseRoleStore: rolestore IDENT { assignments T; kind C = "V"; subject C;
-// scope C+; rolejoin C RolesT RolesID KeyC; revoked C }
+// scope C+; rolejoin C RolesT RolesID KeyC; revoked C; [permissions C] }
+// `permissions` is OPTIONAL — the roles-table column holding a role's materialized
+// effective permission set, read by the holds-resolver (EID-334).
 func (p *parser) parseRoleStore() (*RoleStore, error) {
 	rs := &RoleStore{Pos: Pos{p.cur().line}}
 	p.advance() // 'rolestore'
@@ -1461,6 +1463,8 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 			err = p.parseRoleStoreJoin(rs)
 		case p.acceptKw("revoked"):
 			rs.RevokedCol, err = p.ident()
+		case p.acceptKw("permissions"):
+			rs.PermsCol, err = p.ident()
 		default:
 			return nil, p.errf("unexpected %s %q in rolestore", p.peekKind(), p.cur().lit)
 		}
