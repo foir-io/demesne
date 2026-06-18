@@ -1,0 +1,27 @@
+{
+  "name": "demesne",
+  "displayName": "Demesne",
+  "description": "Syntax highlighting for Demesne authorization specs (.demesne)",
+  "version": "0.1.0",
+  "publisher": "eidestudio",
+  "license": "MIT",
+  "engines": { "vscode": "^1.60.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "demesne",
+        "aliases": ["Demesne", "demesne"],
+        "extensions": [".demesne"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "demesne",
+        "scopeName": "source.demesne",
+        "path": "./syntaxes/demesne.tmLanguage.json"
+      }
+    ]
+  }
+}

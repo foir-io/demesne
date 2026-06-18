@@ -1,0 +1,59 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Demesne",
+  "scopeName": "source.demesne",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#builtins" },
+    { "include": "#via" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#permkeys" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "match": "//.*$",
+      "name": "comment.line.double-slash.demesne"
+    },
+    "strings": {
+      "name": "string.quoted.double.demesne",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.demesne" }]
+    },
+    "builtins": {
+      "comment": "@-prefixed special terms: @rls @pdp @kernel @scoped @open @public @session @app_scope @store_manage @kind @sub @tenant_id …",
+      "match": "@[A-Za-z_]+",
+      "name": "support.function.builtin.demesne"
+    },
+    "via": {
+      "comment": "`via <repr>` — highlight the relation representation kind",
+      "match": "\\b(via)\\s+(role|edge|grant|closure|group|object|composition|memberin|membership)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.via.demesne" },
+        "2": { "name": "entity.name.type.repr.demesne" }
+      }
+    },
+    "declarations": {
+      "comment": "top-level declaration blocks",
+      "match": "\\b(topology|vocabulary|subject|object|template|procedures|ungoverned|fieldscopes|rolestore|grant|claims|definers|tables)\\b",
+      "name": "keyword.other.declaration.demesne"
+    },
+    "keywords": {
+      "comment": "block/clause keywords + reach/binding/boolean words",
+      "match": "\\b(level|virtual|parent|parents|col|claim|permission|preset|rank|assignments|kind|scope|rolejoin|revoked|permissions|pk|granted|by|created|column|at|active|expires|anchor|reach|identifies|roles|configurable|none|binds|membership|table|scoped|relation|use|omit|guard|maps|where|mode|schema|self|descendants|owner|admin|public|and|or|not)\\b",
+      "name": "keyword.control.demesne"
+    },
+    "permkeys": {
+      "comment": "permission / scope keys like content:write, records:read:*, search:semantic:read",
+      "match": "\\b[a-z_]+(?::[a-z_*]+)+",
+      "name": "constant.other.permission.demesne"
+    },
+    "operators": {
+      "match": "->|>=|\\+|\\||\\*|>|=",
+      "name": "keyword.operator.demesne"
+    }
+  }
+}
