@@ -247,6 +247,14 @@ policy in app code):
   denied), so the engine never re-checks. The audit columns (`pk`, `granted … by`,
   `revoked … by`) are optional rolestore declarations; the intersection-cap
   delegation guard ("can't grant a role you don't hold") is a separate primitive.
+- `Vocabulary.CapGrant(held, requested) → DelegationCap{Allowed, Unknown, Excess}` —
+  the **delegation cap**, the generic "you can't grant a permission you don't hold"
+  guard on authoring/assigning a role. `Unknown` is the requested perms outside the
+  vocabulary (fail-closed); `Excess` is the valid perms the grantor doesn't hold (the
+  cap). It composes directly with the holds-resolver — `held` is the grantor's
+  `EffectivePerms.Permissions()` — and owns *only* the intersection + validity; a rank
+  **floor** (via `RankOf`/`PresetsAtOrAbove`), a higher-plane **bypass**, and the
+  principal-kind check are the adopter glue you wrap around it.
 - `Spec.PointCheckSQL(object)` — a read-check **query** you run *under* the
   principal's claims; the **database** answers "can this principal see this row?"
   via the real policy. For UI affordances, never as a substitute for enforcement.

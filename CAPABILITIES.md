@@ -208,3 +208,33 @@ reproducing Foir's hand-written queries over the real `foir.demesne` rolestore (
 byte-identical; Assign/List column tuples minus the pinned `client_id` + `ON CONFLICT`
 deltas) plus a dev-DB assign→list→revoke round-trip under RLS with an out-of-scope DENY —
 lives consumer-side (`demesne_role_assignment_test.go`).
+
+## Layer 3 — the delegation cap (closing the compiler→framework gap, EID-334)
+
+The generic ReBAC guard on conferring authority: **"you cannot grant a permission you
+do not hold."** Without it an in-scope grantor could author/assign a role carrying more
+than the grantor holds (privilege escalation). The RFC calls this out as *generic ReBAC
+policy, not adopter policy* — yet Foir hand-wrote it (`AuthorizeAdminRoleGrant`:
+`adminperm.Unknown` for vocabulary validity + `adminperm.Subset` for the intersection).
+It is derivable from the vocabulary + the grantor's held set, so the engine computes it
+(`delegation.go`): `Vocabulary.CapGrant(held, requested) → DelegationCap{Allowed,
+Unknown, Excess}` — `Unknown` = requested perms outside the vocabulary (fail-closed),
+`Excess` = valid perms the grantor doesn't hold (the cap). The two failure classes are
+disjoint, each carrying its own denial reason.
+
+Pure compute, no SQL, no policy re-evaluation — it folds two sets the caller already
+has: the vocabulary's permission list (the engine owns it) and the grantor's effective
+held set, which is exactly the `EffectivePerms` the holds-resolver (Layer 2) resolves,
+so the two compose directly. GENERIC by construction: it owns *only* the intersection
+cap + validity — the rank **floor** ("must be ≥ project_admin to author at all", via the
+shipped `RankOf`/`PresetsAtOrAbove`), a higher-plane **bypass** (platform staff skip the
+cap), and the principal-kind check are adopter policy a caller wraps around it. Nothing
+is Foir-specific — the vocabulary is spec-declared (EID-267 / EID-315).
+
+Proof: `delegation_test.go` (allowed / excess / unknown / dedup / rank-floor
+composition). The no-drift proof — `CapGrant.Unknown` reproducing `adminperm.Unknown`
+and `CapGrant.Excess`-empty reproducing `adminperm.Subset` over the real `foir.demesne`
+admin vocabulary, plus a **full reconstruction of `AuthorizeAdminRoleGrant`** (CapGrant
++ the rank ladder + the kind/bypass glue) matching the live function's allow/deny + error
+code across its own matrix — lives consumer-side (`demesne_delegation_test.go`),
+demonstrating the Foir swap is mechanical.
