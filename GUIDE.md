@@ -255,6 +255,20 @@ policy in app code):
   `EffectivePerms.Permissions()` — and owns *only* the intersection + validity; a rank
   **floor** (via `RankOf`/`PresetsAtOrAbove`), a higher-plane **bypass**, and the
   principal-kind check are the adopter glue you wrap around it.
+- `Spec.GrantSurface(name)` — the control-plane **write** side of a `grant … via edge`
+  store (operator/impersonation reach), the dual of the reach definer:
+  - `GrantInsert(id, grantee, level, grantedBy, expiresAt, extra)` — issue a grant (the
+    grantee reaches that level node); declared extra columns (`column <col>`) are
+    written from `extra` **and projected**, so a response echoing them isn't emptied.
+  - `RevokeSQL()` — soft-revoke (stamp the active column) when the grant is revocable,
+    else a hard `DELETE`; idempotent.
+  - `ListSQL()` — grants with three optional filters ($1 grantee, $2 level, $3
+    active-only), the **active predicate built from the grant's own active/expiry
+    columns — the same conjuncts the reach definer uses**, so writes and reads agree.
+  Build SQL + args; the caller runs them behind its own eligibility gate (the
+  level-grant moat — the edge exposes no app-role write policy, so a self-grant is
+  impossible). The audit/extra columns (`pk`, `granted by`, `revoked by`, `created`,
+  `column <col>`) are optional grant declarations.
 - `Spec.PointCheckSQL(object)` — a read-check **query** you run *under* the
   principal's claims; the **database** answers "can this principal see this row?"
   via the real policy. For UI affordances, never as a substitute for enforcement.

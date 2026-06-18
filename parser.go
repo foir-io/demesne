@@ -1576,6 +1576,7 @@ func (p *parser) parseClaims() (*ClaimsAccessor, error) {
 // parseGrant: grant IDENT at LEVEL via edge TABLE(grantee_col, level_col)
 //
 //	[active COL] [expires COL]
+//	[pk COL] [granted by COL] [revoked by COL] [created COL]   (management write surface)
 func (p *parser) parseGrant() (*Grant, error) {
 	g := &Grant{Pos: Pos{p.cur().line}}
 	p.advance() // 'grant'
@@ -1614,23 +1615,56 @@ func (p *parser) parseGrant() (*Grant, error) {
 	if _, err := p.expect(tRParen); err != nil {
 		return nil, err
 	}
-	// optional `active <col>` (NULL ⇒ active) and `expires <col>` (> now() ⇒ active)
-	for {
-		if p.acceptKw("active") {
-			if g.ActiveCol, err = p.ident(); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if p.acceptKw("expires") {
-			if g.ExpiresCol, err = p.ident(); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		break
+	if err := p.parseGrantOptions(g); err != nil {
+		return nil, err
 	}
 	return g, nil
+}
+
+// parseGrantOptions parses the optional trailing grant clauses in any order: the reach
+// validity columns `active <col>` (NULL ⇒ active) / `expires <col>` (> now() ⇒ active),
+// and the management write-surface columns `pk <col>`, `granted by <col>`,
+// `revoked by <col>`, `created <col>`. Each binds a single identifier column (the
+// `granted`/`revoked` forms consume an intervening `by`).
+func (p *parser) parseGrantOptions(g *Grant) error {
+	for {
+		if p.acceptKw("column") {
+			col, err := p.ident()
+			if err != nil {
+				return err
+			}
+			g.ExtraCols = append(g.ExtraCols, col)
+			continue
+		}
+		var dst *string
+		needBy := false
+		switch {
+		case p.acceptKw("active"):
+			dst = &g.ActiveCol
+		case p.acceptKw("expires"):
+			dst = &g.ExpiresCol
+		case p.acceptKw("pk"):
+			dst = &g.IDCol
+		case p.acceptKw("created"):
+			dst = &g.CreatedAtCol
+		case p.acceptKw("granted"):
+			dst, needBy = &g.GrantedByCol, true
+		case p.acceptKw("revoked"):
+			dst, needBy = &g.RevokedByCol, true
+		default:
+			return nil
+		}
+		if needBy {
+			if err := p.expectKw("by"); err != nil {
+				return err
+			}
+		}
+		col, err := p.ident()
+		if err != nil {
+			return err
+		}
+		*dst = col
+	}
 }
 
 func (p *parser) parseFieldScopes() (*FieldScopes, error) {
