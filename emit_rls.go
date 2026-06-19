@@ -850,6 +850,14 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		if err := reqClaim(custClaim, obj, "group relation "+t.Ident); err != nil {
 			return nil, err
 		}
+		if repr.Materialized {
+			// WS3 step 2: the floor probes the trigger-maintained flat by (resource,
+			// principal) instead of walking the closure — an O(1) index lookup, the
+			// grant-dominant-list win. Through the SECURITY DEFINER <flat>_member so the
+			// flat stays private (never granted to the querying role), like every other
+			// auth read. flat == walk is the WS3 oracle's leak-critical invariant.
+			return []string{fmt.Sprintf("%s_member(%s, %s)", s.groupFlatName(obj, r, repr), pk, s.claim(custClaim))}, nil
+		}
 		return []string{fmt.Sprintf("%s.%s_member(%s, %s)", s.definerSchema(), repr.Closure, repr.Col, s.claim(custClaim))}, nil
 	case ViaMemberIn:
 		// Scoped role-membership (v3 WS6): admin_memberin_<level>(principal, scope) —

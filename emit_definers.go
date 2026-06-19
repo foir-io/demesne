@@ -154,6 +154,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	if err := s.defEmitStoreManage(&out, seen, virtual); err != nil {
 		return nil, err
 	}
+	s.defEmitMaterializedFlatMembers(&out, seen)
 
 	// Stamp the configured definer schema + table schema on every generated function
 	// so CreateSQL qualifies the function and pins its search_path consistently
@@ -647,6 +648,23 @@ func (s *Spec) defEmitGroup(out *[]GenFn, seen map[string]bool) {
 				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_group AND %s = p_member)", g.Closure, g.GroupCol, g.MemberCol),
 			})
 		}
+	}
+}
+
+// defEmitMaterializedFlatMembers emits the SECURITY DEFINER point-lookup for every
+// `via group ... materialized` relation — auth.<obj>_<rel>_flat_member(resource, principal)
+// — the O(1) probe the RLS floor calls instead of walking the closure (WS3 step 2). One
+// per materialized relation (each flat is per object-relation, so no dedup needed). Emits
+// nothing for a spec with no materialized relation, keeping non-materialized output
+// (Foir) byte-identical.
+func (s *Spec) defEmitMaterializedFlatMembers(out *[]GenFn, seen map[string]bool) {
+	for _, f := range s.EmitMaterializedFlats() {
+		name := f.Flat + "_member"
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		*out = append(*out, f.MemberDefiner())
 	}
 }
 
