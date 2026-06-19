@@ -177,6 +177,32 @@ func TestMaterializedFlat_NonMaterializedStillWalks(t *testing.T) {
 	}
 }
 
+// `materialized` is fail-closed restricted to a single-kind via-group: a multi-kind one
+// must be rejected (the flat tags only one kind), while the non-materialized multi-kind
+// form stays valid (single-kind closure behaviour, unaffected).
+func TestMaterialized_MultiKindRejected(t *testing.T) {
+	multi := strings.Replace(matGroupSpec,
+		"relation team:    customer via group tc(grp, mem) edge te(mem, grp) on team_id materialized",
+		"relation team:    customer | admin via group tc(grp, mem) edge te(mem, grp) on team_id materialized", 1)
+	s, err := Parse(multi)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = Validate(s)
+	if err == nil || !strings.Contains(err.Error(), "must be single-kind") {
+		t.Fatalf("multi-kind materialized via-group must be rejected, got: %v", err)
+	}
+	// The same relation WITHOUT `materialized` is allowed (single-kind closure semantics).
+	ok := strings.Replace(multi, " on team_id materialized", " on team_id", 1)
+	so, err := Parse(ok)
+	if err != nil {
+		t.Fatalf("parse non-materialized: %v", err)
+	}
+	if err := Validate(so); err != nil {
+		t.Fatalf("non-materialized multi-kind via-group should validate, got: %v", err)
+	}
+}
+
 // A non-materialized group relation emits NO flat — the modifier is opt-in, so any
 // existing spec is byte-identical (no flat tables/triggers appear).
 func TestEmitMaterializedFlats_NoneWhenNotMaterialized(t *testing.T) {

@@ -457,6 +457,15 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 		if mi, ok := r.Repr.(ViaMemberIn); ok {
 			errs = append(errs, valCheckViaMemberIn(s, o, r, mi)...)
 		}
+		// `via group ... materialized` is fail-closed restricted to a SINGLE kind: the flat
+		// stores only one principal_kind (the relation's first type) and the floor matches
+		// principal_id alone, so a multi-kind materialized relation would silently tag and
+		// honour only the first kind. Reject it at compile time rather than emit a half-truth
+		// flat (WS3). Non-materialized multi-kind via-group keeps the same single-kind closure
+		// behaviour and is unaffected.
+		if g, ok := r.Repr.(ViaGroup); ok && g.Materialized && len(r.Types) > 1 {
+			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via group ... materialized` with multiple kinds %v — a materialized via-group must be single-kind (the flat tags only one principal_kind and the floor matches the id alone)", r.Pos.Line, o.Name, r.Name, r.Types))
+		}
 	}
 	return relByName, errors.Join(errs...)
 }
