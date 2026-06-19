@@ -31,20 +31,47 @@ func TestAccessorCoverage_OwnerGrantUnion_Covered(t *testing.T) {
 	}
 }
 
-// A SELECT term over a relation with no reverse branch (here ViaGroup) must fail
+// A SELECT term over a relation with no reverse branch yet (here ViaObject) must fail
 // closed — emitting would silently under-report who can access the row.
 func TestAccessorCoverage_UncoveredRepr_FailsClosed(t *testing.T) {
 	obj := &Object{
-		Name: "doc", Table: "docs",
-		Relations: []*Relation{{Name: "team", Repr: ViaGroup{Closure: "team_closure"}}},
-		Perms:     []*Perm{selectPerm([]*Term{{Ident: "team"}}, &PermNode{Op: "leaf", Term: &Term{Ident: "team"}})},
+		Name: "comment", Table: "comments",
+		Relations: []*Relation{{Name: "parent", Repr: ViaObject{Object: "doc", Verb: "view", Col: "doc_id"}}},
+		Perms:     []*Perm{selectPerm([]*Term{{Ident: "parent"}}, &PermNode{Op: "leaf", Term: &Term{Ident: "parent"}})},
 	}
 	ok, reason := accessorCoverage(obj)
 	if ok {
-		t.Fatal("a SELECT via ViaGroup must fail closed (no accessor branch yet)")
+		t.Fatal("a SELECT via ViaObject must fail closed (no accessor branch yet)")
 	}
-	if !strings.Contains(reason, "team") {
+	if !strings.Contains(reason, "parent") {
 		t.Errorf("reason should name the offending relation, got %q", reason)
+	}
+}
+
+// ViaGroup now has a reverse builder → covered, and the group branch reverse-reads the
+// closure (transitive members of the row's group) — the same rows the forward term
+// tests.
+func TestAccessorCoverage_ViaGroup_CoveredWithBranch(t *testing.T) {
+	g := ViaGroup{Closure: "team_members", GroupCol: "group_id", MemberCol: "member_id", Col: "team_id"}
+	obj := &Object{
+		Name: "doc", Table: "docs",
+		Relations: []*Relation{{Name: "team", Types: []string{"customer"}, Repr: g}},
+		Perms:     []*Perm{selectPerm([]*Term{{Ident: "team"}}, &PermNode{Op: "leaf", Term: &Term{Ident: "team"}})},
+	}
+	if ok, reason := accessorCoverage(obj); !ok {
+		t.Fatalf("ViaGroup should now be covered, got refusal: %s", reason)
+	}
+	br := defGroupAccessorBranches(obj, obj.Perms[0], map[string]*Relation{"team": obj.Relations[0]})
+	if len(br) != 1 {
+		t.Fatalf("want 1 group branch, got %d", len(br))
+	}
+	for _, want := range []string{
+		"'group'::text", "'customer'::text", "c.member_id",
+		"JOIN team_members c ON c.group_id = t.team_id", "WHERE t.id = p_id",
+	} {
+		if !strings.Contains(br[0], want) {
+			t.Errorf("group branch missing %q:\n%s", want, br[0])
+		}
 	}
 }
 

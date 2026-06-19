@@ -403,7 +403,7 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 // WS1's reverse builders extend this set; until then those shapes fail closed.
 func accessorReprCovered(r Repr) bool {
 	switch r.(type) {
-	case ViaColumn, ViaGrant, ViaRole:
+	case ViaColumn, ViaGrant, ViaRole, ViaGroup:
 		return true
 	default:
 		return false
@@ -899,7 +899,53 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 		branches = append(branches, rb)
 	}
 
+	// GROUP — nested-group membership relations: the transitive members of the group
+	// named by the row's column, a reverse read of the SAME closure the forward term
+	// checks (WS1 reverse builder).
+	branches = append(branches, defGroupAccessorBranches(obj, sel, rels)...)
+
 	return accessorGenFn(obj.Table, branches)
+}
+
+// defGroupAccessorBranches renders the GROUP enumeration branches — one per ViaGroup
+// relation in the SELECT permission. Each reverse-reads the transitive-closure table
+// the forward `<Closure>_member(row.<Col>, claim)` term tests: the members of the group
+// the row names. Because it reads the same committed closure rows the forward predicate
+// does, the enumeration agrees with the predicate by construction.
+func defGroupAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+	if sel == nil {
+		return nil
+	}
+	var branches []string
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		g, ok := r.Repr.(ViaGroup)
+		if !ok {
+			continue
+		}
+		kind := ""
+		if len(r.Types) > 0 {
+			kind = r.Types[0]
+		}
+		branches = append(branches, groupAccessorBranch(obj.Table, obj.pk(), kind, g))
+	}
+	return branches
+}
+
+// groupAccessorBranch renders one GROUP enumeration branch: the transitive members of
+// the group named by the row's <Col>, as 'read' accessors of the relation's kind.
+// Joins the closure (group, member) to the object row on the row's group column —
+// exactly the membership the forward `<Closure>_member` definer tests, reversed.
+func groupAccessorBranch(table, pk, kind string, g ViaGroup) string {
+	return fmt.Sprintf(
+		"SELECT 'group'::text, '%s'::text, c.%s, 'read'::text\n    FROM %s t\n    JOIN %s c ON c.%s = t.%s\n    WHERE t.%s = p_id",
+		kind, g.MemberCol, table, g.Closure, g.GroupCol, g.Col, pk)
 }
 
 // defOwnerAccessorBranches renders the OWNER enumeration branches — the owner
