@@ -78,7 +78,17 @@ func (c ChangelogTrigger) relExpr(rowVar string) string {
 	return "'" + c.Table + "'"
 }
 
-// FunctionSQL renders the append trigger function.
+// ChangelogChannel is the LISTEN/NOTIFY channel the append trigger publishes each event
+// on, so a consumer (the WS5 realtime gateway) reacts to a grant/revoke near-instantly
+// instead of polling. The payload is the event as JSON
+// ({rel, resource_id, principal_kind, principal_id, op}). It is a fixed contract string
+// shared with the (out-of-process, non-Go) consumer.
+const ChangelogChannel = "demesne_authz_changelog"
+
+// FunctionSQL renders the append trigger function: it appends the event to the changelog
+// (the durable, ordered feed / zookie source) AND pg_notify's it on ChangelogChannel (the
+// low-latency push for a live consumer). A missed notify is non-fatal — the durable feed +
+// the consumer's own periodic re-check backstop it.
 func (c ChangelogTrigger) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
 RETURNS trigger
@@ -88,15 +98,17 @@ BEGIN
   IF (TG_OP = 'INSERT') THEN
     INSERT INTO %[2]s (rel, resource_id, principal_kind, principal_id, op)
       VALUES (%[3]s, NEW.%[4]s, NEW.%[5]s, NEW.%[6]s, 'grant');
+    PERFORM pg_notify('%[8]s', json_build_object('rel', %[3]s, 'resource_id', NEW.%[4]s, 'principal_kind', NEW.%[5]s, 'principal_id', NEW.%[6]s, 'op', 'grant')::text);
     RETURN NEW;
   ELSIF (TG_OP = 'DELETE') THEN
     INSERT INTO %[2]s (rel, resource_id, principal_kind, principal_id, op)
       VALUES (%[7]s, OLD.%[4]s, OLD.%[5]s, OLD.%[6]s, 'revoke');
+    PERFORM pg_notify('%[8]s', json_build_object('rel', %[7]s, 'resource_id', OLD.%[4]s, 'principal_kind', OLD.%[5]s, 'principal_id', OLD.%[6]s, 'op', 'revoke')::text);
     RETURN OLD;
   END IF;
   RETURN NULL;
 END;
-$$;`, c.fnName(), c.Changelog, c.relExpr("NEW"), c.RecordCol, c.KindCol, c.PrincipalCol, c.relExpr("OLD"))
+$$;`, c.fnName(), c.Changelog, c.relExpr("NEW"), c.RecordCol, c.KindCol, c.PrincipalCol, c.relExpr("OLD"), ChangelogChannel)
 }
 
 // TriggerSQL binds the append (row-level, so each grant/revoke is a distinct event).

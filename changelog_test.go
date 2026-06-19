@@ -37,6 +37,9 @@ func TestChangelog_TrackedGrantEmitsFeed(t *testing.T) {
 		"VALUES (NEW.resource_type, NEW.resource_id, NEW.principal_kind, NEW.principal_id, 'grant')",
 		"VALUES (OLD.resource_type, OLD.resource_id, OLD.principal_kind, OLD.principal_id, 'revoke')",
 		"CREATE TRIGGER racl_changelog AFTER INSERT OR DELETE ON public.racl FOR EACH ROW",
+		"pg_notify('demesne_authz_changelog'",
+		"'op', 'grant'",
+		"'op', 'revoke'",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("ChangelogSQL missing %q:\n%s", want, sql)
