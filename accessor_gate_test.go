@@ -191,16 +191,19 @@ func TestAccessorTree_AndNot_Composes(t *testing.T) {
 			{Name: "grantee", Types: []string{"customer"}, Repr: g},
 			{Name: "blocked", Types: []string{"customer"}, Repr: grp},
 		},
+		// Use the realistic grant-selector leaf `grantee:read` (Ident carries the access
+		// class), the form the parser produces — a bare "grantee" Ident would not catch
+		// the grant-selector resolution path.
 		Perms: []*Perm{selectPerm(
-			[]*Term{{Ident: "grantee"}, {Ident: "blocked"}},
+			[]*Term{{Ident: "grantee:read"}, {Ident: "blocked"}},
 			&PermNode{Op: "and", Kids: []*PermNode{
-				{Op: "leaf", Term: &Term{Ident: "grantee"}},
+				{Op: "leaf", Term: &Term{Ident: "grantee:read"}},
 				{Op: "not", Kids: []*PermNode{{Op: "leaf", Term: &Term{Ident: "blocked"}}}},
 			}},
 		)},
 	}
 	if ok, reason := cover(obj); !ok {
-		t.Fatalf("grantee AND NOT blocked should compose (covered), got: %s", reason)
+		t.Fatalf("grantee:read AND NOT blocked should compose (covered), got: %s", reason)
 	}
 	sql, ok := (&Spec{Objects: []*Object{obj}}).accessorTreeSQL(obj, obj.Perms[0].Tree,
 		map[string]*Relation{"grantee": obj.Relations[0], "blocked": obj.Relations[1]})

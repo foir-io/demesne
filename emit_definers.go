@@ -1158,7 +1158,14 @@ func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Rela
 	if t == nil || t.Ident == "" {
 		return "", false
 	}
-	r := rels[t.Ident]
+	// A grant-selector leaf (`grantee:read`) names a ViaGrant relation with an access
+	// class; resolve it to the relation name (the grant branch lists all acl rows for
+	// the resource, tagged with their access — matching the flat path).
+	name := t.Ident
+	if rn, _, ok := grantSelector(t.Ident, rels); ok {
+		name = rn
+	}
+	r := rels[name]
 	if r == nil {
 		return "", false
 	}
