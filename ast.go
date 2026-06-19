@@ -511,6 +511,14 @@ type ViaGrant struct {
 	// — the ordered (seq = zookie) feed a consumer Watches for grant/revoke events (the
 	// WS5 realtime force-drop signal). Opt-in, so a store without it is byte-identical.
 	Tracked bool
+	// Async (WS4 async-affordance tier, EID-345) additionally builds an eventually-consistent
+	// affordance INDEX for this grant relation (auth.<obj>_<rel>_async), maintained off the
+	// changelog and read ONLY by the affordance Check path — NEVER the floor. The relation
+	// itself stays a normal floor grant term (the floor reads the sync grant definer); `async`
+	// only adds the cache. REQUIRES `tracked` (the index is built off the changelog feed). The
+	// V12 floor-asymmetry validator proves no floor artifact references the async index, so a
+	// stale cache can only mis-render an affordance, never gate a fetch. Opt-in / byte-identical.
+	Async bool
 }
 
 // ArgSrc is one argument of a ViaMemberIn check: either a claim key (`@sub`) or a

@@ -1066,6 +1066,8 @@ func (p *parser) parseReprGrant() (Repr, error) {
 	}
 	// Optional `tracked`: opt the store into the authz changelog (WS4).
 	vg.Tracked = p.acceptKw("tracked")
+	// Optional `async` (after `tracked`): also build an async affordance index (WS4).
+	vg.Async = p.acceptKw("async")
 	return vg, nil
 }
 
