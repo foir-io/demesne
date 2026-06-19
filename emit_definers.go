@@ -1272,51 +1272,59 @@ func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relati
 		}
 		return strings.Join(parts, "\n  UNION ALL\n  "), true
 	case "and":
-		var positives, negatives []*PermNode
-		for _, k := range n.Kids {
-			if k.Op == "not" {
-				if len(k.Kids) != 1 {
-					return "", false
-				}
-				negatives = append(negatives, k.Kids[0])
-			} else {
-				positives = append(positives, k)
+		return s.accessorAndSQL(obj, n, rels)
+	}
+	return "", false // a bare `not` (no positive base) is not enumerable
+}
+
+// accessorAndSQL composes the `and` / `and not` accessor enumeration: the first positive
+// branch FILTERED to (kind,id) IN every other positive and NOT IN every negative. Split out
+// of accessorTreeSQL purely to keep each function's cognitive complexity in check — the logic
+// is an exact move of the former and-case (byte-identical SQL).
+func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, bool) {
+	var positives, negatives []*PermNode
+	for _, k := range n.Kids {
+		if k.Op == "not" {
+			if len(k.Kids) != 1 {
+				return "", false
 			}
+			negatives = append(negatives, k.Kids[0])
+		} else {
+			positives = append(positives, k)
 		}
-		if len(positives) == 0 {
-			return "", false // a bare exclusion has no bounded positive base
-		}
-		base, ok := s.accessorTreeSQL(obj, positives[0], rels)
+	}
+	if len(positives) == 0 {
+		return "", false // a bare exclusion has no bounded positive base
+	}
+	base, ok := s.accessorTreeSQL(obj, positives[0], rels)
+	if !ok {
+		return "", false
+	}
+	idIn := func(sub string) string {
+		return fmt.Sprintf("(a.principal_kind, a.principal_id) IN (SELECT b.principal_kind, b.principal_id FROM (%s) b(source, principal_kind, principal_id, access))", sub)
+	}
+	idNotIn := func(sub string) string {
+		return fmt.Sprintf("(a.principal_kind, a.principal_id) NOT IN (SELECT b.principal_kind, b.principal_id FROM (%s) b(source, principal_kind, principal_id, access))", sub)
+	}
+	var filters []string
+	for _, p := range positives[1:] {
+		sub, ok := s.accessorTreeSQL(obj, p, rels)
 		if !ok {
 			return "", false
 		}
-		idIn := func(sub string) string {
-			return fmt.Sprintf("(a.principal_kind, a.principal_id) IN (SELECT b.principal_kind, b.principal_id FROM (%s) b(source, principal_kind, principal_id, access))", sub)
-		}
-		idNotIn := func(sub string) string {
-			return fmt.Sprintf("(a.principal_kind, a.principal_id) NOT IN (SELECT b.principal_kind, b.principal_id FROM (%s) b(source, principal_kind, principal_id, access))", sub)
-		}
-		var filters []string
-		for _, p := range positives[1:] {
-			sub, ok := s.accessorTreeSQL(obj, p, rels)
-			if !ok {
-				return "", false
-			}
-			filters = append(filters, idIn(sub))
-		}
-		for _, ng := range negatives {
-			sub, ok := s.accessorTreeSQL(obj, ng, rels)
-			if !ok {
-				return "", false
-			}
-			filters = append(filters, idNotIn(sub))
-		}
-		if len(filters) == 0 {
-			return base, true
-		}
-		return fmt.Sprintf("SELECT a.* FROM (%s) a(source, principal_kind, principal_id, access)\n    WHERE %s", base, strings.Join(filters, "\n      AND ")), true
+		filters = append(filters, idIn(sub))
 	}
-	return "", false // a bare `not` (no positive base) is not enumerable
+	for _, ng := range negatives {
+		sub, ok := s.accessorTreeSQL(obj, ng, rels)
+		if !ok {
+			return "", false
+		}
+		filters = append(filters, idNotIn(sub))
+	}
+	if len(filters) == 0 {
+		return base, true
+	}
+	return fmt.Sprintf("SELECT a.* FROM (%s) a(source, principal_kind, principal_id, access)\n    WHERE %s", base, strings.Join(filters, "\n      AND ")), true
 }
 
 // defOwnerAccessorBranches renders the OWNER enumeration branches — the owner
