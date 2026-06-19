@@ -386,7 +386,7 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 		// access a row — a fail-OPEN "who can access X". Refuse to emit it (a build
 		// error naming the gap) until the WS1 reverse builders cover that shape,
 		// rather than ship a wrong answer.
-		if ok, reason := accessorCoverage(obj); !ok {
+		if ok, reason := s.accessorCoverage(obj); !ok {
 			return fmt.Errorf("object %q: cannot soundly enumerate accessors (auth.%s would under-report) — %s", obj.Name, name, reason)
 		}
 		seen[name] = true
@@ -440,7 +440,17 @@ func accessorTreeOp(n *PermNode) string {
 // whose Repr has no accessor branch yet. Returns (false, reason) in that case.
 // Non-relation leaves (builtins, visibility modes folded as a category flag, grant /
 // kind terms) are not relation reverses and do not trip the gate.
-func accessorCoverage(obj *Object) (bool, string) {
+func (s *Spec) accessorCoverage(obj *Object) (bool, string) {
+	return s.accessorCoverageSeen(obj, map[string]bool{})
+}
+
+// accessorCoverageSeen is accessorCoverage with a visited set for the ViaObject
+// recursion (acyclicity is validated, so a revisit imposes no new requirement).
+func (s *Spec) accessorCoverageSeen(obj *Object, seen map[string]bool) (bool, string) {
+	if seen[obj.Name] {
+		return true, ""
+	}
+	seen[obj.Name] = true
 	rels := map[string]*Relation{}
 	for _, r := range obj.Relations {
 		rels[r.Name] = r
@@ -466,11 +476,44 @@ func accessorCoverage(obj *Object) (bool, string) {
 		if r == nil {
 			continue
 		}
+		if vo, ok := r.Repr.(ViaObject); ok {
+			if cov, reason := s.viaObjectCovered(vo, seen); !cov {
+				return false, fmt.Sprintf("relation %q borrows %s->%s, not soundly enumerable (%s)", t.Ident, vo.Object, vo.Verb, reason)
+			}
+			continue
+		}
 		if !accessorReprCovered(r.Repr) {
 			return false, fmt.Sprintf("relation %q (%T) has no accessor branch yet (reverse builder is WS1)", t.Ident, r.Repr)
 		}
 	}
 	return true, ""
+}
+
+// viaObjectCovered reports whether a cross-object borrow can be reverse-enumerated. It
+// can only when the borrowed verb is the other object's READ verb (its accessor
+// enumerator answers only the SELECT / visibility decision), the other object actually
+// HAS an accessor enumerator (a content object with a grant store), and the other
+// object's own coverage holds (recursively; acyclicity is validated). Otherwise fail
+// closed — a non-read borrow or a borrow from an unenumerable object cannot be answered.
+func (s *Spec) viaObjectCovered(vo ViaObject, seen map[string]bool) (bool, string) {
+	other := s.objectByName(vo.Object)
+	if other == nil {
+		return false, fmt.Sprintf("borrowed object %q not found", vo.Object)
+	}
+	readVerb := ""
+	for _, pm := range other.Perms {
+		if pm.Maps == "select" {
+			readVerb = pm.Verb
+			break
+		}
+	}
+	if readVerb == "" || vo.Verb != readVerb {
+		return false, fmt.Sprintf("only a read borrow is reversible (%q is not %q's select verb)", vo.Verb, vo.Object)
+	}
+	if _, vg := grantRelation(other); vg == nil {
+		return false, fmt.Sprintf("borrowed object %q has no accessor enumerator", vo.Object)
+	}
+	return s.accessorCoverageSeen(other, seen)
 }
 
 // defEmitStructuralAccessors emits the structural accessor enumerators (Expand over
@@ -909,6 +952,12 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 	// `<Closure>_reachable(claim, row.<Col>)` term tests (WS1 reverse builder).
 	branches = append(branches, defClosureAccessorBranches(obj, sel, rels)...)
 
+	// OBJECT — cross-object borrow relations: the accessors of the borrowed object's
+	// READ permission for the related row, recursed via that object's own accessor
+	// enumerator (WS1 reverse builder; the coverage gate guarantees the borrow is a
+	// read borrow from an enumerable, covered object).
+	branches = append(branches, s.defObjectAccessorBranches(obj, sel, rels)...)
+
 	return accessorGenFn(obj.Table, branches)
 }
 
@@ -993,6 +1042,47 @@ func closureAccessorBranch(table, pk, kind string, c ViaClosure) string {
 	return fmt.Sprintf(
 		"SELECT 'closure'::text, '%s'::text, x.%s, 'read'::text\n    FROM %s t\n    JOIN %s x ON x.%s = t.%s\n    WHERE t.%s = p_id",
 		kind, c.AncestorCol, table, c.Closure, c.DescendantCol, c.Col, pk)
+}
+
+// defObjectAccessorBranches renders the OBJECT (cross-object borrow) enumeration
+// branches — one per ViaObject relation in the SELECT permission. Each LATERAL-calls
+// the borrowed object's accessor enumerator on the related row this object's <Col>
+// names, returning those accessors. Because it delegates to the same enumerator the
+// borrowed object's own read uses (and the gate guarantees a read borrow from a
+// covered object), it agrees with the forward `<Object>_can_<verb>` definer.
+func (s *Spec) defObjectAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+	if sel == nil {
+		return nil
+	}
+	var branches []string
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		vo, ok := r.Repr.(ViaObject)
+		if !ok {
+			continue
+		}
+		other := s.objectByName(vo.Object)
+		if other == nil {
+			continue // the coverage gate guarantees this resolved; defensive
+		}
+		branches = append(branches, objectAccessorBranch(obj.Table, obj.pk(), vo, other.Table, s.definerSchema()))
+	}
+	return branches
+}
+
+// objectAccessorBranch renders one OBJECT enumeration branch: a LATERAL call to the
+// borrowed object's accessor enumerator on the related row named by this object's
+// <Col>, passing its rows through unchanged (source / kind / principal / access).
+func objectAccessorBranch(table, pk string, vo ViaObject, otherTable, schema string) string {
+	return fmt.Sprintf(
+		"SELECT a.source, a.principal_kind, a.principal_id, a.access\n    FROM %s t\n    JOIN LATERAL %s.%s_accessors(t.%s) a ON true\n    WHERE t.%s = p_id",
+		table, schema, otherTable, vo.Col, pk)
 }
 
 // defOwnerAccessorBranches renders the OWNER enumeration branches — the owner
