@@ -304,6 +304,23 @@ END;
 $$;`, m.fnName(), m.qFlat(), m.ObjPK, m.Kind, m.MemberCol, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col)
 }
 
+// MemberDefiner is the SECURITY DEFINER point-lookup the RLS floor calls (WS3 step 2): is
+// p_principal in the flat for p_resource? An O(1) probe on the flat's resource index,
+// replacing the per-row closure walk (`<Closure>_member`). Emitted as part of the kernel
+// definer set (EmitDefiners), so the V11 definer-closure check and the definer oracle own
+// it; the flat stays PRIVATE — only this definer reads it (never granted to the querying
+// role), consistent with every other auth-substrate read (closures, grant stores).
+// flat == walk is gated by the WS3 oracle.
+func (m MaterializedFlat) MemberDefiner() GenFn {
+	return GenFn{
+		Schema:      m.schema(),
+		TableSchema: m.tableSchema(),
+		Name:        m.Flat + "_member",
+		Sig:         "p_resource text, p_principal text",
+		Body:        fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE resource_id = p_resource AND principal_id = p_principal)", m.qFlat()),
+	}
+}
+
 // TriggerSQL binds the rebuild to BOTH the object table (its group column / row set) and
 // the closure (membership) — statement-level, so the flat is recomputed once the group
 // closure trigger has settled.
@@ -341,4 +358,34 @@ func (s *Spec) EmitMaterializedFlats() []MaterializedFlat {
 		}
 	}
 	return out
+}
+
+// FlatsSQL renders the materialized-flat substrate for every `via group ... materialized`
+// relation, in this order so each statement's references already exist: the flat TABLE +
+// covering indexes, the full-recompute REBUILD function, and the (object + closure)
+// maintenance TRIGGERS. It is emitted BEFORE the definers in the full SQL — the accessor
+// reads the flat and the kernel's <flat>_member definer (emitted by EmitDefiners) reads it
+// too, so the table must exist first. Prefixed with a COST banner. Returns "" when the
+// spec declares no materialized relation — so a non-materialized spec (Foir) generates
+// nothing here and its output is byte-identical.
+func (s *Spec) FlatsSQL() string {
+	flats := s.EmitMaterializedFlats()
+	if len(flats) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("-- ===== Materialized via-group flats (via group ... materialized) =====\n")
+	b.WriteString("-- COST: each flat is object ⋈ group-closure, rebuilt by an AFTER trigger INSIDE\n")
+	b.WriteString("-- the writing transaction (staleness == 0). It trades write-amplification for an\n")
+	b.WriteString("-- O(1) indexed membership probe on read — the RLS floor calls the SECURITY DEFINER\n")
+	b.WriteString("-- <flat>_member(); the flat itself is never granted to the querying role.\n\n")
+	for _, f := range flats {
+		b.WriteString(f.TableSQL())
+		b.WriteString("\n")
+		b.WriteString(f.FunctionSQL())
+		b.WriteString("\n\n")
+		b.WriteString(f.TriggerSQL())
+		b.WriteString("\n")
+	}
+	return b.String()
 }
