@@ -112,6 +112,8 @@ func (c ChangelogTrigger) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
@@ -249,6 +251,8 @@ func (c ObjectChangelogTrigger) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
 %s  RETURN NEW;
