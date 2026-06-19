@@ -52,12 +52,30 @@ func TestEmitMaterializedFlats_GroupRelation(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"AFTER INSERT OR UPDATE OR DELETE ON public.docs",
-		"AFTER INSERT OR UPDATE OR DELETE ON public.tc",
+		"AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON public.docs",
+		"AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON public.tc",
 		"EXECUTE FUNCTION auth.docs_team_flat_rebuild()",
 	} {
 		if !strings.Contains(f.TriggerSQL(), want) {
 			t.Errorf("TriggerSQL missing %q:\n%s", want, f.TriggerSQL())
+		}
+	}
+	// Reconciler (defence-in-depth): recomputes canonical, RAISEs on drift, self-heals.
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION auth.docs_team_flat_reconcile()",
+		"RETURNS integer", "SECURITY DEFINER",
+		"LOCK TABLE auth.docs_team_flat IN SHARE ROW EXCLUSIVE MODE",
+		"RAISE WARNING", "self-healing",
+	} {
+		if !strings.Contains(f.ReconcileSQL(), want) {
+			t.Errorf("ReconcileSQL missing %q:\n%s", want, f.ReconcileSQL())
+		}
+	}
+	// FlatsSQL bundles table + rebuild + reconcile + triggers; serialization lock present.
+	flatSQL := s.FlatsSQL()
+	for _, want := range []string{"_reconcile()", "LOCK TABLE auth.docs_team_flat IN SHARE ROW EXCLUSIVE MODE", "OR TRUNCATE"} {
+		if !strings.Contains(flatSQL, want) {
+			t.Errorf("FlatsSQL missing %q", want)
 		}
 	}
 }

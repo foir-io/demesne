@@ -218,12 +218,14 @@ END;
 $$;`, g.fnName(), g.Closure, g.GroupCol, g.MemberCol, g.EdgeMember, g.EdgeGroup, g.Edge)
 }
 
-// TriggerSQL renders the statement-level binding (recompute once per statement).
+// TriggerSQL renders the statement-level binding (recompute once per statement). TRUNCATE
+// is included so emptying the edge re-derives the closure rather than silently freezing it
+// (a frozen closure that still backs the floor would be a stale over-grant).
 func (g GroupTrigger) TriggerSQL() string {
 	name := g.Closure + "_rebuild"
 	var b strings.Builder
 	fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON %s.%s;\n", name, g.tableSchema(), g.Edge)
-	fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, g.tableSchema(), g.Edge, g.fnName())
+	fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, g.tableSchema(), g.Edge, g.fnName())
 	return b.String()
 }
 
@@ -282,8 +284,9 @@ func (m MaterializedFlat) tableSchema() string {
 	}
 	return "public"
 }
-func (m MaterializedFlat) qFlat() string  { return m.schema() + "." + m.Flat }
-func (m MaterializedFlat) fnName() string { return m.schema() + "." + m.Flat + "_rebuild" }
+func (m MaterializedFlat) qFlat() string       { return m.schema() + "." + m.Flat }
+func (m MaterializedFlat) fnName() string       { return m.schema() + "." + m.Flat + "_rebuild" }
+func (m MaterializedFlat) reconcileFn() string  { return m.schema() + "." + m.Flat + "_reconcile" }
 
 // TableSQL creates the flat table + forward (resource) and reverse (principal) indexes.
 func (m MaterializedFlat) TableSQL() string {
@@ -317,6 +320,47 @@ END;
 $$;`, m.fnName(), m.qFlat(), m.ObjPK, m.Kind, m.MemberCol, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col)
 }
 
+// ReconcileSQL renders a defence-in-depth reconciler: auth.<flat>_reconcile() recomputes
+// the canonical object ⋈ closure, compares it to the live flat, RAISEs WARNING with the
+// drift counts (stale = over-grant, missing = under-grant), SELF-HEALS by rewriting the
+// flat to canonical, and returns the total drift. The maintenance triggers do NOT fire
+// under session_replication_role=replica (logical-replication apply, bulk load) — so a
+// silent stale flat (which the RLS floor reads as still-granted) needs a periodic /
+// post-deploy backstop. Takes the same rebuild lock so it serializes with live writers.
+func (m MaterializedFlat) ReconcileSQL() string {
+	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = %[2]s
+AS $$
+DECLARE
+  v_missing integer;
+  v_stale integer;
+BEGIN
+  LOCK TABLE %[3]s IN SHARE ROW EXCLUSIVE MODE;
+  WITH canon AS (
+    SELECT o.%[4]s AS resource_id, '%[5]s'::text AS principal_kind, c.%[6]s AS principal_id
+    FROM %[7]s.%[8]s o JOIN %[7]s.%[9]s c ON c.%[10]s = o.%[11]s
+  )
+  SELECT
+    (SELECT count(*) FROM (SELECT resource_id, principal_kind, principal_id FROM canon
+       EXCEPT SELECT resource_id, principal_kind, principal_id FROM %[3]s) d),
+    (SELECT count(*) FROM (SELECT resource_id, principal_kind, principal_id FROM %[3]s
+       EXCEPT SELECT resource_id, principal_kind, principal_id FROM canon) d)
+  INTO v_missing, v_stale;
+  IF v_missing > 0 OR v_stale > 0 THEN
+    RAISE WARNING 'demesne: flat %[3]s drift — %% missing, %% stale (over-grant); self-healing', v_missing, v_stale;
+    DELETE FROM %[3]s;
+    INSERT INTO %[3]s (resource_id, principal_kind, principal_id)
+    SELECT o.%[4]s, '%[5]s', c.%[6]s
+    FROM %[7]s.%[8]s o JOIN %[7]s.%[9]s c ON c.%[10]s = o.%[11]s;
+  END IF;
+  RETURN v_missing + v_stale;
+END;
+$$;`, m.reconcileFn(), m.schema(), m.qFlat(), m.ObjPK, m.Kind, m.MemberCol, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col)
+}
+
 // MemberDefiner is the SECURITY DEFINER point-lookup the RLS floor calls (WS3 step 2): is
 // p_principal in the flat for p_resource? An O(1) probe on the flat's resource index,
 // replacing the per-row closure walk (`<Closure>_member`). Emitted as part of the kernel
@@ -342,7 +386,9 @@ func (m MaterializedFlat) TriggerSQL() string {
 	for _, tbl := range []string{m.ObjTable, m.Closure} {
 		name := m.Flat + "_rebuild_" + tbl
 		fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON %s.%s;\n", name, m.tableSchema(), tbl)
-		fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, m.tableSchema(), tbl, m.fnName())
+		// TRUNCATE included so emptying the object/closure re-derives the flat rather than
+		// freezing it (a frozen flat the RLS floor reads would be a stale over-grant).
+		fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, m.tableSchema(), tbl, m.fnName())
 	}
 	return b.String()
 }
@@ -396,6 +442,8 @@ func (s *Spec) FlatsSQL() string {
 		b.WriteString(f.TableSQL())
 		b.WriteString("\n")
 		b.WriteString(f.FunctionSQL())
+		b.WriteString("\n\n")
+		b.WriteString(f.ReconcileSQL())
 		b.WriteString("\n\n")
 		b.WriteString(f.TriggerSQL())
 		b.WriteString("\n")
