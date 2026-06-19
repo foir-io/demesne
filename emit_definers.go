@@ -403,7 +403,7 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 // WS1's reverse builders extend this set; until then those shapes fail closed.
 func accessorReprCovered(r Repr) bool {
 	switch r.(type) {
-	case ViaColumn, ViaGrant, ViaRole, ViaGroup:
+	case ViaColumn, ViaGrant, ViaRole, ViaGroup, ViaClosure:
 		return true
 	default:
 		return false
@@ -904,6 +904,11 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 	// checks (WS1 reverse builder).
 	branches = append(branches, defGroupAccessorBranches(obj, sel, rels)...)
 
+	// CLOSURE — hierarchy-reachability relations: the ANCESTORS of the row's node, a
+	// reverse read of the SAME (ancestor, descendant) closure the forward
+	// `<Closure>_reachable(claim, row.<Col>)` term tests (WS1 reverse builder).
+	branches = append(branches, defClosureAccessorBranches(obj, sel, rels)...)
+
 	return accessorGenFn(obj.Table, branches)
 }
 
@@ -946,6 +951,48 @@ func groupAccessorBranch(table, pk, kind string, g ViaGroup) string {
 	return fmt.Sprintf(
 		"SELECT 'group'::text, '%s'::text, c.%s, 'read'::text\n    FROM %s t\n    JOIN %s c ON c.%s = t.%s\n    WHERE t.%s = p_id",
 		kind, g.MemberCol, table, g.Closure, g.GroupCol, g.Col, pk)
+}
+
+// defClosureAccessorBranches renders the CLOSURE enumeration branches — one per
+// ViaClosure relation in the SELECT permission. Each reverse-reads the
+// (ancestor, descendant) closure the forward `<Closure>_reachable(claim, row.<Col>)`
+// term tests: the ancestors of the node the row names (i.e. every claim value from
+// which the row's node is reachable). Reading the same committed closure rows the
+// forward predicate does, the enumeration agrees with the predicate by construction.
+func defClosureAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+	if sel == nil {
+		return nil
+	}
+	var branches []string
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		c, ok := r.Repr.(ViaClosure)
+		if !ok {
+			continue
+		}
+		kind := ""
+		if len(r.Types) > 0 {
+			kind = r.Types[0]
+		}
+		branches = append(branches, closureAccessorBranch(obj.Table, obj.pk(), kind, c))
+	}
+	return branches
+}
+
+// closureAccessorBranch renders one CLOSURE enumeration branch: the ancestors of the
+// node the row names (row.<Col>), as 'read' accessors of the relation's kind. Joins the
+// closure (ancestor, descendant) to the object row on the row's node column — exactly
+// the reachability the forward `<Closure>_reachable` definer tests, reversed.
+func closureAccessorBranch(table, pk, kind string, c ViaClosure) string {
+	return fmt.Sprintf(
+		"SELECT 'closure'::text, '%s'::text, x.%s, 'read'::text\n    FROM %s t\n    JOIN %s x ON x.%s = t.%s\n    WHERE t.%s = p_id",
+		kind, c.AncestorCol, table, c.Closure, c.DescendantCol, c.Col, pk)
 }
 
 // defOwnerAccessorBranches renders the OWNER enumeration branches — the owner

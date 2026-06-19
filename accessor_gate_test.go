@@ -77,6 +77,32 @@ func TestAccessorCoverage_ViaGroup_CoveredWithBranch(t *testing.T) {
 
 // Intersection / exclusion in the SELECT tree must fail closed — the union-only
 // enumerator cannot represent INTERSECT / EXCEPT.
+// ViaClosure now has a reverse builder → covered; the branch reverse-reads the
+// closure (ancestors of the row's node) — the same rows the forward _reachable tests.
+func TestAccessorCoverage_ViaClosure_CoveredWithBranch(t *testing.T) {
+	c := ViaClosure{Closure: "node_closure", AncestorCol: "ancestor", DescendantCol: "descendant", Col: "node_id"}
+	obj := &Object{
+		Name: "doc", Table: "docs",
+		Relations: []*Relation{{Name: "tree", Types: []string{"customer"}, Repr: c}},
+		Perms:     []*Perm{selectPerm([]*Term{{Ident: "tree"}}, &PermNode{Op: "leaf", Term: &Term{Ident: "tree"}})},
+	}
+	if ok, reason := accessorCoverage(obj); !ok {
+		t.Fatalf("ViaClosure should now be covered, got refusal: %s", reason)
+	}
+	br := defClosureAccessorBranches(obj, obj.Perms[0], map[string]*Relation{"tree": obj.Relations[0]})
+	if len(br) != 1 {
+		t.Fatalf("want 1 closure branch, got %d", len(br))
+	}
+	for _, want := range []string{
+		"'closure'::text", "'customer'::text", "x.ancestor",
+		"JOIN node_closure x ON x.descendant = t.node_id", "WHERE t.id = p_id",
+	} {
+		if !strings.Contains(br[0], want) {
+			t.Errorf("closure branch missing %q:\n%s", want, br[0])
+		}
+	}
+}
+
 func TestAccessorCoverage_IntersectionExclusion_FailsClosed(t *testing.T) {
 	obj := &Object{
 		Name: "doc", Table: "docs",
