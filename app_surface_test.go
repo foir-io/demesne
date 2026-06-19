@@ -63,7 +63,7 @@ func TestAppSurface_ReadBuilders(t *testing.T) {
 		t.Errorf("CheckManySQL\n  got:  %s\n  want: %s", got, want)
 	}
 	if got, want := o.ListResourcesSQL(),
-		"SELECT id FROM records WHERE ($1 IS NULL OR id > $1) ORDER BY id LIMIT $2"; got != want {
+		"SELECT id FROM records WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2"; got != want {
 		t.Errorf("ListResourcesSQL\n  got:  %s\n  want: %s", got, want)
 	}
 }
@@ -72,7 +72,7 @@ func TestAppSurface_ReadBuilders(t *testing.T) {
 func TestAppSurface_CustomPK(t *testing.T) {
 	o := AppObjectSurface{Object: "doc", Table: "docs", PK: "doc_id"}
 	if got, want := o.ListResourcesSQL(),
-		"SELECT doc_id FROM docs WHERE ($1 IS NULL OR doc_id > $1) ORDER BY doc_id LIMIT $2"; got != want {
+		"SELECT doc_id FROM docs WHERE ($1::text IS NULL OR doc_id::text > $1::text) ORDER BY doc_id::text LIMIT $2"; got != want {
 		t.Errorf("custom PK not threaded:\n  got:  %s\n  want: %s", got, want)
 	}
 }

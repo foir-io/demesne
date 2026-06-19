@@ -107,7 +107,11 @@ func (o AppObjectSurface) CheckManySQL() string {
 // returned and the LIMIT pushes down — this is the grant-dominant-LIST fast path that
 // needs no materialized index. Equal to "what the subject can SELECT" by construction.
 func (o AppObjectSurface) ListResourcesSQL() string {
+	// $1 is cast to text so a NULL first-page cursor has a determinable type under the
+	// exec protocol (a bare `$1 IS NULL` leaves the planner unable to infer it); the
+	// keyset comparison and ORDER BY share the text projection so the boundary aligns
+	// with the order — a stable total order for the text/uuid PKs governed tables use.
 	return fmt.Sprintf(
-		"SELECT %s FROM %s WHERE ($1 IS NULL OR %s > $1) ORDER BY %s LIMIT $2",
+		"SELECT %s FROM %s WHERE ($1::text IS NULL OR %s::text > $1::text) ORDER BY %s::text LIMIT $2",
 		o.PK, o.Table, o.PK, o.PK)
 }
