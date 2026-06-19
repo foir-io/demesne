@@ -60,6 +60,13 @@ type AppObjectSurface struct {
 	// grant-dominant path). The fast-path STILL runs under RLS, so it is a candidate-narrowing
 	// hint, never a second evaluator.
 	FlatListFn string
+	// AsyncCheckSQL is the MinimizeLatency affordance read for this object's `async` via-grant
+	// relation: SELECT allowed, as_of FROM <index>_affordance($1, '<kind>', <subject claim>),
+	// where $1 is the row id and the principal is the subject's own claim (IDOR-safe, like the
+	// flat). It reads the async INDEX, NEVER the floor — the caller wraps the (allowed, as_of)
+	// it returns in ComposeAffordance to get an Affordance (a hint), never a Decision. "" when
+	// the object has no async relation (so a non-async spec's surface is byte-identical).
+	AsyncCheckSQL string
 }
 
 // EmitAppSurface projects every governed object into the app-level read surface — the
@@ -72,10 +79,11 @@ func (s *Spec) EmitAppSurface() (*AppCheckSurface, error) {
 	out := &AppCheckSurface{Objects: make([]AppObjectSurface, 0, len(s.Objects))}
 	for _, o := range s.Objects {
 		out.Objects = append(out.Objects, AppObjectSurface{
-			Object:     o.Name,
-			Table:      o.Table,
-			PK:         o.pk(),
-			FlatListFn: s.flatListFn(o),
+			Object:        o.Name,
+			Table:         o.Table,
+			PK:            o.pk(),
+			FlatListFn:    s.flatListFn(o),
+			AsyncCheckSQL: s.asyncCheckSQL(o),
 		})
 	}
 	return out, nil
@@ -119,6 +127,35 @@ func (s *Spec) flatListFn(o *Object) string {
 	}
 	// Must match MaterializedFlat: Flat = <objTable>_<relName>_flat, fn = <flat>_resources.
 	return fmt.Sprintf("%s.%s_%s_flat_resources", s.definerSchema(), o.Table, rel.Name)
+}
+
+// asyncCheckSQL builds the MinimizeLatency affordance read for an object's `async` via-grant
+// relation: a point membership read of the async INDEX for ($1 row, the relation's kind, the
+// subject's own claim). The principal comes from the claims GUC (not a caller arg), so a caller
+// cannot ask "can SOMEONE ELSE see this" via the cache — the same IDOR-safe symmetry the flat
+// uses. Returns "" when the object has no async relation, or when no owner-plane subject claim
+// resolves (the read needs the asking subject). NEVER references the floor.
+func (s *Spec) asyncCheckSQL(o *Object) string {
+	var rel *Relation
+	for _, r := range o.Relations {
+		if relationIsAsync(r) {
+			rel = r
+			break
+		}
+	}
+	if rel == nil || len(o.Scoped) == 0 {
+		return ""
+	}
+	cust := s.ownerSubject(o.Scoped[len(o.Scoped)-1])
+	if cust == nil {
+		return ""
+	}
+	kind := ""
+	if len(rel.Types) > 0 {
+		kind = rel.Types[0]
+	}
+	return fmt.Sprintf("SELECT allowed, as_of::text FROM %s_affordance($1, '%s', %s)",
+		s.asyncIndexBase(o.Table, rel.Name), kind, s.claim(cust.Identifies))
 }
 
 // Object returns the named object's surface, or (zero, false).
