@@ -506,6 +506,11 @@ type ViaGrant struct {
 	AccessCol    string
 	DiscrimCol   string // "" when the store is not shared (single-kind store)
 	DiscrimVal   string // the constant this relation's rows carry in DiscrimCol
+	// Tracked opts the grant store into the authz changelog (WS4, EID-345): an AFTER
+	// INSERT/DELETE trigger appends a (resource, principal, op) row to auth._authz_changelog
+	// — the ordered (seq = zookie) feed a consumer Watches for grant/revoke events (the
+	// WS5 realtime force-drop signal). Opt-in, so a store without it is byte-identical.
+	Tracked bool
 }
 
 // ArgSrc is one argument of a ViaMemberIn check: either a claim key (`@sub`) or a

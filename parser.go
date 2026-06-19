@@ -1064,6 +1064,8 @@ func (p *parser) parseReprGrant() (Repr, error) {
 		}
 		vg.DiscrimCol, vg.DiscrimVal = col, val.lit
 	}
+	// Optional `tracked`: opt the store into the authz changelog (WS4).
+	vg.Tracked = p.acceptKw("tracked")
 	return vg, nil
 }
 
