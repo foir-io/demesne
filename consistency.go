@@ -18,7 +18,21 @@ import (
 //   - AtLeastAsFresh(z): answer from the cache iff it reflects everything committed up to z,
 //     else the caller falls back to the floor (fail-closed).
 //   - FullyConsistent: the floor — the only compliance answer (CheckSQL / PointCheckSQL).
-type Consistency interface{ isConsistency() }
+type Consistency interface {
+	isConsistency()
+	// Level lets a consumer (a different package) route on the requested tier without seeing
+	// the unexported variants — e.g. go straight to the floor for FullyConsistent.
+	Level() ConsistencyLevel
+}
+
+// ConsistencyLevel is the exported discriminant of a Consistency (for routing + telemetry).
+type ConsistencyLevel int
+
+const (
+	LevelMinimizeLatency ConsistencyLevel = iota
+	LevelAtLeastAsFresh
+	LevelFullyConsistent
+)
 
 type minimizeLatency struct{}
 type atLeastAsFresh struct{ z Zookie }
@@ -27,6 +41,10 @@ type fullyConsistent struct{}
 func (minimizeLatency) isConsistency() {}
 func (atLeastAsFresh) isConsistency()  {}
 func (fullyConsistent) isConsistency() {}
+
+func (minimizeLatency) Level() ConsistencyLevel { return LevelMinimizeLatency }
+func (atLeastAsFresh) Level() ConsistencyLevel  { return LevelAtLeastAsFresh }
+func (fullyConsistent) Level() ConsistencyLevel { return LevelFullyConsistent }
 
 // MinimizeLatency reads the async cache and returns its current hint + as-of, no floor round-trip.
 func MinimizeLatency() Consistency { return minimizeLatency{} }
