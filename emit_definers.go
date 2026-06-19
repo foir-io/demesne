@@ -660,11 +660,16 @@ func (s *Spec) defEmitGroup(out *[]GenFn, seen map[string]bool) {
 func (s *Spec) defEmitMaterializedFlatMembers(out *[]GenFn, seen map[string]bool) {
 	for _, f := range s.EmitMaterializedFlats() {
 		name := f.Flat + "_member"
-		if seen[name] {
-			continue
+		if !seen[name] {
+			seen[name] = true
+			*out = append(*out, f.MemberDefiner())
 		}
-		seen[name] = true
-		*out = append(*out, f.MemberDefiner())
+		// The reverse ListResources fast-path definer (drive-from-flat), when the object
+		// has an owner-plane claim to read the asking subject from.
+		if rname := f.Flat + "_resources"; f.HasReverse() && !seen[rname] {
+			seen[rname] = true
+			*out = append(*out, f.ResourcesDefiner())
+		}
 	}
 }
 

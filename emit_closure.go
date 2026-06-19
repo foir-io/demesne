@@ -270,6 +270,12 @@ type MaterializedFlat struct {
 	GroupCol    string
 	MemberCol   string
 	Kind        string // principal_kind value (the relation's first type)
+	// ClaimExpr is the owner-plane claim expression (the subject identifier read from the
+	// request GUC, e.g. (current_setting('request.jwt.claims',true)::json ->> 'customer_id')).
+	// It is how the reverse ListResources fast-path (<flat>_resources) reads "who is asking"
+	// — the same claim the floor matches. "" when no owner subject resolves (then there is
+	// no reverse fast-path).
+	ClaimExpr string
 }
 
 func (m MaterializedFlat) schema() string {
@@ -378,6 +384,49 @@ func (m MaterializedFlat) MemberDefiner() GenFn {
 	}
 }
 
+func (m MaterializedFlat) resourcesFn() string { return m.schema() + "." + m.Flat + "_resources" }
+
+// HasReverse reports whether the reverse ListResources fast-path can be emitted — it needs
+// an owner-plane claim to read "who is asking" from the GUC.
+func (m MaterializedFlat) HasReverse() bool { return m.ClaimExpr != "" }
+
+// ResourcesDefiner is the reverse drive-from-flat ListResources fast-path (WS3 perf tail):
+// auth.<flat>_resources() returns the resource ids the calling subject can reach, read
+// from the GUC claim — so a grant-dominant LIST drives from this small set (`id IN (...)`)
+// and the LIMIT pushes down, instead of scanning the whole table under per-row RLS.
+//
+// It is computed TWO-LEVEL (the Leopard normalization): resource→userset is the object's
+// group column, userset→subject is the transitive-membership closure — i.e. the subject's
+// groups (closure WHERE member = claim) joined to the objects filed under them. This reads
+// the AUTHORITATIVE source (closure ⋈ object), not the one-level flat, so the LIST cannot
+// drift from the floor independently, and it bounds write-amplification (no extra
+// resource→subject denormalization beyond the already-maintained closure + the level-1
+// index). The result equals the floor's admit-set (flat == walk, oracle-gated); RLS still
+// runs over the candidates, so scope + the floor remain the enforcement — this is a
+// candidate-narrowing hint, never a second evaluator.
+func (m MaterializedFlat) ResourcesDefiner() GenFn {
+	return GenFn{
+		Schema:      m.schema(),
+		TableSchema: m.tableSchema(),
+		Name:        m.Flat + "_resources",
+		Returns:     "SETOF text",
+		RawBody:     true,
+		Body: fmt.Sprintf("  SELECT o.%[1]s\n  FROM %[2]s.%[3]s o JOIN %[2]s.%[4]s c ON c.%[5]s = o.%[6]s\n  WHERE c.%[7]s = %[8]s;",
+			m.ObjPK, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col, m.MemberCol, m.ClaimExpr),
+	}
+}
+
+// IndexesSQL emits the two level-indexes the two-level reverse needs: level-1 on the
+// object's group column (group → resources) and level-2 on the closure member column
+// (subject → groups). IF NOT EXISTS + named by table/column so flats sharing a closure
+// create each once. The closure's (group) side is the group-closure's own concern.
+func (m MaterializedFlat) IndexesSQL() string {
+	return fmt.Sprintf(
+		"CREATE INDEX IF NOT EXISTS %[1]s_%[2]s_l1_idx ON %[3]s.%[1]s (%[2]s);\n"+
+			"CREATE INDEX IF NOT EXISTS %[4]s_%[5]s_l2_idx ON %[3]s.%[4]s (%[5]s);\n",
+		m.ObjTable, m.Col, m.tableSchema(), m.Closure, m.MemberCol)
+}
+
 // TriggerSQL binds the rebuild to BOTH the object table (its group column / row set) and
 // the closure (membership) — statement-level, so the flat is recomputed once the group
 // closure trigger has settled.
@@ -398,6 +447,12 @@ func (m MaterializedFlat) TriggerSQL() string {
 func (s *Spec) EmitMaterializedFlats() []MaterializedFlat {
 	var out []MaterializedFlat
 	for _, obj := range s.Objects {
+		claimExpr := ""
+		if len(obj.Scoped) > 0 {
+			if cust := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); cust != nil {
+				claimExpr = s.claim(cust.Identifies)
+			}
+		}
 		for _, r := range obj.Relations {
 			g, ok := r.Repr.(ViaGroup)
 			if !ok || !g.Materialized {
@@ -412,7 +467,7 @@ func (s *Spec) EmitMaterializedFlats() []MaterializedFlat {
 				Flat:     obj.Table + "_" + r.Name + "_flat",
 				ObjTable: obj.Table, ObjPK: obj.pk(), Col: g.Col,
 				Closure: g.Closure, GroupCol: g.GroupCol, MemberCol: g.MemberCol,
-				Kind: kind,
+				Kind: kind, ClaimExpr: claimExpr,
 			})
 		}
 	}
@@ -440,6 +495,8 @@ func (s *Spec) FlatsSQL() string {
 	b.WriteString("-- <flat>_member(); the flat itself is never granted to the querying role.\n\n")
 	for _, f := range flats {
 		b.WriteString(f.TableSQL())
+		b.WriteString("\n")
+		b.WriteString(f.IndexesSQL())
 		b.WriteString("\n")
 		b.WriteString(f.FunctionSQL())
 		b.WriteString("\n\n")

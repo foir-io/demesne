@@ -53,6 +53,13 @@ type AppObjectSurface struct {
 	Object string // the spec object name
 	Table  string // its governed table
 	PK     string // its primary-key column (the row identity)
+	// FlatListFn is the qualified reverse fast-path fn (auth.<flat>_resources) when this
+	// object's SELECT permission is EXACTLY one materialized via-group term (single-term,
+	// exclusion-free) — then ListResources can drive from that small reachable set and the
+	// LIMIT pushes down. "" otherwise: the caller uses the RLS-filtered SELECT (the default
+	// grant-dominant path). The fast-path STILL runs under RLS, so it is a candidate-narrowing
+	// hint, never a second evaluator.
+	FlatListFn string
 }
 
 // EmitAppSurface projects every governed object into the app-level read surface — the
@@ -65,12 +72,53 @@ func (s *Spec) EmitAppSurface() (*AppCheckSurface, error) {
 	out := &AppCheckSurface{Objects: make([]AppObjectSurface, 0, len(s.Objects))}
 	for _, o := range s.Objects {
 		out.Objects = append(out.Objects, AppObjectSurface{
-			Object: o.Name,
-			Table:  o.Table,
-			PK:     o.pk(),
+			Object:     o.Name,
+			Table:      o.Table,
+			PK:         o.pk(),
+			FlatListFn: s.flatListFn(o),
 		})
 	}
 	return out, nil
+}
+
+// flatListFn returns the reverse ListResources fast-path fn (auth.<flat>_resources) for an
+// object whose SELECT permission is EXACTLY one materialized via-group term — single-term
+// and exclusion-free, so driving the LIST from that one flat returns the WHOLE visible set
+// (a union would miss the other terms' rows; an exclusion would over-include). "" otherwise,
+// so the caller falls back to the RLS-filtered SELECT. Needs an owner-plane claim (the
+// two-level reverse reads the asking subject from the GUC).
+func (s *Spec) flatListFn(o *Object) string {
+	var sel *Perm
+	for _, pm := range o.Perms {
+		if pm.Maps == "select" {
+			sel = pm
+			break
+		}
+	}
+	// Single positive leaf only: a union / `and` / `and not` adds Expr leaves, so len != 1
+	// rules them out; the tree-op guard is belt-and-suspenders.
+	if sel == nil || len(sel.Expr) != 1 || sel.Expr[0] == nil || accessorTreeOp(sel.Tree) != "" {
+		return ""
+	}
+	var rel *Relation
+	for _, r := range o.Relations {
+		if r.Name == sel.Expr[0].Ident {
+			rel = r
+			break
+		}
+	}
+	if rel == nil {
+		return ""
+	}
+	g, ok := rel.Repr.(ViaGroup)
+	if !ok || !g.Materialized {
+		return ""
+	}
+	if len(o.Scoped) == 0 || s.ownerSubject(o.Scoped[len(o.Scoped)-1]) == nil {
+		return "" // no owner claim → no two-level reverse
+	}
+	// Must match MaterializedFlat: Flat = <objTable>_<relName>_flat, fn = <flat>_resources.
+	return fmt.Sprintf("%s.%s_%s_flat_resources", s.definerSchema(), o.Table, rel.Name)
 }
 
 // Object returns the named object's surface, or (zero, false).
@@ -114,4 +162,21 @@ func (o AppObjectSurface) ListResourcesSQL() string {
 	return fmt.Sprintf(
 		"SELECT %s FROM %s WHERE ($1::text IS NULL OR %s::text > $1::text) ORDER BY %s::text LIMIT $2",
 		o.PK, o.Table, o.PK, o.PK)
+}
+
+// ListResourcesFastSQL is the materialized-flat drive-from-flat variant of
+// ListResourcesSQL, valid ONLY when FlatListFn != "" (a single-term, exclusion-free
+// materialized via-group SELECT). It narrows the scan to the subject's reachable set via
+// `<pk> IN (SELECT <flat>_resources())` so the keyset LIMIT pushes down instead of the
+// planner filtering the whole table per-row under RLS. It STILL runs under the subject's
+// claims + RLS role, so scope and the floor remain the enforcement — the IN is a candidate
+// hint that returns the same rows as ListResourcesSQL (oracle-gated). Returns "" when the
+// object is not fast-path-eligible, so the caller uses ListResourcesSQL.
+func (o AppObjectSurface) ListResourcesFastSQL() string {
+	if o.FlatListFn == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"SELECT %s FROM %s WHERE %s IN (SELECT %s()) AND ($1::text IS NULL OR %s::text > $1::text) ORDER BY %s::text LIMIT $2",
+		o.PK, o.Table, o.PK, o.FlatListFn, o.PK, o.PK)
 }

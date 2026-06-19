@@ -177,6 +177,89 @@ func TestMaterializedFlat_NonMaterializedStillWalks(t *testing.T) {
 	}
 }
 
+const matSingleTermSpec = `
+topology { level tenant level project parent tenant }
+vocabulary cust { permission self:read }
+subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
+object doc {
+  table  docs
+  scoped tenant > project
+  relation team: customer via group tc(grp, mem) edge te(mem, grp) on team_id materialized
+  permission view = team @rls maps select
+}`
+
+// WS3 perf tail: a single-term materialized via-group SELECT is ListResources fast-path
+// eligible — it emits a two-level reverse definer (closure ⋈ object, reading the GUC claim),
+// the level indexes, and a drive-from-flat list SQL. A union (multi-term) SELECT is NOT
+// eligible and falls back to the RLS SELECT.
+func TestMaterialized_ListFastPathEmit(t *testing.T) {
+	s, err := Parse(matSingleTermSpec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	// Two-level reverse definer in the kernel set: closure ⋈ object, filtered by the GUC claim.
+	defs, _ := s.EmitDefiners()
+	var res *GenFn
+	for i := range defs {
+		if defs[i].Name == "docs_team_flat_resources" {
+			res = &defs[i]
+		}
+	}
+	if res == nil {
+		t.Fatal("EmitDefiners did not emit docs_team_flat_resources")
+	}
+	sql := res.CreateSQL()
+	for _, want := range []string{
+		"RETURNS SETOF text", "SECURITY DEFINER",
+		"FROM public.docs o JOIN public.tc c ON c.grp = o.team_id",
+		"WHERE c.mem = (current_setting(", "->> 'customer_id')",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("resources definer missing %q:\n%s", want, sql)
+		}
+	}
+	// Level indexes (level-1 object group col, level-2 closure member).
+	flatSQL := s.FlatsSQL()
+	for _, want := range []string{
+		"CREATE INDEX IF NOT EXISTS docs_team_id_l1_idx ON public.docs (team_id)",
+		"CREATE INDEX IF NOT EXISTS tc_mem_l2_idx ON public.tc (mem)",
+	} {
+		if !strings.Contains(flatSQL, want) {
+			t.Errorf("FlatsSQL missing index %q", want)
+		}
+	}
+	// App surface: the single-term object is fast-path eligible.
+	surf, err := s.EmitAppSurface()
+	if err != nil {
+		t.Fatalf("emit app surface: %v", err)
+	}
+	doc, _ := surf.Object("doc")
+	if doc.FlatListFn != "auth.docs_team_flat_resources" {
+		t.Errorf("single-term materialized object should be fast-path eligible, FlatListFn=%q", doc.FlatListFn)
+	}
+	if fast := doc.ListResourcesFastSQL(); !strings.Contains(fast, "IN (SELECT auth.docs_team_flat_resources())") || !strings.Contains(fast, "LIMIT $2") {
+		t.Errorf("ListResourcesFastSQL not the drive-from-flat keyset query:\n%s", fast)
+	}
+
+	// A union SELECT (grantee:read + team) is NOT eligible — driving from team alone would
+	// miss grantee rows.
+	su, _ := Parse(matGroupSpec)
+	if err := Validate(su); err != nil {
+		t.Fatalf("validate union: %v", err)
+	}
+	usurf, _ := su.EmitAppSurface()
+	udoc, _ := usurf.Object("doc")
+	if udoc.FlatListFn != "" {
+		t.Errorf("union materialized SELECT must NOT be fast-path eligible, got %q", udoc.FlatListFn)
+	}
+	if udoc.ListResourcesFastSQL() != "" {
+		t.Error("ineligible object must return empty ListResourcesFastSQL (caller uses the RLS SELECT)")
+	}
+}
+
 // `materialized` is fail-closed restricted to a single-kind via-group: a multi-kind one
 // must be rejected (the flat tags only one kind), while the non-materialized multi-kind
 // form stays valid (single-kind closure behaviour, unaffected).
