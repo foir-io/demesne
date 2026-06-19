@@ -236,6 +236,9 @@ func emitAllSQL(s *demesne.Spec) error {
 	if c := s.ChangelogSQL(); c != "" {
 		fmt.Print("\n" + c)
 	}
+	if a := s.AsyncSQL(); a != "" {
+		fmt.Print("\n" + a)
+	}
 	return nil
 }
 

@@ -68,31 +68,54 @@ func TestAsync_FloorAsymmetryDetectsLeak(t *testing.T) {
 	}
 }
 
-// In this increment the `async` flag is INERT (the index emitter is the next increment), so
-// a `tracked async` spec emits byte-identical SQL to the same spec with `tracked` only.
-func TestAsync_ByteIdenticalWhenInert(t *testing.T) {
-	emit := func(src string) string {
-		s, err := Parse(src)
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
-		if err := Validate(s); err != nil {
-			t.Fatalf("validate: %v", err)
-		}
-		res, err := s.EmitRLS()
-		if err != nil {
-			t.Fatalf("emit rls: %v", err)
-		}
-		defs, err := s.EmitDefiners()
-		if err != nil {
-			t.Fatalf("emit definers: %v", err)
-		}
-		return DefinersSQL(defs) + "\n" + res.PolicySQL("authenticated") + "\n" +
-			s.TriggersSQL() + "\n" + s.FlatsSQL() + "\n" + s.ChangelogSQL()
+// The async index emits its full surface (table + maintenance + read fns + shared cursor),
+// and — the real teeth — the V12 floor-asymmetry oracle is STILL green with that surface
+// present: the floor (RLS + definers + flat/closure/changelog writers) references none of it.
+func TestAsync_EmitsIndexAndOracleStillGreen(t *testing.T) {
+	s, err := Parse(asyncGrantSpec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
 	}
-	trackedOnly := strings.Replace(asyncGrantSpec, `"doc" tracked async`, `"doc" tracked`, 1)
-	if emit(asyncGrantSpec) != emit(trackedOnly) {
-		t.Error("`async` must be inert in this increment — emitted SQL differs from the tracked-only spec")
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	async := s.AsyncSQL()
+	for _, want := range []string{
+		"auth._authz_async_cursor", "auth.docs_grantee_async ", "auth.docs_grantee_async_apply()",
+		"auth.docs_grantee_async_rebuild()", "auth.docs_grantee_async_affordance(",
+		"auth.docs_grantee_async_watermark()", "pg_snapshot_xmin(pg_current_snapshot())",
+		"resource_type", // the rel discriminator this index consumes (DiscrimVal)
+	} {
+		if !strings.Contains(async, want) {
+			t.Errorf("AsyncSQL missing %q", want)
+		}
+	}
+	// The async fns must NOT be in the kernel definer set (so V11 fails the build on any floor
+	// reference); the V12 oracle proves the live floor references no async surface.
+	defs, _ := s.EmitDefiners()
+	for _, d := range defs {
+		if strings.Contains(d.Name, "_async") {
+			t.Errorf("async fn %q leaked into the kernel definer set", d.Name)
+		}
+	}
+	if err := validateAsyncFloorAsymmetry(s); err != nil {
+		t.Errorf("oracle must be green with the async surface present, got: %v", err)
+	}
+}
+
+// The changelog gains the per-row txid (xid8) ONLY when the spec uses `async` — Foir (tracked,
+// no async) keeps the changelog byte-identical.
+func TestAsync_ChangelogTxidIsAsyncOnly(t *testing.T) {
+	withAsync, _ := Parse(asyncGrantSpec)
+	if !strings.Contains(withAsync.ChangelogTableSQL(), "txid xid8 NOT NULL DEFAULT pg_current_xact_id()") {
+		t.Error("async spec changelog must carry the txid column")
+	}
+	trackedOnly, _ := Parse(strings.Replace(asyncGrantSpec, `"doc" tracked async`, `"doc" tracked`, 1))
+	if strings.Contains(trackedOnly.ChangelogTableSQL(), "txid") {
+		t.Error("non-async (tracked-only) changelog must NOT carry txid — byte-identical for Foir")
+	}
+	if trackedOnly.AsyncSQL() != "" {
+		t.Error("non-async spec must emit no async surface")
 	}
 }
 

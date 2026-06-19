@@ -25,7 +25,7 @@ func (s *Spec) changelogTable() string { return s.definerSchema() + "._authz_cha
 
 func (s *Spec) ChangelogTableSQL() string {
 	t := s.changelogTable()
-	return fmt.Sprintf(
+	base := fmt.Sprintf(
 		"CREATE TABLE IF NOT EXISTS %[1]s (\n"+
 			"  seq bigserial PRIMARY KEY,\n"+
 			"  rel text NOT NULL,\n"+
@@ -33,11 +33,30 @@ func (s *Spec) ChangelogTableSQL() string {
 			"  principal_kind text NOT NULL,\n"+
 			"  principal_id text NOT NULL,\n"+
 			"  op text NOT NULL,\n"+
-			"  at timestamptz NOT NULL DEFAULT now()\n"+
+			"  at timestamptz NOT NULL DEFAULT now()%[2]s\n"+
 			");\n"+
 			"CREATE INDEX IF NOT EXISTS _authz_changelog_seq_idx ON %[1]s (seq);\n"+
 			"CREATE INDEX IF NOT EXISTS _authz_changelog_principal_idx ON %[1]s (principal_kind, principal_id);\n",
-		t)
+		t, s.changelogTxidColumn())
+	if s.hasAsync() {
+		// The async-affordance tier reads the feed by (rel, txid) to apply the newly-SETTLED
+		// band on each pass (the commit-horizon watermark, not the gappy seq) — index it.
+		base += fmt.Sprintf("CREATE INDEX IF NOT EXISTS _authz_changelog_rel_txid_idx ON %[1]s (rel, txid);\n", t)
+	}
+	return base
+}
+
+// changelogTxidColumn adds each row's inserting transaction id (xid8) to the changelog, but
+// ONLY when the spec uses an `async` relation — the async tier needs it to compute a
+// commit-settlement watermark (a seq can commit out of order / gap on rollback, so it can't
+// express "the cache reflects everything committed before T"; a transaction id can). The
+// DEFAULT means the append triggers need no change. A spec with no async relation emits the
+// changelog exactly as before (byte-identical).
+func (s *Spec) changelogTxidColumn() string {
+	if !s.hasAsync() {
+		return ""
+	}
+	return ",\n  txid xid8 NOT NULL DEFAULT pg_current_xact_id()"
 }
 
 // ChangelogTrigger is the per-store append trigger: AFTER INSERT/DELETE on a tracked grant
