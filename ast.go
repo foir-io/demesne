@@ -362,7 +362,46 @@ type Object struct {
 	// which materialises the final Perms before validation/emission.
 	Use  string
 	Omit []string
-	Pos  Pos
+	// TrackOwner / TrackVisibility opt the object TABLE into the authz changelog
+	// (EID-350) — the object-table analogue of the `tracked` grant-store modifier.
+	// `track owner` emits an AFTER UPDATE trigger on the owner columns
+	// (owner_id/owner_kind) that appends a revoke (old owner) + grant (new owner)
+	// event on a transfer; `track visibility` emits one on the mode column
+	// (access_mode) that appends a RESOURCE-scoped event (empty principal) on a
+	// flip. So a consumer's force-drop is event-driven for owner transfers +
+	// visibility changes, not just the periodic re-check — while a grant/revoke on
+	// the grant store stays covered by the `tracked` store trigger. Both empty ⇒ no
+	// object trigger (byte-identical for an object that doesn't opt in).
+	TrackOwner      bool
+	TrackVisibility bool
+	Pos             Pos
+}
+
+// ownerChangelogCols returns the unified (owner_id, owner_kind) columns the
+// object's owner is stored in — the first owner ViaColumn carrying a
+// discriminator (the unified owner shape the grant edge also uses). ok=false if
+// the object has no such owner relation (so `track owner` can be rejected).
+func (o *Object) ownerChangelogCols() (idCol, kindCol string, ok bool) {
+	for _, r := range o.Relations {
+		if vc, isVC := r.Repr.(ViaColumn); isVC && vc.DiscrimCol != "" {
+			return vc.Column, vc.DiscrimCol, true
+		}
+	}
+	return "", "", false
+}
+
+// modeChangelogCol returns the visibility/mode column (the `mode <col> = "..."`
+// term), or ok=false if the object declares no mode term (so `track visibility`
+// can be rejected).
+func (o *Object) modeChangelogCol() (col string, ok bool) {
+	for _, pm := range o.Perms {
+		for _, t := range pm.Expr {
+			if t.ModeCol != "" {
+				return t.ModeCol, true
+			}
+		}
+	}
+	return "", false
 }
 
 // IsLevelEntity reports whether the object is the entity for a topology level

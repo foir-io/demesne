@@ -652,6 +652,23 @@ func (p *parser) parseObjectBody(o *Object) error {
 				return err
 			}
 			o.Omit = append(o.Omit, v)
+		case p.isKw("track"):
+			// `track owner` / `track visibility` — opt the object TABLE into the
+			// authz changelog (EID-350). Each statement names one tracked aspect;
+			// repeat to track both.
+			p.advance()
+			what, err := p.ident()
+			if err != nil {
+				return err
+			}
+			switch what {
+			case "owner":
+				o.TrackOwner = true
+			case "visibility":
+				o.TrackVisibility = true
+			default:
+				return p.errf("object %q: `track` expects `owner` or `visibility`, got %q", o.Name, what)
+			}
 		default:
 			return p.errf("unexpected %s %q in object %q", p.peekKind(), p.cur().lit, o.Name)
 		}

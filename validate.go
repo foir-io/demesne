@@ -420,6 +420,11 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 	// definer naming (both `<table>_grants[_<obj>]`).
 	add(valCheckGrantRelCount(o))
 
+	// `track owner` / `track visibility` (EID-350) must reference columns the object
+	// actually declares, else the emitted AFTER UPDATE OF trigger would have an empty
+	// column list (invalid SQL) — fail closed at validation instead.
+	add(valCheckTrackChangelog(o))
+
 	for _, pm := range o.Perms {
 		add(validatePerm(s, o, pm, relByName))
 	}
@@ -569,6 +574,25 @@ func valCheckGrantRelCount(o *Object) error {
 	}
 	if grantRels > 1 {
 		return fmt.Errorf("object %q declares %d `via grant` relations — at most one is allowed", o.Name, grantRels)
+	}
+	return nil
+}
+
+// valCheckTrackChangelog enforces that `track owner` / `track visibility`
+// (EID-350) reference columns the object declares: `track owner` needs a
+// discriminated owner ViaColumn (the unified owner_id/owner_kind), `track
+// visibility` needs a `mode <col>` term. Without them the emitted object-table
+// trigger would carry an empty `AFTER UPDATE OF` column list — fail closed here.
+func valCheckTrackChangelog(o *Object) error {
+	if o.TrackOwner {
+		if _, _, ok := o.ownerChangelogCols(); !ok {
+			return fmt.Errorf("line %d: object %q declares `track owner` but has no owner column (a `via <id> where <kind> = ...` relation)", o.Pos.Line, o.Name)
+		}
+	}
+	if o.TrackVisibility {
+		if _, ok := o.modeChangelogCol(); !ok {
+			return fmt.Errorf("line %d: object %q declares `track visibility` but has no `mode <col>` term", o.Pos.Line, o.Name)
+		}
 	}
 	return nil
 }

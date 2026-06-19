@@ -146,21 +146,159 @@ func (s *Spec) EmitChangelogTriggers() []ChangelogTrigger {
 	return out
 }
 
-// ChangelogSQL renders the full changelog layer (the shared table + every append trigger),
-// prefixed with a banner. Returns "" when no store is tracked.
+// ObjectChangelogTrigger is the per-OBJECT-TABLE append trigger (EID-350): the
+// object-table analogue of ChangelogTrigger (which fires on the grant store). It
+// fires AFTER UPDATE OF the tracked owner/mode columns and appends + pg_notify's:
+//   - on an OWNER transfer (owner id/kind changed) — a revoke for the OLD owner
+//     and a grant for the NEW owner (principal-keyed, so a consumer re-checks the
+//     exact principal who lost access); and/or
+//   - on a VISIBILITY flip (mode column changed) — one RESOURCE-scoped event with
+//     an EMPTY principal and op 'visibility', because a public⇄private flip
+//     affects every in-scope principal, not one (a consumer re-checks the
+//     resource's whole room).
+//
+// It writes to the SAME shared _authz_changelog table + ChangelogChannel as the
+// grant-store trigger, so a consumer sees one ordered feed. The floor never reads
+// it (the WS4 fail-closed asymmetry holds — this is an affordance/latency signal).
+type ObjectChangelogTrigger struct {
+	Schema       string // definer schema (the changelog + fn live here)
+	TableSchema  string // the object table's schema
+	Changelog    string // qualified changelog table
+	Table        string // the object table (e.g. records)
+	Rel          string // constant `rel` value — the object / resource-type name
+	PK           string // the row identity column
+	OwnerIDCol   string // "" → owner not tracked
+	OwnerKindCol string
+	ModeCol      string // "" → visibility not tracked
+}
+
+func (c ObjectChangelogTrigger) schema() string {
+	if c.Schema != "" {
+		return c.Schema
+	}
+	return "auth"
+}
+func (c ObjectChangelogTrigger) tableSchema() string {
+	if c.TableSchema != "" {
+		return c.TableSchema
+	}
+	return "public"
+}
+func (c ObjectChangelogTrigger) fnName() string { return c.schema() + "." + c.Table + "_obj_changelog" }
+
+// trackedCols is the AFTER UPDATE OF column list — only the tracked aspects, so
+// an ordinary content edit (data/updated_at) never fires the trigger.
+func (c ObjectChangelogTrigger) trackedCols() []string {
+	var cols []string
+	if c.OwnerIDCol != "" {
+		cols = append(cols, c.OwnerIDCol, c.OwnerKindCol)
+	}
+	if c.ModeCol != "" {
+		cols = append(cols, c.ModeCol)
+	}
+	return cols
+}
+
+func (c ObjectChangelogTrigger) FunctionSQL() string {
+	cols := "(rel, resource_id, principal_kind, principal_id, op)"
+	var body strings.Builder
+	if c.OwnerIDCol != "" {
+		// Owner transfer: old owner loses, new owner gains. Skip a NULL owner id
+		// (project-owned rows carry no owner) — the changelog principal_id is NOT NULL.
+		fmt.Fprintf(&body, "  IF (OLD.%[1]s IS DISTINCT FROM NEW.%[1]s) OR (OLD.%[2]s IS DISTINCT FROM NEW.%[2]s) THEN\n", c.OwnerIDCol, c.OwnerKindCol)
+		fmt.Fprintf(&body, "    IF OLD.%s IS NOT NULL THEN\n", c.OwnerIDCol)
+		fmt.Fprintf(&body, "      INSERT INTO %s %s\n", c.Changelog, cols)
+		fmt.Fprintf(&body, "        VALUES ('%s', NEW.%s, COALESCE(OLD.%s, ''), OLD.%s, 'revoke');\n", c.Rel, c.PK, c.OwnerKindCol, c.OwnerIDCol)
+		fmt.Fprintf(&body, "      PERFORM pg_notify('%s', json_build_object('rel', '%s', 'resource_id', NEW.%s, 'principal_kind', COALESCE(OLD.%s, ''), 'principal_id', OLD.%s, 'op', 'revoke')::text);\n", ChangelogChannel, c.Rel, c.PK, c.OwnerKindCol, c.OwnerIDCol)
+		body.WriteString("    END IF;\n")
+		fmt.Fprintf(&body, "    IF NEW.%s IS NOT NULL THEN\n", c.OwnerIDCol)
+		fmt.Fprintf(&body, "      INSERT INTO %s %s\n", c.Changelog, cols)
+		fmt.Fprintf(&body, "        VALUES ('%s', NEW.%s, COALESCE(NEW.%s, ''), NEW.%s, 'grant');\n", c.Rel, c.PK, c.OwnerKindCol, c.OwnerIDCol)
+		fmt.Fprintf(&body, "      PERFORM pg_notify('%s', json_build_object('rel', '%s', 'resource_id', NEW.%s, 'principal_kind', COALESCE(NEW.%s, ''), 'principal_id', NEW.%s, 'op', 'grant')::text);\n", ChangelogChannel, c.Rel, c.PK, c.OwnerKindCol, c.OwnerIDCol)
+		body.WriteString("    END IF;\n")
+		body.WriteString("  END IF;\n")
+	}
+	if c.ModeCol != "" {
+		// Visibility flip: resource-scoped (empty principal) — affects every in-scope
+		// principal, so a consumer re-checks the resource's whole room.
+		fmt.Fprintf(&body, "  IF (OLD.%[1]s IS DISTINCT FROM NEW.%[1]s) THEN\n", c.ModeCol)
+		fmt.Fprintf(&body, "    INSERT INTO %s %s\n", c.Changelog, cols)
+		fmt.Fprintf(&body, "      VALUES ('%s', NEW.%s, '', '', 'visibility');\n", c.Rel, c.PK)
+		fmt.Fprintf(&body, "    PERFORM pg_notify('%s', json_build_object('rel', '%s', 'resource_id', NEW.%s, 'principal_kind', '', 'principal_id', '', 'op', 'visibility')::text);\n", ChangelogChannel, c.Rel, c.PK)
+		body.WriteString("  END IF;\n")
+	}
+	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+%s  RETURN NEW;
+END;
+$$;`, c.fnName(), body.String())
+}
+
+func (c ObjectChangelogTrigger) TriggerSQL() string {
+	name := c.Table + "_obj_changelog"
+	var b strings.Builder
+	fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON %s.%s;\n", name, c.tableSchema(), c.Table)
+	fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER UPDATE OF %s ON %s.%s FOR EACH ROW EXECUTE FUNCTION %s();\n",
+		name, strings.Join(c.trackedCols(), ", "), c.tableSchema(), c.Table, c.fnName())
+	return b.String()
+}
+
+// EmitObjectChangelogTriggers returns one trigger per object that opts into
+// object-table tracking (`track owner` / `track visibility`), sorted by table.
+// Empty when nothing opts in, keeping a non-tracking spec byte-identical.
+func (s *Spec) EmitObjectChangelogTriggers() []ObjectChangelogTrigger {
+	var out []ObjectChangelogTrigger
+	for _, obj := range s.Objects {
+		if !obj.TrackOwner && !obj.TrackVisibility {
+			continue
+		}
+		t := ObjectChangelogTrigger{
+			Schema: s.definerSchema(), TableSchema: s.tableSchema(),
+			Changelog: s.changelogTable(), Table: obj.Table,
+			Rel: obj.Name, PK: obj.pk(),
+		}
+		if obj.TrackOwner {
+			if idCol, kindCol, ok := obj.ownerChangelogCols(); ok {
+				t.OwnerIDCol, t.OwnerKindCol = idCol, kindCol
+			}
+		}
+		if obj.TrackVisibility {
+			if modeCol, ok := obj.modeChangelogCol(); ok {
+				t.ModeCol = modeCol
+			}
+		}
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Table < out[j].Table })
+	return out
+}
+
+// ChangelogSQL renders the full changelog layer (the shared table + every append
+// trigger — grant-store AND object-table), prefixed with a banner. Returns ""
+// when nothing is tracked.
 func (s *Spec) ChangelogSQL() string {
-	trigs := s.EmitChangelogTriggers()
-	if len(trigs) == 0 {
+	grantTrigs := s.EmitChangelogTriggers()
+	objTrigs := s.EmitObjectChangelogTriggers()
+	if len(grantTrigs) == 0 && len(objTrigs) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("-- ===== Authz changelog (via grant ... tracked) =====\n")
-	b.WriteString("-- An ordered (seq = zookie) feed of grant/revoke events on the tracked stores —\n")
-	b.WriteString("-- the source a consumer Watches to react to access changes (WS5 realtime\n")
-	b.WriteString("-- force-drop). It never feeds the RLS floor (the WS4 fail-closed asymmetry).\n\n")
+	b.WriteString("-- ===== Authz changelog (via grant ... tracked + track owner/visibility) =====\n")
+	b.WriteString("-- An ordered (seq = zookie) feed of grant/revoke + owner/visibility events on the\n")
+	b.WriteString("-- tracked stores/objects — the source a consumer Watches to react to access changes\n")
+	b.WriteString("-- (WS5 realtime force-drop). It never feeds the RLS floor (the WS4 fail-closed asymmetry).\n\n")
 	b.WriteString(s.ChangelogTableSQL())
 	b.WriteString("\n")
-	for _, c := range trigs {
+	for _, c := range grantTrigs {
+		b.WriteString(c.FunctionSQL())
+		b.WriteString("\n\n")
+		b.WriteString(c.TriggerSQL())
+		b.WriteString("\n")
+	}
+	for _, c := range objTrigs {
 		b.WriteString(c.FunctionSQL())
 		b.WriteString("\n\n")
 		b.WriteString(c.TriggerSQL())
