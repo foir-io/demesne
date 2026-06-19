@@ -67,6 +67,11 @@ type AppObjectSurface struct {
 	// it returns in ComposeAffordance to get an Affordance (a hint), never a Decision. "" when
 	// the object has no async relation (so a non-async spec's surface is byte-identical).
 	AsyncCheckSQL string
+	// EditCheckSQL is the WRITE point-check (EID-350): SELECT EXISTS over the object's
+	// `update`-mapped permission predicate, inlined (a bare SELECT never triggers the UPDATE
+	// policy). Run under the subject's claims it reports "visible AND editable" — the gate a
+	// co-edit / write join needs. "" when the object has no @rls update permission.
+	EditCheckSQL string
 }
 
 // EmitAppSurface projects every governed object into the app-level read surface — the
@@ -78,12 +83,17 @@ func (s *Spec) EmitAppSurface() (*AppCheckSurface, error) {
 	}
 	out := &AppCheckSurface{Objects: make([]AppObjectSurface, 0, len(s.Objects))}
 	for _, o := range s.Objects {
+		editSQL, err := s.editPointCheckSQL(o)
+		if err != nil {
+			return nil, fmt.Errorf("EmitAppSurface: %s edit point-check: %w", o.Name, err)
+		}
 		out.Objects = append(out.Objects, AppObjectSurface{
 			Object:        o.Name,
 			Table:         o.Table,
 			PK:            o.pk(),
 			FlatListFn:    s.flatListFn(o),
 			AsyncCheckSQL: s.asyncCheckSQL(o),
+			EditCheckSQL:  editSQL,
 		})
 	}
 	return out, nil
@@ -176,6 +186,13 @@ func (a *AppCheckSurface) Object(name string) (AppObjectSurface, bool) {
 func (o AppObjectSurface) CheckSQL() string {
 	return fmt.Sprintf("SELECT EXISTS (SELECT 1 FROM %s WHERE %s = $1)", o.Table, o.PK)
 }
+
+// CheckEditSQL is the point WRITE-check (EID-350): run under the subject's claims +
+// RLS role, it reports whether the subject can EDIT the row whose id binds to $1 —
+// i.e. the row is visible AND passes the object's UPDATE policy predicate (inlined,
+// since a bare SELECT never triggers the UPDATE policy). "" when the object has no
+// @rls update permission; the caller then has no write gate to apply.
+func (o AppObjectSurface) CheckEditSQL() string { return o.EditCheckSQL }
 
 // CheckManySQL is the batched point-check: $1 binds an array of row ids; run under the
 // subject's claims it returns the PK of each one the subject can see (RLS drops the

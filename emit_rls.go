@@ -124,6 +124,49 @@ func (s *Spec) EmitRLS() (*RLSResult, error) {
 	return res, nil
 }
 
+// editPointCheckSQL renders a WRITE point-check for an object (EID-350): a query
+// that, run UNDER the subject's claims + the RLS role, reports whether the subject
+// can EDIT the row whose id binds to $1. Unlike the read point-check (which leans
+// on the SELECT policy filtering a bare `SELECT 1`), a SELECT never triggers the
+// UPDATE policy — so this INLINES the object's `update`-mapped permission predicate
+// (the EXACT USING clause EmitRLS gives the UPDATE policy, via the same rlsPredicate
+// builder). The outer SELECT is still under the SELECT policy, so the result is
+// "visible AND editable" — what a co-edit (write) join needs. Equal by delegation:
+// no second evaluator; the policy's own predicate decides. "" when the object has
+// no @rls update permission (e.g. append-only), so the caller treats it as
+// not-editable / falls back to the read decision.
+func (s *Spec) editPointCheckSQL(o *Object) (string, error) {
+	var upd *Perm
+	for _, pm := range o.Perms {
+		if contains(pm.Layers, "rls") && pm.Maps == "update" {
+			upd = pm
+			break
+		}
+	}
+	if upd == nil {
+		return "", nil
+	}
+	chain, err := s.Topology.Chain()
+	if err != nil {
+		return "", err
+	}
+	virtual := map[string]bool{}
+	for _, l := range chain {
+		if l.Virtual {
+			virtual[l.Name] = true
+		}
+	}
+	cust := s.ownerSubject(o.Scoped[len(o.Scoped)-1])
+	pred, err := s.rlsPredicate(o, upd, cust, virtual)
+	if err != nil {
+		return "", err
+	}
+	if pred == "" {
+		return "", nil
+	}
+	return fmt.Sprintf("SELECT EXISTS (SELECT 1 FROM %s WHERE %s = $1 AND (%s))", o.Table, o.pk(), pred), nil
+}
+
 // ownerSubject returns the per-record owner-plane subject for an object's leaf
 // level — the subject EXPLICITLY bound with `binds owner` at that anchor (EID-265
 // WS2). This is a declared binding, not a shape heuristic (formerly "the unique
