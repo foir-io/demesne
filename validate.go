@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Validate runs the semantic rules V1–V10 (RFC §8.2) over a parsed Spec and
@@ -98,6 +99,73 @@ func Validate(s *Spec) error {
 	// third-party consumer of the engine.
 	add(validateDefinerClosure(s))
 
+	// V12 — async floor-asymmetry. The async-affordance tier (WS4) caches a grant relation
+	// in an index read ONLY by the affordance Check path; the RLS floor must NEVER reference
+	// that index. Prove it by re-emitting the whole floor surface and asserting zero async
+	// tokens. No-op for a spec with no `async` relation.
+	add(validateAsyncFloorAsymmetry(s))
+
+	return errors.Join(errs...)
+}
+
+// asyncTokensInBodies returns the async-surface tokens that appear in any of the given SQL
+// bodies — the pure detection core of the V12 floor-asymmetry oracle (testable in isolation).
+func asyncTokensInBodies(bodies, tokens []string) []string {
+	var found []string
+	seen := map[string]bool{}
+	for _, body := range bodies {
+		if body == "" {
+			continue
+		}
+		for _, tok := range tokens {
+			if !seen[tok] && strings.Contains(body, tok) {
+				seen[tok] = true
+				found = append(found, tok)
+			}
+		}
+	}
+	return found
+}
+
+// validateAsyncFloorAsymmetry (V12) is the load-bearing fence for the async-affordance tier:
+// no RLS floor artifact may reference an `async` relation's index surface. It re-emits the
+// COMPLETE floor surface — every RLS policy body, every SECURITY DEFINER kernel body, AND
+// every function/trigger that WRITES a table the floor reads (the materialized-flat
+// rebuild/reconcile, the closure/group maintenance, the changelog append trigger) — and
+// asserts none references an async-index token. Because EmitRLS + EmitDefiners + the
+// floor-read writers are the single, total source of the floor, an empty scan is a
+// by-construction proof that a stale async cache can never gate a fetch (it can only
+// mis-render an affordance, which the real fetch corrects). The async index itself is
+// emitted on a SEPARATE surface (not scanned here), so this never false-positives. No-op +
+// byte-identical for a spec with no `async` relation.
+func validateAsyncFloorAsymmetry(s *Spec) error {
+	tokens := s.asyncSurfaceTokens()
+	if len(tokens) == 0 {
+		return nil
+	}
+	res, err := s.EmitRLS()
+	if err != nil {
+		return fmt.Errorf("async asymmetry (V12): RLS does not emit: %w", err)
+	}
+	defs, err := s.EmitDefiners()
+	if err != nil {
+		return fmt.Errorf("async asymmetry (V12): kernel does not emit: %w", err)
+	}
+	var bodies []string
+	for _, p := range res.Policies {
+		bodies = append(bodies, p.Using, p.Check)
+	}
+	for _, d := range defs {
+		bodies = append(bodies, d.Body)
+	}
+	// The floor-read WRITERS (their bodies are not kernel GenFns): the materialized flat
+	// rebuild/reconcile + member, the closure/group maintenance, the changelog append trigger.
+	bodies = append(bodies, s.FlatsSQL(), s.TriggersSQL(), s.ChangelogSQL())
+
+	var errs []error
+	for _, tok := range asyncTokensInBodies(bodies, tokens) {
+		errs = append(errs, fmt.Errorf("async asymmetry (V12): a floor artifact references async surface %q — the floor must read only sync, committed truth; an async index may serve an affordance Check but never gate enforcement", tok))
+	}
 	return errors.Join(errs...)
 }
 
@@ -352,6 +420,11 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 	// definer naming (both `<table>_grants[_<obj>]`).
 	add(valCheckGrantRelCount(o))
 
+	// `track owner` / `track visibility` (EID-350) must reference columns the object
+	// actually declares, else the emitted AFTER UPDATE OF trigger would have an empty
+	// column list (invalid SQL) — fail closed at validation instead.
+	add(valCheckTrackChangelog(o))
+
 	for _, pm := range o.Perms {
 		add(validatePerm(s, o, pm, relByName))
 	}
@@ -457,6 +530,20 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 		if mi, ok := r.Repr.(ViaMemberIn); ok {
 			errs = append(errs, valCheckViaMemberIn(s, o, r, mi)...)
 		}
+		// `via group ... materialized` is fail-closed restricted to a SINGLE kind: the flat
+		// stores only one principal_kind (the relation's first type) and the floor matches
+		// principal_id alone, so a multi-kind materialized relation would silently tag and
+		// honour only the first kind. Reject it at compile time rather than emit a half-truth
+		// flat (WS3). Non-materialized multi-kind via-group keeps the same single-kind closure
+		// behaviour and is unaffected.
+		if g, ok := r.Repr.(ViaGroup); ok && g.Materialized && len(r.Types) > 1 {
+			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via group ... materialized` with multiple kinds %v — a materialized via-group must be single-kind (the flat tags only one principal_kind and the floor matches the id alone)", r.Pos.Line, o.Name, r.Name, r.Types))
+		}
+		// `via grant ... async` REQUIRES `tracked` — the async affordance index is built off
+		// the changelog feed, which only exists for a tracked store (WS4). Fail closed.
+		if g, ok := r.Repr.(ViaGrant); ok && g.Async && !g.Tracked {
+			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via grant ... async` without `tracked` — the async affordance index is maintained off the changelog, which requires `tracked`", r.Pos.Line, o.Name, r.Name))
+		}
 	}
 	return relByName, errors.Join(errs...)
 }
@@ -487,6 +574,25 @@ func valCheckGrantRelCount(o *Object) error {
 	}
 	if grantRels > 1 {
 		return fmt.Errorf("object %q declares %d `via grant` relations — at most one is allowed", o.Name, grantRels)
+	}
+	return nil
+}
+
+// valCheckTrackChangelog enforces that `track owner` / `track visibility`
+// (EID-350) reference columns the object declares: `track owner` needs a
+// discriminated owner ViaColumn (the unified owner_id/owner_kind), `track
+// visibility` needs a `mode <col>` term. Without them the emitted object-table
+// trigger would carry an empty `AFTER UPDATE OF` column list — fail closed here.
+func valCheckTrackChangelog(o *Object) error {
+	if o.TrackOwner {
+		if _, _, ok := o.ownerChangelogCols(); !ok {
+			return fmt.Errorf("line %d: object %q declares `track owner` but has no owner column (a `via <id> where <kind> = ...` relation)", o.Pos.Line, o.Name)
+		}
+	}
+	if o.TrackVisibility {
+		if _, ok := o.modeChangelogCol(); !ok {
+			return fmt.Errorf("line %d: object %q declares `track visibility` but has no `mode <col>` term", o.Pos.Line, o.Name)
+		}
 	}
 	return nil
 }

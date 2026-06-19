@@ -652,6 +652,23 @@ func (p *parser) parseObjectBody(o *Object) error {
 				return err
 			}
 			o.Omit = append(o.Omit, v)
+		case p.isKw("track"):
+			// `track owner` / `track visibility` — opt the object TABLE into the
+			// authz changelog (EID-350). Each statement names one tracked aspect;
+			// repeat to track both.
+			p.advance()
+			what, err := p.ident()
+			if err != nil {
+				return err
+			}
+			switch what {
+			case "owner":
+				o.TrackOwner = true
+			case "visibility":
+				o.TrackVisibility = true
+			default:
+				return p.errf("object %q: `track` expects `owner` or `visibility`, got %q", o.Name, what)
+			}
 		default:
 			return p.errf("unexpected %s %q in object %q", p.peekKind(), p.cur().lit, o.Name)
 		}
@@ -983,9 +1000,11 @@ func (p *parser) parseReprGroup() (Repr, error) {
 	if err != nil {
 		return nil, err
 	}
+	mat := p.acceptKw("materialized")
 	return ViaGroup{
 		Closure: clo, GroupCol: cloCols[0], MemberCol: cloCols[1],
 		Edge: edge, EdgeMember: edgeCols[0], EdgeGroup: edgeCols[1], Col: col,
+		Materialized: mat,
 	}, nil
 }
 
@@ -1062,6 +1081,10 @@ func (p *parser) parseReprGrant() (Repr, error) {
 		}
 		vg.DiscrimCol, vg.DiscrimVal = col, val.lit
 	}
+	// Optional `tracked`: opt the store into the authz changelog (WS4).
+	vg.Tracked = p.acceptKw("tracked")
+	// Optional `async` (after `tracked`): also build an async affordance index (WS4).
+	vg.Async = p.acceptKw("async")
 	return vg, nil
 }
 

@@ -362,7 +362,46 @@ type Object struct {
 	// which materialises the final Perms before validation/emission.
 	Use  string
 	Omit []string
-	Pos  Pos
+	// TrackOwner / TrackVisibility opt the object TABLE into the authz changelog
+	// (EID-350) — the object-table analogue of the `tracked` grant-store modifier.
+	// `track owner` emits an AFTER UPDATE trigger on the owner columns
+	// (owner_id/owner_kind) that appends a revoke (old owner) + grant (new owner)
+	// event on a transfer; `track visibility` emits one on the mode column
+	// (access_mode) that appends a RESOURCE-scoped event (empty principal) on a
+	// flip. So a consumer's force-drop is event-driven for owner transfers +
+	// visibility changes, not just the periodic re-check — while a grant/revoke on
+	// the grant store stays covered by the `tracked` store trigger. Both empty ⇒ no
+	// object trigger (byte-identical for an object that doesn't opt in).
+	TrackOwner      bool
+	TrackVisibility bool
+	Pos             Pos
+}
+
+// ownerChangelogCols returns the unified (owner_id, owner_kind) columns the
+// object's owner is stored in — the first owner ViaColumn carrying a
+// discriminator (the unified owner shape the grant edge also uses). ok=false if
+// the object has no such owner relation (so `track owner` can be rejected).
+func (o *Object) ownerChangelogCols() (idCol, kindCol string, ok bool) {
+	for _, r := range o.Relations {
+		if vc, isVC := r.Repr.(ViaColumn); isVC && vc.DiscrimCol != "" {
+			return vc.Column, vc.DiscrimCol, true
+		}
+	}
+	return "", "", false
+}
+
+// modeChangelogCol returns the visibility/mode column (the `mode <col> = "..."`
+// term), or ok=false if the object declares no mode term (so `track visibility`
+// can be rejected).
+func (o *Object) modeChangelogCol() (col string, ok bool) {
+	for _, pm := range o.Perms {
+		for _, t := range pm.Expr {
+			if t.ModeCol != "" {
+				return t.ModeCol, true
+			}
+		}
+	}
+	return "", false
 }
 
 // IsLevelEntity reports whether the object is the entity for a topology level
@@ -463,6 +502,11 @@ type ViaGroup struct {
 	EdgeMember string // edge member column ("member ∈ group")
 	EdgeGroup  string // edge group column
 	Col        string // the object row's column naming the granted group
+	// Materialized opts the relation into a flat (resource_id, principal) index
+	// (auth.<obj>_<rel>_flat), trigger-maintained from the object row ⋈ the closure,
+	// that the accessor (and, once oracle-gated, RLS) reads instead of recursing —
+	// the WS3 grant-dominant-list fast path (EID-344). Cost class Closure.
+	Materialized bool
 }
 
 // ViaObject: `via object <Object>-><verb> on <col>` — a cross-object permission
@@ -501,6 +545,19 @@ type ViaGrant struct {
 	AccessCol    string
 	DiscrimCol   string // "" when the store is not shared (single-kind store)
 	DiscrimVal   string // the constant this relation's rows carry in DiscrimCol
+	// Tracked opts the grant store into the authz changelog (WS4, EID-345): an AFTER
+	// INSERT/DELETE trigger appends a (resource, principal, op) row to auth._authz_changelog
+	// — the ordered (seq = zookie) feed a consumer Watches for grant/revoke events (the
+	// WS5 realtime force-drop signal). Opt-in, so a store without it is byte-identical.
+	Tracked bool
+	// Async (WS4 async-affordance tier, EID-345) additionally builds an eventually-consistent
+	// affordance INDEX for this grant relation (auth.<obj>_<rel>_async), maintained off the
+	// changelog and read ONLY by the affordance Check path — NEVER the floor. The relation
+	// itself stays a normal floor grant term (the floor reads the sync grant definer); `async`
+	// only adds the cache. REQUIRES `tracked` (the index is built off the changelog feed). The
+	// V12 floor-asymmetry validator proves no floor artifact references the async index, so a
+	// stale cache can only mis-render an affordance, never gate a fetch. Opt-in / byte-identical.
+	Async bool
 }
 
 // ArgSrc is one argument of a ViaMemberIn check: either a claim key (`@sub`) or a

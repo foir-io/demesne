@@ -57,6 +57,8 @@ func (c ClosureTrigger) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
@@ -196,8 +198,17 @@ func (g GroupTrigger) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
+  -- Serialize concurrent rebuilds (CONCURRENCY): a full DELETE+INSERT under READ
+  -- COMMITTED can otherwise lose a revocation — a second writer's DELETE cannot see the
+  -- first writer's freshly-inserted (uncommitted) rows, so a revoked membership survives.
+  -- This closure backs the via-group RLS floor (directly via <Closure>_member, and via any
+  -- materialized flat built from it), so a stale survivor is a leak. SHARE ROW EXCLUSIVE
+  -- self-conflicts so writers serialize, while ACCESS SHARE readers are NOT blocked.
+  LOCK TABLE %[2]s IN SHARE ROW EXCLUSIVE MODE;
   DELETE FROM %[2]s;
   INSERT INTO %[2]s (%[3]s, %[4]s)
   WITH RECURSIVE tc AS (
@@ -211,12 +222,14 @@ END;
 $$;`, g.fnName(), g.Closure, g.GroupCol, g.MemberCol, g.EdgeMember, g.EdgeGroup, g.Edge)
 }
 
-// TriggerSQL renders the statement-level binding (recompute once per statement).
+// TriggerSQL renders the statement-level binding (recompute once per statement). TRUNCATE
+// is included so emptying the edge re-derives the closure rather than silently freezing it
+// (a frozen closure that still backs the floor would be a stale over-grant).
 func (g GroupTrigger) TriggerSQL() string {
 	name := g.Closure + "_rebuild"
 	var b strings.Builder
 	fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON %s.%s;\n", name, g.tableSchema(), g.Edge)
-	fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, g.tableSchema(), g.Edge, g.fnName())
+	fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, g.tableSchema(), g.Edge, g.fnName())
 	return b.String()
 }
 
@@ -241,4 +254,262 @@ func (s *Spec) EmitGroupTriggers() []GroupTrigger {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Closure < out[j].Closure })
 	return out
+}
+
+// MaterializedFlat (WS3, EID-344) is a flat (resource_id, principal_kind, principal_id)
+// index for a `via group ... materialized` relation — the object row ⋈ the group
+// closure, trigger-maintained so the accessor (and, once oracle-gated, RLS) reads a
+// sargable point/reverse lookup instead of recursing the closure per row. Maintenance is
+// full-recompute (correct across every mutation path; the incremental / two-level
+// Leopard optimization is a later WS3 step). Nothing reads it until wired, so emitting it
+// is additive (byte-identical for any spec with no `materialized` relation).
+type MaterializedFlat struct {
+	Schema      string // definer schema — the flat table + rebuild fn live here
+	TableSchema string // the object/closure table schema
+	Flat        string // flat table name (<objTable>_<rel>_flat)
+	ObjTable    string
+	ObjPK       string
+	Col         string // the object's group column
+	Closure     string
+	GroupCol    string
+	MemberCol   string
+	Kind        string // principal_kind value (the relation's first type)
+	// ClaimExpr is the owner-plane claim expression (the subject identifier read from the
+	// request GUC, e.g. (current_setting('request.jwt.claims',true)::json ->> 'customer_id')).
+	// It is how the reverse ListResources fast-path (<flat>_resources) reads "who is asking"
+	// — the same claim the floor matches. "" when no owner subject resolves (then there is
+	// no reverse fast-path).
+	ClaimExpr string
+}
+
+func (m MaterializedFlat) schema() string {
+	if m.Schema != "" {
+		return m.Schema
+	}
+	return "auth"
+}
+func (m MaterializedFlat) tableSchema() string {
+	if m.TableSchema != "" {
+		return m.TableSchema
+	}
+	return "public"
+}
+func (m MaterializedFlat) qFlat() string       { return m.schema() + "." + m.Flat }
+func (m MaterializedFlat) fnName() string       { return m.schema() + "." + m.Flat + "_rebuild" }
+func (m MaterializedFlat) reconcileFn() string  { return m.schema() + "." + m.Flat + "_reconcile" }
+
+// TableSQL creates the flat table + forward (resource) and reverse (principal) indexes.
+func (m MaterializedFlat) TableSQL() string {
+	return fmt.Sprintf(
+		"CREATE TABLE IF NOT EXISTS %[1]s (resource_id text NOT NULL, principal_kind text NOT NULL, principal_id text NOT NULL);\n"+
+			"CREATE INDEX IF NOT EXISTS %[2]s_res_idx ON %[1]s (resource_id);\n"+
+			"CREATE INDEX IF NOT EXISTS %[2]s_prin_idx ON %[1]s (principal_id);\n",
+		m.qFlat(), m.Flat)
+}
+
+// FunctionSQL renders the full-recompute rebuild: flat = object row ⋈ closure (resource
+// → transitive group members), tagged with the relation's principal kind.
+func (m MaterializedFlat) FunctionSQL() string {
+	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  -- Serialize concurrent rebuilds (CONCURRENCY): a full DELETE+INSERT under READ
+  -- COMMITTED can otherwise lose a revocation — a second writer's DELETE cannot see the
+  -- first writer's freshly-inserted (uncommitted) rows, so a revoked row survives → the
+  -- RLS floor reads a stale flat (a leak). SHARE ROW EXCLUSIVE self-conflicts so writers
+  -- serialize, while the ACCESS SHARE reader (the <flat>_member SELECT) is NOT blocked.
+  LOCK TABLE %[2]s IN SHARE ROW EXCLUSIVE MODE;
+  DELETE FROM %[2]s;
+  INSERT INTO %[2]s (resource_id, principal_kind, principal_id)
+  SELECT o.%[3]s, '%[4]s', c.%[5]s
+  FROM %[6]s.%[7]s o JOIN %[6]s.%[8]s c ON c.%[9]s = o.%[10]s;
+  RETURN NULL;
+END;
+$$;`, m.fnName(), m.qFlat(), m.ObjPK, m.Kind, m.MemberCol, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col)
+}
+
+// ReconcileSQL renders a defence-in-depth reconciler: auth.<flat>_reconcile() recomputes
+// the canonical object ⋈ closure, compares it to the live flat, RAISEs WARNING with the
+// drift counts (stale = over-grant, missing = under-grant), SELF-HEALS by rewriting the
+// flat to canonical, and returns the total drift. The maintenance triggers do NOT fire
+// under session_replication_role=replica (logical-replication apply, bulk load) — so a
+// silent stale flat (which the RLS floor reads as still-granted) needs a periodic /
+// post-deploy backstop. Takes the same rebuild lock so it serializes with live writers.
+func (m MaterializedFlat) ReconcileSQL() string {
+	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = %[2]s
+AS $$
+DECLARE
+  v_missing integer;
+  v_stale integer;
+BEGIN
+  LOCK TABLE %[3]s IN SHARE ROW EXCLUSIVE MODE;
+  WITH canon AS (
+    SELECT o.%[4]s AS resource_id, '%[5]s'::text AS principal_kind, c.%[6]s AS principal_id
+    FROM %[7]s.%[8]s o JOIN %[7]s.%[9]s c ON c.%[10]s = o.%[11]s
+  )
+  SELECT
+    (SELECT count(*) FROM (SELECT resource_id, principal_kind, principal_id FROM canon
+       EXCEPT SELECT resource_id, principal_kind, principal_id FROM %[3]s) d),
+    (SELECT count(*) FROM (SELECT resource_id, principal_kind, principal_id FROM %[3]s
+       EXCEPT SELECT resource_id, principal_kind, principal_id FROM canon) d)
+  INTO v_missing, v_stale;
+  IF v_missing > 0 OR v_stale > 0 THEN
+    RAISE WARNING 'demesne: flat %[3]s drift — %% missing, %% stale (over-grant); self-healing', v_missing, v_stale;
+    DELETE FROM %[3]s;
+    INSERT INTO %[3]s (resource_id, principal_kind, principal_id)
+    SELECT o.%[4]s, '%[5]s', c.%[6]s
+    FROM %[7]s.%[8]s o JOIN %[7]s.%[9]s c ON c.%[10]s = o.%[11]s;
+  END IF;
+  RETURN v_missing + v_stale;
+END;
+$$;`, m.reconcileFn(), m.schema(), m.qFlat(), m.ObjPK, m.Kind, m.MemberCol, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col)
+}
+
+// MemberDefiner is the SECURITY DEFINER point-lookup the RLS floor calls (WS3 step 2): is
+// p_principal in the flat for p_resource? An O(1) probe on the flat's resource index,
+// replacing the per-row closure walk (`<Closure>_member`). Emitted as part of the kernel
+// definer set (EmitDefiners), so the V11 definer-closure check and the definer oracle own
+// it; the flat stays PRIVATE — only this definer reads it (never granted to the querying
+// role), consistent with every other auth-substrate read (closures, grant stores).
+// flat == walk is gated by the WS3 oracle.
+func (m MaterializedFlat) MemberDefiner() GenFn {
+	return GenFn{
+		Schema:      m.schema(),
+		TableSchema: m.tableSchema(),
+		Name:        m.Flat + "_member",
+		Sig:         "p_resource text, p_principal text",
+		Body:        fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE resource_id = p_resource AND principal_id = p_principal)", m.qFlat()),
+	}
+}
+
+func (m MaterializedFlat) resourcesFn() string { return m.schema() + "." + m.Flat + "_resources" }
+
+// HasReverse reports whether the reverse ListResources fast-path can be emitted — it needs
+// an owner-plane claim to read "who is asking" from the GUC.
+func (m MaterializedFlat) HasReverse() bool { return m.ClaimExpr != "" }
+
+// ResourcesDefiner is the reverse drive-from-flat ListResources fast-path (WS3 perf tail):
+// auth.<flat>_resources() returns the resource ids the calling subject can reach, read
+// from the GUC claim — so a grant-dominant LIST drives from this small set (`id IN (...)`)
+// and the LIMIT pushes down, instead of scanning the whole table under per-row RLS.
+//
+// It is computed TWO-LEVEL (the Leopard normalization): resource→userset is the object's
+// group column, userset→subject is the transitive-membership closure — i.e. the subject's
+// groups (closure WHERE member = claim) joined to the objects filed under them. This reads
+// the AUTHORITATIVE source (closure ⋈ object), not the one-level flat, so the LIST cannot
+// drift from the floor independently, and it bounds write-amplification (no extra
+// resource→subject denormalization beyond the already-maintained closure + the level-1
+// index). The result equals the floor's admit-set (flat == walk, oracle-gated); RLS still
+// runs over the candidates, so scope + the floor remain the enforcement — this is a
+// candidate-narrowing hint, never a second evaluator.
+func (m MaterializedFlat) ResourcesDefiner() GenFn {
+	return GenFn{
+		Schema:      m.schema(),
+		TableSchema: m.tableSchema(),
+		Name:        m.Flat + "_resources",
+		Returns:     "SETOF text",
+		RawBody:     true,
+		Body: fmt.Sprintf("  SELECT o.%[1]s\n  FROM %[2]s.%[3]s o JOIN %[2]s.%[4]s c ON c.%[5]s = o.%[6]s\n  WHERE c.%[7]s = %[8]s;",
+			m.ObjPK, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col, m.MemberCol, m.ClaimExpr),
+	}
+}
+
+// IndexesSQL emits the two level-indexes the two-level reverse needs: level-1 on the
+// object's group column (group → resources) and level-2 on the closure member column
+// (subject → groups). IF NOT EXISTS + named by table/column so flats sharing a closure
+// create each once. The closure's (group) side is the group-closure's own concern.
+func (m MaterializedFlat) IndexesSQL() string {
+	return fmt.Sprintf(
+		"CREATE INDEX IF NOT EXISTS %[1]s_%[2]s_l1_idx ON %[3]s.%[1]s (%[2]s);\n"+
+			"CREATE INDEX IF NOT EXISTS %[4]s_%[5]s_l2_idx ON %[3]s.%[4]s (%[5]s);\n",
+		m.ObjTable, m.Col, m.tableSchema(), m.Closure, m.MemberCol)
+}
+
+// TriggerSQL binds the rebuild to BOTH the object table (its group column / row set) and
+// the closure (membership) — statement-level, so the flat is recomputed once the group
+// closure trigger has settled.
+func (m MaterializedFlat) TriggerSQL() string {
+	var b strings.Builder
+	for _, tbl := range []string{m.ObjTable, m.Closure} {
+		name := m.Flat + "_rebuild_" + tbl
+		fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON %s.%s;\n", name, m.tableSchema(), tbl)
+		// TRUNCATE included so emptying the object/closure re-derives the flat rather than
+		// freezing it (a frozen flat the RLS floor reads would be a stale over-grant).
+		fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, m.tableSchema(), tbl, m.fnName())
+	}
+	return b.String()
+}
+
+// EmitMaterializedFlats returns a MaterializedFlat for every `via group ... materialized`
+// relation, in (object, relation) order.
+func (s *Spec) EmitMaterializedFlats() []MaterializedFlat {
+	var out []MaterializedFlat
+	for _, obj := range s.Objects {
+		claimExpr := ""
+		if len(obj.Scoped) > 0 {
+			if cust := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); cust != nil {
+				claimExpr = s.claim(cust.Identifies)
+			}
+		}
+		for _, r := range obj.Relations {
+			g, ok := r.Repr.(ViaGroup)
+			if !ok || !g.Materialized {
+				continue
+			}
+			kind := ""
+			if len(r.Types) > 0 {
+				kind = r.Types[0]
+			}
+			out = append(out, MaterializedFlat{
+				Schema: s.definerSchema(), TableSchema: s.tableSchema(),
+				Flat:     obj.Table + "_" + r.Name + "_flat",
+				ObjTable: obj.Table, ObjPK: obj.pk(), Col: g.Col,
+				Closure: g.Closure, GroupCol: g.GroupCol, MemberCol: g.MemberCol,
+				Kind: kind, ClaimExpr: claimExpr,
+			})
+		}
+	}
+	return out
+}
+
+// FlatsSQL renders the materialized-flat substrate for every `via group ... materialized`
+// relation, in this order so each statement's references already exist: the flat TABLE +
+// covering indexes, the full-recompute REBUILD function, and the (object + closure)
+// maintenance TRIGGERS. It is emitted BEFORE the definers in the full SQL — the accessor
+// reads the flat and the kernel's <flat>_member definer (emitted by EmitDefiners) reads it
+// too, so the table must exist first. Prefixed with a COST banner. Returns "" when the
+// spec declares no materialized relation — so a non-materialized spec (Foir) generates
+// nothing here and its output is byte-identical.
+func (s *Spec) FlatsSQL() string {
+	flats := s.EmitMaterializedFlats()
+	if len(flats) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("-- ===== Materialized via-group flats (via group ... materialized) =====\n")
+	b.WriteString("-- COST: each flat is object ⋈ group-closure, rebuilt by an AFTER trigger INSIDE\n")
+	b.WriteString("-- the writing transaction (staleness == 0). It trades write-amplification for an\n")
+	b.WriteString("-- O(1) indexed membership probe on read — the RLS floor calls the SECURITY DEFINER\n")
+	b.WriteString("-- <flat>_member(); the flat itself is never granted to the querying role.\n\n")
+	for _, f := range flats {
+		b.WriteString(f.TableSQL())
+		b.WriteString("\n")
+		b.WriteString(f.IndexesSQL())
+		b.WriteString("\n")
+		b.WriteString(f.FunctionSQL())
+		b.WriteString("\n\n")
+		b.WriteString(f.ReconcileSQL())
+		b.WriteString("\n\n")
+		b.WriteString(f.TriggerSQL())
+		b.WriteString("\n")
+	}
+	return b.String()
 }

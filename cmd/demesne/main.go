@@ -213,6 +213,12 @@ func emitPDPReport(s *demesne.Spec) error {
 }
 
 func emitAllSQL(s *demesne.Spec) error {
+	// Materialized flats first: the accessor definers read the flat and the RLS policies
+	// call <flat>_member, so the table + functions must already exist. "" (byte-identical)
+	// for a spec with no `materialized` relation.
+	if f := s.FlatsSQL(); f != "" {
+		fmt.Print(f + "\n")
+	}
 	if err := emitDefinersSQL(s); err != nil {
 		return err
 	}
@@ -226,6 +232,12 @@ func emitAllSQL(s *demesne.Spec) error {
 	}
 	if t := s.TriggersSQL(); t != "" {
 		fmt.Print("\n" + t)
+	}
+	if c := s.ChangelogSQL(); c != "" {
+		fmt.Print("\n" + c)
+	}
+	if a := s.AsyncSQL(); a != "" {
+		fmt.Print("\n" + a)
 	}
 	return nil
 }

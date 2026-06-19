@@ -88,6 +88,8 @@ func TestClosure_ReachabilityLookupAndTrigger(t *testing.T) {
 	for _, frag := range []string{
 		"CREATE OR REPLACE FUNCTION auth.folder_closure_maintain()",
 		"RETURNS trigger",
+		"SECURITY DEFINER", // EID-350: maintenance writes the closure as owner, reads all base rows
+
 		"TG_OP = 'INSERT'",
 		"VALUES (NEW.id, NEW.id)",        // self pair
 		"WHERE c.descendant_id = NEW.parent_id", // inherit parent's ancestors

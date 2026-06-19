@@ -140,7 +140,9 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		return nil, err
 	}
 	s.defEmitGrantRelations(&out, seen)
-	s.defEmitAccessors(&out, seen)
+	if err := s.defEmitAccessors(&out, seen); err != nil {
+		return nil, err
+	}
 	if err := s.defEmitStructuralAccessors(&out, seen); err != nil {
 		return nil, err
 	}
@@ -152,6 +154,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	if err := s.defEmitStoreManage(&out, seen, virtual); err != nil {
 		return nil, err
 	}
+	s.defEmitMaterializedFlatMembers(&out, seen)
 
 	// Stamp the configured definer schema + table schema on every generated function
 	// so CreateSQL qualifies the function and pins its search_path consistently
@@ -368,7 +371,7 @@ func (s *Spec) defEmitGrantRelations(out *[]GenFn, seen map[string]bool) {
 // SAME composed relations the predicate compiles from, so Expand agrees with
 // <table>_select by construction — no second evaluator. SECURITY DEFINER +
 // set-returning; the handler calls it under the caller's claims.
-func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) {
+func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 	for _, obj := range s.Objects {
 		if _, vg := grantRelation(obj); vg == nil {
 			continue
@@ -377,9 +380,191 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) {
 		if seen[name] {
 			continue
 		}
+		// Fail closed (EID-342 / WS1): the accessor enumerator below covers only
+		// owner / grant / role over a UNION of branches. If this object's SELECT
+		// permission uses a relation it cannot reverse, or intersection/exclusion it
+		// cannot represent, emitting it anyway would silently UNDER-report who can
+		// access a row — a fail-OPEN "who can access X". Refuse to emit it (a build
+		// error naming the gap) until the WS1 reverse builders cover that shape,
+		// rather than ship a wrong answer.
+		if ok, reason := s.accessorCoverage(obj); !ok {
+			return fmt.Errorf("object %q: cannot soundly enumerate accessors (auth.%s would under-report) — %s", obj.Name, name, reason)
+		}
 		seen[name] = true
 		*out = append(*out, s.pureAccessorDefiner(obj))
 	}
+	return nil
+}
+
+// accessorReprCovered reports whether the accessor enumerator (pureAccessorDefiner)
+// has a reverse branch for a relation's Repr today: owner (ViaColumn), grant
+// (ViaGrant), and the role plane (ViaRole). The transitive / cross-object reprs
+// (edge, closure, group, object, composition, memberin) have NO accessor branch yet,
+// so an enumerator built over a SELECT permission that uses one silently under-reports.
+// WS1's reverse builders extend this set; until then those shapes fail closed.
+func accessorReprCovered(r Repr) bool {
+	switch r.(type) {
+	case ViaColumn, ViaGrant, ViaRole, ViaGroup, ViaClosure:
+		return true
+	default:
+		return false
+	}
+}
+
+// accessorTreeOp returns the first intersection/exclusion operator in a permission
+// tree ("and" or "and not"), or "" for a union-only tree (or / bare leaf). The
+// accessor enumerator only UNIONs its branches, so it cannot represent INTERSECT
+// (and) or EXCEPT (and not) — a tree using either cannot be reverse-enumerated soundly
+// yet.
+func accessorTreeOp(n *PermNode) string {
+	if n == nil {
+		return ""
+	}
+	switch n.Op {
+	case "not":
+		return "and not"
+	case "and":
+		return "and"
+	}
+	for _, k := range n.Kids {
+		if op := accessorTreeOp(k); op != "" {
+			return op
+		}
+	}
+	return ""
+}
+
+// accessorCoverage reports whether the accessor enumerator can SOUNDLY enumerate an
+// object's SELECT permission — i.e. its reverse (who-can-access) answer is complete.
+// It is unsound, and so refused, when the SELECT permission either (a) uses
+// intersection or exclusion (the enumerator only unions) or (b) references a relation
+// whose Repr has no accessor branch yet. Returns (false, reason) in that case.
+// Non-relation leaves (builtins, visibility modes folded as a category flag, grant /
+// kind terms) are not relation reverses and do not trip the gate.
+func (s *Spec) accessorCoverage(obj *Object) (bool, string) {
+	return s.accessorCoverageSeen(obj, map[string]bool{})
+}
+
+// accessorCoverageSeen is accessorCoverage with a visited set for the ViaObject
+// recursion (acyclicity is validated, so a revisit imposes no new requirement).
+func (s *Spec) accessorCoverageSeen(obj *Object, seen map[string]bool) (bool, string) {
+	if seen[obj.Name] {
+		return true, ""
+	}
+	seen[obj.Name] = true
+	rels := map[string]*Relation{}
+	for _, r := range obj.Relations {
+		rels[r.Name] = r
+	}
+	var sel *Perm
+	for _, pm := range obj.Perms {
+		if pm.Maps == "select" {
+			sel = pm
+			break
+		}
+	}
+	if sel == nil {
+		return true, ""
+	}
+	if accessorTreeOp(sel.Tree) != "" {
+		// Intersection/exclusion: the tree composer handles it iff every leaf is a
+		// composable content relation (owner/grant/group/closure/object). A leaf it
+		// cannot compose (a builtin / the @app_scope role plane) fails closed.
+		if _, ok := s.accessorTreeSQL(obj, sel.Tree, rels); !ok {
+			return false, "its SELECT permission intersects/excludes over a term the accessor enumerator cannot compose (only owner/grant/group/closure/object leaves)"
+		}
+		return true, ""
+	}
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		if vo, ok := r.Repr.(ViaObject); ok {
+			if cov, reason := s.viaObjectCovered(vo, seen); !cov {
+				return false, fmt.Sprintf("relation %q borrows %s->%s, not soundly enumerable (%s)", t.Ident, vo.Object, vo.Verb, reason)
+			}
+			continue
+		}
+		if !accessorReprCovered(r.Repr) {
+			return false, fmt.Sprintf("relation %q (%T) has no accessor branch yet (reverse builder is WS1)", t.Ident, r.Repr)
+		}
+	}
+	return true, ""
+}
+
+// viaObjectCovered reports whether a cross-object borrow can be reverse-enumerated. It
+// can only when the borrowed verb is the other object's READ verb (its accessor
+// enumerator answers only the SELECT / visibility decision), the other object actually
+// HAS an accessor enumerator (a content object with a grant store), and the other
+// object's own coverage holds (recursively; acyclicity is validated). Otherwise fail
+// closed — a non-read borrow or a borrow from an unenumerable object cannot be answered.
+func (s *Spec) viaObjectCovered(vo ViaObject, seen map[string]bool) (bool, string) {
+	other := s.objectByName(vo.Object)
+	if other == nil {
+		return false, fmt.Sprintf("borrowed object %q not found", vo.Object)
+	}
+	readVerb := ""
+	for _, pm := range other.Perms {
+		if pm.Maps == "select" {
+			readVerb = pm.Verb
+			break
+		}
+	}
+	if readVerb == "" || vo.Verb != readVerb {
+		return false, fmt.Sprintf("only a read borrow is reversible (%q is not %q's select verb)", vo.Verb, vo.Object)
+	}
+	if _, vg := grantRelation(other); vg == nil {
+		return false, fmt.Sprintf("borrowed object %q has no accessor enumerator", vo.Object)
+	}
+	return s.accessorCoverageSeen(other, seen)
+}
+
+// structuralAccessorCoverage reports whether the STRUCTURAL accessor enumerator
+// (level-entity / control plane) can soundly enumerate an object's SELECT permission.
+// structuralTermEnum enumerates role-walks, builtins (which add no principals), and
+// via-role / via-memberin relations; ANY other relation Repr it silently skips, and it
+// walks the flat term list so intersection/exclusion is ignored. So an enumerator that
+// emits some branches while a term goes unenumerated would under-report — fail closed.
+func structuralAccessorCoverage(obj *Object) (bool, string) {
+	rels := map[string]*Relation{}
+	for _, r := range obj.Relations {
+		rels[r.Name] = r
+	}
+	var sel *Perm
+	for _, pm := range obj.Perms {
+		if pm.Maps == "select" {
+			sel = pm
+			break
+		}
+	}
+	if sel == nil {
+		return true, ""
+	}
+	if op := accessorTreeOp(sel.Tree); op != "" {
+		return false, fmt.Sprintf("its SELECT permission uses %q, which the union enumerator cannot represent", op)
+	}
+	for _, t := range sel.Expr {
+		// builtins add no principals; a role-walk (WalkVerb) is enumerated regardless of
+		// the relation's Repr; a non-relation term carries no accessor.
+		if t == nil || t.Builtin != "" || t.WalkVerb != "" || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		switch r.Repr.(type) {
+		case ViaRole, ViaMemberIn:
+			// enumerable by the structural path
+		default:
+			return false, fmt.Sprintf("relation %q (%T) is not enumerable by the structural accessor path (only via-role / via-memberin)", t.Ident, r.Repr)
+		}
+	}
+	return true, ""
 }
 
 // defEmitStructuralAccessors emits the structural accessor enumerators (Expand over
@@ -405,6 +590,11 @@ func (s *Spec) defEmitStructuralAccessors(out *[]GenFn, seen map[string]bool) er
 			return err
 		}
 		if ok {
+			// Fail closed (EID-342 / WS1): the enumerator emits, but if a SELECT term
+			// went unenumerated it would under-report who can administer the node.
+			if cov, reason := structuralAccessorCoverage(obj); !cov {
+				return fmt.Errorf("object %q: cannot soundly enumerate structural accessors (auth.%s would under-report) — %s", obj.Name, name, reason)
+			}
 			seen[name] = true
 			*out = append(*out, d)
 		}
@@ -457,6 +647,28 @@ func (s *Spec) defEmitGroup(out *[]GenFn, seen map[string]bool) {
 				Sig:  "p_group text, p_member text",
 				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_group AND %s = p_member)", g.Closure, g.GroupCol, g.MemberCol),
 			})
+		}
+	}
+}
+
+// defEmitMaterializedFlatMembers emits the SECURITY DEFINER point-lookup for every
+// `via group ... materialized` relation — auth.<obj>_<rel>_flat_member(resource, principal)
+// — the O(1) probe the RLS floor calls instead of walking the closure (WS3 step 2). One
+// per materialized relation (each flat is per object-relation, so no dedup needed). Emits
+// nothing for a spec with no materialized relation, keeping non-materialized output
+// (Foir) byte-identical.
+func (s *Spec) defEmitMaterializedFlatMembers(out *[]GenFn, seen map[string]bool) {
+	for _, f := range s.EmitMaterializedFlats() {
+		name := f.Flat + "_member"
+		if !seen[name] {
+			seen[name] = true
+			*out = append(*out, f.MemberDefiner())
+		}
+		// The reverse ListResources fast-path definer (drive-from-flat), when the object
+		// has an owner-plane claim to read the asking subject from.
+		if rname := f.Flat + "_resources"; f.HasReverse() && !seen[rname] {
+			seen[rname] = true
+			*out = append(*out, f.ResourcesDefiner())
 		}
 	}
 }
@@ -788,6 +1000,15 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 		}
 	}
 
+	// and/and-not: compose the accessor set with set algebra (the coverage gate has
+	// already verified every leaf is composable). A union-only tree falls through to the
+	// flat bucketed path below, which stays byte-identical.
+	if sel != nil && accessorTreeOp(sel.Tree) != "" {
+		if composed, ok := s.accessorTreeSQL(obj, sel.Tree, rels); ok {
+			return accessorGenFn(obj.Table, []string{composed})
+		}
+	}
+
 	var branches []string
 	var adminExcl string
 	if sel != nil {
@@ -808,7 +1029,302 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 		branches = append(branches, rb)
 	}
 
+	// GROUP — nested-group membership relations: the transitive members of the group
+	// named by the row's column, a reverse read of the SAME closure the forward term
+	// checks (WS1 reverse builder).
+	branches = append(branches, s.defGroupAccessorBranches(obj, sel, rels)...)
+
+	// CLOSURE — hierarchy-reachability relations: the ANCESTORS of the row's node, a
+	// reverse read of the SAME (ancestor, descendant) closure the forward
+	// `<Closure>_reachable(claim, row.<Col>)` term tests (WS1 reverse builder).
+	branches = append(branches, defClosureAccessorBranches(obj, sel, rels)...)
+
+	// OBJECT — cross-object borrow relations: the accessors of the borrowed object's
+	// READ permission for the related row, recursed via that object's own accessor
+	// enumerator (WS1 reverse builder; the coverage gate guarantees the borrow is a
+	// read borrow from an enumerable, covered object).
+	branches = append(branches, s.defObjectAccessorBranches(obj, sel, rels)...)
+
 	return accessorGenFn(obj.Table, branches)
+}
+
+// defGroupAccessorBranches renders the GROUP enumeration branches — one per ViaGroup
+// relation in the SELECT permission. Each reverse-reads the transitive-closure table
+// the forward `<Closure>_member(row.<Col>, claim)` term tests: the members of the group
+// the row names. Because it reads the same committed closure rows the forward predicate
+// does, the enumeration agrees with the predicate by construction.
+func (s *Spec) defGroupAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+	if sel == nil {
+		return nil
+	}
+	var branches []string
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		g, ok := r.Repr.(ViaGroup)
+		if !ok {
+			continue
+		}
+		kind := ""
+		if len(r.Types) > 0 {
+			kind = r.Types[0]
+		}
+		branches = append(branches, groupAccessorBranch(obj.Table, obj.pk(), kind, g, s.groupFlatName(obj, r, g)))
+	}
+	return branches
+}
+
+// groupAccessorBranch renders one GROUP enumeration branch: the transitive members of
+// the group named by the row's <Col>, as 'read' accessors of the relation's kind.
+//
+// When the relation is materialized (flat != "" — the qualified auth.<obj>_<rel>_flat
+// table), the branch reverse-reads the trigger-maintained flat (resource_id →
+// transitive members) as a sargable point lookup on the resource index, instead of
+// joining the closure per call. The flat is `object row ⋈ closure` (the WS3
+// maintenance oracle proves flat == walk after every mutation), so the rows are the
+// SAME committed bytes the walk produces — no second evaluator, just a faster read.
+// Otherwise it joins the closure (group, member) to the object row on the row's group
+// column — exactly the membership the forward `<Closure>_member` definer tests,
+// reversed.
+func groupAccessorBranch(table, pk, kind string, g ViaGroup, flat string) string {
+	if g.Materialized && flat != "" {
+		return fmt.Sprintf(
+			"SELECT 'group'::text, '%s'::text, f.principal_id, 'read'::text\n    FROM %s f\n    WHERE f.resource_id = p_id",
+			kind, flat)
+	}
+	return fmt.Sprintf(
+		"SELECT 'group'::text, '%s'::text, c.%s, 'read'::text\n    FROM %s t\n    JOIN %s c ON c.%s = t.%s\n    WHERE t.%s = p_id",
+		kind, g.MemberCol, table, g.Closure, g.GroupCol, g.Col, pk)
+}
+
+// groupFlatName returns the qualified materialized-flat table for a via-group relation
+// (auth.<obj>_<rel>_flat), or "" when the relation is not materialized — so the
+// accessor (and, post-flip, RLS) walk the closure. It MUST agree with the name
+// EmitMaterializedFlats emits (qFlat = definerSchema . <objTable>_<relName>_flat).
+func (s *Spec) groupFlatName(obj *Object, r *Relation, g ViaGroup) string {
+	if !g.Materialized {
+		return ""
+	}
+	return fmt.Sprintf("%s.%s_%s_flat", s.definerSchema(), obj.Table, r.Name)
+}
+
+// defClosureAccessorBranches renders the CLOSURE enumeration branches — one per
+// ViaClosure relation in the SELECT permission. Each reverse-reads the
+// (ancestor, descendant) closure the forward `<Closure>_reachable(claim, row.<Col>)`
+// term tests: the ancestors of the node the row names (i.e. every claim value from
+// which the row's node is reachable). Reading the same committed closure rows the
+// forward predicate does, the enumeration agrees with the predicate by construction.
+func defClosureAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+	if sel == nil {
+		return nil
+	}
+	var branches []string
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		c, ok := r.Repr.(ViaClosure)
+		if !ok {
+			continue
+		}
+		kind := ""
+		if len(r.Types) > 0 {
+			kind = r.Types[0]
+		}
+		branches = append(branches, closureAccessorBranch(obj.Table, obj.pk(), kind, c))
+	}
+	return branches
+}
+
+// closureAccessorBranch renders one CLOSURE enumeration branch: the ancestors of the
+// node the row names (row.<Col>), as 'read' accessors of the relation's kind. Joins the
+// closure (ancestor, descendant) to the object row on the row's node column — exactly
+// the reachability the forward `<Closure>_reachable` definer tests, reversed.
+func closureAccessorBranch(table, pk, kind string, c ViaClosure) string {
+	return fmt.Sprintf(
+		"SELECT 'closure'::text, '%s'::text, x.%s, 'read'::text\n    FROM %s t\n    JOIN %s x ON x.%s = t.%s\n    WHERE t.%s = p_id",
+		kind, c.AncestorCol, table, c.Closure, c.DescendantCol, c.Col, pk)
+}
+
+// defObjectAccessorBranches renders the OBJECT (cross-object borrow) enumeration
+// branches — one per ViaObject relation in the SELECT permission. Each LATERAL-calls
+// the borrowed object's accessor enumerator on the related row this object's <Col>
+// names, returning those accessors. Because it delegates to the same enumerator the
+// borrowed object's own read uses (and the gate guarantees a read borrow from a
+// covered object), it agrees with the forward `<Object>_can_<verb>` definer.
+func (s *Spec) defObjectAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+	if sel == nil {
+		return nil
+	}
+	var branches []string
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		vo, ok := r.Repr.(ViaObject)
+		if !ok {
+			continue
+		}
+		other := s.objectByName(vo.Object)
+		if other == nil {
+			continue // the coverage gate guarantees this resolved; defensive
+		}
+		branches = append(branches, objectAccessorBranch(obj.Table, obj.pk(), vo, other.Table, s.definerSchema()))
+	}
+	return branches
+}
+
+// objectAccessorBranch renders one OBJECT enumeration branch: a LATERAL call to the
+// borrowed object's accessor enumerator on the related row named by this object's
+// <Col>, passing its rows through unchanged (source / kind / principal / access).
+func objectAccessorBranch(table, pk string, vo ViaObject, otherTable, schema string) string {
+	return fmt.Sprintf(
+		"SELECT a.source, a.principal_kind, a.principal_id, a.access\n    FROM %s t\n    JOIN LATERAL %s.%s_accessors(t.%s) a ON true\n    WHERE t.%s = p_id",
+		table, schema, otherTable, vo.Col, pk)
+}
+
+// accessorBranchForTerm returns one tree LEAF's accessor branch — the per-term form of
+// the bucketed builders, for the tree composer (and/and-not). It covers the composable
+// CONTENT relations (owner / grant / group / closure / object); a builtin, the
+// @app_scope role plane, or an unknown leaf returns ok=false so the composer fails
+// closed (those are not clean per-principal set terms to intersect/exclude).
+func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Relation) (string, bool) {
+	if t == nil || t.Ident == "" {
+		return "", false
+	}
+	// A grant-selector leaf (`grantee:read`) names a ViaGrant relation with an access
+	// class; resolve it to the relation name (the grant branch lists all acl rows for
+	// the resource, tagged with their access — matching the flat path).
+	name := t.Ident
+	if rn, _, ok := grantSelector(t.Ident, rels); ok {
+		name = rn
+	}
+	r := rels[name]
+	if r == nil {
+		return "", false
+	}
+	kind := ""
+	if len(r.Types) > 0 {
+		kind = r.Types[0]
+	}
+	switch repr := r.Repr.(type) {
+	case ViaColumn:
+		return ownerAccessorBranch(obj.Table, obj.pk(), kind, repr, false), true
+	case ViaGrant:
+		return grantAccessorBranch(&repr), true
+	case ViaGroup:
+		return groupAccessorBranch(obj.Table, obj.pk(), kind, repr, s.groupFlatName(obj, r, repr)), true
+	case ViaClosure:
+		return closureAccessorBranch(obj.Table, obj.pk(), kind, repr), true
+	case ViaObject:
+		if ok, _ := s.viaObjectCovered(repr, map[string]bool{}); !ok {
+			return "", false
+		}
+		other := s.objectByName(repr.Object)
+		if other == nil {
+			return "", false
+		}
+		return objectAccessorBranch(obj.Table, obj.pk(), repr, other.Table, s.definerSchema()), true
+	}
+	return "", false
+}
+
+// accessorTreeSQL composes a permission tree's accessor enumeration with set algebra:
+// or → UNION ALL; and → the first positive branch FILTERED to also-appear-in every
+// other positive ((kind,id) IN …) and NOT-appear-in every negative ((kind,id) NOT IN …).
+// Set membership is on PRINCIPAL IDENTITY (kind, id), never the whole row — `owner` and
+// `grantee` carry different source/access for the same principal, so a full-row
+// INTERSECT/EXCEPT would be wrong — and the composed result keeps the base positive's
+// provenance. Returns ok=false (→ fail closed) when a leaf is not a composable content
+// relation, or a `not` has no positive base to bound it. Only invoked for trees that
+// actually use and/and-not; a union-only tree keeps the byte-identical flat path.
+func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, bool) {
+	if n == nil {
+		return "", false
+	}
+	switch n.Op {
+	case "leaf":
+		return s.accessorBranchForTerm(obj, n.Term, rels)
+	case "or":
+		var parts []string
+		for _, k := range n.Kids {
+			sql, ok := s.accessorTreeSQL(obj, k, rels)
+			if !ok {
+				return "", false
+			}
+			parts = append(parts, "("+sql+")")
+		}
+		if len(parts) == 0 {
+			return "", false
+		}
+		return strings.Join(parts, "\n  UNION ALL\n  "), true
+	case "and":
+		return s.accessorAndSQL(obj, n, rels)
+	}
+	return "", false // a bare `not` (no positive base) is not enumerable
+}
+
+// accessorAndSQL composes the `and` / `and not` accessor enumeration: the first positive
+// branch FILTERED to (kind,id) IN every other positive and NOT IN every negative. Split out
+// of accessorTreeSQL purely to keep each function's cognitive complexity in check — the logic
+// is an exact move of the former and-case (byte-identical SQL).
+func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, bool) {
+	var positives, negatives []*PermNode
+	for _, k := range n.Kids {
+		if k.Op == "not" {
+			if len(k.Kids) != 1 {
+				return "", false
+			}
+			negatives = append(negatives, k.Kids[0])
+		} else {
+			positives = append(positives, k)
+		}
+	}
+	if len(positives) == 0 {
+		return "", false // a bare exclusion has no bounded positive base
+	}
+	base, ok := s.accessorTreeSQL(obj, positives[0], rels)
+	if !ok {
+		return "", false
+	}
+	idIn := func(sub string) string {
+		return fmt.Sprintf("(a.principal_kind, a.principal_id) IN (SELECT b.principal_kind, b.principal_id FROM (%s) b(source, principal_kind, principal_id, access))", sub)
+	}
+	idNotIn := func(sub string) string {
+		return fmt.Sprintf("(a.principal_kind, a.principal_id) NOT IN (SELECT b.principal_kind, b.principal_id FROM (%s) b(source, principal_kind, principal_id, access))", sub)
+	}
+	var filters []string
+	for _, p := range positives[1:] {
+		sub, ok := s.accessorTreeSQL(obj, p, rels)
+		if !ok {
+			return "", false
+		}
+		filters = append(filters, idIn(sub))
+	}
+	for _, ng := range negatives {
+		sub, ok := s.accessorTreeSQL(obj, ng, rels)
+		if !ok {
+			return "", false
+		}
+		filters = append(filters, idNotIn(sub))
+	}
+	if len(filters) == 0 {
+		return base, true
+	}
+	return fmt.Sprintf("SELECT a.* FROM (%s) a(source, principal_kind, principal_id, access)\n    WHERE %s", base, strings.Join(filters, "\n      AND ")), true
 }
 
 // defOwnerAccessorBranches renders the OWNER enumeration branches — the owner

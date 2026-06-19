@@ -81,6 +81,8 @@ func TestGroup_NestedMembership(t *testing.T) {
 	fn := gts[0].FunctionSQL()
 	for _, frag := range []string{
 		"CREATE OR REPLACE FUNCTION auth.group_closure_rebuild()",
+		"SECURITY DEFINER", // EID-350: full rebuild must read all edges + write as owner
+
 		"DELETE FROM group_closure;",
 		"WITH RECURSIVE tc AS (",
 		"SELECT group_id AS grp, member_id AS mem FROM group_members",        // base
@@ -90,8 +92,8 @@ func TestGroup_NestedMembership(t *testing.T) {
 			t.Errorf("rebuild fn missing %q:\n%s", frag, fn)
 		}
 	}
-	if !strings.Contains(gts[0].TriggerSQL(), "AFTER INSERT OR UPDATE OR DELETE ON public.group_members FOR EACH STATEMENT") {
-		t.Errorf("trigger not statement-level on the edge:\n%s", gts[0].TriggerSQL())
+	if !strings.Contains(gts[0].TriggerSQL(), "AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON public.group_members FOR EACH STATEMENT") {
+		t.Errorf("trigger not statement-level (with TRUNCATE) on the edge:\n%s", gts[0].TriggerSQL())
 	}
 	if !strings.Contains(s.TriggersSQL(), "via group") {
 		t.Error("TriggersSQL COST banner does not mention via group")
