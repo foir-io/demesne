@@ -85,6 +85,6 @@ export function claimsSetSQL(claims: Claims, local: boolean): string {
  * Run in order inside one tx; the SECOND statement binds the mintClaims result to $1.
  * Mirrors Go `SessionSetupSQL`.
  */
-export function sessionSetupSQL(claims: Claims, local: boolean): string[] {
+export function sessionSetupSQL(claims: Claims, local: boolean): [string, string] {
   return [setRoleSQL(claims, local), claimsSetSQL(claims, local)];
 }

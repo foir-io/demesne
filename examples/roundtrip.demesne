@@ -1,0 +1,36 @@
+// Demesne TypeScript worked example (EID-338). A deliberately non-Foir 2-level
+// tenancy with an owner-shared object, small enough to stand up a real Postgres,
+// apply the emitted RLS, and round-trip the @demesne/runtime builders against it.
+//
+//   - tenancy: org > workspace  (claim keys `org` / `ws`, NOT `<level>_id`)
+//   - a `note` object owned by a member, scoped to its workspace
+//   - read visibility = the owner, or anyone the note is shared with (a grant store)
+//   - a per-record visibility mode (`open` opens public read within the workspace)
+//
+// The round-trip (ts/packages/example-app) proves: claims minting + session setup +
+// the RLS-filtered SELECT return EXACTLY the rows the subject may see, and that
+// checkSQL / listResourcesSQL / checkManySQL agree with the live RLS predicate.
+
+topology {
+  level org       col org_ref  claim org
+  level workspace parent org col ws_ref claim ws
+}
+
+vocabulary app { permission self:read }
+
+subject member {
+  anchor workspace
+  reach  self
+  identifies member_ref
+  roles  none
+  binds  owner
+}
+
+object note {
+  table  notes
+  pk     note_pk
+  scoped org > workspace
+  relation owner:   member via owner_ref
+  relation grantee: member via grant note_acl(note_ref, grantee_kind, grantee_ref, perm)
+  permission view = owner + mode visibility = "open" + grantee:read @rls maps select
+}

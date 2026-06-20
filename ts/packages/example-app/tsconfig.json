@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@demesne/runtime": ["../runtime/src/index.ts"]
+    }
+  },
+  "include": ["src", "test", "generated"]
+}
