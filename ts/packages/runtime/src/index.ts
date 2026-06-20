@@ -9,4 +9,8 @@
 
 export * from "./goCompat.js";
 export * from "./decision.js";
+export * from "./pdp.js";
+export * from "./vocabulary.js";
+export * from "./holds.js";
+export * from "./delegation.js";
 export type * from "./types.js";
