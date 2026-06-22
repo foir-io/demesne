@@ -319,6 +319,9 @@ they're listed in a banner; check those rows via a related object or your own pr
 run your own filtered read, then resolve. `Claims.Extra` carries deployment claims the spec's
 contract doesn't model. Only `select`→read and `update`→edit verbs get a row check; `@pdp`
 verbs decide on held permissions (`Can<Verb>(held)`); insert/delete have no pre-flight check.
+With more than one rolestore the holds surface is suffixed per rolestore (`HoldsStaff`,
+`HoldsOps`, …); a `@pdp` verb whose permission no rolestore vocabulary covers is flagged in a
+generated banner (nothing can produce its `held` — resolve it yourself or add a rolestore).
 
 ---
 
