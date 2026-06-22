@@ -100,6 +100,27 @@ func TestCLI_EmitTS(t *testing.T) {
 	}
 }
 
+func TestCLI_EmitProfileSupabase(t *testing.T) {
+	spec := writeSpec(t)
+	out := captureStdout(t, func() {
+		if err := cmdEmit([]string{spec, "--profile", "supabase"}); err != nil {
+			t.Fatalf("emit --profile supabase: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"create or replace function public.demesne_access_token_hook(event jsonb)",
+		"grant execute on function public.demesne_access_token_hook to supabase_auth_admin;",
+		"if meta ? 'customer_id'",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("supabase profile output missing %q:\n%s", want, out)
+		}
+	}
+	if err := cmdEmit([]string{spec, "--profile", "firebase"}); err == nil {
+		t.Error("an unknown --profile should error")
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
