@@ -283,6 +283,45 @@ policy in app code):
 
 ---
 
+## The typed app framework (`emit … framework`)
+
+Above the runtime glue, Demesne generates the **typed Go an app is built on** — a `Claims`
+struct, the session envelope, per-object `Can<Verb>(ctx, q, id)` methods, scoped query
+builders (`ListResources` / `CheckMany`), a per-rolestore holds-resolver, a reusable
+`Check(ctx, q, object, verb, id)`, and an HTTP `CheckHandler`. The generated package imports
+the engine and references `demesne.Querier` directly, so the engine owns the composition
+rules and the typed surface is a thin wrapper. Everything runs under the caller's claims —
+the database decides (equal by delegation).
+
+**Generate it library-side — that's the integration point.** Call `Spec.EmitFramework(pkg)`
+from your own generator behind a `//go:generate` directive; don't depend on the CLI binary.
+The `cmd/demesne` CLI is a separate nested module with a local `replace`, so
+`go run …/cmd/demesne@v0.59.0` won't resolve for a consumer — but the engine API is the right
+seam anyway:
+
+```go
+//go:generate go run ./internal/gen
+// internal/gen/main.go:
+src, _ := spec.EmitFramework("authz")   // gofmt'd, deterministic
+os.WriteFile("internal/authz/authz.go", []byte(src), 0o644)
+```
+
+**Wiring a connection.** Adapt your driver to `demesne.Querier`: `demesne.FromSQL(db)` for
+`database/sql`, or `github.com/eidestudio/demesne/pgx`.`FromPgx(pool)` for pgx (a separate
+module so the engine stays stdlib-pure). Run the generated `Can<Verb>` inside a transaction
+that has run `SessionSetupSQL` + the `Claims.Mint()` result.
+
+**A few sharp edges, by design.** Objects with a **composite primary key** (`pk (a, b, …)`)
+have no single-column row identity, so they get **no** `Can`/`ListResources`/`CheckMany` —
+they're listed in a banner; check those rows via a related object or your own predicate.
+`Holds` bakes the *generic* active-assignment read; when you need adopter admission filters
+(disabled roles, scoped grants), use the `AssignmentsSQL` + `ResolveHeld` **seam** instead —
+run your own filtered read, then resolve. `Claims.Extra` carries deployment claims the spec's
+contract doesn't model. Only `select`→read and `update`→edit verbs get a row check; `@pdp`
+verbs decide on held permissions (`Can<Verb>(held)`); insert/delete have no pre-flight check.
+
+---
+
 ## What it is not
 
 Not arbitrary general ReBAC, and not a Zanzibar/Permify-style Check service. The

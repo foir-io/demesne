@@ -18,21 +18,70 @@ func TestEmitFramework_Shape(t *testing.T) {
 		"package authz",
 		`demesne "github.com/eidestudio/demesne"`,
 		"type Decision = demesne.Decision",
-		"type Querier interface {",
-		"func FromSQL(db sqlDB) Querier",
-		"type Claims struct {",
 		"func (c Claims) Mint() (string, error)",
+		"demesne.MintClaimsValuesWithExtra(claimsContract, c.values(), c.Extra)",
 		"func SessionSetupSQL(local bool) []string",
-		"func (docAccess) CanView(ctx context.Context, q Querier, id string) (Decision, error)",
-		"func (docAccess) ListResources(ctx context.Context, q Querier, after *string, limit int) ([]string, error)",
-		"func (docAccess) CheckMany(ctx context.Context, q Querier, ids []string) ([]string, error)",
-		"func Holds(ctx context.Context, q Querier, principalID string, scope []string) (demesne.EffectivePerms, error)",
-		"func CheckHandler(q Querier) http.HandlerFunc",
+		"func (docAccess) CanView(ctx context.Context, q demesne.Querier, id string) (Decision, error)",
+		"func (docAccess) ListResources(ctx context.Context, q demesne.Querier, after *string, limit int) ([]string, error)",
+		"func (docAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []string) ([]string, error)",
+		"const AssignmentsSQL = ",
+		"func ResolveHeld(assignments []demesne.RoleAssignment, scope []string) (demesne.EffectivePerms, error)",
+		"func Holds(ctx context.Context, q demesne.Querier, principalID string, scope []string) (demesne.EffectivePerms, error)",
+		"func Check(ctx context.Context, q demesne.Querier, object, verb, id string) (Decision, error)",
+		"func CheckHandler(q demesne.Querier) http.HandlerFunc",
 		"demesne.ComposeCan(true, ok, demesne.NotGoverned)",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("generated framework missing %q", want)
 		}
+	}
+}
+
+// A composite-PK object has no single-column row identity, so the framework skips its
+// Can/list surface and banners it; point-checkable siblings are unaffected (EID-371 §4.1).
+// EmitAppSurface omits it and PointCheckSQL errors for it (the fix at the source).
+func TestEmitFramework_CompositePKSkip(t *testing.T) {
+	const spec = `
+topology { level tenant }
+vocabulary v { permission a:read }
+subject u { anchor tenant reach self identifies sub roles none }
+object acl { table resource_acl pk (resource_id, principal_id, access) scoped tenant relation o: u via principal_id permission view = o @rls maps select }
+object note { table notes scoped tenant relation o: u via owner_id permission view = o @rls maps select }
+`
+	s, err := Parse(spec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	src, err := s.EmitFramework("authz")
+	if err != nil {
+		t.Fatalf("EmitFramework: %v", err)
+	}
+	if strings.Contains(src, "aclAccess") || strings.Contains(src, `"acl.view"`) {
+		t.Errorf("composite-PK object 'acl' should have NO Can surface:\n%s", src)
+	}
+	for _, want := range []string{
+		"composite primary key",
+		"acl (table resource_acl, pk resource_id, principal_id, access)",
+		"func (noteAccess) CanView(", // the point-checkable sibling IS emitted
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("generated framework missing %q", want)
+		}
+	}
+	surf, err := s.EmitAppSurface()
+	if err != nil {
+		t.Fatalf("EmitAppSurface: %v", err)
+	}
+	for _, o := range surf.Objects {
+		if o.Object == "acl" {
+			t.Error("EmitAppSurface should omit the composite-PK object")
+		}
+	}
+	if _, err := s.PointCheckSQL("acl"); err == nil {
+		t.Error("PointCheckSQL should error for a composite-PK object")
 	}
 }
 
