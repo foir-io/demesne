@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// The generic permission-template primitive (the app-defined replacement for the
-// removed settings/platform sugar). An object applies a template with `use`, may
-// `omit` verbs, and may override a verb with its own permission line. A template
-// has NO effect on emission — it is pure parse-time sugar resolved into the using
-// object's Perms — so a `use contained` object emits exactly the containment
-// policies the old `settings <table>` sugar produced.
 const templateSpec = `
 topology {
   level platform virtual
@@ -68,13 +62,11 @@ func TestTemplate_UseExpandsOverrideOmit(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 
-	// Expansion happens at parse time: the using objects carry real Perms.
 	configs := s.objectByName("configs")
 	if configs == nil || len(configs.Perms) != 4 {
 		t.Fatalf("configs should inherit the template's 4 perms, got %d", len(configs.Perms))
 	}
-	// docs: template's view OVERRIDDEN by the object's own line, delete OMITTED →
-	// view, create, edit (3 perms, no delete).
+
 	docs := s.objectByName("docs")
 	gotVerbs := map[string]bool{}
 	for _, pm := range docs.Perms {
@@ -98,9 +90,6 @@ func TestTemplate_UseExpandsOverrideOmit(t *testing.T) {
 		pol[p.Name] = p
 	}
 
-	// (1) A `use contained` object emits all four containment policies — the same
-	//     shape the removed `settings <table>` sugar produced: scoped containment
-	//     plus the operator impersonation grant, no owner axis.
 	for _, op := range []string{"select", "insert", "update", "delete"} {
 		p, ok := pol["configs_"+op]
 		if !ok {
@@ -121,19 +110,15 @@ func TestTemplate_UseExpandsOverrideOmit(t *testing.T) {
 		}
 	}
 
-	// (2) `omit delete` emits NO delete policy (an append-only-style table would use
-	//     this to keep rows immutable — the engine simply emits no policy for it).
 	if _, ok := pol["docs_delete"]; ok {
 		t.Errorf("docs_delete policy was emitted despite `omit delete`")
 	}
 
-	// (3) The object's own `view` line OVERRODE the template's @scoped view → the
-	//     docs select policy carries the owner axis, not bare containment.
 	dv := pol["docs_select"].Using
 	if !strings.Contains(dv, "customer_id = ") {
 		t.Errorf("docs_select did not take the overriding owner view:\n%s", dv)
 	}
-	// …while the non-overridden verbs still come from the template (@scoped).
+
 	di := pol["docs_insert"].Check
 	if !strings.Contains(di, "auth.impersonation_grants_reach(") || strings.Contains(di, "customer_id") {
 		t.Errorf("docs_insert should be the inherited @scoped containment policy:\n%s", di)
@@ -171,8 +156,6 @@ object x { table x; scoped tenant; use t }`},
 	}
 }
 
-// A template that only carries permission lines — no table/scope/relations — is a
-// pure, composable bundle; a stray non-permission statement inside it is rejected.
 func TestTemplate_OnlyPermissionLines(t *testing.T) {
 	const bad = `
 topology { level tenant }

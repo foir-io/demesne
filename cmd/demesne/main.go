@@ -1,11 +1,3 @@
-// Command demesne is the product-surface CLI (EID-265 WS7): point it at a spec
-// and/or a database and validate, emit, introspect, scaffold, check, and diff.
-//
-// The engine (github.com/eidestudio/demesne) is a pure stdlib library; this CLI
-// is a SEPARATE module that additionally links a Postgres driver for the
-// live-database subcommands (introspect/scaffold/check/diff). The engine still
-// never touches a database — the CLI introspects information_schema into the
-// engine's plain-data Schema and hands it in.
 package main
 
 import (
@@ -73,7 +65,6 @@ func main() {
 	}
 }
 
-// loadSpec reads, parses, and validates a spec file.
 func loadSpec(path string) (*demesne.Spec, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
@@ -96,7 +87,6 @@ func need(args []string, n int, what string) error {
 	return nil
 }
 
-// dsnArg returns args[i] or $DATABASE_URL.
 func dsnArg(args []string, i int) (string, error) {
 	if len(args) > i && args[i] != "" {
 		return args[i], nil
@@ -138,13 +128,13 @@ func cmdEmit(args []string) error {
 	if len(args) > 1 {
 		kind = args[1]
 	}
-	// A deployment profile is platform glue, independent of the target language.
+
 	if profile != "" {
 		return emitProfile(s, profile)
 	}
 	switch target {
 	case "go":
-		// default target unchanged.
+
 	case "ts":
 		return emitTS(s, kind)
 	default:
@@ -187,8 +177,6 @@ func cmdEmit(args []string) error {
 	}
 }
 
-// stripFlag removes a `--<name> <v>` / `--<name>=<v>` flag from args (anywhere,
-// order-independent), returning its value (or def) and the remaining positionals.
 func stripFlag(args []string, name, def string) (string, []string) {
 	val := def
 	pfx := "--" + name + "="
@@ -209,12 +197,9 @@ func stripFlag(args []string, name, def string) (string, []string) {
 	return val, out
 }
 
-// stripTargetFlag (the emit-target language) / stripProfileFlag (the deployment profile).
 func stripTargetFlag(args []string) (string, []string)  { return stripFlag(args, "target", "go") }
 func stripProfileFlag(args []string) (string, []string) { return stripFlag(args, "profile", "") }
 
-// emitProfile dispatches a deployment profile — the platform-specific deployment glue
-// (the deployment-side analogue of an emit target).
 func emitProfile(s *demesne.Spec, profile string) error {
 	switch profile {
 	case "supabase":
@@ -229,9 +214,6 @@ func emitProfile(s *demesne.Spec, profile string) error {
 	}
 }
 
-// emitTS dispatches the TypeScript emit target: the generated projection module
-// (@demesne/runtime) and the standalone codegen artifacts. The SQL/DDL kinds are
-// language-neutral and have no TypeScript form.
 func emitTS(s *demesne.Spec, kind string) error {
 	switch kind {
 	case "all", "projections":
@@ -257,7 +239,6 @@ func emitTS(s *demesne.Spec, kind string) error {
 	}
 }
 
-// emitPDPTS renders each emit-site's Policy as a standalone TypeScript const (sorted).
 func emitPDPTS(s *demesne.Spec) error {
 	pdps, err := s.EmitPDP()
 	if err != nil {
@@ -333,9 +314,7 @@ func emitPDPReport(s *demesne.Spec) error {
 }
 
 func emitAllSQL(s *demesne.Spec) error {
-	// Materialized flats first: the accessor definers read the flat and the RLS policies
-	// call <flat>_member, so the table + functions must already exist. "" (byte-identical)
-	// for a spec with no `materialized` relation.
+
 	if f := s.FlatsSQL(); f != "" {
 		fmt.Print(f + "\n")
 	}
@@ -405,12 +384,6 @@ func cmdScaffold(args []string) error {
 	return nil
 }
 
-// scaffoldInteractive runs the FK-graph scaffold, then asks for the deployment
-// details the inference can't know (the RLS role + the definer/table schemas — what
-// the engine de-Foired into spec-declared bindings) and surfaces the ungoverned
-// tables as fill-in stubs. The combo: introspect (DB) + a short Q&A (you) →
-// a more deployment-ready starter spec. Prompts go to stderr so stdout is the spec
-// alone (`demesne scaffold -i <dsn> > my.demesne`); empty stdin → all defaults.
 func scaffoldInteractive(sc *demesne.Schema) error {
 	r := bufio.NewReader(os.Stdin)
 	ask := func(label, def string) string {
@@ -432,8 +405,7 @@ func scaffoldInteractive(sc *demesne.Schema) error {
 	}
 
 	var b strings.Builder
-	// Emit the deployment bindings only when they differ from the engine defaults
-	// (so a default run stays byte-identical to plain `scaffold`).
+
 	if role != "authenticated" {
 		fmt.Fprintf(&b, "claims via \"request.jwt.claims\" json role %s\n", role)
 	}
@@ -448,9 +420,6 @@ func scaffoldInteractive(sc *demesne.Schema) error {
 	}
 	b.WriteString(body)
 
-	// The scaffold output re-parses; run coverage on it to list the tables it could
-	// NOT place (no FK path to a container) as TODO object stubs — the operator fills
-	// or deletes them.
 	if spec, perr := demesne.Parse(body); perr == nil {
 		cov := spec.TableCoverage(sc.Tables())
 		if len(cov.Ungoverned) > 0 {
@@ -485,8 +454,6 @@ func cmdCheck(args []string) error {
 	}
 	fmt.Println("ok: spec is valid AND binds to the live schema (every referenced table/column exists)")
 
-	// The moat assumes the RLS connection role is NOT BYPASSRLS — a BYPASSRLS role
-	// ignores every policy (incl. FORCE'd ones), silently defeating enforcement.
 	role := s.ConnectionRole()
 	exists, bypass, err := roleBypassesRLS(dsn, role)
 	switch {

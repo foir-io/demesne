@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// WS3 Phase C — `via closure` is unbounded-depth reachability over a
-// self-referential hierarchy. A doc lives in a folder (folder_id); a user is
-// granted at some ancestor folder (the claim); the doc is reachable iff a closure
-// pair (granted_folder, doc_folder) exists. The compiler owns BOTH sides: the
-// indexed reachability lookup definer (the read) and the closure-maintenance
-// trigger on the base hierarchy (the write).
 const closureSpec = `
 topology { level org level project parent org }
 vocabulary v { permission self:read }
@@ -32,7 +26,6 @@ func TestClosure_ReachabilityLookupAndTrigger(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 
-	// (0) The relation is its own cost class — write-amplified, not free.
 	var rel *Relation
 	for _, r := range s.Objects[0].Relations {
 		if r.Name == "infolder" {
@@ -43,8 +36,6 @@ func TestClosure_ReachabilityLookupAndTrigger(t *testing.T) {
 		t.Fatalf("infolder cost class = %v, want closure", rel.CostClass())
 	}
 
-	// (1) RLS term: the row's folder_id is reachable from the subject's granted
-	//     folder claim via the closure lookup.
 	rls, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit rls: %v", err)
@@ -58,7 +49,6 @@ func TestClosure_ReachabilityLookupAndTrigger(t *testing.T) {
 		t.Errorf("docs_select missing the closure reachability call:\n%s", sel.Using)
 	}
 
-	// (2) The reachability definer is generated (V11 closure holds because of it).
 	defs, err := s.EmitDefiners()
 	if err != nil {
 		t.Fatalf("emit definers: %v", err)
@@ -79,7 +69,6 @@ func TestClosure_ReachabilityLookupAndTrigger(t *testing.T) {
 		t.Error("reachability lookup is not SECURITY DEFINER")
 	}
 
-	// (3) The closure-maintenance trigger is generated for the base hierarchy.
 	trigs := s.EmitTriggers()
 	if len(trigs) != 1 || trigs[0].Closure != "folder_closure" || trigs[0].Base != "folders" {
 		t.Fatalf("EmitTriggers = %+v, want one for folder_closure on folders", trigs)
@@ -88,14 +77,14 @@ func TestClosure_ReachabilityLookupAndTrigger(t *testing.T) {
 	for _, frag := range []string{
 		"CREATE OR REPLACE FUNCTION auth.folder_closure_maintain()",
 		"RETURNS trigger",
-		"SECURITY DEFINER", // EID-350: maintenance writes the closure as owner, reads all base rows
+		"SECURITY DEFINER",
 
 		"TG_OP = 'INSERT'",
-		"VALUES (NEW.id, NEW.id)",        // self pair
-		"WHERE c.descendant_id = NEW.parent_id", // inherit parent's ancestors
+		"VALUES (NEW.id, NEW.id)",
+		"WHERE c.descendant_id = NEW.parent_id",
 		"TG_OP = 'DELETE'",
 		"TG_OP = 'UPDATE'",
-		"NEW.parent_id IS DISTINCT FROM OLD.parent_id", // reparent guard
+		"NEW.parent_id IS DISTINCT FROM OLD.parent_id",
 	} {
 		if !strings.Contains(fn, frag) {
 			t.Errorf("maintenance function missing %q:\n%s", frag, fn)
@@ -113,13 +102,11 @@ func TestClosure_ReachabilityLookupAndTrigger(t *testing.T) {
 		}
 	}
 
-	// (4) The cost is visible in the rendered output.
 	if !strings.Contains(s.TriggersSQL(), "COST:") {
 		t.Error("TriggersSQL does not surface the write-amplification cost")
 	}
 }
 
-// A non-closure spec generates no closure layer — the output is unchanged (Foir).
 func TestClosure_AbsentWhenUnused(t *testing.T) {
 	s := mustSpec(t, `
 		topology { level a }

@@ -37,9 +37,6 @@ func TestEmitFramework_Shape(t *testing.T) {
 	}
 }
 
-// A composite-PK object has no single-column row identity, so the framework skips its
-// Can/list surface and banners it; point-checkable siblings are unaffected (EID-371 §4.1).
-// EmitAppSurface omits it and PointCheckSQL errors for it (the fix at the source).
 func TestEmitFramework_CompositePKSkip(t *testing.T) {
 	const spec = `
 topology { level tenant }
@@ -65,7 +62,7 @@ object note { table notes scoped tenant relation o: u via owner_id permission vi
 	for _, want := range []string{
 		"composite primary key",
 		"acl (table resource_acl, pk resource_id, principal_id, access)",
-		"func (noteAccess) CanView(", // the point-checkable sibling IS emitted
+		"func (noteAccess) CanView(",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("generated framework missing %q", want)
@@ -85,11 +82,6 @@ object note { table notes scoped tenant relation o: u via owner_id permission vi
 	}
 }
 
-// The committed worked-example package (examples/authz/authz.go) is generated from
-// example.demesne and built by `go build ./...` — an always-on compile proof + a readable
-// reference. This golden test keeps it in lockstep with the emitter.
-//
-// Regenerate:  UPDATE_ORACLE=1 go test -run TestEmitFramework_ExampleArtifact
 func TestEmitFramework_ExampleArtifact(t *testing.T) {
 	s := loadExample(t)
 	src, err := s.EmitFramework("authz")
@@ -116,11 +108,6 @@ func TestEmitFramework_ExampleArtifact(t *testing.T) {
 	}
 }
 
-// The Supabase worked example's framework package (examples/supabaseauthz/authz.go),
-// generated from supabase.demesne and imported by the Go round-trip in cmd/demesne. Built
-// by `go build ./...`; this golden keeps it in sync.
-//
-// Regenerate:  UPDATE_ORACLE=1 go test -run TestEmitFramework_SupabaseArtifact
 func TestEmitFramework_SupabaseArtifact(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("examples", "supabase.demesne"))
 	if err != nil {
@@ -157,7 +144,6 @@ func TestEmitFramework_SupabaseArtifact(t *testing.T) {
 	}
 }
 
-// The generated package must COMPILE against the engine — the real proof it is valid Go.
 func TestEmitFramework_Compiles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("-short: skipping the go-build compile proof")

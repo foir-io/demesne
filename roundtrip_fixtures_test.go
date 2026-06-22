@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// Generates the TypeScript worked example's two engine artifacts from
-// examples/roundtrip.demesne — the projection module (EmitTS) and the DDL the example
-// applies to a real Postgres (definers + enablement + RLS, the emitAllSQL order). They
-// are committed under ts/packages/example-app/generated/ for the round-trip test to
-// import/apply; this golden test keeps them in lockstep with the engine.
-//
-// Regenerate after an intentional change:  UPDATE_ORACLE=1 go test -run TestRoundtrip_Fixtures
-
 func roundtripDDL(s *Spec) (string, error) {
 	defs, err := s.EmitDefiners()
 	if err != nil {
@@ -97,12 +89,6 @@ func TestRoundtrip_Fixtures(t *testing.T) {
 	}
 }
 
-// Generates the Supabase worked example's engine artifacts from examples/supabase.demesne:
-// the projection module, the DDL (definers in the `demesne` schema + RLS over the
-// `demesne_demo` schema), and the Supabase deployment profile (the custom access-token
-// hook). Committed under ts/packages/example-app/generated/supabase/ for the round-trip.
-//
-// Regenerate:  UPDATE_ORACLE=1 go test -run TestSupabase_Fixtures
 func TestSupabase_Fixtures(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("examples", "supabase.demesne"))
 	if err != nil {

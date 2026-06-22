@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// schemaForScaffold builds a small multi-tenant schema: tenants ← projects ←
-// {records, files, models}. tenants/projects are referenced widely (>= threshold)
-// so they read as tenancy LEVELS; the leaf tables carry both scope columns.
 func schemaForScaffold() *Schema {
 	sc := NewSchema()
 	sc.AddColumn("tenants", "id", "text", false)
@@ -42,13 +39,11 @@ func TestScaffold_InfersTopologyAndScopedObjects(t *testing.T) {
 			t.Errorf("scaffold output missing %q:\n%s", want, src)
 		}
 	}
-	// tenants/projects are levels, not scaffolded as objects.
+
 	if strings.Contains(src, "object tenants {") || strings.Contains(src, "object projects {") {
 		t.Errorf("level tables should not be emitted as scoped objects:\n%s", src)
 	}
 
-	// Round-trip: the generated starter must PARSE and VALIDATE (it is a real,
-	// compiling containment-only spec the user then refines).
 	s, err := Parse(src)
 	if err != nil {
 		t.Fatalf("scaffolded spec does not parse: %v\n%s", err, src)
@@ -56,14 +51,12 @@ func TestScaffold_InfersTopologyAndScopedObjects(t *testing.T) {
 	if err := Validate(s); err != nil {
 		t.Fatalf("scaffolded spec does not validate: %v\n%s", err, src)
 	}
-	// And it binds back to the schema it was generated from.
+
 	if err := s.ValidateAgainst(sc); err != nil {
 		t.Fatalf("scaffolded spec does not bind to its own schema: %v", err)
 	}
 }
 
-// With no foreign keys there is no tenancy signal — scaffold reports that rather
-// than guessing.
 func TestScaffold_NoContainersIsAnError(t *testing.T) {
 	sc := NewSchema()
 	sc.AddColumn("widgets", "id", "text", false)

@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// The owner and admin planes are bound EXPLICITLY (EID-265 WS2 `binds owner|admin`),
-// not inferred from subject shape. The binding decides which claim the owner axis
-// and the role definers resolve against — even when the claim keys are unusual and
-// no shape heuristic could disambiguate.
 const bindsSpec = `
 topology { level tenant level project parent tenant }
 vocabulary adminv { permission a:b  preset p @ project = a:b }
@@ -60,23 +56,19 @@ func TestBinds_ExplicitPlaneBindingDrivesClaims(t *testing.T) {
 	if sel == nil {
 		t.Fatal("no docs_select policy")
 	}
-	// The owner axis resolves the bound owner claim; the role definer the bound
-	// admin claim — neither inferred from shape.
+
 	if !strings.Contains(sel.Using, "owner_col = (current_setting('request.jwt.claims', true)::json ->> 'owner_claim')") {
 		t.Errorf("owner axis did not use the bound owner claim:\n%s", sel.Using)
 	}
 	if !strings.Contains(sel.Using, "->> 'admin_sub'") {
 		t.Errorf("role definer did not use the bound admin claim:\n%s", sel.Using)
 	}
-	// The role-definer affix derives from the admin plane NAME (`staff`), not a
-	// baked "admin" (EID-265 WS2 function-naming lift).
+
 	if !strings.Contains(sel.Using, "staff_has_doc_role(") {
 		t.Errorf("role-definer affix did not derive from the admin plane name `staff`:\n%s", sel.Using)
 	}
 }
 
-// Ambiguity is an error: the binding replaces the former first-match shape pick,
-// so two owners at one level (or an unknown binding) must fail closed.
 func TestBinds_AmbiguityAndUnknownRejected(t *testing.T) {
 	dup := `
 topology { level tenant level project parent tenant }

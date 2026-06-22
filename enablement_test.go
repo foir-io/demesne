@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// A generated policy is inert unless RLS is ENABLED and FORCED on its table, so
-// the moat must own that enablement — EnablementSQL emits it for every governed
-// table, idempotently.
 func TestEnablementSQL(t *testing.T) {
 	s := mustSpec(t, `
 		topology { level tenant level project parent tenant }
@@ -33,7 +30,7 @@ func TestEnablementSQL(t *testing.T) {
 			t.Errorf("enablement SQL missing %q:\n%s", want, sql)
 		}
 	}
-	// Deterministic order (records' table sorts after files').
+
 	if strings.Index(sql, "public.files") > strings.Index(sql, "public.records") {
 		t.Errorf("enablement SQL not sorted by table:\n%s", sql)
 	}

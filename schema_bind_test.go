@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// WS4 — spec-vs-schema binding. ValidateAgainst checks every table/column the
-// spec references actually exists in the target database, WITHOUT the engine
-// touching a DB (the caller supplies an introspected Schema). This is the
-// "configure authz for the tables in your database" promise's verification half.
 const bindSpec = `
 topology { level tenant level project parent tenant }
 vocabulary admin { permission a:b preset p @ project = a:b }
@@ -33,10 +29,9 @@ object doc {
 }
 `
 
-// fullSchema returns a Schema that satisfies bindSpec exactly.
 func fullSchema() *Schema {
 	sc := NewSchema()
-	sc.AddColumn("docs", "id", "text", false) // the object's primary key (EID-278 bind-check)
+	sc.AddColumn("docs", "id", "text", false)
 	for _, c := range []string{"tenant_id", "project_id", "owner_id", "visibility"} {
 		sc.AddColumn("docs", c, "text", c == "visibility")
 	}
@@ -64,7 +59,6 @@ func TestValidateAgainst_BindsToMatchingSchema(t *testing.T) {
 func TestValidateAgainst_ReportsMissingTableAndColumn(t *testing.T) {
 	s := mustSpec(t, bindSpec)
 
-	// Missing a referenced column (the descriptor mode column).
 	sc := fullSchema()
 	delete(sc.tables["docs"], "visibility")
 	err := s.ValidateAgainst(sc)
@@ -72,7 +66,6 @@ func TestValidateAgainst_ReportsMissingTableAndColumn(t *testing.T) {
 		t.Errorf("missing mode column should be reported, got: %v", err)
 	}
 
-	// Missing a whole referenced table (the grant store).
 	sc2 := fullSchema()
 	delete(sc2.tables, "doc_acl")
 	err = s.ValidateAgainst(sc2)
@@ -80,7 +73,6 @@ func TestValidateAgainst_ReportsMissingTableAndColumn(t *testing.T) {
 		t.Errorf("missing grant table should be reported, got: %v", err)
 	}
 
-	// Missing a role-store column.
 	sc3 := fullSchema()
 	delete(sc3.tables["role_assignments"], "revoked_at")
 	err = s.ValidateAgainst(sc3)
@@ -89,8 +81,6 @@ func TestValidateAgainst_ReportsMissingTableAndColumn(t *testing.T) {
 	}
 }
 
-// A level-entity object pins its own `id` as the leaf scope column — the binding
-// check must look for `id`, not `<level>_id`.
 func TestValidateAgainst_LevelEntityUsesIDColumn(t *testing.T) {
 	s := mustSpec(t, `
 		topology { level tenant level project parent tenant }
@@ -108,7 +98,7 @@ func TestValidateAgainst_LevelEntityUsesIDColumn(t *testing.T) {
 	if err := s.ValidateAgainst(sc); err != nil {
 		t.Fatalf("level-entity should bind (id + tenant_id present): %v", err)
 	}
-	// Drop `id` → the leaf scope column is missing.
+
 	delete(sc.tables["projects"], "id")
 	if err := s.ValidateAgainst(sc); err == nil || !strings.Contains(err.Error(), `no column "id"`) {
 		t.Errorf("level-entity without its id column should fail, got: %v", err)

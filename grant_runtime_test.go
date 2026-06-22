@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// fullGrantSpec — an impersonation grant declaring every optional column (pk + the
-// grant/revoke audit columns), plus active + expiry.
 const fullGrantSpec = `
 topology { level platform virtual  level tenant parent platform }
 vocabulary admin { permission a:read  preset v @ tenant = a:read }
@@ -20,9 +18,6 @@ subject admin    { anchor tenant;   reach descendants; identifies sub; roles con
 object thing { table things; scoped tenant; relation m: admin via role; permission view = m @rls maps select }
 `
 
-// minimalGrantSpec — a grant declaring only the reach columns: no pk override, no
-// active/expiry, no audit. The write builders fall back to the "id" PK, a hard DELETE
-// revoke, and an always-active list.
 const minimalGrantSpec = `
 topology { level platform virtual  level tenant parent platform }
 vocabulary admin { permission a:read  preset v @ tenant = a:read }
@@ -39,11 +34,8 @@ func TestGrant_FullSurface(t *testing.T) {
 		t.Fatalf("GrantSurface: %v", err)
 	}
 
-	// Issue — pk/grantee/level/grantor/expiry written, extras appended sorted, full
-	// projection returned.
 	sql, args := g.GrantInsert("g1", "u1", "t1", "granter1", "2030-01-01T00:00:00Z", map[string]any{"reason": "audit me"})
-	// The declared `column reason` is WRITTEN (after the modelled cols) AND PROJECTED
-	// (last in RETURNING) — not silently dropped.
+
 	wantSQL := "INSERT INTO impersonation_grants (id, grantee_id, tenant_id, granted_by, expires_at, reason) " +
 		"VALUES ($1, $2, $3, $4, $5, $6) " +
 		"RETURNING id, grantee_id, tenant_id, granted_by, expires_at, created_at, revoked_at, revoked_by, reason"
@@ -54,14 +46,12 @@ func TestGrant_FullSurface(t *testing.T) {
 		t.Errorf("GrantInsert args = %v", args)
 	}
 
-	// Revoke — soft-revoke by PK + revoker, idempotent, RETURNING the row (incl. reason).
 	wantRevoke := "UPDATE impersonation_grants SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL " +
 		"RETURNING id, grantee_id, tenant_id, granted_by, expires_at, created_at, revoked_at, revoked_by, reason"
 	if got := g.RevokeSQL(); got != wantRevoke {
 		t.Errorf("RevokeSQL:\n got: %s\nwant: %s", got, wantRevoke)
 	}
 
-	// List — three optional filters + the active predicate, newest first (incl. reason).
 	wantList := "SELECT id, grantee_id, tenant_id, granted_by, expires_at, created_at, revoked_at, revoked_by, reason " +
 		"FROM impersonation_grants " +
 		"WHERE ($1::text IS NULL OR grantee_id = $1) AND ($2::text IS NULL OR tenant_id = $2) " +
@@ -81,7 +71,6 @@ func TestGrant_MinimalSurface(t *testing.T) {
 		t.Errorf("PK should default to id, got %q", g.PK)
 	}
 
-	// No grantor/expiry/extras → bare INSERT, projection is just the reach columns.
 	sql, args := g.GrantInsert("g1", "u1", "t1", "ignored", nil, nil)
 	if sql != "INSERT INTO simple_grants (id, grantee_id, tenant_id) VALUES ($1, $2, $3) RETURNING id, grantee_id, tenant_id" {
 		t.Errorf("GrantInsert SQL = %q", sql)
@@ -90,12 +79,10 @@ func TestGrant_MinimalSurface(t *testing.T) {
 		t.Errorf("GrantInsert args = %v", args)
 	}
 
-	// No active column → revoke is a hard DELETE.
 	if got := g.RevokeSQL(); got != "DELETE FROM simple_grants WHERE id = $1" {
 		t.Errorf("RevokeSQL = %q", got)
 	}
 
-	// Neither active nor expiry → the active predicate is TRUE; no created-at → no ORDER BY.
 	wantList := "SELECT id, grantee_id, tenant_id FROM simple_grants " +
 		"WHERE ($1::text IS NULL OR grantee_id = $1) AND ($2::text IS NULL OR tenant_id = $2) AND (NOT $3::boolean OR (TRUE))"
 	if got := g.ListSQL(); got != wantList {
@@ -103,7 +90,6 @@ func TestGrant_MinimalSurface(t *testing.T) {
 	}
 }
 
-// The active predicate degrades gracefully: revoked-only, expiry-only, or neither.
 func TestGrant_ActivePredicate(t *testing.T) {
 	s := mustSpec(t, fullGrantSpec)
 	full, _ := s.GrantSurface("impersonation")
@@ -111,24 +97,21 @@ func TestGrant_ActivePredicate(t *testing.T) {
 		t.Errorf("full predicate = %q", got)
 	}
 
-	// revoked-only.
 	revokedOnly := &GrantSurface{ActiveCol: "revoked_at"}
 	if got := revokedOnly.activePredicate(""); got != "revoked_at IS NULL" {
 		t.Errorf("revoked-only = %q", got)
 	}
-	// expiry-only.
+
 	expiryOnly := &GrantSurface{ExpiresCol: "expires_at"}
 	if got := expiryOnly.activePredicate(""); got != "expires_at > now()" {
 		t.Errorf("expiry-only = %q", got)
 	}
-	// neither.
+
 	if got := (&GrantSurface{}).activePredicate(""); got != "TRUE" {
 		t.Errorf("neither = %q", got)
 	}
 }
 
-// Multiple declared `column`s are written + projected in DECLARATION order (not
-// sorted, not map-order), and a declared column with no supplied value is NULL ($N).
 func TestGrant_ExtraColumns(t *testing.T) {
 	const src = `
 topology { level platform virtual  level tenant parent platform }
@@ -146,7 +129,7 @@ object thing { table things; scoped tenant; relation m: admin via role; permissi
 	if !reflect.DeepEqual(g.ExtraCols, []string{"reason", "note"}) {
 		t.Fatalf("ExtraCols = %v, want [reason note]", g.ExtraCols)
 	}
-	// Both columns written (declaration order) + projected; `note` absent from extra → NULL.
+
 	sql, args := g.GrantInsert("g1", "u1", "t1", "", nil, map[string]any{"reason": "r"})
 	wantSQL := "INSERT INTO edges (id, grantee_id, tenant_id, reason, note) VALUES ($1, $2, $3, $4, $5) " +
 		"RETURNING id, grantee_id, tenant_id, reason, note"

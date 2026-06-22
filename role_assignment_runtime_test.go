@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// fullRoleStoreSpec declares every optional write-surface column (pk + the grant /
-// revoke audit columns + a materialized permissions column).
 const fullRoleStoreSpec = `
 topology { level tenant  level project parent tenant }
 vocabulary admin { permission a:read  preset v @ project = a:read }
@@ -25,8 +23,6 @@ subject admin { anchor tenant; reach descendants; identifies sub; roles configur
 object thing { table things; scoped tenant > project; relation m: admin via role; permission view = m @rls maps select }
 `
 
-// minimalRoleStoreSpec declares only the read columns (no pk/granted/revoked-by) —
-// the write builders fall back to the "id" PK and omit the undeclared audit columns.
 const minimalRoleStoreSpec = `
 topology { level tenant  level project parent tenant }
 vocabulary admin { permission a:read  preset v @ project = a:read }
@@ -42,9 +38,6 @@ subject admin { anchor tenant; reach descendants; identifies sub; roles configur
 object thing { table things; scoped tenant > project; relation m: admin via role; permission view = m @rls maps select }
 `
 
-// rpScopedRoleStoreSpec adds an adopter context column (`column client_id`) — an
-// RP/client scope on the assignment tuple — to exercise the extra-column write/project
-// and the TOUCH conflict key.
 const rpScopedRoleStoreSpec = `
 topology { level tenant  level project parent tenant }
 vocabulary admin { permission a:read  preset v @ project = a:read }
@@ -63,9 +56,6 @@ subject admin { anchor tenant; reach descendants; identifies sub; roles configur
 object thing { table things; scoped tenant > project; relation m: admin via role; permission view = m @rls maps select }
 `
 
-// An extra context column (client_id) is WRITTEN + PROJECTED, and the TOUCH variant
-// reactivates on conflict with a key over (identity bare + nullable scope/context
-// COALESCE'd) — the soft-revoke-aware idempotent write.
 func TestRoleAssignment_TouchAndExtra(t *testing.T) {
 	s := mustSpec(t, rpScopedRoleStoreSpec)
 	r, err := s.RoleAssignmentSurface("")
@@ -93,16 +83,12 @@ func TestRoleAssignment_TouchAndExtra(t *testing.T) {
 	if tsql != wantTouch {
 		t.Errorf("AssignTouchInsert SQL:\n got: %s\nwant: %s", tsql, wantTouch)
 	}
-	// TOUCH adds no placeholders (reactivation uses NULL/now()/EXCLUDED).
+
 	if !reflect.DeepEqual(targs, args) {
 		t.Errorf("TOUCH args drift from CREATE: %v vs %v", targs, args)
 	}
 }
 
-// The shared touchOnConflict helper (the write-dual of grantEdgeExists) is GENERAL —
-// it produces the same idempotent-reactivate shape for distinct reachability-grant
-// edges, not just role assignments. Here: a role-assignment tuple AND a level-grant
-// edge tuple.
 func TestTouchOnConflict_GeneralAcrossEdges(t *testing.T) {
 	roleAssign := touchOnConflict(
 		[]string{"principal_kind", "principal_id", "role_id"},
@@ -127,7 +113,6 @@ func TestRoleAssignment_FullSurface(t *testing.T) {
 		t.Fatalf("RoleAssignmentSurface: %v", err)
 	}
 
-	// Assign — kind inlined, scope + grantor bound, full audit projection returned.
 	sql, args := r.AssignInsert("a1", "u1", "role1", []string{"t1", "p1"}, "granter1", nil)
 	wantSQL := "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_by) " +
 		"VALUES ($1, $2, $3, $4, $5, $6, $7) " +
@@ -140,19 +125,16 @@ func TestRoleAssignment_FullSurface(t *testing.T) {
 		t.Errorf("AssignInsert args = %v, want %v", args, wantArgs)
 	}
 
-	// Revoke — soft-revoke by PK + revoker, idempotent.
 	if got := r.RevokeSQL(); got != "UPDATE role_assignments SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL" {
 		t.Errorf("RevokeSQL = %q", got)
 	}
 
-	// List by role — audit view, newest first.
 	wantByRole := "SELECT id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_at, granted_by, revoked_at, revoked_by " +
 		"FROM role_assignments WHERE role_id = $1 ORDER BY granted_at DESC"
 	if got := r.ListForRoleSQL(); got != wantByRole {
 		t.Errorf("ListForRoleSQL:\n got: %s\nwant: %s", got, wantByRole)
 	}
 
-	// List by principal — active, joined to the role's key + permissions; kind inlined.
 	wantByPrincipal := "SELECT a.id, a.principal_id, a.role_id, a.granted_at, a.granted_by, r.key, r.permissions " +
 		"FROM role_assignments a JOIN roles r ON r.id = a.role_id " +
 		"WHERE a.principal_kind = 'admin' AND a.principal_id = $1 AND a.revoked_at IS NULL"
@@ -171,8 +153,6 @@ func TestRoleAssignment_MinimalSurface(t *testing.T) {
 		t.Errorf("PK should default to id, got %q", r.PK)
 	}
 
-	// No grantor column → omitted from the INSERT (grantedBy arg ignored); RETURNING
-	// carries only the declared columns (revoked_at, but no granted_at/by, revoked_by).
 	sql, args := r.AssignInsert("a1", "u1", "role1", []string{"t1", "p1"}, "ignored", nil)
 	wantSQL := "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, project_id) " +
 		"VALUES ($1, $2, $3, $4, $5, $6) " +
@@ -184,19 +164,14 @@ func TestRoleAssignment_MinimalSurface(t *testing.T) {
 		t.Errorf("AssignInsert args = %v", args)
 	}
 
-	// Revoke with no revoker column.
 	if got := r.RevokeSQL(); got != "UPDATE role_assignments SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL" {
 		t.Errorf("RevokeSQL = %q", got)
 	}
 
-	// No granted-at column → no ORDER BY.
 	if got := r.ListForRoleSQL(); got != "SELECT id, principal_kind, principal_id, role_id, tenant_id, project_id, revoked_at FROM role_assignments WHERE role_id = $1" {
 		t.Errorf("ListForRoleSQL = %q", got)
 	}
 
-	// No granted-at/by + no materialized permissions → ListForPrincipal omits all
-	// three optional columns (the guard FALSE branch), keeping only the join + active
-	// filter projection.
 	wantByPrincipal := "SELECT a.id, a.principal_id, a.role_id, r.key " +
 		"FROM role_assignments a JOIN roles r ON r.id = a.role_id " +
 		"WHERE a.principal_kind = 'admin' AND a.principal_id = $1 AND a.revoked_at IS NULL"
@@ -205,8 +180,6 @@ func TestRoleAssignment_MinimalSurface(t *testing.T) {
 	}
 }
 
-// A scope shorter than ScopeCols leaves the unsupplied levels NULL (an unpinned
-// tail), not a panic.
 func TestRoleAssignment_ShortScope(t *testing.T) {
 	s := mustSpec(t, fullRoleStoreSpec)
 	r, _ := s.RoleAssignmentSurface("")
@@ -217,7 +190,6 @@ func TestRoleAssignment_ShortScope(t *testing.T) {
 	}
 }
 
-// The pk override is honoured by both the INSERT id column and the revoke key.
 func TestRoleAssignment_PKOverride(t *testing.T) {
 	const src = `
 topology { level tenant }

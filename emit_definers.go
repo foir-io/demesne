@@ -6,47 +6,19 @@ import (
 	"strings"
 )
 
-// Definer kernel (RFC §8.2 V9): the compiler owns 100% of the SECURITY DEFINER
-// surface — it GENERATES every trusted function the emitted policies call, so
-// there are no opaque hand-written functions the isolation proof must trust.
-// Bodies are canonical `sql` EXISTS over the declared stores (membership table,
-// role-assignment store, the object's own table for the realtime gate).
-//
-// Generated functions for the Foir admin role model:
-//   - <flag>(user_id)                       — membership (is_platform_admin)
-//   - is_tenant_admin(user_id, t)           — tenant-level role, recurses ↑
-//   - admin_has_<obj>_role(user_id, t, p)   — any project-level role
-//   - is_<rank>(user_id, t, p)              — project-level role ≥ rank, recurses ↑
-//   - <kernelfn>(customer, record, access)  — realtime gate (owner reachability)
-
-// GenFn is a generated SECURITY DEFINER function.
 type GenFn struct {
-	Name   string // unqualified function name
-	Schema string // the schema the function lives in ("" → "auth")
-	// TableSchema is the schema the function's bare table references resolve against —
-	// the pinned `SET search_path`. "" → "public". A SECURITY DEFINER function pins its
-	// search_path (so a caller cannot redirect its table lookups — the security
-	// reason), and that pin must name the schema the GOVERNED tables actually live in;
-	// hardcoding "public" would break (and is the table-side twin of the DDL's table
-	// schema). Set to the spec's tableSchema(), so it stays "public" for Foir.
+	Name   string
+	Schema string
+
 	TableSchema string
-	Sig         string // argument signature, e.g. "user_id text, check_tenant_id text"
-	Body        string // the SELECT expression (a boolean), or a full query when RawBody
-	// Returns is the function's return type. Empty means "boolean" — the
-	// canonical predicate definer (the body is a boolean SELECT expression). A
-	// non-empty value (e.g. "TABLE(source text, principal_id text)") makes the
-	// function set-returning; the body is then a complete query (RawBody), not a
-	// scalar expression. Used by the accessor-enumerator (Expand): the read-side
-	// dual that lists WHO can access a row, generated from the same descriptor the
-	// RLS predicate compiles from.
+	Sig         string
+	Body        string
+
 	Returns string
-	// RawBody renders Body verbatim inside the $$ … $$ (a complete SELECT / UNION
-	// query) instead of wrapping it as `SELECT <Body>;`. Set for set-returning
-	// definers whose body is a multi-branch query.
+
 	RawBody bool
 }
 
-// schema returns the function's schema, defaulting to "auth".
 func (d GenFn) schema() string {
 	if d.Schema != "" {
 		return d.Schema
@@ -54,8 +26,6 @@ func (d GenFn) schema() string {
 	return "auth"
 }
 
-// tableSchema returns the schema the function's bare table references resolve against
-// (the pinned search_path), defaulting to "public".
 func (d GenFn) tableSchema() string {
 	if d.TableSchema != "" {
 		return d.TableSchema
@@ -63,8 +33,6 @@ func (d GenFn) tableSchema() string {
 	return "public"
 }
 
-// ArgTypes returns the comma-joined argument types of the signature (for a
-// regprocedure lookup), e.g. "text, text, text".
 func (d GenFn) ArgTypes() string {
 	if strings.TrimSpace(d.Sig) == "" {
 		return ""
@@ -78,7 +46,6 @@ func (d GenFn) ArgTypes() string {
 	return strings.Join(types, ", ")
 }
 
-// CreateSQL renders the full CREATE OR REPLACE FUNCTION statement.
 func (d GenFn) CreateSQL() string {
 	returns := d.Returns
 	if returns == "" {
@@ -93,10 +60,6 @@ func (d GenFn) CreateSQL() string {
 		d.schema(), d.Name, d.Sig, returns, d.tableSchema(), body)
 }
 
-// DefinersSQL renders the full CREATE OR REPLACE FUNCTION set for the generated
-// definers in dependency order (callee before caller), each via CreateSQL().
-// CREATE OR REPLACE bodies round-trip byte-identical through pg_get_functiondef
-// (the definer oracle proves it), so applying this to a live database is a no-op.
 func DefinersSQL(defs []GenFn) string {
 	var b strings.Builder
 	for _, d := range defs {
@@ -106,18 +69,9 @@ func DefinersSQL(defs []GenFn) string {
 	return b.String()
 }
 
-// EmitDefiners generates every definer the spec's policies reference, in
-// dependency order (a fn appears after the fns it calls). The body is a fixed
-// sequence of emitter blocks, each appending its definers to `out`; the shared
-// `seen` map (introduced at the role block) keeps a definer named two ways from
-// being emitted twice. Splitting the blocks into helpers keeps each one small
-// while preserving the exact emission order (and therefore the byte-identical
-// SQL).
 func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	var out []GenFn
 
-	// The virtual-level set, for re-deriving an object's predicate (cross-object
-	// references below).
 	virtual := s.defVirtualLevels()
 
 	if err := s.defEmitMembership(&out); err != nil {
@@ -125,7 +79,6 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	}
 	s.defEmitGrantReach(&out)
 
-	// Role-resolution fns, derived from each object's role relations + walks.
 	rs := roleStoreByName(s)
 	rankIdx := rankIndex(s)
 	presetLevels := presetLevelMap(s)
@@ -159,9 +112,6 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	}
 	s.defEmitMaterializedFlatMembers(&out, seen)
 
-	// Stamp the configured definer schema + table schema on every generated function
-	// so CreateSQL qualifies the function and pins its search_path consistently
-	// (defaults "auth"/"public" keep Foir's SQL byte-identical).
 	for i := range out {
 		out[i].Schema = s.definerSchema()
 		out[i].TableSchema = s.tableSchema()
@@ -169,8 +119,6 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	return out, nil
 }
 
-// defVirtualLevels returns the set of virtual topology level names, used when
-// re-deriving an object's predicate for cross-object references.
 func (s *Spec) defVirtualLevels() map[string]bool {
 	vchain, _ := s.Topology.Chain()
 	virtual := map[string]bool{}
@@ -182,9 +130,6 @@ func (s *Spec) defVirtualLevels() map[string]bool {
 	return virtual
 }
 
-// defEmitMembership emits the membership operator fn (e.g. is_platform_admin) — a
-// LEGACY unconditional god-flag. The general, scoped form is a `grant` (below); a
-// spec uses at most one of the two as its operator.
 func (s *Spec) defEmitMembership(out *[]GenFn) error {
 	for _, sub := range s.Subjects {
 		m := sub.Membership
@@ -204,11 +149,6 @@ func (s *Spec) defEmitMembership(out *[]GenFn) error {
 	return nil
 }
 
-// defEmitGrantReach emits the level-scoped grant-reach fns: an active grant edge
-// confers reach into a topology level. auth.<table>_reach(user_id, check_<level>_id)
-// EXISTS over the grant store. These are BOTH a disjunct of the level's role definer
-// AND a top-level OR branch on objects scoped under that level, so they are emitted
-// before the role definers that call them (callee before caller).
 func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 	gseen := map[string]bool{}
 	for _, g := range s.Grants {
@@ -217,8 +157,7 @@ func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 			continue
 		}
 		gseen[name] = true
-		// Shared reachability-grant shape; conjuncts are this grant's own: grantee
-		// match, the level-subtree target, then the validity gates.
+
 		conj := []string{
 			fmt.Sprintf("%s = user_id", g.GranteeCol),
 			fmt.Sprintf("%s = check_%s_id", g.LevelCol, g.Level),
@@ -233,8 +172,6 @@ func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 	}
 }
 
-// defEmitRoleDefiners emits the role-resolution fns, derived from each object's role
-// relations + walks.
 func (s *Spec) defEmitRoleDefiners(out *[]GenFn, seen map[string]bool, rs *RoleStore, rankIdx map[string]int, presetLevels map[string][]string) error {
 	for _, obj := range s.Objects {
 		rels := map[string]*Relation{}
@@ -257,15 +194,6 @@ func (s *Spec) defEmitRoleDefiners(out *[]GenFn, seen map[string]bool, rs *RoleS
 	return nil
 }
 
-// defEmitPlatformRoles emits the platform-anchored role definers (v3 WS6 — the
-// platform plane). A role-bearing subject anchored at the VIRTUAL root governs the
-// global objects (the tables above tenancy). Its definer is the SAME role-resolution
-// EXISTS every other role uses, lifted to the schema root: has_<anchor>_role(user_id)
-// over the role store with every scope column NULL. The name is DELIBERATELY not the
-// legacy `is_platform_admin` — the god-flag retires in full, so the policy text itself
-// must read as a revocable role check (a `role_assignments` row), not a renamed
-// standing boolean. No bespoke hand-written function: same primitive as every
-// tenant/project role, lifted to the platform root.
 func (s *Spec) defEmitPlatformRoles(out *[]GenFn, seen map[string]bool, rs *RoleStore, presetLevels map[string][]string) {
 	for _, sub := range s.Subjects {
 		if !s.isPlatformRoleSubject(sub) || rs == nil {
@@ -280,12 +208,6 @@ func (s *Spec) defEmitPlatformRoles(out *[]GenFn, seen map[string]bool, rs *Role
 	}
 }
 
-// defEmitScopedMemberin emits the scoped role-membership definers (v3 WS6):
-// admin_memberin_<level>(principal, scope) = does the principal hold ANY admin role
-// assignment at that scope level (not revoked)? One definer per (adminName, level);
-// the RLS term supplies the principal/scope args (claim or row column). Powers the
-// tenant picker ("tenants I administer") and admin_users co-tenant visibility from
-// one shape.
 func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *RoleStore) {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
@@ -306,8 +228,6 @@ func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *Rol
 	}
 }
 
-// defEmitKernel emits the realtime gate fn(s): an object with a @kernel permission
-// gets a reachability function over its own table (owner axis).
 func (s *Spec) defEmitKernel(out *[]GenFn, seen map[string]bool) error {
 	for _, obj := range s.Objects {
 		for _, pm := range obj.Perms {
@@ -327,13 +247,6 @@ func (s *Spec) defEmitKernel(out *[]GenFn, seen map[string]bool) error {
 	return nil
 }
 
-// defEmitGrantRelations emits the access-class grant RELATION definers (the
-// de-prescribed form of the descriptor grant list): an object with a `via grant`
-// relation gets the SAME per-kind auth.<store>_grants[_<kind>](<principal>, record,
-// access) EXISTS the descriptor emits — same names, same bodies — so a pure-relation
-// object's grant definers are byte-identical. The `seen` map keeps a shared store
-// from re-emitting a kind's definer (e.g. a discriminated store names them per
-// object, so no clash).
 func (s *Spec) defEmitGrantRelations(out *[]GenFn, seen map[string]bool) {
 	for _, obj := range s.Objects {
 		r, vg := grantRelation(obj)
@@ -364,16 +277,6 @@ func (s *Spec) defEmitGrantRelations(out *[]GenFn, seen map[string]bool) {
 	}
 }
 
-// defEmitAccessors emits the accessor enumerators (Expand — the read-side dual of
-// the RLS predicate): for every content object with a grant store,
-// auth.<table>_accessors(p_id) returns the rows (source, principal_kind,
-// principal_id, access) of every NAMED accessor the SELECT predicate admits — owner
-// column(s), the explicit grant rows, and the role plane (role-bearing admins
-// reachable via @app_scope). "Public = everyone" is a category (the row's mode), not
-// enumerated, so it is folded in by the caller as a flag, not a row. Built from the
-// SAME composed relations the predicate compiles from, so Expand agrees with
-// <table>_select by construction — no second evaluator. SECURITY DEFINER +
-// set-returning; the handler calls it under the caller's claims.
 func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 	for _, obj := range s.Objects {
 		if _, vg := grantRelation(obj); vg == nil {
@@ -383,13 +286,7 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 		if seen[name] {
 			continue
 		}
-		// Fail closed (EID-342 / WS1): the accessor enumerator below covers only
-		// owner / grant / role over a UNION of branches. If this object's SELECT
-		// permission uses a relation it cannot reverse, or intersection/exclusion it
-		// cannot represent, emitting it anyway would silently UNDER-report who can
-		// access a row — a fail-OPEN "who can access X". Refuse to emit it (a build
-		// error naming the gap) until the WS1 reverse builders cover that shape,
-		// rather than ship a wrong answer.
+
 		if ok, reason := s.accessorCoverage(obj); !ok {
 			return fmt.Errorf("object %q: cannot soundly enumerate accessors (auth.%s would under-report) — %s", obj.Name, name, reason)
 		}
@@ -399,13 +296,6 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 	return nil
 }
 
-// accessorReprCovered reports whether the accessor enumerator (pureAccessorDefiners)
-// has a reverse branch for a relation's Repr today: owner (ViaColumn), grant
-// (ViaGrant), the role plane (ViaRole), nested groups (ViaGroup), hierarchy closure
-// (ViaClosure), and composition cascade (ViaComposition — its 1-hop parent dual). The
-// remaining reprs (edge, object handled specially, memberin) have NO accessor branch
-// yet, so an enumerator built over a SELECT permission that uses one would silently
-// under-report; WS1's reverse builders extend this set, until then those fail closed.
 func accessorReprCovered(r Repr) bool {
 	switch r.(type) {
 	case ViaColumn, ViaGrant, ViaRole, ViaGroup, ViaClosure, ViaComposition:
@@ -415,11 +305,6 @@ func accessorReprCovered(r Repr) bool {
 	}
 }
 
-// accessorTreeOp returns the first intersection/exclusion operator in a permission
-// tree ("and" or "and not"), or "" for a union-only tree (or / bare leaf). The
-// accessor enumerator only UNIONs its branches, so it cannot represent INTERSECT
-// (and) or EXCEPT (and not) — a tree using either cannot be reverse-enumerated soundly
-// yet.
 func accessorTreeOp(n *PermNode) string {
 	if n == nil {
 		return ""
@@ -438,19 +323,10 @@ func accessorTreeOp(n *PermNode) string {
 	return ""
 }
 
-// accessorCoverage reports whether the accessor enumerator can SOUNDLY enumerate an
-// object's SELECT permission — i.e. its reverse (who-can-access) answer is complete.
-// It is unsound, and so refused, when the SELECT permission either (a) uses
-// intersection or exclusion (the enumerator only unions) or (b) references a relation
-// whose Repr has no accessor branch yet. Returns (false, reason) in that case.
-// Non-relation leaves (builtins, visibility modes folded as a category flag, grant /
-// kind terms) are not relation reverses and do not trip the gate.
 func (s *Spec) accessorCoverage(obj *Object) (bool, string) {
 	return s.accessorCoverageSeen(obj, map[string]bool{})
 }
 
-// accessorCoverageSeen is accessorCoverage with a visited set for the ViaObject
-// recursion (acyclicity is validated, so a revisit imposes no new requirement).
 func (s *Spec) accessorCoverageSeen(obj *Object, seen map[string]bool) (bool, string) {
 	if seen[obj.Name] {
 		return true, ""
@@ -471,9 +347,7 @@ func (s *Spec) accessorCoverageSeen(obj *Object, seen map[string]bool) (bool, st
 		return true, ""
 	}
 	if accessorTreeOp(sel.Tree) != "" {
-		// Intersection/exclusion: the tree composer handles it iff every leaf is a
-		// composable content relation (owner/grant/group/closure/object). A leaf it
-		// cannot compose (a builtin / the @app_scope role plane) fails closed.
+
 		if _, ok := s.accessorTreeSQL(obj, sel.Tree, rels); !ok {
 			return false, "its SELECT permission intersects/excludes over a term the accessor enumerator cannot compose (only owner/grant/group/closure/object leaves)"
 		}
@@ -500,12 +374,6 @@ func (s *Spec) accessorCoverageSeen(obj *Object, seen map[string]bool) (bool, st
 	return true, ""
 }
 
-// viaObjectCovered reports whether a cross-object borrow can be reverse-enumerated. It
-// can only when the borrowed verb is the other object's READ verb (its accessor
-// enumerator answers only the SELECT / visibility decision), the other object actually
-// HAS an accessor enumerator (a content object with a grant store), and the other
-// object's own coverage holds (recursively; acyclicity is validated). Otherwise fail
-// closed — a non-read borrow or a borrow from an unenumerable object cannot be answered.
 func (s *Spec) viaObjectCovered(vo ViaObject, seen map[string]bool) (bool, string) {
 	other := s.objectByName(vo.Object)
 	if other == nil {
@@ -527,12 +395,6 @@ func (s *Spec) viaObjectCovered(vo ViaObject, seen map[string]bool) (bool, strin
 	return s.accessorCoverageSeen(other, seen)
 }
 
-// structuralAccessorCoverage reports whether the STRUCTURAL accessor enumerator
-// (level-entity / control plane) can soundly enumerate an object's SELECT permission.
-// structuralTermEnum enumerates role-walks, builtins (which add no principals), and
-// via-role / via-memberin relations; ANY other relation Repr it silently skips, and it
-// walks the flat term list so intersection/exclusion is ignored. So an enumerator that
-// emits some branches while a term goes unenumerated would under-report — fail closed.
 func structuralAccessorCoverage(obj *Object) (bool, string) {
 	rels := map[string]*Relation{}
 	for _, r := range obj.Relations {
@@ -552,8 +414,7 @@ func structuralAccessorCoverage(obj *Object) (bool, string) {
 		return false, fmt.Sprintf("its SELECT permission uses %q, which the union enumerator cannot represent", op)
 	}
 	for _, t := range sel.Expr {
-		// builtins add no principals; a role-walk (WalkVerb) is enumerated regardless of
-		// the relation's Repr; a non-relation term carries no accessor.
+
 		if t == nil || t.Builtin != "" || t.WalkVerb != "" || t.Ident == "" {
 			continue
 		}
@@ -563,7 +424,7 @@ func structuralAccessorCoverage(obj *Object) (bool, string) {
 		}
 		switch r.Repr.(type) {
 		case ViaRole, ViaMemberIn:
-			// enumerable by the structural path
+
 		default:
 			return false, fmt.Sprintf("relation %q (%T) is not enumerable by the structural accessor path (only via-role / via-memberin)", t.Ident, r.Repr)
 		}
@@ -571,15 +432,6 @@ func structuralAccessorCoverage(obj *Object) (bool, string) {
 	return true, ""
 }
 
-// defEmitStructuralAccessors emits the structural accessor enumerators (Expand over
-// the role/staff CONTROL plane): for every level-entity object (project, tenant, …),
-// auth.<table>_accessors(p_id) enumerates who can administer the node — role-holders
-// (ROLE), platform staff (STAFF), and the impersonation operators (IMPERSONATION).
-// The control plane has no owner/grant/visibility axes; every accessor is a NAMED
-// principal (no "everyone" category) read from the role store + impersonation grant
-// the SELECT predicate compiles from. Settings tables defer to their containing
-// project/tenant (containment-only access = the level's accessors), so only the
-// level entities get an enumerator.
 func (s *Spec) defEmitStructuralAccessors(out *[]GenFn, seen map[string]bool) error {
 	for _, obj := range s.Objects {
 		if !obj.IsLevelEntity() {
@@ -594,8 +446,7 @@ func (s *Spec) defEmitStructuralAccessors(out *[]GenFn, seen map[string]bool) er
 			return err
 		}
 		if ok {
-			// Fail closed (EID-342 / WS1): the enumerator emits, but if a SELECT term
-			// went unenumerated it would under-report who can administer the node.
+
 			if cov, reason := structuralAccessorCoverage(obj); !cov {
 				return fmt.Errorf("object %q: cannot soundly enumerate structural accessors (auth.%s would under-report) — %s", obj.Name, name, reason)
 			}
@@ -606,10 +457,6 @@ func (s *Spec) defEmitStructuralAccessors(out *[]GenFn, seen map[string]bool) er
 	return nil
 }
 
-// defEmitClosure emits the closure-reachability lookups (WS3 Phase C): an indexed
-// EXISTS over a trigger-maintained transitive-closure table — the row's node is
-// reachable from the subject's granted ancestor. The maintenance trigger is
-// generated separately (EmitTriggers); this is the read side the RLS term calls.
 func (s *Spec) defEmitClosure(out *[]GenFn, seen map[string]bool) {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
@@ -631,9 +478,6 @@ func (s *Spec) defEmitClosure(out *[]GenFn, seen map[string]bool) {
 	}
 }
 
-// defEmitGroup emits the nested-group membership lookups (v3 WS2): is a principal a
-// transitive member of a group? An indexed EXISTS over the membership closure
-// (group, member).
 func (s *Spec) defEmitGroup(out *[]GenFn, seen map[string]bool) {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
@@ -655,12 +499,6 @@ func (s *Spec) defEmitGroup(out *[]GenFn, seen map[string]bool) {
 	}
 }
 
-// defEmitMaterializedFlatMembers emits the SECURITY DEFINER point-lookup for every
-// `via group ... materialized` relation — auth.<obj>_<rel>_flat_member(resource, principal)
-// — the O(1) probe the RLS floor calls instead of walking the closure (WS3 step 2). One
-// per materialized relation (each flat is per object-relation, so no dedup needed). Emits
-// nothing for a spec with no materialized relation, keeping non-materialized output
-// (Foir) byte-identical.
 func (s *Spec) defEmitMaterializedFlatMembers(out *[]GenFn, seen map[string]bool) {
 	for _, f := range s.EmitMaterializedFlats() {
 		name := f.Flat + "_member"
@@ -668,8 +506,7 @@ func (s *Spec) defEmitMaterializedFlatMembers(out *[]GenFn, seen map[string]bool
 			seen[name] = true
 			*out = append(*out, f.MemberDefiner())
 		}
-		// The reverse ListResources fast-path definer (drive-from-flat), when the object
-		// has an owner-plane claim to read the asking subject from.
+
 		if rname := f.Flat + "_resources"; f.HasReverse() && !seen[rname] {
 			seen[rname] = true
 			*out = append(*out, f.ResourcesDefiner())
@@ -677,11 +514,6 @@ func (s *Spec) defEmitMaterializedFlatMembers(out *[]GenFn, seen map[string]bool
 	}
 }
 
-// defEmitCrossObject emits the cross-object permission references (v3 WS3):
-// `auth.<Other>_can_<verb>(id)` runs the OTHER object's full <verb> predicate for the
-// related row — so a comment's reader can be "the parent document's reader",
-// borrowing whatever roles / ACLs / groups / boolean that object's policy uses,
-// evaluated at the related row.
 func (s *Spec) defEmitCrossObject(out *[]GenFn, seen map[string]bool, virtual map[string]bool) error {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
@@ -712,25 +544,13 @@ func (s *Spec) defEmitCrossObject(out *[]GenFn, seen map[string]bool, virtual ma
 	return nil
 }
 
-// defEmitComposition emits the 1-hop composition-parent cascade definers (EID-364):
-// auth.<obj>_composition_<rel>(p_<obj>_id, p_access) is true iff the row p_<obj>_id is
-// the composed CHILD of a PARENT the caller may access at p_access. It EXISTS-checks a
-// <repr.Table> edge whose <ChildCol> = the row (and, when discriminated, <KindCol> =
-// <KindVal>), joined to the PARENT row at <ParentCol>, and runs the object's OWN per-verb
-// RLS predicate there — chosen by access (read→select, write→update, delete→delete) — so
-// the borrowed access may be owner / ACL / public / role, evaluated at the parent. The
-// parent predicate is built from the object with composition relations PRUNED, so a
-// composition term can never re-enter this definer: the cascade is strictly 1-hop, with
-// no recursion and no cycle hang. Claims read from the GUC inside the inlined predicate
-// (like the cross-object borrow); the row id + access class are the only parameters.
 func (s *Spec) defEmitComposition(out *[]GenFn, seen map[string]bool, virtual map[string]bool) error {
-	// access class → the @rls op whose predicate that class cascades. 'write' borrows
-	// EDIT (update), never CREATE (insert) — children are never created by cascade.
+
 	branches := []struct{ access, op string }{
 		{"read", "select"}, {"write", "update"}, {"delete", "delete"},
 	}
 	for _, obj := range s.Objects {
-		base := obj.withoutComposition() // the 1-hop parent base (no re-entry)
+		base := obj.withoutComposition()
 		for _, r := range obj.Relations {
 			vc, ok := r.Repr.(ViaComposition)
 			if !ok {
@@ -748,13 +568,9 @@ func (s *Spec) defEmitComposition(out *[]GenFn, seen map[string]bool, virtual ma
 					return err
 				}
 				if pred == "" {
-					continue // object has no @rls perm at this op → no cascade branch
+					continue
 				}
-				// Each branch is a CORRELATED EXISTS over the object table at the parent
-				// row (like the cross-object borrow), NOT a join: the parent predicate
-				// references the object's columns UNQUALIFIED (tenant_id, owner_id, …), and
-				// the edge table shares some of those names (tenant_id/project_id) — a join
-				// would make them ambiguous, so the inner SELECT scopes them to the object.
+
 				cases = append(cases, fmt.Sprintf("WHEN '%s' THEN EXISTS (SELECT 1 FROM %s WHERE %s.%s = e.%s AND (%s))",
 					b.access, obj.Table, obj.Table, obj.pk(), vc.ParentCol, pred))
 			}
@@ -778,10 +594,6 @@ func (s *Spec) defEmitComposition(out *[]GenFn, seen map[string]bool, virtual ma
 	return nil
 }
 
-// opPredicate returns obj's @rls predicate for the permission mapped to <op>
-// (select/update/delete), or "" if the object has no such permission. Like
-// objectVerbPredicate but keyed on the mapref (the access class) rather than the verb
-// name, so the composition cascade can pick EDIT for a write and DELETE for a delete.
 func (s *Spec) opPredicate(obj *Object, op string, virtual map[string]bool) (string, error) {
 	for _, pm := range obj.Perms {
 		if contains(pm.Layers, "rls") && pm.Maps == op {
@@ -792,10 +604,6 @@ func (s *Spec) opPredicate(obj *Object, op string, virtual map[string]bool) (str
 	return "", nil
 }
 
-// withoutComposition returns a shallow copy of the object with every composition
-// relation removed and every permission's expression (Tree + Expr) pruned of its
-// composition leaves — the 1-hop base used to evaluate a composition PARENT's access
-// without re-entering the cascade definer.
 func (o *Object) withoutComposition() *Object {
 	comp := map[string]bool{}
 	var rels []*Relation
@@ -819,8 +627,6 @@ func (o *Object) withoutComposition() *Object {
 	return &cp
 }
 
-// pruneCompLeaves returns a copy of the permission tree with every leaf naming a
-// composition relation removed (an emptied OR/AND/NOT subtree collapses to nil).
 func pruneCompLeaves(n *PermNode, comp map[string]bool) *PermNode {
 	if n == nil {
 		return nil
@@ -842,7 +648,7 @@ func pruneCompLeaves(n *PermNode, comp map[string]bool) *PermNode {
 			return nil
 		}
 		if len(kids) == 1 && n.Op == "or" {
-			return kids[0] // a single survivor needs no union wrapper
+			return kids[0]
 		}
 		cp := *n
 		cp.Kids = kids
@@ -859,7 +665,6 @@ func pruneCompLeaves(n *PermNode, comp map[string]bool) *PermNode {
 	return n
 }
 
-// pruneCompExpr drops composition leaves from a permission's flat term list.
 func pruneCompExpr(expr []*Term, comp map[string]bool) []*Term {
 	out := make([]*Term, 0, len(expr))
 	for _, t := range expr {
@@ -871,14 +676,6 @@ func pruneCompExpr(expr []*Term, comp map[string]bool) []*Term {
 	return out
 }
 
-// defEmitStoreManage emits the write-moat dispatch (v0.28.0): for every discriminated
-// grant store named by a @store_manage write-governance object,
-// auth.<store>_manage(p_type, p_id) CASEs the discriminator to the matching KIND's
-// can-edit predicate — fail-closed (ELSE false). Each kind's auth.<O>_can_edit(p_id)
-// runs that object's full edit predicate AT the row (the same EXISTS-over-table shape
-// as a cross-object borrow). The set of kinds is the spec's descriptor objects on the
-// store (compile-time platform STRUCTURE); per-model access config is a runtime-data
-// layer the edit predicate reads, never baked here.
 func (s *Spec) defEmitStoreManage(out *[]GenFn, seen map[string]bool, virtual map[string]bool) error {
 	manageStores := map[string]bool{}
 	for _, obj := range s.Objects {
@@ -910,8 +707,6 @@ func (s *Spec) defEmitStoreManage(out *[]GenFn, seen map[string]bool, virtual ma
 	return nil
 }
 
-// defStoreManageWhens emits each descriptor's can-edit definer for a store (once,
-// guarded by `seen`) and returns the CASE WHEN clauses the store's dispatch CASEs on.
 func (s *Spec) defStoreManageWhens(out *[]GenFn, seen map[string]bool, virtual map[string]bool, store string) ([]string, error) {
 	var whens []string
 	for _, o := range s.storeDescriptors(store) {
@@ -933,27 +728,22 @@ func (s *Spec) defStoreManageWhens(out *[]GenFn, seen map[string]bool, virtual m
 	return whens, nil
 }
 
-// roleDefinerForTerm returns the definer a role-bearing term needs (a walk into
-// a parent level, or a via-role relation), or ok=false for non-role terms.
 func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, rs *RoleStore, rankIdx map[string]int, presetLevels map[string][]string) (GenFn, bool, error) {
 	if rs == nil {
 		return GenFn{}, false, nil
 	}
-	// Ancestor walk: `<rel>-><verb>` → is_<level>_admin, role at that ancestor
-	// level (deeper scope cols pinned NULL), OR'd with the operator's reach AT
-	// that level (an unconditional god-flag, or a scoped grant — see operatorReach).
+
 	if t.WalkVerb != "" {
 		parent := rels[t.Ident]
 		if parent == nil {
 			return GenFn{}, false, fmt.Errorf("walk references unknown relation %q", t.Ident)
 		}
-		lvl := parent.Types[0] // the level the walk targets (e.g. tenant)
+		lvl := parent.Types[0]
 		fn := fmt.Sprintf("is_%s_%s", lvl, s.adminName())
-		keys := presetLevels[lvl] // all presets bound at that level
+		keys := presetLevels[lvl]
 		return s.roleDefiner(fn, rs, lvl, keys, s.operatorReach(lvl)), true, nil
 	}
-	// A via-role relation on this object — referenced directly, or session-gated
-	// via `@session(<rel>)`.
+
 	relName := t.Ident
 	if t.Builtin == "session" && t.SessionRel != "" {
 		relName = t.SessionRel
@@ -966,10 +756,7 @@ func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[strin
 	if !ok {
 		return GenFn{}, false, nil
 	}
-	// The platform-staff plane (a via-role targeting a virtual-anchored role
-	// subject) is NOT an object-scoped role — it resolves to has_<anchor>_role,
-	// generated by the dedicated platform-role loop. Skip it here so we don't also
-	// emit a spurious (unreferenced) <admin>_has_<obj>_role for it.
+
 	if len(r.Types) > 0 {
 		if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
 			return GenFn{}, false, nil
@@ -978,26 +765,17 @@ func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[strin
 	objLevel := obj.Scoped[len(obj.Scoped)-1]
 	keys := presetLevels[objLevel]
 	if vr.HasRank {
-		// is_<rank>: project-level presets at or above the rank threshold,
-		// recursing to the parent-level admin fn (is_<ancestor>_admin).
+
 		keys = atOrAbove(keys, vr.RankMin, rankIdx)
 		recurse := s.parentLevelRecurse(obj)
 		return s.roleDefiner("is_"+vr.RankMin, rs, objLevel, keys, recurse), true, nil
 	}
-	// <admin>_has_<obj>_role: any role at the object's level, no recursion.
+
 	return s.roleDefiner(fmt.Sprintf("%s_has_%s_role", s.adminName(), obj.Name), rs, objLevel, keys, ""), true, nil
 }
 
-// roleDefiner builds a role-resolution EXISTS over the role store at the given
-// level (pinning ancestor scope cols, the level col, and NULLing deeper cols),
-// optionally OR'd with a recursion call.
 func (s *Spec) roleDefiner(name string, rs *RoleStore, level string, keys []string, recurse string) GenFn {
-	// The role store's scope columns are a fixed ordered set; pin root..level to
-	// args and NULL the columns BELOW level. This needs the full nonVirtual level
-	// sequence the scope columns map to (the topological order), not just the
-	// ancestor path — a tenant-level role must NULL project_id. (WS3: a branching
-	// tree whose roles span multiple branches needs per-branch scope columns, out
-	// of scope here; single-branch role stays identical to the chain case.)
+
 	chain, _ := s.Topology.Chain()
 	var nonVirtual []string
 	for _, l := range chain {
@@ -1005,21 +783,14 @@ func (s *Spec) roleDefiner(name string, rs *RoleStore, level string, keys []stri
 			nonVirtual = append(nonVirtual, l.Name)
 		}
 	}
-	// A non-virtual level is PINNED to an arg iff it is on the role-anchor's
-	// root→level path (root..level inclusive); every level below is NULL'd. This is
-	// the path-aware form of the chain-era "pin root..level, NULL below" — and it
-	// handles a VIRTUAL anchor (the platform root) for free: the virtual root has
-	// NO non-virtual ancestor, so every scope column is NULL and the signature is
-	// just (user_id) — `is_platform_<role>(user_id)`, a role at the schema root
-	// (v3 WS6, the general retirement of the is_platform_admin god-flag).
+
 	onPath := map[string]bool{}
 	if path, err := s.Topology.AncestorPath(level); err == nil {
 		for _, l := range path {
 			onPath[l.Name] = true
 		}
 	}
-	// Build the per-scope-column predicate: pin the anchor's ancestry to args, NULL
-	// every level below it.
+
 	args := []string{"user_id text"}
 	var scope []string
 	for i, lvl := range nonVirtual {
@@ -1052,10 +823,6 @@ func (s *Spec) roleDefiner(name string, rs *RoleStore, level string, keys []stri
 	return GenFn{Name: name, Sig: strings.Join(args, ", "), Body: body}
 }
 
-// parentLevelRecurse returns the recursion call a project-level rank fn makes —
-// the ancestor-level admin fn (is_<parent>_admin(user_id, check_<parent>_id)),
-// or, when the object is already at the top non-virtual level, the operator's
-// reach at that level (a god-flag or a scoped grant; "" if no operator).
 func (s *Spec) parentLevelRecurse(obj *Object) string {
 	if len(obj.Scoped) < 2 {
 		return s.operatorReach(obj.Scoped[len(obj.Scoped)-1])
@@ -1064,15 +831,6 @@ func (s *Spec) parentLevelRecurse(obj *Object) string {
 	return fmt.Sprintf("is_%s_%s(user_id, check_%s_id)", parent, s.adminName(), parent)
 }
 
-// operatorReach returns the recursion predicate the privileged ("operator")
-// subject contributes to a role-resolution definer AT a given level — the
-// disjunct by which an operator satisfies that level's admin authority:
-//   - a LEGACY membership operator → its unconditional flag fn, level-independent
-//     (e.g. `is_platform_admin(user_id)`);
-//   - a SCOPED grant operator whose grant is at this level → the grant-reach call
-//     (`<table>_reach(user_id, check_<level>_id)`), gated by an active grant edge;
-//   - "" if no operator contributes here (the role definer is then the bare role
-//     EXISTS — no ambient cross-tenant authority).
 func (s *Spec) operatorReach(level string) string {
 	for _, sub := range s.Subjects {
 		if sub.Membership != nil {
@@ -1087,32 +845,13 @@ func (s *Spec) operatorReach(level string) string {
 	return ""
 }
 
-// platformRoleFn is the generated name of a platform-anchored role definer:
-// has_<anchor>_role (e.g. has_platform_role). Centralised so the kernel emitter
-// and the RLS emitter agree on the one name. Deliberately distinct from the
-// legacy is_platform_admin god-flag — the policy must read as a revocable role.
 func platformRoleFn(anchor string) string { return "has_" + anchor + "_role" }
 
-// isPlatformRoleSubject reports whether a subject is the platform-plane role
-// subject (v3 WS6): a role-bearing subject (configurable roles, not `roles none`)
-// anchored at a VIRTUAL level, and NOT an operator (no membership god-flag, no
-// grant-conferred reach). Such a subject contributes the platform-role branch on
-// global objects and drives the generated is_<anchor>_<adminName> definer. The
-// virtual anchor is what distinguishes it from an ordinary tenant/project role
-// subject (which pins scope columns); V7 already requires an empty-pin subject to
-// anchor virtually, so this is the sanctioned root-plane authority.
 func (s *Spec) isPlatformRoleSubject(sub *Subject) bool {
 	return sub.Roles != "" && !sub.RolesNone && sub.Membership == nil &&
 		sub.Reach != "grant" && s.levelIsVirtual(sub.Anchor)
 }
 
-// selectUsesAppScope reports whether the object's SELECT permission references the
-// @app_scope builtin — the broad operator-plane read reach. The accessor
-// enumerator is the read-side dual of <table>_select, so it gates the role plane
-// on the SELECT perm specifically: an object may grant @app_scope on writes
-// (project-wide edit, e.g. collaborative note resolution) while keeping a tighter
-// @descriptor-only read — there the accessor must NOT enumerate role-holders, as
-// they cannot SELECT the row qua role.
 func (s *Spec) selectUsesAppScope(obj *Object) bool {
 	for _, pm := range obj.Perms {
 		if pm.Maps != "select" {
@@ -1127,10 +866,6 @@ func (s *Spec) selectUsesAppScope(obj *Object) bool {
 	return false
 }
 
-// ownerPrincipalName returns the principal-kind name of the object's owner axis —
-// the first declared type of the relation named "owner" (an owner column), else the
-// leaf owner subject, else "principal". Drives the kernel reachability-gate
-// signature (auth.<principal>_can_access_<obj>).
 func (s *Spec) ownerPrincipalName(obj *Object) string {
 	for _, r := range obj.Relations {
 		if r.Name == "owner" && len(r.Types) > 0 {
@@ -1145,11 +880,6 @@ func (s *Spec) ownerPrincipalName(obj *Object) string {
 	return "principal"
 }
 
-// pureAccessorDefiner is the de-prescribed accessorDefiner: it sources the OWNER
-// axes from the SELECT permission's owner (ViaColumn) relation terms, the GRANT
-// rows from the object's `via grant` relation, and the admin-owner exclusion from
-// the `@app_scope(exclude <rel>)` term — emitting the SAME branches in the same
-// order the SELECT predicate composes — owner branch(es), then GRANT, then ROLE.
 func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 	rels := map[string]*Relation{}
 	for _, r := range obj.Relations {
@@ -1163,9 +893,6 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 		}
 	}
 
-	// and/and-not: compose the accessor set with set algebra (the coverage gate has
-	// already verified every leaf is composable). A union-only tree falls through to the
-	// flat bucketed path below, which stays byte-identical.
 	if sel != nil && accessorTreeOp(sel.Tree) != "" {
 		if composed, ok := s.accessorTreeSQL(obj, sel.Tree, rels); ok {
 			return []GenFn{accessorGenFn(obj.Table, []string{composed})}
@@ -1175,48 +902,29 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 	var branches []string
 	var adminExcl string
 	if sel != nil {
-		// OWNER — owner (ViaColumn) relation terms, in the perm's declared order.
+
 		branches = append(branches, defOwnerAccessorBranches(obj, sel, rels)...)
-		// The admin-owner exclusion that gates the role plane: the relation excluded
-		// by @app_scope(exclude <rel>).
+
 		adminExcl = defAdminExclCond(sel, rels)
 	}
 
-	// GRANT — the `via grant` relation's acl rows.
 	if _, vg := grantRelation(obj); vg != nil {
 		branches = append(branches, grantAccessorBranch(vg))
 	}
 
-	// ROLE — the role plane (gated by @app_scope + the admin-owner exclusion).
 	if rb, ok := s.roleAccessorBranch(obj, adminExcl); ok {
 		branches = append(branches, rb)
 	}
 
-	// GROUP — nested-group membership relations: the transitive members of the group
-	// named by the row's column, a reverse read of the SAME closure the forward term
-	// checks (WS1 reverse builder).
 	branches = append(branches, s.defGroupAccessorBranches(obj, sel, rels)...)
 
-	// CLOSURE — hierarchy-reachability relations: the ANCESTORS of the row's node, a
-	// reverse read of the SAME (ancestor, descendant) closure the forward
-	// `<Closure>_reachable(claim, row.<Col>)` term tests (WS1 reverse builder).
 	branches = append(branches, defClosureAccessorBranches(obj, sel, rels)...)
 
-	// OBJECT — cross-object borrow relations: the accessors of the borrowed object's
-	// READ permission for the related row, recursed via that object's own accessor
-	// enumerator (WS1 reverse builder; the coverage gate guarantees the borrow is a
-	// read borrow from an enumerable, covered object).
 	branches = append(branches, s.defObjectAccessorBranches(obj, sel, rels)...)
 
-	// COMPOSITION (EID-364) — a composed child's accessors are its composition PARENT's
-	// DIRECT accessors (the reverse dual of the pruned 1-hop cascade). When the object
-	// has a composition relation the enumerator SPLITS: <table>_direct_accessors holds the
-	// non-composition branches above, and <table>_accessors unions it with one cascade
-	// branch per parent edge — each recursing into _direct_accessors (never <table>_accessors
-	// itself), so the reverse walk is strictly 1-hop with no cycle, matching the RLS prune.
 	comp := s.defCompositionAccessorBranches(obj, sel, rels)
 	if len(comp) == 0 {
-		return []GenFn{accessorGenFn(obj.Table, branches)} // byte-identical: no split
+		return []GenFn{accessorGenFn(obj.Table, branches)}
 	}
 	direct := accessorGenFnNamed(obj.Table+"_direct_accessors", branches)
 	full := accessorGenFn(obj.Table, append(
@@ -1225,12 +933,6 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 	return []GenFn{direct, full}
 }
 
-// defCompositionAccessorBranches renders the COMPOSITION enumeration branches — one per
-// ViaComposition relation in the SELECT permission. Each reverse-reads the structural
-// edge table: for this row (the child), the DIRECT accessors of every composition PARENT
-// it points at. It recurses into <table>_direct_accessors (the non-composition dual), so
-// the cascade is 1-hop and cannot loop, exactly as the forward definer prunes composition
-// from the parent predicate.
 func (s *Spec) defCompositionAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
 	if sel == nil {
 		return nil
@@ -1253,8 +955,6 @@ func (s *Spec) defCompositionAccessorBranches(obj *Object, sel *Perm, rels map[s
 	return branches
 }
 
-// compositionAccessorBranch is one ViaComposition relation's reverse branch: the DIRECT
-// accessors of each parent the child row (p_id) is composed under via <Table>.
 func compositionAccessorBranch(table, schema string, vc ViaComposition) string {
 	conds := []string{fmt.Sprintf("e.%s = p_id", vc.ChildCol)}
 	if vc.KindCol != "" {
@@ -1265,11 +965,6 @@ func compositionAccessorBranch(table, schema string, vc ViaComposition) string {
 		vc.Table, schema, table, vc.ParentCol, strings.Join(conds, " AND "))
 }
 
-// defGroupAccessorBranches renders the GROUP enumeration branches — one per ViaGroup
-// relation in the SELECT permission. Each reverse-reads the transitive-closure table
-// the forward `<Closure>_member(row.<Col>, claim)` term tests: the members of the group
-// the row names. Because it reads the same committed closure rows the forward predicate
-// does, the enumeration agrees with the predicate by construction.
 func (s *Spec) defGroupAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
 	if sel == nil {
 		return nil
@@ -1296,18 +991,6 @@ func (s *Spec) defGroupAccessorBranches(obj *Object, sel *Perm, rels map[string]
 	return branches
 }
 
-// groupAccessorBranch renders one GROUP enumeration branch: the transitive members of
-// the group named by the row's <Col>, as 'read' accessors of the relation's kind.
-//
-// When the relation is materialized (flat != "" — the qualified auth.<obj>_<rel>_flat
-// table), the branch reverse-reads the trigger-maintained flat (resource_id →
-// transitive members) as a sargable point lookup on the resource index, instead of
-// joining the closure per call. The flat is `object row ⋈ closure` (the WS3
-// maintenance oracle proves flat == walk after every mutation), so the rows are the
-// SAME committed bytes the walk produces — no second evaluator, just a faster read.
-// Otherwise it joins the closure (group, member) to the object row on the row's group
-// column — exactly the membership the forward `<Closure>_member` definer tests,
-// reversed.
 func groupAccessorBranch(table, pk, kind string, g ViaGroup, flat string) string {
 	if g.Materialized && flat != "" {
 		return fmt.Sprintf(
@@ -1319,10 +1002,6 @@ func groupAccessorBranch(table, pk, kind string, g ViaGroup, flat string) string
 		kind, g.MemberCol, table, g.Closure, g.GroupCol, g.Col, pk)
 }
 
-// groupFlatName returns the qualified materialized-flat table for a via-group relation
-// (auth.<obj>_<rel>_flat), or "" when the relation is not materialized — so the
-// accessor (and, post-flip, RLS) walk the closure. It MUST agree with the name
-// EmitMaterializedFlats emits (qFlat = definerSchema . <objTable>_<relName>_flat).
 func (s *Spec) groupFlatName(obj *Object, r *Relation, g ViaGroup) string {
 	if !g.Materialized {
 		return ""
@@ -1330,12 +1009,6 @@ func (s *Spec) groupFlatName(obj *Object, r *Relation, g ViaGroup) string {
 	return fmt.Sprintf("%s.%s_%s_flat", s.definerSchema(), obj.Table, r.Name)
 }
 
-// defClosureAccessorBranches renders the CLOSURE enumeration branches — one per
-// ViaClosure relation in the SELECT permission. Each reverse-reads the
-// (ancestor, descendant) closure the forward `<Closure>_reachable(claim, row.<Col>)`
-// term tests: the ancestors of the node the row names (i.e. every claim value from
-// which the row's node is reachable). Reading the same committed closure rows the
-// forward predicate does, the enumeration agrees with the predicate by construction.
 func defClosureAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
 	if sel == nil {
 		return nil
@@ -1362,22 +1035,12 @@ func defClosureAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relatio
 	return branches
 }
 
-// closureAccessorBranch renders one CLOSURE enumeration branch: the ancestors of the
-// node the row names (row.<Col>), as 'read' accessors of the relation's kind. Joins the
-// closure (ancestor, descendant) to the object row on the row's node column — exactly
-// the reachability the forward `<Closure>_reachable` definer tests, reversed.
 func closureAccessorBranch(table, pk, kind string, c ViaClosure) string {
 	return fmt.Sprintf(
 		"SELECT 'closure'::text, '%s'::text, x.%s, 'read'::text\n    FROM %s t\n    JOIN %s x ON x.%s = t.%s\n    WHERE t.%s = p_id",
 		kind, c.AncestorCol, table, c.Closure, c.DescendantCol, c.Col, pk)
 }
 
-// defObjectAccessorBranches renders the OBJECT (cross-object borrow) enumeration
-// branches — one per ViaObject relation in the SELECT permission. Each LATERAL-calls
-// the borrowed object's accessor enumerator on the related row this object's <Col>
-// names, returning those accessors. Because it delegates to the same enumerator the
-// borrowed object's own read uses (and the gate guarantees a read borrow from a
-// covered object), it agrees with the forward `<Object>_can_<verb>` definer.
 func (s *Spec) defObjectAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
 	if sel == nil {
 		return nil
@@ -1397,34 +1060,24 @@ func (s *Spec) defObjectAccessorBranches(obj *Object, sel *Perm, rels map[string
 		}
 		other := s.objectByName(vo.Object)
 		if other == nil {
-			continue // the coverage gate guarantees this resolved; defensive
+			continue
 		}
 		branches = append(branches, objectAccessorBranch(obj.Table, obj.pk(), vo, other.Table, s.definerSchema()))
 	}
 	return branches
 }
 
-// objectAccessorBranch renders one OBJECT enumeration branch: a LATERAL call to the
-// borrowed object's accessor enumerator on the related row named by this object's
-// <Col>, passing its rows through unchanged (source / kind / principal / access).
 func objectAccessorBranch(table, pk string, vo ViaObject, otherTable, schema string) string {
 	return fmt.Sprintf(
 		"SELECT a.source, a.principal_kind, a.principal_id, a.access\n    FROM %s t\n    JOIN LATERAL %s.%s_accessors(t.%s) a ON true\n    WHERE t.%s = p_id",
 		table, schema, otherTable, vo.Col, pk)
 }
 
-// accessorBranchForTerm returns one tree LEAF's accessor branch — the per-term form of
-// the bucketed builders, for the tree composer (and/and-not). It covers the composable
-// CONTENT relations (owner / grant / group / closure / object); a builtin, the
-// @app_scope role plane, or an unknown leaf returns ok=false so the composer fails
-// closed (those are not clean per-principal set terms to intersect/exclude).
 func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Relation) (string, bool) {
 	if t == nil || t.Ident == "" {
 		return "", false
 	}
-	// A grant-selector leaf (`grantee:read`) names a ViaGrant relation with an access
-	// class; resolve it to the relation name (the grant branch lists all acl rows for
-	// the resource, tagged with their access — matching the flat path).
+
 	name := t.Ident
 	if rn, _, ok := grantSelector(t.Ident, rels); ok {
 		name = rn
@@ -1459,15 +1112,6 @@ func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Rela
 	return "", false
 }
 
-// accessorTreeSQL composes a permission tree's accessor enumeration with set algebra:
-// or → UNION ALL; and → the first positive branch FILTERED to also-appear-in every
-// other positive ((kind,id) IN …) and NOT-appear-in every negative ((kind,id) NOT IN …).
-// Set membership is on PRINCIPAL IDENTITY (kind, id), never the whole row — `owner` and
-// `grantee` carry different source/access for the same principal, so a full-row
-// INTERSECT/EXCEPT would be wrong — and the composed result keeps the base positive's
-// provenance. Returns ok=false (→ fail closed) when a leaf is not a composable content
-// relation, or a `not` has no positive base to bound it. Only invoked for trees that
-// actually use and/and-not; a union-only tree keeps the byte-identical flat path.
 func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, bool) {
 	if n == nil {
 		return "", false
@@ -1491,13 +1135,9 @@ func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relati
 	case "and":
 		return s.accessorAndSQL(obj, n, rels)
 	}
-	return "", false // a bare `not` (no positive base) is not enumerable
+	return "", false
 }
 
-// accessorAndSQL composes the `and` / `and not` accessor enumeration: the first positive
-// branch FILTERED to (kind,id) IN every other positive and NOT IN every negative. Split out
-// of accessorTreeSQL purely to keep each function's cognitive complexity in check — the logic
-// is an exact move of the former and-case (byte-identical SQL).
 func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, bool) {
 	var positives, negatives []*PermNode
 	for _, k := range n.Kids {
@@ -1511,7 +1151,7 @@ func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relatio
 		}
 	}
 	if len(positives) == 0 {
-		return "", false // a bare exclusion has no bounded positive base
+		return "", false
 	}
 	base, ok := s.accessorTreeSQL(obj, positives[0], rels)
 	if !ok {
@@ -1544,9 +1184,6 @@ func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relatio
 	return fmt.Sprintf("SELECT a.* FROM (%s) a(source, principal_kind, principal_id, access)\n    WHERE %s", base, strings.Join(filters, "\n      AND ")), true
 }
 
-// defOwnerAccessorBranches renders the OWNER enumeration branches — the owner
-// (ViaColumn) relation terms of the SELECT permission, in the perm's declared order.
-// The first emitted branch carries the result-set column aliases (first=true).
 func defOwnerAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
 	var branches []string
 	first := true
@@ -1572,9 +1209,6 @@ func defOwnerAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation)
 	return branches
 }
 
-// defAdminExclCond returns the admin-owner exclusion that gates the role plane: the
-// relation excluded by @app_scope(exclude <rel>), as an r.-prefixed condition (""
-// when there is none).
 func defAdminExclCond(sel *Perm, rels map[string]*Relation) string {
 	for _, t := range sel.Expr {
 		if t != nil && t.Builtin == "app_scope" && t.ExcludeRel != "" {
@@ -1588,10 +1222,6 @@ func defAdminExclCond(sel *Perm, rels map[string]*Relation) string {
 	return ""
 }
 
-// ownerAccessorBranch renders one OWNER enumeration branch — the owner column's
-// value as a 'write' accessor of the given kind, for rows owned via that axis. The
-// FIRST branch of the UNION carries the column aliases (it names the result set).
-// pk is the object table's primary-key column (the row identity p_id binds to).
 func ownerAccessorBranch(table, pk, kind string, vc ViaColumn, first bool) string {
 	if first {
 		return fmt.Sprintf(
@@ -1603,8 +1233,6 @@ func ownerAccessorBranch(table, pk, kind string, vc ViaColumn, first bool) strin
 		kind, vc.Column, table, pk, ownerColPresent(vc))
 }
 
-// ownerExclCond is the "not owned via this axis" condition (r.-prefixed) the role
-// plane is gated by — mirroring @app_scope's exclusion of admin-owned rows.
 func ownerExclCond(vc ViaColumn) string {
 	if vc.DiscrimCol != "" {
 		return fmt.Sprintf("r.%s IS DISTINCT FROM '%s'", vc.DiscrimCol, vc.DiscrimVal)
@@ -1612,8 +1240,6 @@ func ownerExclCond(vc ViaColumn) string {
 	return fmt.Sprintf("r.%s IS NULL", vc.Column)
 }
 
-// grantAccessorBranch renders the GRANT enumeration branch — the explicit acl rows
-// for the resource, filtered by the discriminator when the store is shared.
 func grantAccessorBranch(g *ViaGrant) string {
 	conds := []string{fmt.Sprintf("%s = p_id", g.RecordCol)}
 	if g.DiscrimCol != "" {
@@ -1624,13 +1250,6 @@ func grantAccessorBranch(g *ViaGrant) string {
 		g.KindCol, g.PrincipalCol, g.AccessCol, g.Table, strings.Join(conds, " AND "))
 }
 
-// roleAccessorBranch renders the ROLE enumeration branch (and ok=false when none):
-// admins holding a role that reaches the row's scope (ancestor-or-equal — scope
-// levels above the leaf pinned to equality, the leaf NULL-or-equal so a tenant-level
-// role reaches a project row), gated by the admin-owner exclusion exactly as
-// @app_scope is. Only emitted when the object grants the broad operator reach
-// (@app_scope) on SELECT; an @descriptor-only / pure-no-app_scope read admits no
-// role-holders qua role, so enumerating them would over-report.
 func (s *Spec) roleAccessorBranch(obj *Object, adminExcl string) (string, bool) {
 	rs := roleStoreByName(s)
 	if rs == nil || !s.selectUsesAppScope(obj) {
@@ -1660,15 +1279,10 @@ func (s *Spec) roleAccessorBranch(obj *Object, adminExcl string) (string, bool) 
 		strings.Join(where, " AND ")), true
 }
 
-// accessorGenFn wraps the UNION-ALL of accessor branches in the set-returning
-// SECURITY DEFINER shape shared by the descriptor and pure enumerators.
 func accessorGenFn(table string, branches []string) GenFn {
 	return accessorGenFnNamed(table+"_accessors", branches)
 }
 
-// accessorGenFnNamed is accessorGenFn with an explicit function name — used to emit the
-// <table>_direct_accessors split alongside <table>_accessors when an object cascades
-// composition (the full enumerator unions the direct one with the 1-hop parent walk).
 func accessorGenFnNamed(name string, branches []string) GenFn {
 	return GenFn{
 		Name:    name,
@@ -1679,16 +1293,6 @@ func accessorGenFnNamed(name string, branches []string) GenFn {
 	}
 }
 
-// structuralAccessorDefiner builds auth.<table>_accessors(p_id) for a level-entity
-// (control-plane) object — the Expand enumerator over the role/staff plane. It
-// walks the object's SELECT permission terms, mapping each to a principal
-// enumeration: a platform-staff via-role → STAFF; a role-walk into a parent level,
-// a via-role, or a via-memberin → ROLE at the matching scope; and (for a level
-// entity reachable by the operator grant) the active impersonation grants →
-// IMPERSONATION. @session / containment builtins add no NEW principals (they are
-// the mechanism by which the enumerated role-holders' claims match) and are
-// skipped. UNION (not UNION ALL) so a principal reachable two ways lists once per
-// distinct (source, principal). Returns ok=false if there are no enumerable terms.
 func (s *Spec) structuralAccessorDefiner(obj *Object) (GenFn, bool, error) {
 	rs := roleStoreByName(s)
 	if rs == nil {
@@ -1719,8 +1323,7 @@ func (s *Spec) structuralAccessorDefiner(obj *Object) (GenFn, bool, error) {
 		}
 		branches = append(branches, b...)
 	}
-	// The operator (impersonation) grant auto-applies to a level entity reachable
-	// at the grant's level — enumerate the active grants for the row's scope.
+
 	for _, g := range s.Grants {
 		if s.levelOnObjectPath(obj, g.Level) {
 			branches = append(branches, s.impersonationEnumSQL(obj, g))
@@ -1738,14 +1341,9 @@ func (s *Spec) structuralAccessorDefiner(obj *Object) (GenFn, bool, error) {
 	}, true, nil
 }
 
-// structuralTermEnum maps one SELECT-permission term of a control-plane object to
-// its principal-enumeration branch(es). Mirrors roleDefinerForTerm, but emits the
-// enumeration (who satisfies the term) instead of the boolean check.
 func (s *Spec) structuralTermEnum(obj *Object, t *Term, rels map[string]*Relation, rs *RoleStore, presetLevels map[string][]string, rankIdx map[string]int) ([]string, error) {
 	if t.WalkVerb != "" {
-		// Role-walk into a parent level (e.g. tenant->owner): the parent level's
-		// admin roles. The parent's operator reach is covered by the impersonation
-		// branch (added once per object), so this stays roles-only.
+
 		parent := rels[t.Ident]
 		if parent == nil {
 			return nil, fmt.Errorf("structural accessors: walk references unknown relation %q", t.Ident)
@@ -1754,7 +1352,7 @@ func (s *Spec) structuralTermEnum(obj *Object, t *Term, rels map[string]*Relatio
 		return []string{s.roleEnumSQL(obj, rs, lvl, presetLevels[lvl], "role", "read")}, nil
 	}
 	if t.Builtin != "" {
-		// @session / @app_scope / @open contribute no NEW enumerable principals.
+
 		return nil, nil
 	}
 	r := rels[t.Ident]
@@ -1765,9 +1363,7 @@ func (s *Spec) structuralTermEnum(obj *Object, t *Term, rels map[string]*Relatio
 	case ViaRole:
 		if len(r.Types) > 0 {
 			if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
-				// The platform-role plane: has_<anchor>_role holders (NULL scope). The
-				// `source` tag is the SUBJECT's own name (spec-derived — "staff" for Foir,
-				// whatever an adopter names its root-role subject), never a baked literal.
+
 				return []string{s.roleEnumSQL(obj, rs, st.Anchor, presetLevels[st.Anchor], st.Name, "write")}, nil
 			}
 		}
@@ -1778,17 +1374,12 @@ func (s *Spec) structuralTermEnum(obj *Object, t *Term, rels map[string]*Relatio
 		}
 		return []string{s.roleEnumSQL(obj, rs, objLevel, keys, "role", "read")}, nil
 	case ViaMemberIn:
-		// Any admin role at the named level scope (no preset filter, descendants of
-		// that scope included — the memberin shape).
+
 		return []string{s.memberinEnumSQL(obj, rs, repr.Level)}, nil
 	}
 	return nil, nil
 }
 
-// roleEnumSQL enumerates the role store's admins holding a role at `level` that
-// reaches this row's scope — pinning the level's root→level scope columns to the
-// row's columns, NULLing the deeper ones (the inverse of roleDefiner's claim
-// pinning), filtered to `presets` when non-empty. Tagged with `source` / `access`.
 func (s *Spec) roleEnumSQL(obj *Object, rs *RoleStore, level string, presets []string, source, access string) string {
 	chain, _ := s.Topology.Chain()
 	var nonVirtual []string
@@ -1832,9 +1423,6 @@ func (s *Spec) roleEnumSQL(obj *Object, rs *RoleStore, level string, presets []s
 		rs.KindCol, rs.KindVal, rs.RevokedCol, strings.Join(conds, " AND "), join, obj.pk())
 }
 
-// memberinEnumSQL enumerates admins with ANY role at the given level's scope (the
-// via-memberin shape: a tenant member is anyone with a role anywhere in the
-// tenant, regardless of project) — so the deeper scope columns are NOT NULL-pinned.
 func (s *Spec) memberinEnumSQL(obj *Object, rs *RoleStore, level string) string {
 	return fmt.Sprintf(
 		"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s e JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND ra.%s = e.%s\n    WHERE e.%s = p_id",
@@ -1842,9 +1430,6 @@ func (s *Spec) memberinEnumSQL(obj *Object, rs *RoleStore, level string) string 
 		rs.RevokedCol, s.scopeColForLevel(rs, level), s.scopeCol(obj, level), obj.pk())
 }
 
-// impersonationEnumSQL enumerates the operators holding an ACTIVE impersonation
-// grant reaching this row's grant-level scope (e.g. the tenant) — the IMPERSONATION
-// plane, the same active-grant gate impersonation_grants_reach checks.
 func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
 	conds := []string{fmt.Sprintf("ig.%s = e.%s", g.LevelCol, s.scopeCol(obj, g.Level))}
 	if g.ActiveCol != "" {
@@ -1853,11 +1438,7 @@ func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
 	if g.ExpiresCol != "" {
 		conds = append(conds, fmt.Sprintf("ig.%s > now()", g.ExpiresCol))
 	}
-	// source + principal_kind are spec-DERIVED, never baked Foir literals: the source
-	// is the grant's own name (e.g. "impersonation" for Foir, "break_glass" for another
-	// adopter), and the grantee's kind is the rolestore's declared kind value (the
-	// principal kind a grant confers reach to — "admin" for Foir), falling back to the
-	// grant name when the spec declares no rolestore (EID-267 / EID-315).
+
 	kind := g.Name
 	if rs := roleStoreByName(s); rs != nil {
 		kind = rs.KindVal
@@ -1867,8 +1448,6 @@ func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
 		g.Name, kind, g.GranteeCol, obj.Table, g.Table, strings.Join(conds, " AND "), obj.pk())
 }
 
-// levelOnObjectPath reports whether a topology level is on the object's scope path
-// (so an operator grant at that level reaches the object's rows).
 func (s *Spec) levelOnObjectPath(obj *Object, level string) bool {
 	for _, l := range obj.Scoped {
 		if l == level {
@@ -1878,8 +1457,6 @@ func (s *Spec) levelOnObjectPath(obj *Object, level string) bool {
 	return false
 }
 
-// kernelDefiner builds the realtime/collab reachability gate over an object's
-// own table: the owner axis (the owner principal owns the row).
 func (s *Spec) kernelDefiner(obj *Object) (GenFn, error) {
 	var ownerVC *ViaColumn
 	for _, r := range obj.Relations {
@@ -1895,10 +1472,7 @@ func (s *Spec) kernelDefiner(obj *Object) (GenFn, error) {
 	}
 	principal := s.ownerPrincipalName(obj)
 	ownerMatch := fmt.Sprintf("r.%s = p_%s_id", ownerVC.Column, principal)
-	// A discriminated owner (`via owner_id where owner_kind = "customer"`) gates the
-	// reachability match by the kind column, so the realtime gate stays kind-scoped
-	// under the unified (owner_id, owner_kind) shape (a customer never reaches an
-	// admin-owned row that happens to share an id).
+
 	if ownerVC.DiscrimCol != "" {
 		ownerMatch = fmt.Sprintf("%s AND r.%s = '%s'", ownerMatch, ownerVC.DiscrimCol, ownerVC.DiscrimVal)
 	}
@@ -1910,9 +1484,6 @@ func (s *Spec) kernelDefiner(obj *Object) (GenFn, error) {
 	}, nil
 }
 
-// scopeColForLevel returns the role store's scope column for a topology level
-// (the rolestore's ScopeCols are ordered by the non-virtual chain). Falls back to
-// "<level>_id" if the level is past the declared scope columns.
 func (s *Spec) scopeColForLevel(rs *RoleStore, level string) string {
 	chain, _ := s.Topology.Chain()
 	i := 0
@@ -1938,7 +1509,6 @@ func roleStoreByName(s *Spec) *RoleStore {
 	return nil
 }
 
-// rankIndex maps a preset to its position in the rank ladder (0 = highest).
 func rankIndex(s *Spec) map[string]int {
 	for _, v := range s.Vocabs {
 		if len(v.Rank) > 0 {
@@ -1952,7 +1522,6 @@ func rankIndex(s *Spec) map[string]int {
 	return map[string]int{}
 }
 
-// presetLevelMap groups preset names by their @level annotation.
 func presetLevelMap(s *Spec) map[string][]string {
 	out := map[string][]string{}
 	for _, v := range s.Vocabs {
@@ -1965,8 +1534,6 @@ func presetLevelMap(s *Spec) map[string][]string {
 	return out
 }
 
-// atOrAbove returns the presets in `keys` whose rank is >= threshold (lower or
-// equal index in the ladder).
 func atOrAbove(keys []string, threshold string, rankIdx map[string]int) []string {
 	tIdx, ok := rankIdx[threshold]
 	if !ok {

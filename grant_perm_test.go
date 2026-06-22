@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// `via grant <name>` as a PERMISSION term (v0.43.0): a verb conferred by a declared
-// grant's reach, emitted as a top-level branch. When it is the SOLE grant (no
-// @scoped / owner / role term) the containment block is SUPPRESSED — so the verb is
-// granted only to the grant's holders, NOT to in-scope members. This is the generic
-// mechanism behind "operator-only writes" (e.g. billing): the tenant's own admins can
-// read but are excluded from writing. The word "operator"/"impersonation" lives in
-// the APP spec (the grant + subject), never in the engine.
 const grantPermSpec = `
 topology {
   level platform virtual
@@ -63,7 +56,6 @@ func TestViaGrantPerm_OperatorOnlyWrite(t *testing.T) {
 
 	reach := "auth.impersonation_grants_reach((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id)"
 
-	// WRITE: `via grant impersonation` alone → the reach branch ONLY, no containment.
 	create, ok := pol["billing_subscriptions_insert"]
 	if !ok {
 		t.Fatalf("no insert policy; got %v", policyNames(rls))
@@ -75,7 +67,6 @@ func TestViaGrantPerm_OperatorOnlyWrite(t *testing.T) {
 		t.Errorf("operator-only write leaked the containment branch (an in-tenant admin could write):\n%s", create.Check)
 	}
 
-	// READ: @scoped → operator reach OR in-tenant containment (the tenant's admin can read).
 	view := pol["billing_subscriptions_select"].Using
 	if !strings.Contains(view, reach) {
 		t.Errorf("read lost the operator reach:\n%s", view)
@@ -85,9 +76,6 @@ func TestViaGrantPerm_OperatorOnlyWrite(t *testing.T) {
 	}
 }
 
-// A `via grant` term combined with @scoped dedupes against the auto-added operator
-// reach (a tenant-leaf object already carries it in `top`), so the verb is not
-// double-listed.
 func TestViaGrantPerm_DedupesWithAutoReach(t *testing.T) {
 	spec := strings.Replace(grantPermSpec,
 		"permission view   = @scoped                  @rls maps select   // operator OR in-tenant",
@@ -109,8 +97,6 @@ func TestViaGrantPerm_DedupesWithAutoReach(t *testing.T) {
 	}
 }
 
-// `@public` — a world-read grant for a catalog/reference table: emits a top-level
-// `true`, so everyone reads; writes stay gated (here, platform staff).
 func TestPublicRead(t *testing.T) {
 	const spec = `
 topology {
@@ -150,9 +136,7 @@ object plan_catalog {
 	for _, p := range rls.Policies {
 		pol[p.Name] = p
 	}
-	// Everyone reads: the @public `true` branch is present at top level (a global
-	// object also carries the redundant staff auto-branch, so the predicate is
-	// `has_platform_role OR true` = true), and it is NOT containment-gated.
+
 	sel := pol["billing_plans_select"].Using
 	if !strings.Contains(sel, "true") {
 		t.Errorf("@public read should grant everyone (a top-level `true`), got: %q", sel)
@@ -164,7 +148,6 @@ object plan_catalog {
 		t.Errorf("write should stay staff-gated, got: %q", pol["billing_plans_insert"].Check)
 	}
 
-	// @public on a write verb is rejected.
 	bad := strings.Replace(spec, "permission create = staff    @rls maps insert", "permission create = @public  @rls maps insert", 1)
 	if s2, err := Parse(bad); err == nil {
 		if err := Validate(s2); err == nil {
@@ -173,11 +156,6 @@ object plan_catalog {
 	}
 }
 
-// `@kind("<value>")` — a typed-subject match on the caller's principal-kind claim
-// (the RLS form of a Zanzibar typed wildcard). Models the customers fold: a customer
-// reads its own row (self via id), an in-project admin reads (role), and a service
-// principal reads (@kind), all within containment + the operator reach — replacing
-// the legacy `sub LIKE 'service:%'` subject-string hack.
 func TestKindTerm(t *testing.T) {
 	const spec = `
 topology { level platform virtual  level tenant parent platform  level project parent tenant }
@@ -224,10 +202,10 @@ object customers {
 		}
 	}
 	for _, want := range []string{
-		"(current_setting('request.jwt.claims', true)::json ->> 'kind') = 'service'", // typed service match
-		"id = (current_setting('request.jwt.claims', true)::json ->> 'customer_id')", // self
-		"auth.is_project_viewer(",          // in-project admin role
-		"auth.impersonation_grants_reach(", // operator
+		"(current_setting('request.jwt.claims', true)::json ->> 'kind') = 'service'",
+		"id = (current_setting('request.jwt.claims', true)::json ->> 'customer_id')",
+		"auth.is_project_viewer(",
+		"auth.impersonation_grants_reach(",
 	} {
 		if !strings.Contains(sel, want) {
 			t.Errorf("customers_select missing %q:\n%s", want, sel)
@@ -237,7 +215,6 @@ object customers {
 		t.Errorf("customers_select still pattern-matches the subject string:\n%s", sel)
 	}
 
-	// @kind must be @rls (a row-layer grant), and needs a value.
 	bad := strings.Replace(spec, "@kind(\"service\")  @rls maps select", "@kind(\"service\")  @pdp", 1)
 	if s2, err := Parse(bad); err == nil {
 		if err := Validate(s2); err == nil {
@@ -256,7 +233,7 @@ func TestViaGrantPerm_Errors(t *testing.T) {
 			spec := strings.Replace(grantPermSpec, c.find, c.repl, 1)
 			s, err := Parse(spec)
 			if err != nil {
-				return // a parse-level rejection is also acceptable
+				return
 			}
 			if err := Validate(s); err == nil {
 				t.Fatalf("expected a validation error for %q", c.name)

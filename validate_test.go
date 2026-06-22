@@ -5,17 +5,14 @@ import (
 	"testing"
 )
 
-// TestValidateRejects — each spec violates exactly one rule and must be caught.
 func TestValidateRejects(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want string // substring expected in the error
+		want string
 	}{
 		{
-			// A fork (b, c both parent a) is now VALID — a branching tree (WS3).
-			// What stays invalid: a level unreachable from the root (here b↔c form a
-			// disconnected cycle).
+
 			name: "V1 disconnected cycle",
 			src:  `topology { level a level b parent c level c parent b }`,
 			want: "not reachable from the root",
@@ -72,8 +69,7 @@ func TestValidateRejects(t *testing.T) {
 			want: "unknown permission/preset",
 		},
 		{
-			// V11: a `via edge` relation referenced in @rls emits auth.<table>()
-			// that the kernel does not generate — the dangling-definer hole.
+
 			name: "V11 dangling definer",
 			src: `topology { level a }
 			      vocabulary v { permission p:q }
@@ -83,9 +79,7 @@ func TestValidateRejects(t *testing.T) {
 			want: "definer closure (V11)",
 		},
 		{
-			// Owner axis with no `reach self` subject to resolve a claim — must
-			// refuse rather than emit an empty-claim predicate (surfaced via V11,
-			// which runs the emitter as the comprehensive gate).
+
 			name: "owner claim unresolved",
 			src: `topology { level a }
 			      object o { table t scoped a relation owner: a via cid
@@ -97,8 +91,7 @@ func TestValidateRejects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			spec, err := Parse(tc.src)
 			if err != nil {
-				// Some fixtures intentionally also lack a topology; the rule under
-				// test must still be reachable. A parse error here is a fixture bug.
+
 				t.Fatalf("fixture did not parse: %v", err)
 			}
 			err = Validate(spec)

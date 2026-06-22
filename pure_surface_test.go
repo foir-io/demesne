@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// The runtime ResourceAccessSurface (the handler's grant/visibility/expand SQL
-// source) projects from a pure-relation object: its layout, the discriminated
-// grant-store shape, the allowed kinds + read modes, and the generated SQL.
 func TestResourceAccessSurface_PureProjection(t *testing.T) {
 	pure, err := Parse(storeManagePureSpec)
 	if err != nil {
@@ -24,7 +21,7 @@ func TestResourceAccessSurface_PureProjection(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pure surface %s: %v", tc.obj, err)
 		}
-		// Layout + projected vocab.
+
 		if ps.Table != tc.table || ps.ModeCol != "access_mode" {
 			t.Errorf("%s: Table/ModeCol wrong: %+v", tc.obj, ps)
 		}
@@ -35,7 +32,6 @@ func TestResourceAccessSurface_PureProjection(t *testing.T) {
 			t.Errorf("%s: grant-kind projection wrong", tc.obj)
 		}
 
-		// The generated SQL shapes, carrying the discriminator constant.
 		ins, args := ps.GrantInsert([]string{"t1", "p1"}, "r1", "customer", "c1", "read")
 		wantIns := "INSERT INTO resource_acl (tenant_id, project_id, resource_type, resource_id, principal_kind, principal_id, access) " +
 			"VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (resource_type, resource_id, principal_kind, principal_id, access) DO NOTHING RETURNING created_at"

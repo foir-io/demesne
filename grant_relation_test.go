@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-// The access-class GRANT RELATION (`via grant`): a generic relation over a
-// 4-column ACL edge, referenced per-permission with an access class
-// (`grantee:read`). These golden tests pin the emitted SQL: one EXISTS definer
-// per grantee kind (discriminated when several relations share one physical
-// store) and the per-class RLS calls.
-
-// A pure-relation record: owner + admin_owner + a customer|admin grant relation
-// over the discriminated resource_acl store, with a binary read mode.
 const grantRelPureSpec = `
 topology {
   level platform virtual
@@ -44,7 +36,6 @@ object record {
 }
 `
 
-// grantFnByName returns the CreateSQL of the generated definer with the given name.
 func grantFnByName(t *testing.T, s *Spec, name string) string {
 	t.Helper()
 	dfns, err := s.EmitDefiners()
@@ -68,8 +59,6 @@ func definerNames(dfns []GenFn) string {
 	return strings.Join(ns, ", ")
 }
 
-// The grant relation emits the expected SQL: one EXISTS definer per kind,
-// discriminated, and per-class RLS calls.
 func TestGrantRelation_EmitsPerKindDefinersAndCalls(t *testing.T) {
 	s, err := Parse(grantRelPureSpec)
 	if err != nil {
@@ -100,7 +89,7 @@ func TestGrantRelation_EmitsPerKindDefinersAndCalls(t *testing.T) {
 		t.Fatalf("emit rls: %v", err)
 	}
 	sel := policyByCmd(res, "records", "SELECT").Using
-	// view → grantee:read: customer read against customer_id, admin against sub.
+
 	for _, want := range []string{
 		"auth.resource_acl_grants_record((current_setting('request.jwt.claims', true)::json ->> 'customer_id'), records.id, 'read')",
 		"auth.resource_acl_grants_record_admin((current_setting('request.jwt.claims', true)::json ->> 'sub'), records.id, 'read')",
@@ -109,15 +98,13 @@ func TestGrantRelation_EmitsPerKindDefinersAndCalls(t *testing.T) {
 			t.Errorf("select policy missing %q:\n%s", want, sel)
 		}
 	}
-	// delete → grantee:delete carries the delete access class.
+
 	del := policyByCmd(res, "records", "DELETE").Using
 	if !strings.Contains(del, "records.id, 'delete')") {
 		t.Errorf("delete policy missing delete-class grant:\n%s", del)
 	}
 }
 
-// A bare `grantee` (no access class) defaults to the op's class — read on select,
-// write on update.
 func TestGrantRelation_BareDefaultsToOpClass(t *testing.T) {
 	spec := strings.NewReplacer(
 		"grantee:read", "grantee",
@@ -143,7 +130,6 @@ func TestGrantRelation_BareDefaultsToOpClass(t *testing.T) {
 	}
 }
 
-// policyByCmd returns the named table's policy for a command.
 func policyByCmd(res *RLSResult, table, cmd string) Policy {
 	for _, p := range res.Policies {
 		if p.Table == table && p.Cmd == cmd {

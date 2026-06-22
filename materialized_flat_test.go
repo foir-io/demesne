@@ -43,10 +43,7 @@ func TestEmitMaterializedFlats_GroupRelation(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		// The rebuild writes the PRIVATE auth flat + must read ALL edges to build a
-		// COMPLETE index — so it runs SECURITY DEFINER, never as the authenticated
-		// invoker (which would hit permission-denied on auth.<flat> + an RLS-truncated
-		// rebuild). EID-350: same bug class as the changelog triggers.
+
 		"SECURITY DEFINER",
 		"DELETE FROM auth.docs_team_flat",
 		"SELECT o.id, 'customer', c.mem",
@@ -65,7 +62,7 @@ func TestEmitMaterializedFlats_GroupRelation(t *testing.T) {
 			t.Errorf("TriggerSQL missing %q:\n%s", want, f.TriggerSQL())
 		}
 	}
-	// Reconciler (defence-in-depth): recomputes canonical, RAISEs on drift, self-heals.
+
 	for _, want := range []string{
 		"CREATE OR REPLACE FUNCTION auth.docs_team_flat_reconcile()",
 		"RETURNS integer", "SECURITY DEFINER",
@@ -76,7 +73,7 @@ func TestEmitMaterializedFlats_GroupRelation(t *testing.T) {
 			t.Errorf("ReconcileSQL missing %q:\n%s", want, f.ReconcileSQL())
 		}
 	}
-	// FlatsSQL bundles table + rebuild + reconcile + triggers; serialization lock present.
+
 	flatSQL := s.FlatsSQL()
 	for _, want := range []string{"_reconcile()", "LOCK TABLE auth.docs_team_flat IN SHARE ROW EXCLUSIVE MODE", "OR TRUNCATE"} {
 		if !strings.Contains(flatSQL, want) {
@@ -85,9 +82,6 @@ func TestEmitMaterializedFlats_GroupRelation(t *testing.T) {
 	}
 }
 
-// WS3 step 2: a materialized via-group relation's RLS floor PROBES the flat through the
-// SECURITY DEFINER <flat>_member (an O(1) point lookup), not the closure walk — and that
-// member definer is part of the kernel definer set (so V11 + the definer oracle own it).
 func TestMaterializedFlat_RLSFlipAndMemberDefiner(t *testing.T) {
 	s, err := Parse(matGroupSpec)
 	if err != nil {
@@ -109,7 +103,7 @@ func TestMaterializedFlat_RLSFlipAndMemberDefiner(t *testing.T) {
 	if using == "" {
 		t.Fatal("no docs/select policy")
 	}
-	// The floor probes the flat by (resource pk, claim); it does NOT walk the closure.
+
 	if !strings.Contains(using, "auth.docs_team_flat_member(docs.id,") {
 		t.Errorf("docs/select USING does not call the flat member definer:\n%s", using)
 	}
@@ -117,7 +111,6 @@ func TestMaterializedFlat_RLSFlipAndMemberDefiner(t *testing.T) {
 		t.Errorf("materialized floor must not walk the closure (auth.tc_member):\n%s", using)
 	}
 
-	// The member definer is in the kernel set and is a private SECURITY DEFINER over the flat.
 	defs, err := s.EmitDefiners()
 	if err != nil {
 		t.Fatalf("emit definers: %v", err)
@@ -142,8 +135,6 @@ func TestMaterializedFlat_RLSFlipAndMemberDefiner(t *testing.T) {
 		}
 	}
 
-	// FlatsSQL emits the table + rebuild + triggers (the member definer lives in
-	// DefinersSQL, so it must NOT be duplicated here) — and the table before the trigger.
 	flatSQL := s.FlatsSQL()
 	if !strings.Contains(flatSQL, "CREATE TABLE IF NOT EXISTS auth.docs_team_flat") {
 		t.Errorf("FlatsSQL missing the flat table:\n%s", flatSQL)
@@ -156,7 +147,6 @@ func TestMaterializedFlat_RLSFlipAndMemberDefiner(t *testing.T) {
 	}
 }
 
-// The non-materialized variant keeps walking the closure — proof the flip is opt-in.
 func TestMaterializedFlat_NonMaterializedStillWalks(t *testing.T) {
 	spec := strings.Replace(matGroupSpec, "on team_id materialized", "on team_id", 1)
 	s, err := Parse(spec)
@@ -193,10 +183,6 @@ object doc {
   permission view = team @rls maps select
 }`
 
-// WS3 perf tail: a single-term materialized via-group SELECT is ListResources fast-path
-// eligible — it emits a two-level reverse definer (closure ⋈ object, reading the GUC claim),
-// the level indexes, and a drive-from-flat list SQL. A union (multi-term) SELECT is NOT
-// eligible and falls back to the RLS SELECT.
 func TestMaterialized_ListFastPathEmit(t *testing.T) {
 	s, err := Parse(matSingleTermSpec)
 	if err != nil {
@@ -205,7 +191,7 @@ func TestMaterialized_ListFastPathEmit(t *testing.T) {
 	if err := Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	// Two-level reverse definer in the kernel set: closure ⋈ object, filtered by the GUC claim.
+
 	defs, _ := s.EmitDefiners()
 	var res *GenFn
 	for i := range defs {
@@ -226,7 +212,7 @@ func TestMaterialized_ListFastPathEmit(t *testing.T) {
 			t.Errorf("resources definer missing %q:\n%s", want, sql)
 		}
 	}
-	// Level indexes (level-1 object group col, level-2 closure member).
+
 	flatSQL := s.FlatsSQL()
 	for _, want := range []string{
 		"CREATE INDEX IF NOT EXISTS docs_team_id_l1_idx ON public.docs (team_id)",
@@ -236,7 +222,7 @@ func TestMaterialized_ListFastPathEmit(t *testing.T) {
 			t.Errorf("FlatsSQL missing index %q", want)
 		}
 	}
-	// App surface: the single-term object is fast-path eligible.
+
 	surf, err := s.EmitAppSurface()
 	if err != nil {
 		t.Fatalf("emit app surface: %v", err)
@@ -249,8 +235,6 @@ func TestMaterialized_ListFastPathEmit(t *testing.T) {
 		t.Errorf("ListResourcesFastSQL not the drive-from-flat keyset query:\n%s", fast)
 	}
 
-	// A union SELECT (grantee:read + team) is NOT eligible — driving from team alone would
-	// miss grantee rows.
 	su, _ := Parse(matGroupSpec)
 	if err := Validate(su); err != nil {
 		t.Fatalf("validate union: %v", err)
@@ -265,9 +249,6 @@ func TestMaterialized_ListFastPathEmit(t *testing.T) {
 	}
 }
 
-// `materialized` is fail-closed restricted to a single-kind via-group: a multi-kind one
-// must be rejected (the flat tags only one kind), while the non-materialized multi-kind
-// form stays valid (single-kind closure behaviour, unaffected).
 func TestMaterialized_MultiKindRejected(t *testing.T) {
 	multi := strings.Replace(matGroupSpec,
 		"relation team:    customer via group tc(grp, mem) edge te(mem, grp) on team_id materialized",
@@ -280,7 +261,7 @@ func TestMaterialized_MultiKindRejected(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "must be single-kind") {
 		t.Fatalf("multi-kind materialized via-group must be rejected, got: %v", err)
 	}
-	// The same relation WITHOUT `materialized` is allowed (single-kind closure semantics).
+
 	ok := strings.Replace(multi, " on team_id materialized", " on team_id", 1)
 	so, err := Parse(ok)
 	if err != nil {
@@ -291,8 +272,6 @@ func TestMaterialized_MultiKindRejected(t *testing.T) {
 	}
 }
 
-// A non-materialized group relation emits NO flat — the modifier is opt-in, so any
-// existing spec is byte-identical (no flat tables/triggers appear).
 func TestEmitMaterializedFlats_NoneWhenNotMaterialized(t *testing.T) {
 	spec := strings.Replace(matGroupSpec, "on team_id materialized", "on team_id", 1)
 	s, err := Parse(spec)

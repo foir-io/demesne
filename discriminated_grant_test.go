@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// A discriminated grant edge lets several grant relations share ONE physical
-// store, each filtering its rows by a constant — the general capability behind a
-// unified resource_acl(resource_type, resource_id, …). The engine does not
-// prescribe the shape; the spec author opts in.
 const sharedAclSpec = `
 topology {
   level platform virtual
@@ -65,8 +61,6 @@ func TestDiscriminatedGrantEdge_SharedStore(t *testing.T) {
 		body[d.Name] = d.Body
 	}
 
-	// Each descriptor gets its OWN collision-free definer over the shared table,
-	// named by the object (not just the table), each gated by its discriminator.
 	doc, ok := body["resource_acl_grants_doc"]
 	if !ok {
 		t.Fatalf("no resource_acl_grants_doc definer; have %v", grantKeys(body))
@@ -83,12 +77,11 @@ func TestDiscriminatedGrantEdge_SharedStore(t *testing.T) {
 	if !strings.Contains(note, "resource_type = 'note'") {
 		t.Errorf("note grant definer missing its discriminator:\n%s", note)
 	}
-	// No bare resource_acl_grants — a shared store is always suffixed.
+
 	if _, bad := body["resource_acl_grants"]; bad {
 		t.Error("a bare resource_acl_grants definer was emitted for a shared store")
 	}
 
-	// The RLS read policy calls the object-suffixed definer.
 	res, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit rls: %v", err)
@@ -99,10 +92,8 @@ func TestDiscriminatedGrantEdge_SharedStore(t *testing.T) {
 	}
 }
 
-// A bare (undiscriminated) edge is unchanged: <table>_grants, no discriminator —
-// the capability is purely additive.
 func TestDiscriminatedGrantEdge_BareUnchanged(t *testing.T) {
-	s, err := Parse(reachGrantSpec) // record_acl, no `where`
+	s, err := Parse(reachGrantSpec)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -175,9 +166,6 @@ subject customer { anchor a reach self identifies customer_id roles configurable
 	}
 }
 
-// The @store_manage write-moat dispatches per resource_type to the matching
-// kind's can-edit, fail-closed — the engine-generated write governance for a
-// shared resource_acl.
 const storeManageSpec = `
 topology {
   level platform virtual
@@ -241,13 +229,13 @@ func TestStoreManage_DispatchPerKind(t *testing.T) {
 	for _, d := range defs {
 		body[d.Name] = d.Body
 	}
-	// Per-kind can-edit definers exist (the dispatch targets).
+
 	for _, k := range []string{"record_can_edit", "file_can_edit"} {
 		if b, ok := body[k]; !ok || !strings.HasPrefix(b, "EXISTS (SELECT 1 FROM ") {
 			t.Errorf("missing/wrong %s definer: %q", k, b)
 		}
 	}
-	// The dispatch CASEs the discriminator to each kind's can-edit, fail-closed.
+
 	mng, ok := body["resource_acl_manage"]
 	if !ok {
 		t.Fatalf("no resource_acl_manage dispatch; have %v", grantKeys(body))
@@ -262,7 +250,7 @@ func TestStoreManage_DispatchPerKind(t *testing.T) {
 			t.Errorf("dispatch missing %q:\n%s", want, mng)
 		}
 	}
-	// The write-governance policies call the dispatch over the row's own columns.
+
 	res, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit rls: %v", err)

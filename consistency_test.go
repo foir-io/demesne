@@ -7,7 +7,7 @@ import (
 
 func TestAffordance_ComposeMapping(t *testing.T) {
 	wm := ZookieFromXid(100)
-	// MinimizeLatency: the cache's hint, freshness unknown, sourced from the index.
+
 	a := ComposeAffordance(true, wm, MinimizeLatency())
 	if a.Hint != HintLikely || a.Source != SourceAsyncIndex || a.Freshness != FreshnessUnknown {
 		t.Errorf("MinimizeLatency allowed: %+v", a)
@@ -15,12 +15,11 @@ func TestAffordance_ComposeMapping(t *testing.T) {
 	if a := ComposeAffordance(false, wm, MinimizeLatency()); a.Hint != HintUnlikely {
 		t.Errorf("MinimizeLatency not-allowed must be HintUnlikely: %+v", a)
 	}
-	// AtLeastAsFresh, cache caught up (watermark 100 > requested 50): the real hint, CaughtUp.
+
 	if a := ComposeAffordance(true, wm, AtLeastAsFresh(ZookieFromXid(50))); a.Hint != HintLikely || a.Freshness != CaughtUp {
 		t.Errorf("AtLeastAsFresh fresh: %+v", a)
 	}
-	// AtLeastAsFresh, cache BEHIND the requested zookie (watermark 100 !> 100, and !> 150):
-	// the cache must NOT answer — Hint=Unknown, Stale — so the caller falls back to the floor.
+
 	for _, z := range []uint64{100, 150} {
 		a := ComposeAffordance(true, wm, AtLeastAsFresh(ZookieFromXid(z)))
 		if a.Hint != HintUnknown || a.Freshness != Stale {
@@ -30,7 +29,7 @@ func TestAffordance_ComposeMapping(t *testing.T) {
 }
 
 func TestZookie_ReflectsAndRoundTrip(t *testing.T) {
-	// Reflects is STRICT (horizon must EXCEED the writer xid — the _apply contract).
+
 	if !ZookieFromXid(101).Reflects(ZookieFromXid(100)) {
 		t.Error("watermark 101 must reflect writer 100")
 	}
@@ -49,10 +48,6 @@ func TestZookie_ReflectsAndRoundTrip(t *testing.T) {
 	}
 }
 
-// The type firewall (adversary must-fix #1): the only render accessor returns RenderHint, a
-// DEFINED type that is NOT assignable to a bool parameter (e.g. ComposeCan's pointAllow). This
-// compiles; the point is that `var _ bool = Affordance{}.Render()` would NOT (different defined
-// types), so a cached hint cannot be coerced into an enforcement Allow without an explicit cast.
 func TestAffordance_RenderIsNotBool(t *testing.T) {
 	var rh RenderHint = Affordance{Hint: HintLikely}.Render()
 	if rh != RenderHint(true) {
@@ -66,8 +61,6 @@ func TestAffordance_RenderIsNotBool(t *testing.T) {
 	}
 }
 
-// The app surface exposes a MinimizeLatency affordance read for an async object (reading the
-// index for the subject's OWN claim), and nothing for a non-async object.
 func TestAsyncCheckSQL_EmitsForAsyncObjectOnly(t *testing.T) {
 	s, err := Parse(asyncGrantSpec)
 	if err != nil {
@@ -83,7 +76,7 @@ func TestAsyncCheckSQL_EmitsForAsyncObjectOnly(t *testing.T) {
 			t.Errorf("AsyncCheckSQL missing %q; got %q", want, o.AsyncCheckSQL)
 		}
 	}
-	// A non-async spec emits no affordance read (byte-identical app surface).
+
 	plain, _ := Parse(strings.Replace(asyncGrantSpec, `"doc" tracked async`, `"doc"`, 1))
 	psurf, _ := plain.EmitAppSurface()
 	po, _ := psurf.Object("doc")

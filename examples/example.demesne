@@ -1,25 +1,10 @@
-// =============================================================================
-// Demesne worked example — a fictional multi-tenant document app.
-//
-// This is NOT a real deployment's policy; it exists to exercise every language
-// construct so the compiler's emitters have positive end-to-end coverage and so
-// readers have one complete spec to learn the grammar from. A real platform's
-// spec, its generated migrations, and the live-DB oracle live in that platform's
-// own repo (verification belongs where the database is).
-//
-// Topology: org (virtual root) → tenant → workspace. A document lives in a
-// workspace; staff hold ranked roles; members own documents and share them via
-// generic owner / grant / mode relations (no prescriptive descriptor block).
-// =============================================================================
 
 topology {
-  level org       virtual            // synthetic root: no scope column, the operator anchors here
+  level org       virtual
   level tenant    parent org
   level workspace parent tenant
 }
 
-// Staff role vocabulary → compiles to the app PDP (the admin emit-site). Presets
-// are bound to a topology level (@level) which drives the role-store scope.
 vocabulary staff {
   permission docs:read
   permission docs:write
@@ -31,14 +16,11 @@ vocabulary staff {
   rank tenant_owner > ws_editor > ws_viewer
 }
 
-// Member (end-user) vocabulary → compiles to the public-API scope gate.
 vocabulary member {
   permission self:read
   permission self:write
 }
 
-// Where staff role assignments live — lets the compiler GENERATE the role-
-// resolution definers (is_tenant_admin / admin_has_workspace_role / is_ws_editor).
 rolestore staff {
   assignments role_grants
   kind        grantee_kind = "staff"
@@ -53,7 +35,6 @@ subject staff  { anchor tenant;    reach descendants; identifies sub;        rol
 subject member { anchor workspace; reach self;        identifies member_id;  roles configurable member; binds owner }
 subject service { anchor workspace; reach self;       identifies sub;        roles none }
 
-// The workspace node itself: a level-entity object (its own table IS the node).
 object workspace {
   table  workspaces
   level  workspace
@@ -65,9 +46,6 @@ object workspace {
   permission edit = tenant->owner + @session(admin)     @rls maps update
 }
 
-// A document: owner-origination + per-record visibility modes + an app-managed
-// grant store — composed from plain relations + terms (no prescriptive descriptor
-// block). @kernel adds the realtime/collab reachability gate.
 object doc {
   table  docs
   scoped tenant > workspace

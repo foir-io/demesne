@@ -14,7 +14,6 @@ func findPolicy(r *RLSResult, name string) *Policy {
 	return nil
 }
 
-// claim helper for building expected strings in tests.
 const (
 	cSub      = "(current_setting('request.jwt.claims', true)::json ->> 'sub')"
 	cTenant   = "(current_setting('request.jwt.claims', true)::json ->> 'tenant_id')"
@@ -23,9 +22,6 @@ const (
 	cMember   = "(current_setting('request.jwt.claims', true)::json ->> 'member_id')"
 )
 
-// TestEmitRLS_RoleTerms exercises role-walk + via-role emission on a clean
-// sub-row object: inline owner, a via-role relation (admin_has_<obj>_role), and
-// a role-walk into the parent level (is_<level>_admin).
 func TestEmitRLS_RoleTerms(t *testing.T) {
 	src := `
 	  topology { level platform virtual level tenant parent platform level project parent tenant }
@@ -65,9 +61,9 @@ func TestEmitRLS_RoleTerms(t *testing.T) {
 		t.Fatalf("no things_select policy (unsupported: %v)", res.Unsupported)
 	}
 	for _, frag := range []string{
-		"customer_id = " + cCustomer,                                     // inline owner
-		"auth.admin_has_thing_role(" + cSub + ", tenant_id, project_id)", // via role
-		"auth.is_tenant_admin(" + cSub + ", tenant_id)",                  // role-walk
+		"customer_id = " + cCustomer,
+		"auth.admin_has_thing_role(" + cSub + ", tenant_id, project_id)",
+		"auth.is_tenant_admin(" + cSub + ", tenant_id)",
 	} {
 		if !strings.Contains(pol.Using, frag) {
 			t.Errorf("things_select missing %q in:\n%s", frag, pol.Using)

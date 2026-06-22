@@ -5,11 +5,6 @@ import (
 	"strings"
 )
 
-// Parser for the Demesne grammar (RFC §8.2). Recursive descent over the token
-// stream; produces a Spec AST. Parsing only checks grammatical well-formedness
-// — the semantic validation rules (V1–V10) run in a later pass against the AST.
-
-// Parse parses a spec source into an AST.
 func Parse(src string) (*Spec, error) {
 	toks, err := lex(src)
 	if err != nil {
@@ -20,8 +15,7 @@ func Parse(src string) (*Spec, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Resolve `use <template>` into each object's Perms before any downstream pass
-	// sees the AST — a template is pure parse-time sugar (no effect on emission).
+
 	if err := s.expandTemplates(); err != nil {
 		return nil, err
 	}
@@ -54,18 +48,15 @@ func (p *parser) expect(k tokKind) (token, error) {
 	return p.advance(), nil
 }
 
-// ident consumes an IDENT and returns its literal.
 func (p *parser) ident() (string, error) {
 	t, err := p.expect(tIdent)
 	return t.lit, err
 }
 
-// isKw reports whether the cursor is the keyword kw (an IDENT with that literal).
 func (p *parser) isKw(kw string) bool {
 	return p.peekKind() == tIdent && p.cur().lit == kw
 }
 
-// acceptKw consumes the keyword kw if present and reports whether it did.
 func (p *parser) acceptKw(kw string) bool {
 	if p.isKw(kw) {
 		p.advance()
@@ -74,7 +65,6 @@ func (p *parser) acceptKw(kw string) bool {
 	return false
 }
 
-// expectKw consumes the keyword kw or errors.
 func (p *parser) expectKw(kw string) error {
 	if !p.acceptKw(kw) {
 		return p.errf("expected keyword %q, got %s %q", kw, p.peekKind(), p.cur().lit)
@@ -95,7 +85,6 @@ func (p *parser) parseSpec() (*Spec, error) {
 	return s, nil
 }
 
-// parseDecl parses one top-level declaration and folds it into s.
 func (p *parser) parseDecl(s *Spec) error {
 	switch p.cur().lit {
 	case "topology":
@@ -235,7 +224,7 @@ func (p *parser) ppDeclClaims(s *Spec) error {
 }
 
 func (p *parser) ppDeclDefiners(s *Spec) error {
-	p.advance() // 'definers'
+	p.advance()
 	if err := p.expectKw("schema"); err != nil {
 		return err
 	}
@@ -250,10 +239,8 @@ func (p *parser) ppDeclDefiners(s *Spec) error {
 	return nil
 }
 
-// ppDeclTables parses `tables schema "<name>"` — the Postgres schema the adopter's
-// governed tables live in (qualifies the emitted ENABLE/FORCE/policy/trigger DDL).
 func (p *parser) ppDeclTables(s *Spec) error {
-	p.advance() // 'tables'
+	p.advance()
 	if err := p.expectKw("schema"); err != nil {
 		return err
 	}
@@ -270,7 +257,7 @@ func (p *parser) ppDeclTables(s *Spec) error {
 
 func (p *parser) parseTopology() (*Topology, error) {
 	pos := Pos{p.cur().line}
-	_ = p.advance() // 'topology'
+	_ = p.advance()
 	if _, err := p.expect(tLBrace); err != nil {
 		return nil, err
 	}
@@ -288,19 +275,15 @@ func (p *parser) parseTopology() (*Topology, error) {
 	return t, nil
 }
 
-// parseLevel parses one `level <name> ...` entry inside a topology block.
 func (p *parser) parseLevel() (*Level, error) {
 	lv := &Level{Pos: Pos{p.cur().line}}
-	p.advance() // 'level'
+	p.advance()
 	name, err := p.ident()
 	if err != nil {
 		return nil, err
 	}
 	lv.Name = name
-	// ('parent' IDENT | 'parents' IDENT (',' IDENT)*)? ('virtual')?
-	// ('col' IDENT)? ('claim' IDENT)? — any order, all optional. `parents`
-	// (plural) declares a multi-parent DAG level; `col`/`claim` override the
-	// `<name>_id` scope-column / claim-key conventions independently (EID-278).
+
 	for {
 		if p.acceptKw("parent") {
 			par, err := p.ident()
@@ -337,7 +320,6 @@ func (p *parser) parseLevel() (*Level, error) {
 	return lv, nil
 }
 
-// parseLevelParents parses the `parents IDENT (',' IDENT)*` list into lv.
 func (p *parser) parseLevelParents(lv *Level) error {
 	for {
 		par, err := p.ident()
@@ -348,14 +330,14 @@ func (p *parser) parseLevelParents(lv *Level) error {
 		if p.peekKind() != tComma {
 			break
 		}
-		p.advance() // ','
+		p.advance()
 	}
 	return nil
 }
 
 func (p *parser) parseVocabulary() (*Vocabulary, error) {
 	v := &Vocabulary{Pos: Pos{p.cur().line}}
-	p.advance() // 'vocabulary'
+	p.advance()
 	name, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -397,13 +379,13 @@ func (p *parser) parseVocabulary() (*Vocabulary, error) {
 
 func (p *parser) parsePreset() (*Preset, error) {
 	pr := &Preset{Pos: Pos{p.cur().line}}
-	p.advance() // 'preset'
+	p.advance()
 	name, err := p.ident()
 	if err != nil {
 		return nil, err
 	}
 	pr.Name = name
-	if p.peekKind() == tAt { // optional `@ <level>` (role binds at this topology level)
+	if p.peekKind() == tAt {
 		p.advance()
 		lvl, err := p.ident()
 		if err != nil {
@@ -419,7 +401,7 @@ func (p *parser) parsePreset() (*Preset, error) {
 		pr.Star = true
 		return pr, nil
 	}
-	// permset := item ('+' item)*   where item is PERMKEY or IDENT (preset ref)
+
 	first, err := p.permsetItem()
 	if err != nil {
 		return nil, err
@@ -446,7 +428,7 @@ func (p *parser) permsetItem() (string, error) {
 }
 
 func (p *parser) parseRank() ([]string, error) {
-	p.advance() // 'rank'
+	p.advance()
 	first, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -468,7 +450,7 @@ func (p *parser) parseRank() ([]string, error) {
 
 func (p *parser) parseSubject() (*Subject, error) {
 	sub := &Subject{Pos: Pos{p.cur().line}}
-	p.advance() // 'subject'
+	p.advance()
 	name, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -477,15 +459,13 @@ func (p *parser) parseSubject() (*Subject, error) {
 	if _, err := p.expect(tLBrace); err != nil {
 		return nil, err
 	}
-	// Fields in any order (the inline `;`-separated form and the block form both
-	// occur); each appears at most once.
+
 	for p.peekKind() != tRBrace && p.peekKind() != tEOF {
 		switch {
 		case p.acceptKw("anchor"):
 			sub.Anchor, err = p.ident()
 		case p.acceptKw("reach"):
-			// `reach self|descendants`, or `reach via grant <name>` (reach
-			// conferred by a level-scoped grant edge rather than topology pinning).
+
 			if p.acceptKw("via") {
 				if err = p.expectKw("grant"); err == nil {
 					sub.Reach = "grant"
@@ -502,8 +482,7 @@ func (p *parser) parseSubject() (*Subject, error) {
 		case p.acceptKw("roles"):
 			err = p.parseSubjectRoles(sub)
 		case p.acceptKw("binds"):
-			// `binds owner|admin` — the subject's distinguished plane role, declared
-			// explicitly rather than inferred from shape (EID-265 WS2).
+
 			sub.Binds, err = p.ident()
 		default:
 			return nil, p.errf("unexpected %s %q in subject %q", p.peekKind(), p.cur().lit, sub.Name)
@@ -579,7 +558,7 @@ func (p *parser) parseSubjectRoles(sub *Subject) error {
 
 func (p *parser) parseObject() (*Object, error) {
 	o := &Object{Pos: Pos{p.cur().line}}
-	p.advance() // 'object'
+	p.advance()
 	name, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -594,8 +573,8 @@ func (p *parser) parseObject() (*Object, error) {
 	if o.Table, err = p.ident(); err != nil {
 		return nil, err
 	}
-	if p.acceptKw("pk") { // optional: the table's primary-key column (default "id")
-		if p.peekKind() == tLParen { // composite: `pk (a, b, …)` → not point-checkable
+	if p.acceptKw("pk") {
+		if p.peekKind() == tLParen {
 			p.advance()
 			for {
 				col, cerr := p.ident()
@@ -616,7 +595,7 @@ func (p *parser) parseObject() (*Object, error) {
 			return nil, err
 		}
 	}
-	if p.acceptKw("level") { // optional: this object IS a topology level node
+	if p.acceptKw("level") {
 		if o.Level, err = p.ident(); err != nil {
 			return nil, err
 		}
@@ -636,8 +615,6 @@ func (p *parser) parseObject() (*Object, error) {
 	return o, nil
 }
 
-// parseObjectBody parses the relation/permission/use/omit members of an object
-// up to (but not consuming) the closing brace.
 func (p *parser) parseObjectBody(o *Object) error {
 	for p.peekKind() != tRBrace && p.peekKind() != tEOF {
 		switch {
@@ -670,9 +647,7 @@ func (p *parser) parseObjectBody(o *Object) error {
 			}
 			o.Omit = append(o.Omit, v)
 		case p.isKw("track"):
-			// `track owner` / `track visibility` — opt the object TABLE into the
-			// authz changelog (EID-350). Each statement names one tracked aspect;
-			// repeat to track both.
+
 			p.advance()
 			what, err := p.ident()
 			if err != nil {
@@ -693,15 +668,9 @@ func (p *parser) parseObjectBody(o *Object) error {
 	return nil
 }
 
-// parseTemplate parses a `template <name> { <permission lines> }` block — a named,
-// reusable permission set the APP defines and applies to objects with `use <name>`.
-// Only permission lines are allowed: a template carries no table/scope/relations
-// (those belong to the using object), so it stays a pure, composable bundle of the
-// generic permission terms. This is the generic replacement for the removed
-// `settings`/`platform` Foir-domain-named sugar.
 func (p *parser) parseTemplate() (*Template, error) {
 	t := &Template{Pos: Pos{p.cur().line}}
-	p.advance() // 'template'
+	p.advance()
 	name, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -726,13 +695,6 @@ func (p *parser) parseTemplate() (*Template, error) {
 	return t, nil
 }
 
-// expandTemplates resolves every object's `use <template>` into its Perms, so all
-// downstream passes see an ordinary Object (a template has NO effect on emission —
-// it is pure parse-time sugar). Reconciliation, in order: take the template's
-// permission lines, DROP any verb the object lists in `omit`, DROP any verb the
-// object declares ITSELF (the object's own line overrides the template's), then
-// append the object's own lines. The merged Perms keep template order followed by
-// the object's own lines; emission sorts policies, so order is immaterial.
 func (s *Spec) expandTemplates() error {
 	byName := map[string]*Template{}
 	for _, t := range s.Templates {
@@ -774,7 +736,7 @@ func (s *Spec) expandTemplates() error {
 			if omit[pm.Verb] || own[pm.Verb] {
 				continue
 			}
-			cp := *pm // shallow copy: Tree/Expr/Guard are immutable, sharing is safe
+			cp := *pm
 			merged = append(merged, &cp)
 		}
 		o.Perms = append(merged, o.Perms...)
@@ -801,7 +763,7 @@ func (p *parser) parseLevelChain() ([]string, error) {
 
 func (p *parser) parseRelation() (*Relation, error) {
 	r := &Relation{Pos: Pos{p.cur().line}}
-	p.advance() // 'relation'
+	p.advance()
 	name, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -810,7 +772,7 @@ func (p *parser) parseRelation() (*Relation, error) {
 	if _, err := p.expect(tColon); err != nil {
 		return nil, err
 	}
-	// typeref := IDENT ('|' IDENT)*
+
 	first, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -843,8 +805,6 @@ func (p *parser) parseRelation() (*Relation, error) {
 	return r, nil
 }
 
-// parseTableCols parses `<table>(<col>, <col>, ...)` and returns the table name
-// and its column list.
 func (p *parser) parseTableCols() (string, []string, error) {
 	tbl, err := p.ident()
 	if err != nil {
@@ -895,7 +855,6 @@ func (p *parser) parseRepr() (Repr, error) {
 	}
 }
 
-// parseReprEdge: edge <Table>(<col>, <col>[, <col>])
 func (p *parser) parseReprEdge() (Repr, error) {
 	tbl, err := p.ident()
 	if err != nil {
@@ -926,7 +885,6 @@ func (p *parser) parseReprEdge() (Repr, error) {
 	return ViaEdge{Table: tbl, Cols: cols}, nil
 }
 
-// parseReprRole: role [(rank >= <min>)]
 func (p *parser) parseReprRole() (Repr, error) {
 	vr := ViaRole{}
 	if p.peekKind() == tLParen {
@@ -950,7 +908,6 @@ func (p *parser) parseReprRole() (Repr, error) {
 	return vr, nil
 }
 
-// parseReprComposition: composition <Table>(<child>, <parent>) [where <col> = "<v>"]
 func (p *parser) parseReprComposition() (Repr, error) {
 	tbl, cols, err := p.parseTableCols()
 	if err != nil {
@@ -977,7 +934,6 @@ func (p *parser) parseReprComposition() (Repr, error) {
 	return vc, nil
 }
 
-// parseReprClosure: closure <Closure>(<anc>,<desc>) base <Base>(<id>,<parent>) on <col>
 func (p *parser) parseReprClosure() (Repr, error) {
 	clo, cloCols, err := p.parseTableCols()
 	if err != nil {
@@ -1009,7 +965,6 @@ func (p *parser) parseReprClosure() (Repr, error) {
 	}, nil
 }
 
-// parseReprGroup: group <Closure>(<group>,<member>) edge <Edge>(<member>,<group>) on <col>
 func (p *parser) parseReprGroup() (Repr, error) {
 	clo, cloCols, err := p.parseTableCols()
 	if err != nil {
@@ -1043,7 +998,6 @@ func (p *parser) parseReprGroup() (Repr, error) {
 	}, nil
 }
 
-// parseReprObject: object <Other>-><verb> on <col>
 func (p *parser) parseReprObject() (Repr, error) {
 	other, err := p.ident()
 	if err != nil {
@@ -1066,7 +1020,6 @@ func (p *parser) parseReprObject() (Repr, error) {
 	return ViaObject{Object: other, Verb: verb, Col: col}, nil
 }
 
-// parseReprMemberIn: memberin <level>(<principal-src>, <scope-src>) ; src = @<claim> | <col>
 func (p *parser) parseReprMemberIn() (Repr, error) {
 	level, err := p.ident()
 	if err != nil {
@@ -1092,7 +1045,6 @@ func (p *parser) parseReprMemberIn() (Repr, error) {
 	return ViaMemberIn{Level: level, Principal: principal, Scope: scope}, nil
 }
 
-// parseReprGrant: grant <Table>(record, kind, principal, access) [where <col> = "<v>"]
 func (p *parser) parseReprGrant() (Repr, error) {
 	tbl, cols, err := p.parseTableCols()
 	if err != nil {
@@ -1116,23 +1068,20 @@ func (p *parser) parseReprGrant() (Repr, error) {
 		}
 		vg.DiscrimCol, vg.DiscrimVal = col, val.lit
 	}
-	// Optional `tracked`: opt the store into the authz changelog (WS4).
+
 	vg.Tracked = p.acceptKw("tracked")
-	// Optional `async` (after `tracked`): also build an async affordance index (WS4).
+
 	vg.Async = p.acceptKw("async")
 	return vg, nil
 }
 
-// parseReprColumn: via <fk column> [where <kind_col> = "<val>"]
 func (p *parser) parseReprColumn() (Repr, error) {
 	col, err := p.ident()
 	if err != nil {
 		return nil, err
 	}
 	vc := ViaColumn{Column: col}
-	// Optional discriminator: an owner column gated by a kind column — the unified
-	// (owner_id, owner_kind) shape, mirroring the grant-edge `where`. Several owner
-	// kinds share one id column, each gated by a constant in the kind column.
+
 	if p.acceptKw("where") {
 		dcol, err := p.ident()
 		if err != nil {
@@ -1150,8 +1099,6 @@ func (p *parser) parseReprColumn() (Repr, error) {
 	return vc, nil
 }
 
-// parseArgSrc parses a ViaMemberIn argument: `@<claim>` (a claim key) or `<col>`
-// (a column on the object's own row).
 func (p *parser) parseArgSrc() (ArgSrc, error) {
 	if p.peekKind() == tAt {
 		p.advance()
@@ -1170,7 +1117,7 @@ func (p *parser) parseArgSrc() (ArgSrc, error) {
 
 func (p *parser) parseObjectPerm() (*Perm, error) {
 	pm := &Perm{Pos: Pos{p.cur().line}}
-	p.advance() // 'permission'
+	p.advance()
 	verb, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -1179,18 +1126,14 @@ func (p *parser) parseObjectPerm() (*Perm, error) {
 	if _, err := p.expect(tEq); err != nil {
 		return nil, err
 	}
-	// Boolean expression (v3 WS1), stops at the '@' layertag. Precedence, low→high:
-	//   union := and (('+'|'or') and)*
-	//   and   := unary (('and') unary)*
-	//   unary := 'not'? primary
-	//   primary := '(' union ')' | term
+
 	tree, err := p.parsePermUnion()
 	if err != nil {
 		return nil, err
 	}
 	pm.Tree = tree
 	pm.Expr = tree.Leaves()
-	// layertag := '@' LAYER (',' LAYER)*
+
 	if _, err := p.expect(tAt); err != nil {
 		return nil, err
 	}
@@ -1207,7 +1150,7 @@ func (p *parser) parseObjectPerm() (*Perm, error) {
 		}
 		pm.Layers = append(pm.Layers, l)
 	}
-	// ('maps' mapref)?
+
 	if p.acceptKw("maps") {
 		switch p.peekKind() {
 		case tIdent, tPermKey:
@@ -1216,7 +1159,7 @@ func (p *parser) parseObjectPerm() (*Perm, error) {
 			return nil, p.errf("expected a table-op or permission after maps, got %s %q", p.peekKind(), p.cur().lit)
 		}
 	}
-	// ('guard' col op literal)?
+
 	if p.acceptKw("guard") {
 		g := &Guard{Pos: Pos{p.cur().line}}
 		if g.Col, err = p.ident(); err != nil {
@@ -1241,11 +1184,6 @@ func (p *parser) parseObjectPerm() (*Perm, error) {
 	return pm, nil
 }
 
-// parsePermUnion / parsePermAnd / parsePermUnary / parsePermPrimary parse the
-// permission boolean expression (v3 WS1). Union (`+`/`or`) is lowest precedence,
-// then intersection (`and`), then unary `not`, then a term or a parenthesised
-// sub-expression. A single operand returns its bare node (so a union-only spec is
-// unchanged). Parsing stops at the `@` layertag (no operator consumes it).
 func (p *parser) parsePermUnion() (*PermNode, error) {
 	left, err := p.parsePermAnd()
 	if err != nil {
@@ -1331,16 +1269,14 @@ func (p *parser) parseTerm() (*Term, error) {
 		}
 		return t, nil
 	}
-	// `mode <col> = "<v>" [for <subject>]` — a column-condition (visibility) term.
+
 	if p.isKw("mode") {
 		if err := p.parseTermMode(t); err != nil {
 			return nil, err
 		}
 		return t, nil
 	}
-	// `via grant <name>` — reference a declared grant's reach as a permission term
-	// (the same `via grant <name>` a subject uses for its reach), conferring the verb
-	// to that grant's holders.
+
 	if p.isKw("via") {
 		p.advance()
 		if err := p.expectKw("grant"); err != nil {
@@ -1353,8 +1289,7 @@ func (p *parser) parseTerm() (*Term, error) {
 		t.GrantRef = name
 		return t, nil
 	}
-	// A term is normally a relation IDENT, but a @pdp permission maps to a
-	// capability PERMKEY (e.g. `publish = content:publish @pdp`); accept both.
+
 	switch p.peekKind() {
 	case tIdent, tPermKey:
 		t.Ident = p.advance().lit
@@ -1372,11 +1307,9 @@ func (p *parser) parseTerm() (*Term, error) {
 	return t, nil
 }
 
-// parseTermBuiltin parses the optional argument list of an `@<builtin>` term
-// (t.Builtin already set): @session(<rel>), @app_scope(exclude <rel>), @kind("<v>").
 func (p *parser) parseTermBuiltin(t *Term) error {
 	b := t.Builtin
-	// `@session(<rel>)` — a session-self-gated role grant.
+
 	if b == "session" && p.peekKind() == tLParen {
 		p.advance()
 		rel, err := p.ident()
@@ -1388,8 +1321,7 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 			return err
 		}
 	}
-	// `@app_scope(exclude <rel>)` — the broad reach minus rows owned via <rel>
-	// (operator-private admin-owned rows). The de-prescribed admin-owner exclusion.
+
 	if b == "app_scope" && p.peekKind() == tLParen {
 		p.advance()
 		if err := p.expectKw("exclude"); err != nil {
@@ -1404,7 +1336,7 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 			return err
 		}
 	}
-	// `@kind("<value>")` — a typed-subject match on the caller's principal-kind claim.
+
 	if b == "kind" {
 		if _, err := p.expect(tLParen); err != nil {
 			return err
@@ -1421,9 +1353,8 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 	return nil
 }
 
-// parseTermMode parses `mode <col> = "<v>" [for <subject>]` into t.
 func (p *parser) parseTermMode(t *Term) error {
-	p.advance() // 'mode'
+	p.advance()
 	col, err := p.ident()
 	if err != nil {
 		return err
@@ -1448,7 +1379,7 @@ func (p *parser) parseTermMode(t *Term) error {
 
 func (p *parser) parseProcedures() (*Procedures, error) {
 	pr := &Procedures{Pos: Pos{p.cur().line}}
-	p.advance() // 'procedures'
+	p.advance()
 	site, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -1476,7 +1407,7 @@ func (p *parser) parseProcedures() (*Procedures, error) {
 
 func (p *parser) parseUngoverned() (*Ungoverned, error) {
 	u := &Ungoverned{Pos: Pos{p.cur().line}}
-	p.advance() // 'ungoverned'
+	p.advance()
 	site, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -1510,13 +1441,9 @@ func roleStoreKeyword(s string) bool {
 	return false
 }
 
-// parseRoleStore: rolestore IDENT { assignments T; kind C = "V"; subject C;
-// scope C+; rolejoin C RolesT RolesID KeyC; revoked C; [permissions C] }
-// `permissions` is OPTIONAL — the roles-table column holding a role's materialized
-// effective permission set, read by the holds-resolver (EID-334).
 func (p *parser) parseRoleStore() (*RoleStore, error) {
 	rs := &RoleStore{Pos: Pos{p.cur().line}}
-	p.advance() // 'rolestore'
+	p.advance()
 	name, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -1565,7 +1492,6 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 	return rs, nil
 }
 
-// parseRoleStoreKind parses `kind <col> = "<val>"` into rs.
 func (p *parser) parseRoleStoreKind(rs *RoleStore) error {
 	col, err := p.ident()
 	if err != nil {
@@ -1583,9 +1509,6 @@ func (p *parser) parseRoleStoreKind(rs *RoleStore) error {
 	return nil
 }
 
-// parseRoleStoreJoin parses `rolejoin <col> <table> <id> <key>` into rs.
-// parseRoleStoreRevoked: revoked <col> [by <col>] — the active-filter column and
-// its optional revoker-audit companion (Layer 3 write surface).
 func (p *parser) parseRoleStoreRevoked(rs *RoleStore) error {
 	col, err := p.ident()
 	if err != nil {
@@ -1598,8 +1521,6 @@ func (p *parser) parseRoleStoreRevoked(rs *RoleStore) error {
 	return err
 }
 
-// parseRoleStoreGranted: granted <at-col> [by <col>] — the grant-audit timestamp
-// column and its optional grantor-audit companion (Layer 3 write surface).
 func (p *parser) parseRoleStoreGranted(rs *RoleStore) error {
 	col, err := p.ident()
 	if err != nil {
@@ -1628,13 +1549,9 @@ func (p *parser) parseRoleStoreJoin(rs *RoleStore) error {
 	return err
 }
 
-// parseClaims: claims via "<setting>" [json|jsonb] [role <ident>] — declares the
-// request-context claim accessor (the GUC name + cast) and, optionally, the RLS
-// connection role a session assumes. Cast defaults to json; role defaults (via
-// claimRole) to "authenticated".
 func (p *parser) parseClaims() (*ClaimsAccessor, error) {
 	c := &ClaimsAccessor{Cast: "json", Pos: Pos{p.cur().line}}
-	p.advance() // 'claims'
+	p.advance()
 	if err := p.expectKw("via"); err != nil {
 		return nil, err
 	}
@@ -1643,11 +1560,11 @@ func (p *parser) parseClaims() (*ClaimsAccessor, error) {
 		return nil, err
 	}
 	c.Setting = setting.lit
-	// Optional cast (json|jsonb): any trailing ident that is NOT the `role` keyword.
+
 	if p.peekKind() == tIdent && !p.isKw("role") {
 		c.Cast = p.advance().lit
 	}
-	// Optional RLS connection role.
+
 	if p.acceptKw("role") {
 		if c.Role, err = p.ident(); err != nil {
 			return nil, err
@@ -1656,13 +1573,9 @@ func (p *parser) parseClaims() (*ClaimsAccessor, error) {
 	return c, nil
 }
 
-// parseGrant: grant IDENT at LEVEL via edge TABLE(grantee_col, level_col)
-//
-//	[active COL] [expires COL]
-//	[pk COL] [granted by COL] [revoked by COL] [created COL]   (management write surface)
 func (p *parser) parseGrant() (*Grant, error) {
 	g := &Grant{Pos: Pos{p.cur().line}}
-	p.advance() // 'grant'
+	p.advance()
 	name, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -1704,11 +1617,6 @@ func (p *parser) parseGrant() (*Grant, error) {
 	return g, nil
 }
 
-// parseGrantOptions parses the optional trailing grant clauses in any order: the reach
-// validity columns `active <col>` (NULL ⇒ active) / `expires <col>` (> now() ⇒ active),
-// and the management write-surface columns `pk <col>`, `granted by <col>`,
-// `revoked by <col>`, `created <col>`. Each binds a single identifier column (the
-// `granted`/`revoked` forms consume an intervening `by`).
 func (p *parser) parseGrantOptions(g *Grant) error {
 	for {
 		if p.acceptKw("column") {
@@ -1752,7 +1660,7 @@ func (p *parser) parseGrantOptions(g *Grant) error {
 
 func (p *parser) parseFieldScopes() (*FieldScopes, error) {
 	fs := &FieldScopes{Pos: Pos{p.cur().line}}
-	p.advance() // 'fieldscopes'
+	p.advance()
 	site, err := p.ident()
 	if err != nil {
 		return nil, err
@@ -1778,7 +1686,6 @@ func (p *parser) parseFieldScopes() (*FieldScopes, error) {
 	return fs, nil
 }
 
-// String renders a Term back to its source form (for diagnostics/tests).
 func (t *Term) String() string {
 	switch {
 	case t.GrantRef != "":
@@ -1792,7 +1699,6 @@ func (t *Term) String() string {
 	}
 }
 
-// LayerTag renders the layer list (e.g. "@rls,kernel").
 func (pm *Perm) LayerTag() string {
 	return "@" + strings.Join(pm.Layers, ",")
 }

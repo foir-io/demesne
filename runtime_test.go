@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// runtimeSpec — a customer-owned record plane plus an admin verb PDP, enough to
-// exercise all three runtime helpers.
 const runtimeSpec = `
 topology { level tenant level project parent tenant }
 vocabulary admin { permission content:write  preset ed @ project = content:write }
@@ -29,7 +27,6 @@ ungoverned admin {
 func TestRuntime_MintClaims(t *testing.T) {
 	s := mustSpec(t, runtimeSpec)
 
-	// A customer presents its subset of the contract; the JSON is deterministic.
 	got, err := s.MintClaims(map[string]string{"customer_id": "c1", "tenant_id": "t1", "project_id": "p1"})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
@@ -38,12 +35,10 @@ func TestRuntime_MintClaims(t *testing.T) {
 		t.Errorf("minted claims = %s", got)
 	}
 
-	// A key outside the contract is rejected (typo / stale-key protection).
 	if _, err := s.MintClaims(map[string]string{"tenant_id": "t1", "tenantId": "oops"}); err == nil {
 		t.Error("MintClaims accepted a key not in the contract")
 	}
 
-	// The set-GUC statement targets the spec's claims setting.
 	if sql := s.ClaimsSetSQL(true); sql != "SELECT set_config('request.jwt.claims', $1, true)" {
 		t.Errorf("ClaimsSetSQL = %q", sql)
 	}

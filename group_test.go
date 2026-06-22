@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// Demesne v3 WS2 — nested groups: a `via group` relation resolves transitive
-// group membership over a many-to-many edge (user ∈ group ∈ group, unbounded),
-// the RLS-native analogue of a Zanzibar userset-of-usersets. The compiler owns
-// the membership-lookup definer (read) and the closure-rebuild trigger (write).
 const groupSpec = `
 topology { level tenant level project parent tenant }
 vocabulary v { permission self:read }
@@ -30,7 +26,6 @@ func TestGroup_NestedMembership(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 
-	// cost class
 	var rel *Relation
 	for _, r := range s.Objects[0].Relations {
 		if r.Name == "viewer" {
@@ -41,7 +36,6 @@ func TestGroup_NestedMembership(t *testing.T) {
 		t.Fatalf("viewer cost class = %v, want closure", rel.CostClass())
 	}
 
-	// (1) RLS term: the caller is a transitive member of the row's group.
 	rls, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -55,7 +49,6 @@ func TestGroup_NestedMembership(t *testing.T) {
 		t.Errorf("docs_select missing the membership lookup:\n%s", sel.Using)
 	}
 
-	// (2) membership definer (read side).
 	defs, err := s.EmitDefiners()
 	if err != nil {
 		t.Fatalf("definers: %v", err)
@@ -73,7 +66,6 @@ func TestGroup_NestedMembership(t *testing.T) {
 		t.Errorf("membership body = %q", mem.Body)
 	}
 
-	// (3) closure-rebuild trigger (write side) on the membership edge.
 	gts := s.EmitGroupTriggers()
 	if len(gts) != 1 || gts[0].Closure != "group_closure" || gts[0].Edge != "group_members" {
 		t.Fatalf("EmitGroupTriggers = %+v", gts)
@@ -81,12 +73,12 @@ func TestGroup_NestedMembership(t *testing.T) {
 	fn := gts[0].FunctionSQL()
 	for _, frag := range []string{
 		"CREATE OR REPLACE FUNCTION auth.group_closure_rebuild()",
-		"SECURITY DEFINER", // EID-350: full rebuild must read all edges + write as owner
+		"SECURITY DEFINER",
 
 		"DELETE FROM group_closure;",
 		"WITH RECURSIVE tc AS (",
-		"SELECT group_id AS grp, member_id AS mem FROM group_members",        // base
-		"SELECT tc.grp, e.member_id FROM tc JOIN group_members e ON e.group_id = tc.mem", // recurse
+		"SELECT group_id AS grp, member_id AS mem FROM group_members",
+		"SELECT tc.grp, e.member_id FROM tc JOIN group_members e ON e.group_id = tc.mem",
 	} {
 		if !strings.Contains(fn, frag) {
 			t.Errorf("rebuild fn missing %q:\n%s", frag, fn)

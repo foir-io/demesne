@@ -32,8 +32,6 @@ func TestPDPRenderTS(t *testing.T) {
 	}
 }
 
-// EmitTS over a spec with only the read surfaces (no rolestore / grants / ACL) emits
-// exactly claims + appSurface + pdp, importing only those types.
 func TestEmitTS_ReadSurfacesOnly(t *testing.T) {
 	s := mustSpec(t, runtimeSpec)
 	got, err := s.EmitTS()
@@ -58,8 +56,6 @@ func TestEmitTS_ReadSurfacesOnly(t *testing.T) {
 	}
 }
 
-// EmitTS over the holds spec (a rolestore, no object) emits the holds-resolver +
-// role-assignment projections (and skips appSurface, which has no objects).
 func TestEmitTS_HoldsAndRoleAssignment(t *testing.T) {
 	s, err := Parse(holdsSpec)
 	if err != nil {
@@ -82,7 +78,6 @@ func TestEmitTS_HoldsAndRoleAssignment(t *testing.T) {
 	})
 }
 
-// EmitTS over the full grant spec emits the level-grant projection (keyed by grant name).
 func TestEmitTS_Grants(t *testing.T) {
 	s := mustSpec(t, fullGrantSpec)
 	got, err := s.EmitTS()
@@ -98,8 +93,6 @@ func TestEmitTS_Grants(t *testing.T) {
 	})
 }
 
-// EmitTS over the admin/owner spec emits the per-record resource-access projection,
-// including the unexported descriptor fields (read via in-package access).
 func TestEmitTS_ResourceAccess(t *testing.T) {
 	s := mustSpec(t, adminOwnerSpec)
 	got, err := s.EmitTS()

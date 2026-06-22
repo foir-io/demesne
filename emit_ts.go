@@ -8,22 +8,6 @@ import (
 	"strings"
 )
 
-// TypeScript emit target (EID-338) — the target-neutral half of the generated Layer-2 /
-// Layer-3 surface. Where the engine ships Go runtime HELPERS (MintClaims, AssignInsert,
-// Resolve, …) and only RENDERS data artifacts as Go source (RenderClaimsContractGo,
-// PDP.RenderGo), the TypeScript side is the mirror image: the @demesne/runtime library
-// hand-writes the helpers, and THIS file renders the per-spec PROJECTION as TypeScript
-// source for that library to consume. The projection IS the interface — exactly the data
-// ClaimsContractEntries() / EmitAppSurface() / HoldsResolver() / GrantSurface() /
-// ResourceAccessSurface() already return — so the emitter never recomputes a builder; it
-// only serializes. This keeps the engine stdlib-pure (it is just string/JSON building)
-// and the byte-for-byte equivalence is proven by the differential oracle.
-//
-// The emitted struct field names (json tags) are the wire contract with the TS
-// projection interfaces in @demesne/runtime's types.ts; they must stay in lockstep.
-
-// --- the TS projection shapes (json tags == the @demesne/runtime interfaces) -------
-
 type tsClaimEntry struct {
 	Key      string   `json:"key"`
 	Level    string   `json:"level"`
@@ -145,10 +129,6 @@ type tsResourceAccessProj struct {
 	AccessorFn   string   `json:"accessorFn"`
 }
 
-// --- helpers ----------------------------------------------------------------------
-
-// strs returns ss, or an empty (non-nil) slice when ss is nil — so json renders `[]`,
-// never `null` (the TS interfaces type these fields as `string[]`, never nullable).
 func strs(ss []string) []string {
 	if ss == nil {
 		return []string{}
@@ -156,7 +136,6 @@ func strs(ss []string) []string {
 	return ss
 }
 
-// strMap returns m, or an empty (non-nil) map when m is nil — so json renders `{}`.
 func strMap(m map[string]string) map[string]string {
 	if m == nil {
 		return map[string]string{}
@@ -164,7 +143,6 @@ func strMap(m map[string]string) map[string]string {
 	return m
 }
 
-// setKeys renders a Go set (map[string]bool) as a sorted slice (deterministic).
 func setKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -174,8 +152,6 @@ func setKeys(m map[string]bool) []string {
 	return out
 }
 
-// tsJSON marshals v as a TypeScript literal: JSON without HTML escaping (so a `>` in an
-// SQL string stays literal, not `>`), optionally indented. Valid TS, deterministic.
 func tsJSON(v any, indent bool) string {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -186,8 +162,6 @@ func tsJSON(v any, indent bool) string {
 	_ = enc.Encode(v)
 	return strings.TrimRight(buf.String(), "\n")
 }
-
-// --- per-surface projections ------------------------------------------------------
 
 func (s *Spec) tsClaimsProjection() (*tsClaimsProj, error) {
 	setting, cast := s.claimSetting()
@@ -262,20 +236,12 @@ func tsResAccess(r *ResourceAccessSurface) tsResourceAccessProj {
 	}
 }
 
-// --- the module emitter -----------------------------------------------------------
-
 type tsDecl struct {
-	name string // the exported const name
-	typ  string // its TS type annotation
-	lit  string // the JSON/TS literal value
+	name string
+	typ  string
+	lit  string
 }
 
-// EmitTS renders the spec's complete generated projection as a TypeScript module that
-// imports @demesne/runtime and exports one typed const per present surface (claims,
-// appSurface, pdp, holdsResolver, roleAssignment, grants, resourceAccess). It is the TS
-// analogue of the Go RenderGo artifacts — the data half of the generated surface; the
-// algorithm half is the hand-written @demesne/runtime. A surface absent from the spec
-// (no rolestore, no grants, no ACL object) is simply omitted.
 func (s *Spec) EmitTS() (string, error) {
 	var decls []tsDecl
 
@@ -344,8 +310,6 @@ func (s *Spec) EmitTS() (string, error) {
 	return renderTSModule(decls), nil
 }
 
-// renderTSModule writes the header, the type-only import of exactly the named types, and
-// each `export const`.
 func renderTSModule(decls []tsDecl) string {
 	typeSet := map[string]bool{}
 	for _, d := range decls {
@@ -371,10 +335,6 @@ func renderTSModule(decls []tsDecl) string {
 	return b.String()
 }
 
-// --- standalone codegen artifacts (the TS analogues of RenderClaimsContractGo / RenderGo) ---
-
-// RenderClaimsContractTS emits the flat claims contract as a standalone TypeScript const
-// (the TS analogue of RenderClaimsContractGo).
 func (s *Spec) RenderClaimsContractTS(varName string) (string, error) {
 	keys, err := s.ClaimsContract()
 	if err != nil {
@@ -386,8 +346,6 @@ func (s *Spec) RenderClaimsContractTS(varName string) (string, error) {
 	return b.String(), nil
 }
 
-// RenderTS emits an emit-site's Policy map as a standalone TypeScript const (the TS
-// analogue of PDP.RenderGo). Procedures are sorted (json key order) for stable output.
 func (p *PDP) RenderTS(varName string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "// Code generated by Demesne from the %q emit-site. DO NOT EDIT.\n", p.EmitSite)
