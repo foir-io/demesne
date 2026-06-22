@@ -96,3 +96,69 @@ func TestRoundtrip_Fixtures(t *testing.T) {
 		}
 	}
 }
+
+// Generates the Supabase worked example's engine artifacts from examples/supabase.demesne:
+// the projection module, the DDL (definers in the `demesne` schema + RLS over the
+// `demesne_demo` schema), and the Supabase deployment profile (the custom access-token
+// hook). Committed under ts/packages/example-app/generated/supabase/ for the round-trip.
+//
+// Regenerate:  UPDATE_ORACLE=1 go test -run TestSupabase_Fixtures
+func TestSupabase_Fixtures(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("examples", "supabase.demesne"))
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	s, err := Parse(string(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	proj, err := s.EmitTS()
+	if err != nil {
+		t.Fatalf("EmitTS: %v", err)
+	}
+	ddl, err := roundtripDDL(s)
+	if err != nil {
+		t.Fatalf("roundtripDDL: %v", err)
+	}
+	hook, err := s.EmitSupabaseProfile()
+	if err != nil {
+		t.Fatalf("EmitSupabaseProfile: %v", err)
+	}
+	if !strings.HasSuffix(hook, "\n") {
+		hook += "\n"
+	}
+
+	dir := filepath.Join("ts", "packages", "example-app", "generated", "supabase")
+	artifacts := map[string]string{
+		"projection.ts": proj,
+		"policies.sql":  ddl,
+		"hook.sql":      hook,
+	}
+	update := os.Getenv("UPDATE_ORACLE") != ""
+	if update {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, want := range artifacts {
+		path := filepath.Join(dir, name)
+		if update {
+			if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("wrote %s", path)
+			continue
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%s missing — run: UPDATE_ORACLE=1 go test -run TestSupabase_Fixtures", path)
+		}
+		if !bytes.Equal(got, []byte(want)) {
+			t.Errorf("%s out of date — run: UPDATE_ORACLE=1 go test -run TestSupabase_Fixtures", path)
+		}
+	}
+}
