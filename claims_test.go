@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// The claims accessor is spec-declared: a non-Foir deployment can read claims
-// from a different GUC / cast without the engine assuming request.jwt.claims+json.
 const claimsSpec = `
 claims via "app.context" jsonb
 topology {
@@ -51,11 +49,10 @@ func TestClaims_AccessorIsSpecDeclared(t *testing.T) {
 		t.Errorf("policy did not use the declared accessor:\n%s", sel.Using)
 	}
 	if strings.Contains(sel.Using, "request.jwt.claims") {
-		t.Errorf("policy still hard-codes the Foir GUC:\n%s", sel.Using)
+		t.Errorf("policy still hard-codes the default GUC:\n%s", sel.Using)
 	}
 }
 
-// Omitting the block keeps Foir's exact JSON-GUC form (byte-identical default).
 func TestClaims_DefaultIsForirJSONGUC(t *testing.T) {
 	s := &Spec{}
 	if got := s.claim("sub"); got != "(current_setting('request.jwt.claims', true)::json ->> 'sub')" {

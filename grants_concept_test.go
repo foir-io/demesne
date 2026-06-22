@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// WS3 convergence — a level-scoped Grant and a per-row access-class grant relation
-// are the SAME concept (a ReachGrant), enumerable as one, built from one shared
-// shape — but they keep SEPARATE physical stores and specialized SQL (the moat).
 const reachGrantSpec = `
 topology {
   level platform virtual
@@ -48,8 +45,6 @@ func TestReachGrant_UnifiedConceptSeparateStores(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 
-	// (1) Both grant constructs enumerate as ONE concept, each classified by its
-	//     target granularity.
 	grants := s.ReachGrants()
 	if len(grants) != 2 {
 		t.Fatalf("ReachGrants = %d, want 2 (a level grant + a per-row grant relation)", len(grants))
@@ -67,13 +62,10 @@ func TestReachGrant_UnifiedConceptSeparateStores(t *testing.T) {
 		t.Errorf("acl edge: %+v (want RowReach, grantee principal_id)", row)
 	}
 
-	// (2) The stores are SEPARATE tables — NOT merged into one Zanzibar tuple store.
 	if lvl.EdgeTable() == row.EdgeTable() {
 		t.Error("the two grant stores collapsed into one table — the moat rejects a single tuple store")
 	}
 
-	// (3) Both definer bodies are the shared EXISTS-over-edge shape, each over its
-	//     OWN edge with its OWN specialized, sargable conjuncts.
 	defs, err := s.EmitDefiners()
 	if err != nil {
 		t.Fatalf("emit definers: %v", err)
@@ -94,14 +86,12 @@ func TestReachGrant_UnifiedConceptSeparateStores(t *testing.T) {
 		!strings.Contains(acl, "access = p_access") {
 		t.Errorf("acl-edge definer not the shared shape over its own store:\n%s", acl)
 	}
-	// Neither reads the other's table.
+
 	if strings.Contains(reach, "record_acl") || strings.Contains(acl, "impersonation_grants") {
 		t.Error("a grant definer reads the other grant's store — they are not independent")
 	}
 }
 
-// grantEdgeExists is the single shared shape; identical conjuncts → identical SQL,
-// regardless of which construct supplied them.
 func TestReachGrant_SharedShapeBuilder(t *testing.T) {
 	got := grantEdgeExists("t", "a = x", "b = y")
 	if got != "EXISTS (SELECT 1 FROM t WHERE a = x AND b = y)" {

@@ -1,33 +1,10 @@
-// =============================================================================
-// Demesne deployment-agnostic worked example (EID-278 / v3 WS4).
-//
-// This spec deliberately follows NONE of Foir's naming conventions, to PROVE the
-// engine governs a schema whatever its column names:
-//   - primary keys are NOT `id`            → `pk asset_pk` / `pk space_pk`
-//   - tenancy FKs are NOT `<level>_id`     → `col tenant_ref` / `col space_ref`
-//   - claim keys are NOT `<level>_id`      → `claim tnt`     / `claim spc`
-//   - the role-store roles PK is NOT `id`  → `rolejoin role_ref crew_roles row_id slug`
-//   - the membership id column is NOT `id` → `membership ops_users(user_ref, is_ops)`
-//
-// Every threaded site (containment `<col> = claim(<key>)`, the level-entity self
-// column, owner / grant / mode / role / kernel predicates, and the point-check)
-// must compile against these non-conventional names. The companion test
-// (agnostic_test.go) asserts the emitted SQL pins `tenant_ref = claim('tnt')`,
-// `space_pk = claim('spc')`, references `assets.asset_pk`, and forward-isolates
-// siblings — while example.demesne (all `id` / `<level>_id`) still emits exactly
-// as before (the byte-identity half is the unchanged existing oracle suite).
-//
-// Topology: platform (virtual root) → tenant → space. An asset lives in a space;
-// crew hold ranked roles; members own assets and share them via owner/grant/mode.
-// =============================================================================
 
 topology {
-  level platform virtual                          // synthetic root: operator anchors here
+  level platform virtual
   level tenant   parent platform col tenant_ref claim tnt
   level space    parent tenant   col space_ref  claim spc
 }
 
-// Crew (staff) role vocabulary → the app PDP emit-site.
 vocabulary crew {
   permission asset:read
   permission asset:write
@@ -39,9 +16,6 @@ vocabulary crew {
   rank boss > editor > viewer
 }
 
-// Where crew role assignments live — note the roles table's PK is `row_id`, NOT
-// `id`, and its role-key column is `slug`. The compiler GENERATES the role
-// definers (is_tenant_crew / crew_has_space_role / is_editor) over these names.
 rolestore crew {
   assignments crew_grants
   kind        member_kind = "crew"
@@ -55,8 +29,6 @@ subject root   { anchor platform reach descendants identifies sub via membership
 subject crew   { anchor tenant   reach descendants identifies sub;        roles configurable crew; binds admin }
 subject member { anchor space    reach self;       identifies member_ref; roles none;              binds owner }
 
-// The space node itself: a level-entity object whose own table IS the node — its
-// self column is the PRIMARY KEY `space_pk` (NOT `id`), read against claim `spc`.
 object space {
   table  spaces
   pk     space_pk
@@ -69,8 +41,6 @@ object space {
   permission edit = tenant->owner + @session(boss)    @rls maps update
 }
 
-// An asset: owner-origination + a per-record visibility mode + an app-managed
-// grant store, all over non-conventional columns. @kernel adds the realtime gate.
 object asset {
   table  assets
   pk     asset_pk

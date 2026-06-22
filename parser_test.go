@@ -4,7 +4,6 @@ import (
 	"testing"
 )
 
-// TestParseErrors checks a few malformed specs fail with a line-numbered error.
 func TestParseErrors(t *testing.T) {
 	cases := map[string]string{
 		"bad reach arrow":    "object r { table t scoped a permission view = owner - x @rls }",

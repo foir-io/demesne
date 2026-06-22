@@ -79,7 +79,7 @@ func TestCLI_EmitTS(t *testing.T) {
 			t.Errorf("emit %s --target ts: %v", kind, err)
 		}
 	}
-	// The language-neutral SQL/DDL kinds have no TS target.
+
 	for _, kind := range []string{"rls", "definers", "enablement", "triggers"} {
 		if err := cmdEmit([]string{spec, kind, "--target", "ts"}); err == nil {
 			t.Errorf("emit %s --target ts should error (language-neutral)", kind)
@@ -89,7 +89,6 @@ func TestCLI_EmitTS(t *testing.T) {
 		t.Error("an unknown --target should error")
 	}
 
-	// The =form works and the flag is order-independent; the output is a TS module.
 	out := captureStdout(t, func() {
 		if err := cmdEmit([]string{spec, "--target=ts", "projections"}); err != nil {
 			t.Fatalf("emit projections --target=ts: %v", err)
@@ -124,7 +123,6 @@ func TestCLI_EmitProfileSupabase(t *testing.T) {
 func TestCLI_EmitFramework(t *testing.T) {
 	spec := writeSpec(t)
 
-	// Default package "authz".
 	out := captureStdout(t, func() {
 		if err := cmdEmit([]string{spec, "framework"}); err != nil {
 			t.Fatalf("emit framework: %v", err)
@@ -142,7 +140,6 @@ func TestCLI_EmitFramework(t *testing.T) {
 		}
 	}
 
-	// A custom package name via the 3rd positional.
 	out = captureStdout(t, func() {
 		if err := cmdEmit([]string{spec, "framework", "access"}); err != nil {
 			t.Fatalf("emit framework access: %v", err)

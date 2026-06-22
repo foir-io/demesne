@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// editPointCheckSpec has both a read (select) and an edit (update) permission, so
-// the app surface can project a write point-check.
 const editPointCheckSpec = `
 topology { level tenant level project parent tenant }
 vocabulary cust { permission self:read }
@@ -20,9 +18,6 @@ object doc {
   permission edit = owner + grantee:write @rls maps update
 }`
 
-// TestAppSurface_EditPointCheck (EID-350): the write point-check INLINES the exact
-// UPDATE policy predicate (equal by delegation) and is distinct from the read check;
-// an object with no @rls update permission projects no edit check.
 func TestAppSurface_EditPointCheck(t *testing.T) {
 	s, err := Parse(editPointCheckSpec)
 	if err != nil {
@@ -45,7 +40,6 @@ func TestAppSurface_EditPointCheck(t *testing.T) {
 		t.Error("edit point-check must differ from the read point-check (it inlines the UPDATE predicate)")
 	}
 
-	// Equal by delegation: the inlined predicate is the object's UPDATE policy USING.
 	rls, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("EmitRLS: %v", err)
@@ -63,7 +57,6 @@ func TestAppSurface_EditPointCheck(t *testing.T) {
 		t.Errorf("edit point-check must inline the UPDATE policy USING:\n  check: %s\n  using: %s", edit, updUsing)
 	}
 
-	// A read-only object (no `maps update`) projects no edit check.
 	s2, err := Parse(strings.Replace(editPointCheckSpec,
 		"  permission edit = owner + grantee:write @rls maps update\n", "", 1))
 	if err != nil {
@@ -82,7 +75,7 @@ func TestAppSurface_EditPointCheck(t *testing.T) {
 func TestEmitAppSurface_ProjectionAndDefaults(t *testing.T) {
 	s := &Spec{Objects: []*Object{
 		{Name: "record", Table: "records", PK: "id"},
-		{Name: "note", Table: "notes", PK: ""}, // PK "" → the `id` convention
+		{Name: "note", Table: "notes", PK: ""},
 	}}
 	surf, err := s.EmitAppSurface()
 	if err != nil {
@@ -109,9 +102,6 @@ func TestEmitAppSurface_NoObjects(t *testing.T) {
 	}
 }
 
-// CheckSQL must be byte-identical to PointCheckSQL — the surface's point-check is the
-// SAME query the engine already delegates to RLS, so the app-level answer cannot drift
-// from the enforced predicate (equal-by-delegation).
 func TestAppSurface_CheckEqualsPointCheck(t *testing.T) {
 	s := &Spec{Objects: []*Object{{Name: "record", Table: "records", PK: "id"}}}
 	surf, err := s.EmitAppSurface()
@@ -143,7 +133,6 @@ func TestAppSurface_ReadBuilders(t *testing.T) {
 	}
 }
 
-// A non-`id` PK must thread through every builder (de-Foirs the id assumption).
 func TestAppSurface_CustomPK(t *testing.T) {
 	o := AppObjectSurface{Object: "doc", Table: "docs", PK: "doc_id"}
 	if got, want := o.ListResourcesSQL(),

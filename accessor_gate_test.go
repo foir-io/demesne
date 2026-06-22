@@ -9,14 +9,10 @@ func selectPerm(expr []*Term, tree *PermNode) *Perm {
 	return &Perm{Verb: "read", Maps: "select", Expr: expr, Tree: tree}
 }
 
-// cover runs the coverage gate for the FIRST object, with all given objects in scope
-// (so a ViaObject borrow can resolve the borrowed object).
 func cover(objs ...*Object) (bool, string) {
 	return (&Spec{Objects: objs}).accessorCoverage(objs[0])
 }
 
-// Owner + grant in a flat OR is exactly what the enumerator covers → no refusal
-// (and the Foir-shaped case, so the gate must not trip it).
 func TestAccessorCoverage_OwnerGrantUnion_Covered(t *testing.T) {
 	obj := &Object{
 		Name: "record", Table: "records",
@@ -37,8 +33,6 @@ func TestAccessorCoverage_OwnerGrantUnion_Covered(t *testing.T) {
 	}
 }
 
-// A SELECT term over a relation with no reverse branch yet (here ViaObject) must fail
-// closed — emitting would silently under-report who can access the row.
 func TestAccessorCoverage_UncoveredRepr_FailsClosed(t *testing.T) {
 	obj := &Object{
 		Name: "comment", Table: "comments",
@@ -54,9 +48,6 @@ func TestAccessorCoverage_UncoveredRepr_FailsClosed(t *testing.T) {
 	}
 }
 
-// ViaGroup now has a reverse builder → covered, and the group branch reverse-reads the
-// closure (transitive members of the row's group) — the same rows the forward term
-// tests.
 func TestAccessorCoverage_ViaGroup_CoveredWithBranch(t *testing.T) {
 	g := ViaGroup{Closure: "team_members", GroupCol: "group_id", MemberCol: "member_id", Col: "team_id"}
 	obj := &Object{
@@ -81,10 +72,6 @@ func TestAccessorCoverage_ViaGroup_CoveredWithBranch(t *testing.T) {
 	}
 }
 
-// A MATERIALIZED via-group relation's accessor branch reverse-reads the flat
-// (auth.<table>_<rel>_flat, resource_id → principal) instead of joining the closure —
-// the WS3 read fast-path. The flat name it reads MUST be the one EmitMaterializedFlats
-// emits, or the accessor would point at a non-existent table.
 func TestAccessorBranch_MaterializedGroup_ReadsFlat(t *testing.T) {
 	g := ViaGroup{Closure: "tc", GroupCol: "grp", MemberCol: "mem", Edge: "te", EdgeMember: "mem", EdgeGroup: "grp", Col: "team_id", Materialized: true}
 	obj := &Object{
@@ -97,7 +84,7 @@ func TestAccessorBranch_MaterializedGroup_ReadsFlat(t *testing.T) {
 	if len(br) != 1 {
 		t.Fatalf("want 1 group branch, got %d", len(br))
 	}
-	// Reads the flat by resource_id; does NOT join the closure (no walk).
+
 	for _, want := range []string{
 		"'group'::text", "'customer'::text", "f.principal_id",
 		"FROM auth.docs_team_flat f", "WHERE f.resource_id = p_id",
@@ -109,7 +96,7 @@ func TestAccessorBranch_MaterializedGroup_ReadsFlat(t *testing.T) {
 	if strings.Contains(br[0], "JOIN tc") {
 		t.Errorf("materialized branch must not walk the closure:\n%s", br[0])
 	}
-	// The flat name read MUST match what EmitMaterializedFlats names.
+
 	flats := s.EmitMaterializedFlats()
 	if len(flats) != 1 {
 		t.Fatalf("want 1 materialized flat, got %d", len(flats))
@@ -119,10 +106,6 @@ func TestAccessorBranch_MaterializedGroup_ReadsFlat(t *testing.T) {
 	}
 }
 
-// Intersection / exclusion in the SELECT tree must fail closed — the union-only
-// enumerator cannot represent INTERSECT / EXCEPT.
-// ViaClosure now has a reverse builder → covered; the branch reverse-reads the
-// closure (ancestors of the row's node) — the same rows the forward _reachable tests.
 func TestAccessorCoverage_ViaClosure_CoveredWithBranch(t *testing.T) {
 	c := ViaClosure{Closure: "node_closure", AncestorCol: "ancestor", DescendantCol: "descendant", Col: "node_id"}
 	obj := &Object{
@@ -147,8 +130,6 @@ func TestAccessorCoverage_ViaClosure_CoveredWithBranch(t *testing.T) {
 	}
 }
 
-// A read borrow (ViaObject) from a covered content object is now covered, and the
-// branch LATERAL-calls the borrowed object's accessor enumerator on the related row.
 func TestAccessorCoverage_ViaObject_ReadBorrow_CoveredWithBranch(t *testing.T) {
 	doc := &Object{
 		Name: "doc", Table: "docs",
@@ -156,7 +137,7 @@ func TestAccessorCoverage_ViaObject_ReadBorrow_CoveredWithBranch(t *testing.T) {
 			{Name: "owner", Types: []string{"customer"}, Repr: ViaColumn{Column: "owner_id"}},
 			{Name: "grantee", Types: []string{"customer"}, Repr: ViaGrant{Table: "resource_acl", RecordCol: "resource_id", KindCol: "principal_kind", PrincipalCol: "principal_id", AccessCol: "access"}},
 		},
-		// selectPerm's verb is "read", so the borrow below must be doc->read.
+
 		Perms: []*Perm{selectPerm(
 			[]*Term{{Ident: "owner"}, {Ident: "grantee"}},
 			&PermNode{Op: "or", Kids: []*PermNode{{Op: "leaf", Term: &Term{Ident: "owner"}}, {Op: "leaf", Term: &Term{Ident: "grantee"}}}},
@@ -182,8 +163,6 @@ func TestAccessorCoverage_ViaObject_ReadBorrow_CoveredWithBranch(t *testing.T) {
 	}
 }
 
-// A NON-read borrow (the borrowed verb is not the other object's select verb) must
-// fail closed — the read accessor enumerator can't answer a different verb.
 func TestAccessorCoverage_ViaObject_NonReadBorrow_FailsClosed(t *testing.T) {
 	doc := &Object{
 		Name: "doc", Table: "docs",
@@ -200,7 +179,6 @@ func TestAccessorCoverage_ViaObject_NonReadBorrow_FailsClosed(t *testing.T) {
 	}
 }
 
-// and/and-not over a NON-composable leaf (the @app_scope role plane) still fails closed.
 func TestAccessorCoverage_AndNot_NonComposableLeaf_FailsClosed(t *testing.T) {
 	obj := &Object{
 		Name: "doc", Table: "docs",
@@ -218,8 +196,6 @@ func TestAccessorCoverage_AndNot_NonComposableLeaf_FailsClosed(t *testing.T) {
 	}
 }
 
-// and/and-not over composable content relations now COMPOSES (covered): set algebra on
-// principal identity, keeping the base positive's provenance.
 func TestAccessorTree_AndNot_Composes(t *testing.T) {
 	g := ViaGrant{Table: "resource_acl", RecordCol: "resource_id", KindCol: "principal_kind", PrincipalCol: "principal_id", AccessCol: "access"}
 	grp := ViaGroup{Closure: "blocked_members", GroupCol: "group_id", MemberCol: "member_id", Col: "blocklist_id"}
@@ -229,9 +205,7 @@ func TestAccessorTree_AndNot_Composes(t *testing.T) {
 			{Name: "grantee", Types: []string{"customer"}, Repr: g},
 			{Name: "blocked", Types: []string{"customer"}, Repr: grp},
 		},
-		// Use the realistic grant-selector leaf `grantee:read` (Ident carries the access
-		// class), the form the parser produces — a bare "grantee" Ident would not catch
-		// the grant-selector resolution path.
+
 		Perms: []*Perm{selectPerm(
 			[]*Term{{Ident: "grantee:read"}, {Ident: "blocked"}},
 			&PermNode{Op: "and", Kids: []*PermNode{
@@ -251,7 +225,7 @@ func TestAccessorTree_AndNot_Composes(t *testing.T) {
 	for _, want := range []string{
 		"SELECT a.* FROM (",
 		"(a.principal_kind, a.principal_id) NOT IN (SELECT b.principal_kind, b.principal_id FROM (",
-		"blocked_members", // the negated group's reverse-read appears inside the NOT IN
+		"blocked_members",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("composed and/not SQL missing %q:\n%s", want, sql)
@@ -259,8 +233,6 @@ func TestAccessorTree_AndNot_Composes(t *testing.T) {
 	}
 }
 
-// Structural path: role + memberin + builtin on a level entity is fully enumerable
-// (Foir's tenant/project shape) → covered.
 func TestStructuralCoverage_RoleMemberinBuiltin_Covered(t *testing.T) {
 	obj := &Object{
 		Name: "tenant", Table: "tenants", Level: "tenant",
@@ -282,8 +254,6 @@ func TestStructuralCoverage_RoleMemberinBuiltin_Covered(t *testing.T) {
 	}
 }
 
-// Structural path: an owner (ViaColumn) term the structural enumerator can't enumerate
-// must fail closed (it would silently drop that accessor).
 func TestStructuralCoverage_UncoveredOwner_FailsClosed(t *testing.T) {
 	obj := &Object{
 		Name: "tenant", Table: "tenants", Level: "tenant",
@@ -310,7 +280,6 @@ func TestAccessorCoverage_NoSelectPerm_Covered(t *testing.T) {
 	}
 }
 
-// Non-relation leaves (a builtin) must not trip the gate.
 func TestAccessorCoverage_BuiltinLeaf_Covered(t *testing.T) {
 	obj := &Object{
 		Name: "record", Table: "records",

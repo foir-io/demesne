@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// EID-364 — the 1-hop composition-parent cascade (`via composition`): a composed
-// CHILD record is accessible at the SAME verb the caller passes on its composition
-// PARENT, reached through a structural edge table (record_relationships). This mirrors
-// Foir's own record object (owner + admin_owner + discriminated grant + public mode)
-// plus the composition relation, so the test pins the cascade as it ships.
 const compositionSpec = `
 topology {
   level platform virtual
@@ -51,7 +46,6 @@ func TestComposition_CascadeWiringAndDefiner(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 
-	// Parser carried the columns + kind filter onto the AST.
 	var vc *ViaComposition
 	for _, o := range s.Objects {
 		for _, r := range o.Relations {
@@ -72,8 +66,7 @@ func TestComposition_CascadeWiringAndDefiner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("emit rls: %v", err)
 	}
-	// Each verb's policy carries the cascade term at its OWN access class (the calling
-	// verb is threaded through — read on select, write on update, delete on delete).
+
 	for _, tc := range []struct{ policy, access string }{
 		{"records_select", "read"}, {"records_update", "write"}, {"records_delete", "delete"},
 	} {
@@ -103,10 +96,7 @@ func TestComposition_CascadeWiringAndDefiner(t *testing.T) {
 	if fn.Sig != "p_record_id text, p_access text" {
 		t.Errorf("definer sig = %q", fn.Sig)
 	}
-	// EXISTS over the edge, gated by the kind discriminator + the child column equal to
-	// this row; each per-access branch is a CORRELATED EXISTS over the object table at
-	// the parent row (NOT a join — the edge table shares tenant_id/project_id, so a join
-	// would make the parent predicate's unqualified columns ambiguous).
+
 	wantPrefix := "EXISTS (SELECT 1 FROM record_relationships e WHERE e.from_record_id = p_record_id AND e.kind = 'composition' AND CASE p_access "
 	if !strings.HasPrefix(fn.Body, wantPrefix) {
 		t.Errorf("definer body prefix mismatch:\n%s", fn.Body)
@@ -122,17 +112,10 @@ func TestComposition_CascadeWiringAndDefiner(t *testing.T) {
 		}
 	}
 
-	// 1-HOP / RECURSION SAFETY: the parent predicate is built with composition PRUNED,
-	// so the definer must NOT call ITSELF — a composition term at the parent would
-	// re-enter this function (unbounded recursion / a cycle hang). This is the load-
-	// bearing invariant of the prune.
 	if strings.Contains(fn.Body, "record_composition_comp_parent") {
 		t.Errorf("definer is self-recursive — composition was NOT pruned from the parent predicate:\n%s", fn.Body)
 	}
 
-	// The parent ACCESS is the object's real grant surface (not a stub): the read
-	// branch borrows owner + the grant ACL at the parent (evaluated at the joined
-	// `records` row, claims from the GUC).
 	c := "(current_setting('request.jwt.claims', true)::json ->> 'customer_id')"
 	if !strings.Contains(fn.Body, "customer_id = "+c) {
 		t.Errorf("read branch does not borrow the parent's owner predicate:\n%s", fn.Body)
@@ -142,8 +125,6 @@ func TestComposition_CascadeWiringAndDefiner(t *testing.T) {
 	}
 }
 
-// A composition relation without a kind discriminator is valid (the cascade applies to
-// every edge in the table); the emitted definer then carries no kind filter.
 func TestComposition_NoKindFilter(t *testing.T) {
 	s := mustSpec(t, `
 		topology { level tenant level project parent tenant }

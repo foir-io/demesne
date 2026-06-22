@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-// A `record` object expressed with NO descriptor{} block — only generic relations
-// (owner, admin_owner, grantee) + composable terms (@app_scope(exclude …), mode,
-// the grant access selector). These golden tests pin the RLS predicate, the grant
-// definers, and the Expand accessor enumerator the pure form emits.
-
-// The pure record: owner + admin_owner + a customer|admin grant relation over the
-// discriminated resource_acl, with a binary read mode and the operator-reach
-// exclusion that keeps admin-owned rows out of broad app/service scope.
 const pureRecTargetSpec = `
 topology {
   level platform virtual
@@ -47,9 +39,6 @@ object record {
 }
 `
 
-// The pure record emits the composed RLS predicate: both owner axes, the operator
-// reach gated to exclude admin-owned rows, the binary read mode, and the per-class
-// grant calls.
 func TestPureRecord_EmitsExpectedRLS(t *testing.T) {
 	s, err := Parse(pureRecTargetSpec)
 	if err != nil {
@@ -64,15 +53,15 @@ func TestPureRecord_EmitsExpectedRLS(t *testing.T) {
 	}
 	sel := policyByCmd(res, "records", "SELECT").Using
 	for _, want := range []string{
-		// customer/service owner.
+
 		"customer_id = (current_setting('request.jwt.claims', true)::json ->> 'customer_id')",
-		// admin owner.
+
 		"admin_owner_id = (current_setting('request.jwt.claims', true)::json ->> 'sub')",
-		// @app_scope(exclude admin_owner): broad reach excludes admin-owned rows.
+
 		"(current_setting('request.jwt.claims', true)::json ->> 'customer_id') IS NULL AND admin_owner_id IS NULL",
-		// the binary read mode.
+
 		"access_mode = 'public'",
-		// the per-class grant calls (read on select).
+
 		"auth.resource_acl_grants_record((current_setting('request.jwt.claims', true)::json ->> 'customer_id'), records.id, 'read')",
 		"auth.resource_acl_grants_record_admin((current_setting('request.jwt.claims', true)::json ->> 'sub'), records.id, 'read')",
 	} {
@@ -81,15 +70,12 @@ func TestPureRecord_EmitsExpectedRLS(t *testing.T) {
 		}
 	}
 
-	// INSERT drops the read mode and the read-grant terms (you create your own rows).
 	ins := policyByCmd(res, "records", "INSERT").Check
 	if strings.Contains(ins, "access_mode = 'public'") || strings.Contains(ins, "resource_acl_grants") {
 		t.Errorf("records_insert should not carry read mode / grant terms:\n%s", ins)
 	}
 }
 
-// The pure record emits the two discriminated grant definers and the Expand
-// accessor enumerator (owner axes + grant rows + role plane).
 func TestPureRecord_EmitsGrantDefinersAndAccessor(t *testing.T) {
 	s, err := Parse(pureRecTargetSpec)
 	if err != nil {
@@ -117,13 +103,13 @@ func TestPureRecord_EmitsGrantDefinersAndAccessor(t *testing.T) {
 		"CREATE OR REPLACE FUNCTION auth.records_accessors(p_id text)",
 		"RETURNS TABLE(source text, principal_kind text, principal_id text, access text)",
 		"SECURITY DEFINER",
-		// customer-plane owner branch.
+
 		"SELECT 'owner'::text AS source, 'customer'::text AS principal_kind, customer_id AS principal_id, 'write'::text AS access\n    FROM records WHERE id = p_id AND customer_id IS NOT NULL",
-		// admin-plane owner branch.
+
 		"SELECT 'owner'::text, 'admin'::text, admin_owner_id, 'write'::text\n    FROM records WHERE id = p_id AND admin_owner_id IS NOT NULL",
-		// the explicit (discriminated) grant rows.
+
 		"SELECT 'grant'::text, principal_kind, principal_id, access\n    FROM resource_acl WHERE resource_id = p_id AND resource_type = 'record'",
-		// the role plane, gated by the admin-owner exclusion (mirrors @app_scope).
+
 		"SELECT 'role'::text, 'admin'::text, ra.principal_id, 'read'::text",
 		"WHERE r.id = p_id AND r.admin_owner_id IS NULL",
 	} {
@@ -133,9 +119,6 @@ func TestPureRecord_EmitsGrantDefinersAndAccessor(t *testing.T) {
 	}
 }
 
-// The Expand accessor enumerator built from composed relations, on a customer-only
-// object (no admin owner): the customer-owner branch + the discriminated grant
-// branch, and no admin-owner OWNER branch — purely additive.
 func TestPureAccessor_CustomerOnly(t *testing.T) {
 	pure, err := Parse(storeManagePureSpec)
 	if err != nil {
@@ -152,11 +135,11 @@ func TestPureAccessor_CustomerOnly(t *testing.T) {
 		if strings.Contains(acc, "admin_owner_id") {
 			t.Errorf("%s_accessors (customer-only) should not reference admin_owner_id:\n%s", tc.table, acc)
 		}
-		// The customer-plane owner branch.
+
 		if !strings.Contains(acc, "'owner'::text AS source, 'customer'::text AS principal_kind, customer_id AS principal_id, 'write'::text AS access\n    FROM "+tc.table+" WHERE id = p_id AND customer_id IS NOT NULL") {
 			t.Errorf("%s_accessors missing customer-owner branch:\n%s", tc.table, acc)
 		}
-		// The discriminated grant branch.
+
 		if !strings.Contains(acc, "FROM resource_acl WHERE resource_id = p_id AND resource_type = '"+tc.discrim+"'") {
 			t.Errorf("%s_accessors missing discriminated grant branch:\n%s", tc.table, acc)
 		}

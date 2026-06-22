@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// The cross-language differential oracle (EID-338 / WS6). This Go test writes a manifest
-// — for a battery of specs, the EMITTED projections plus the EXPECTED output of every Go
-// runtime builder — to ts/packages/runtime/test/generated/oracle.json. The Vitest
-// oracle.test.ts loads it, feeds each projection into @demesne/runtime, and asserts the
-// TS builder reproduces the Go output byte-for-byte. Nothing is hand-transcribed: the
-// projection and the expectation both come from the engine, so a divergence in either
-// the emit (field names) or the runtime (logic) fails the TS side.
-//
-// Regenerate after an intentional change:  UPDATE_ORACLE=1 go test -run TestOracle_Manifest
-
 func oracleStmt(sql string, args []any) map[string]any {
 	if args == nil {
 		args = []any{}
@@ -33,7 +23,6 @@ func oracleCase(kind string, input map[string]any, expect any) map[string]any {
 	return c
 }
 
-// canonicalScope returns n placeholder scope values ["s1".."sn"] for a parameterized write.
 func canonicalScope(n int) []any {
 	out := make([]any, n)
 	for i := range out {
@@ -42,7 +31,6 @@ func canonicalScope(n int) []any {
 	return out
 }
 
-// canonicalExtra returns a placeholder value for each declared extra column.
 func canonicalExtra(cols []string) map[string]any {
 	out := map[string]any{}
 	for _, c := range cols {
@@ -55,7 +43,6 @@ func buildOracleEntry(s *Spec) (map[string]any, error) {
 	projections := map[string]any{}
 	var cases []any
 
-	// --- claims (always present) ---
 	cl, err := s.tsClaimsProjection()
 	if err != nil {
 		return nil, err
@@ -70,7 +57,6 @@ func buildOracleEntry(s *Spec) (map[string]any, error) {
 		)
 	}
 
-	// --- app surface ---
 	if surf, err := s.EmitAppSurface(); err == nil {
 		objs := make([]tsAppObject, len(surf.Objects))
 		for i, o := range surf.Objects {
@@ -87,7 +73,6 @@ func buildOracleEntry(s *Spec) (map[string]any, error) {
 		projections["appSurface"] = objs
 	}
 
-	// --- holds-resolver + role-assignment (when a rolestore exists) ---
 	if len(s.RoleStores) > 0 {
 		hr, err := s.HoldsResolver("")
 		if err != nil {
@@ -119,7 +104,6 @@ func buildOracleEntry(s *Spec) (map[string]any, error) {
 		)
 	}
 
-	// --- level grants ---
 	if len(s.Grants) > 0 {
 		gm := map[string]any{}
 		for _, gd := range s.Grants {
@@ -143,7 +127,6 @@ func buildOracleEntry(s *Spec) (map[string]any, error) {
 		projections["grants"] = gm
 	}
 
-	// --- resource ACL ---
 	ram := map[string]any{}
 	for _, o := range s.Objects {
 		if objectGrantEdge(o) == nil {

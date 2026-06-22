@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// The SECURITY DEFINER kernel schema is spec-declared: a non-Foir deployment can
-// host the generated trusted functions in its own schema without the engine
-// assuming "auth". `definers schema "authz"` must flip every qualification —
-// policy call sites, generated CREATE statements, and the V11 closure check —
-// in lockstep, so the closure still holds.
 func TestDefinerSchema_IsSpecDeclared(t *testing.T) {
 	spec := `definers schema "authz"` + "\n" + grantSpec
 	s, err := Parse(spec)
@@ -23,7 +18,6 @@ func TestDefinerSchema_IsSpecDeclared(t *testing.T) {
 		t.Fatalf("validate (closure must hold under the declared schema): %v", err)
 	}
 
-	// (1) Generated definers are created in the declared schema.
 	defs, err := s.EmitDefiners()
 	if err != nil {
 		t.Fatalf("emit definers: %v", err)
@@ -40,7 +34,7 @@ func TestDefinerSchema_IsSpecDeclared(t *testing.T) {
 	if !strings.HasPrefix(ta.CreateSQL(), "CREATE OR REPLACE FUNCTION authz.is_tenant_admin(") {
 		t.Errorf("CreateSQL not qualified with declared schema:\n%s", ta.CreateSQL())
 	}
-	// The intra-kernel recursion call is qualified with the declared schema too.
+
 	if !strings.Contains(ta.Body, "authz.impersonation_grants_reach(") {
 		t.Errorf("recursion call not requalified:\n%s", ta.Body)
 	}
@@ -48,7 +42,6 @@ func TestDefinerSchema_IsSpecDeclared(t *testing.T) {
 		t.Errorf("definer body still references the default auth schema:\n%s", ta.Body)
 	}
 
-	// (2) Emitted policies call the kernel in the declared schema, never "auth.".
 	rls, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit rls: %v", err)
@@ -74,7 +67,6 @@ func TestDefinerSchema_IsSpecDeclared(t *testing.T) {
 	}
 }
 
-// Omitting the block keeps Foir's exact "auth" schema (byte-identical default).
 func TestDefinerSchema_DefaultIsAuth(t *testing.T) {
 	if (&Spec{}).definerSchema() != "auth" {
 		t.Errorf("default definer schema = %q, want auth", (&Spec{}).definerSchema())

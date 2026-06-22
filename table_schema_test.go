@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// The governed-table schema is spec-declared (`tables schema "<name>"`) and qualifies
-// every emitted DDL reference to an adopter table — ENABLE/FORCE RLS, CREATE POLICY,
-// and the closure/group CREATE TRIGGER. Omitting the block defaults to "public" (the
-// Postgres default schema), so existing specs emit byte-identically. This closes the
-// portability gap for an adopter whose governed tables don't live in `public`.
-
 const tableSchemaSpec = `
 tables schema "app"
 topology { level tenant level project parent tenant }
@@ -53,8 +47,6 @@ func TestTableSchema_EnablementAndPolicy(t *testing.T) {
 		t.Errorf("PolicySQL still references public.:\n%s", pol)
 	}
 
-	// The SECURITY DEFINER functions pin search_path to the declared table schema —
-	// otherwise their bare table references would resolve against public and fail.
 	defs, err := s.EmitDefiners()
 	if err != nil {
 		t.Fatalf("emit definers: %v", err)
@@ -69,7 +61,6 @@ func TestTableSchema_EnablementAndPolicy(t *testing.T) {
 	}
 }
 
-// Default (no `tables schema` block) → "public", byte-identical with prior behaviour.
 func TestTableSchema_DefaultsToPublic(t *testing.T) {
 	const src = `
 topology { level tenant level project parent tenant }
@@ -87,7 +78,6 @@ object thing { table things; scoped tenant > project; relation m: member via rol
 	}
 }
 
-// The closure-trigger DDL binds ON the declared table schema.
 func TestTableSchema_ClosureTrigger(t *testing.T) {
 	s := mustSpec(t, "tables schema \"app\"\n"+closureSpec)
 	sql := s.TriggersSQL()
@@ -99,7 +89,6 @@ func TestTableSchema_ClosureTrigger(t *testing.T) {
 	}
 }
 
-// The group-rebuild trigger DDL binds ON the declared table schema.
 func TestTableSchema_GroupTrigger(t *testing.T) {
 	s := mustSpec(t, "tables schema \"app\"\n"+groupSpec)
 	triggers := s.EmitGroupTriggers()
@@ -115,7 +104,6 @@ func TestTableSchema_GroupTrigger(t *testing.T) {
 	}
 }
 
-// A duplicate `tables schema` block is rejected (mirrors the definers block).
 func TestTableSchema_DuplicateRejected(t *testing.T) {
 	const src = `
 tables schema "app"

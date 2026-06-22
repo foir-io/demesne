@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// WS3 Phase A — the topology is a branching TREE, not a strict linear chain: a
-// parent may have multiple child levels (siblings). Each object still declares a
-// linear root→leaf `scoped` path through the tree, so per-object emission is
-// identical to the chain case along that path. Here `org` forks into two sibling
-// leaves, `team` and `client`, each with its own owner-scoped object.
 const treeSpec = `
 topology {
   level org
@@ -42,7 +37,6 @@ func TestTree_BranchingForkCompiles(t *testing.T) {
 		t.Fatalf("validate (a branching tree must be valid): %v", err)
 	}
 
-	// The topology exposes both branches; AncestorPath is per-leaf.
 	if p, _ := s.Topology.AncestorPath("team"); len(p) != 2 || p[0].Name != "org" || p[1].Name != "team" {
 		t.Errorf("AncestorPath(team) = %v, want [org team]", names(p))
 	}
@@ -59,9 +53,7 @@ func TestTree_BranchingForkCompiles(t *testing.T) {
 	if doc == nil || inv == nil {
 		t.Fatalf("missing policies (unsupported: %v)", rls.Unsupported)
 	}
-	// Each object's containment pins ITS OWN branch path — doc is scoped by the
-	// team branch (org_id + team_id), invoice by the client branch (org_id +
-	// client_id). Neither leaks the other's leaf column.
+
 	for _, want := range []string{"org_id = ", "team_id = ", "owner_id = "} {
 		if !strings.Contains(doc.Using, want) {
 			t.Errorf("docs_select missing %q (team branch):\n%s", want, doc.Using)
@@ -80,8 +72,6 @@ func TestTree_BranchingForkCompiles(t *testing.T) {
 	}
 }
 
-// The claims contract still covers EVERY level of the tree (one id per level,
-// across both branches).
 func TestTree_ClaimsCoverAllBranches(t *testing.T) {
 	s := mustSpec(t, treeSpec)
 	claims, err := s.ClaimsContract()

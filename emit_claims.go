@@ -5,14 +5,6 @@ import (
 	"strings"
 )
 
-// Claims-contract emitter (RFC §6.1). The topology + subjects own the JWT claims
-// contract end-to-end; this renders it as a generated Go artifact (the canonical
-// key set WithRLS / session minting must provide). Phase B has the live
-// BuildRLSClaims consume this; Phase A's oracle asserts the live minting covers
-// every key and no RLS predicate references a key outside it.
-
-// RenderClaimsContractGo emits a deterministic, sorted Go declaration of the
-// claims contract for the given var name.
 func (s *Spec) RenderClaimsContractGo(varName string) (string, error) {
 	keys, err := s.ClaimsContract()
 	if err != nil {
@@ -31,13 +23,6 @@ func (s *Spec) RenderClaimsContractGo(varName string) (string, error) {
 	return b.String(), nil
 }
 
-// RenderClaimsContractEntriesGo emits the STRUCTURED claims contract (EID-334):
-// each key plus its source — the topology level whose scope id feeds it, and the
-// subjects whose `identifies` feeds it. It is the machine-readable provenance a
-// derived claims-builder consumes (the data BuildClaims uses at runtime), rendered
-// as a generated artifact for adopters who codegen the mapping. The DemesneClaimEntry
-// type it references mirrors the engine's ClaimEntry; emitting the type alongside
-// keeps the artifact self-contained.
 func (s *Spec) RenderClaimsContractEntriesGo(varName string) (string, error) {
 	entries, err := s.ClaimsContractEntries()
 	if err != nil {
@@ -61,7 +46,6 @@ func (s *Spec) RenderClaimsContractEntriesGo(varName string) (string, error) {
 	return b.String(), nil
 }
 
-// renderStringSlice renders a []string as a Go composite literal (nil → "nil").
 func renderStringSlice(ss []string) string {
 	if len(ss) == 0 {
 		return "nil"

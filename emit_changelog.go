@@ -6,21 +6,6 @@ import (
 	"strings"
 )
 
-// Authz changelog (WS4, EID-345): an ordered, durable feed of access-changing writes —
-// the zookie source (a `seq` watermark = "authorized as-of seq N") and the event stream a
-// consumer Watches to react to grants/revokes (the WS5 realtime force-drop signal). It is
-// OPT-IN per grant store via the `tracked` modifier, so a spec that tracks nothing emits
-// none of this and its output is byte-identical.
-//
-// The changelog never participates in the RLS FLOOR — the floor reads only sync truth, so
-// a lagging consumer of the changelog is an affordance/latency concern, never an
-// authorization one (the WS4 fail-closed asymmetry; the validator enforces that no RLS
-// term reads an async relation).
-
-// ChangelogTableSQL renders the single shared changelog table (+ its cursor index). Emitted
-// once when any store is tracked. `seq` is the monotonic cursor / zookie; `op` is
-// 'grant' | 'revoke'; `rel` is the resource type (the store's discriminator value) or the
-// store name, so a consumer can filter the feed.
 func (s *Spec) changelogTable() string { return s.definerSchema() + "._authz_changelog" }
 
 func (s *Spec) ChangelogTableSQL() string {
@@ -39,19 +24,12 @@ func (s *Spec) ChangelogTableSQL() string {
 			"CREATE INDEX IF NOT EXISTS _authz_changelog_principal_idx ON %[1]s (principal_kind, principal_id);\n",
 		t, s.changelogTxidColumn())
 	if s.hasAsync() {
-		// The async-affordance tier reads the feed by (rel, txid) to apply the newly-SETTLED
-		// band on each pass (the commit-horizon watermark, not the gappy seq) — index it.
+
 		base += fmt.Sprintf("CREATE INDEX IF NOT EXISTS _authz_changelog_rel_txid_idx ON %[1]s (rel, txid);\n", t)
 	}
 	return base
 }
 
-// changelogTxidColumn adds each row's inserting transaction id (xid8) to the changelog, but
-// ONLY when the spec uses an `async` relation — the async tier needs it to compute a
-// commit-settlement watermark (a seq can commit out of order / gap on rollback, so it can't
-// express "the cache reflects everything committed before T"; a transaction id can). The
-// DEFAULT means the append triggers need no change. A spec with no async relation emits the
-// changelog exactly as before (byte-identical).
 func (s *Spec) changelogTxidColumn() string {
 	if !s.hasAsync() {
 		return ""
@@ -59,19 +37,15 @@ func (s *Spec) changelogTxidColumn() string {
 	return ",\n  txid xid8 NOT NULL DEFAULT pg_current_xact_id()"
 }
 
-// ChangelogTrigger is the per-store append trigger: AFTER INSERT/DELETE on a tracked grant
-// store, it appends a (rel, resource, principal, op) row to the changelog. `rel` is the
-// row's discriminator value (the resource type) when the store is shared, else the store
-// name — so one trigger captures every type the store holds.
 type ChangelogTrigger struct {
-	Schema       string // definer schema (the changelog + fn live here)
-	TableSchema  string // the grant-store table's schema
-	Changelog    string // qualified changelog table
-	Table        string // the grant store
+	Schema       string
+	TableSchema  string
+	Changelog    string
+	Table        string
 	RecordCol    string
 	KindCol      string
 	PrincipalCol string
-	DiscrimCol   string // "" → rel is the store name constant
+	DiscrimCol   string
 }
 
 func (c ChangelogTrigger) schema() string {
@@ -88,8 +62,6 @@ func (c ChangelogTrigger) tableSchema() string {
 }
 func (c ChangelogTrigger) fnName() string { return c.schema() + "." + c.Table + "_changelog" }
 
-// relExpr is the SQL for the `rel` value from a NEW/OLD row: the discriminator column when
-// shared (so the feed is filterable by resource type), else the store name as a constant.
 func (c ChangelogTrigger) relExpr(rowVar string) string {
 	if c.DiscrimCol != "" {
 		return rowVar + "." + c.DiscrimCol
@@ -97,17 +69,8 @@ func (c ChangelogTrigger) relExpr(rowVar string) string {
 	return "'" + c.Table + "'"
 }
 
-// ChangelogChannel is the LISTEN/NOTIFY channel the append trigger publishes each event
-// on, so a consumer (the WS5 realtime gateway) reacts to a grant/revoke near-instantly
-// instead of polling. The payload is the event as JSON
-// ({rel, resource_id, principal_kind, principal_id, op}). It is a fixed contract string
-// shared with the (out-of-process, non-Go) consumer.
 const ChangelogChannel = "demesne_authz_changelog"
 
-// FunctionSQL renders the append trigger function: it appends the event to the changelog
-// (the durable, ordered feed / zookie source) AND pg_notify's it on ChangelogChannel (the
-// low-latency push for a live consumer). A missed notify is non-fatal — the durable feed +
-// the consumer's own periodic re-check backstop it.
 func (c ChangelogTrigger) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
 RETURNS trigger
@@ -132,7 +95,6 @@ END;
 $$;`, c.fnName(), c.Changelog, c.relExpr("NEW"), c.RecordCol, c.KindCol, c.PrincipalCol, c.relExpr("OLD"), ChangelogChannel)
 }
 
-// TriggerSQL binds the append (row-level, so each grant/revoke is a distinct event).
 func (c ChangelogTrigger) TriggerSQL() string {
 	name := c.Table + "_changelog"
 	var b strings.Builder
@@ -141,10 +103,6 @@ func (c ChangelogTrigger) TriggerSQL() string {
 	return b.String()
 }
 
-// EmitChangelogTriggers returns one append trigger per DISTINCT grant store that has a
-// `tracked` grant relation (deduped by table — a shared store gets a single trigger that
-// captures every type via its discriminator), sorted by table. Empty when nothing is
-// tracked, keeping a non-tracking spec (Foir, until it opts in) byte-identical.
 func (s *Spec) EmitChangelogTriggers() []ChangelogTrigger {
 	seen := map[string]bool{}
 	var out []ChangelogTrigger
@@ -167,30 +125,16 @@ func (s *Spec) EmitChangelogTriggers() []ChangelogTrigger {
 	return out
 }
 
-// ObjectChangelogTrigger is the per-OBJECT-TABLE append trigger (EID-350): the
-// object-table analogue of ChangelogTrigger (which fires on the grant store). It
-// fires AFTER UPDATE OF the tracked owner/mode columns and appends + pg_notify's:
-//   - on an OWNER transfer (owner id/kind changed) — a revoke for the OLD owner
-//     and a grant for the NEW owner (principal-keyed, so a consumer re-checks the
-//     exact principal who lost access); and/or
-//   - on a VISIBILITY flip (mode column changed) — one RESOURCE-scoped event with
-//     an EMPTY principal and op 'visibility', because a public⇄private flip
-//     affects every in-scope principal, not one (a consumer re-checks the
-//     resource's whole room).
-//
-// It writes to the SAME shared _authz_changelog table + ChangelogChannel as the
-// grant-store trigger, so a consumer sees one ordered feed. The floor never reads
-// it (the WS4 fail-closed asymmetry holds — this is an affordance/latency signal).
 type ObjectChangelogTrigger struct {
-	Schema       string // definer schema (the changelog + fn live here)
-	TableSchema  string // the object table's schema
-	Changelog    string // qualified changelog table
-	Table        string // the object table (e.g. records)
-	Rel          string // constant `rel` value — the object / resource-type name
-	PK           string // the row identity column
-	OwnerIDCol   string // "" → owner not tracked
+	Schema       string
+	TableSchema  string
+	Changelog    string
+	Table        string
+	Rel          string
+	PK           string
+	OwnerIDCol   string
 	OwnerKindCol string
-	ModeCol      string // "" → visibility not tracked
+	ModeCol      string
 }
 
 func (c ObjectChangelogTrigger) schema() string {
@@ -207,8 +151,6 @@ func (c ObjectChangelogTrigger) tableSchema() string {
 }
 func (c ObjectChangelogTrigger) fnName() string { return c.schema() + "." + c.Table + "_obj_changelog" }
 
-// trackedCols is the AFTER UPDATE OF column list — only the tracked aspects, so
-// an ordinary content edit (data/updated_at) never fires the trigger.
 func (c ObjectChangelogTrigger) trackedCols() []string {
 	var cols []string
 	if c.OwnerIDCol != "" {
@@ -224,8 +166,7 @@ func (c ObjectChangelogTrigger) FunctionSQL() string {
 	cols := "(rel, resource_id, principal_kind, principal_id, op)"
 	var body strings.Builder
 	if c.OwnerIDCol != "" {
-		// Owner transfer: old owner loses, new owner gains. Skip a NULL owner id
-		// (project-owned rows carry no owner) — the changelog principal_id is NOT NULL.
+
 		fmt.Fprintf(&body, "  IF (OLD.%[1]s IS DISTINCT FROM NEW.%[1]s) OR (OLD.%[2]s IS DISTINCT FROM NEW.%[2]s) THEN\n", c.OwnerIDCol, c.OwnerKindCol)
 		fmt.Fprintf(&body, "    IF OLD.%s IS NOT NULL THEN\n", c.OwnerIDCol)
 		fmt.Fprintf(&body, "      INSERT INTO %s %s\n", c.Changelog, cols)
@@ -240,8 +181,7 @@ func (c ObjectChangelogTrigger) FunctionSQL() string {
 		body.WriteString("  END IF;\n")
 	}
 	if c.ModeCol != "" {
-		// Visibility flip: resource-scoped (empty principal) — affects every in-scope
-		// principal, so a consumer re-checks the resource's whole room.
+
 		fmt.Fprintf(&body, "  IF (OLD.%[1]s IS DISTINCT FROM NEW.%[1]s) THEN\n", c.ModeCol)
 		fmt.Fprintf(&body, "    INSERT INTO %s %s\n", c.Changelog, cols)
 		fmt.Fprintf(&body, "      VALUES ('%s', NEW.%s, '', '', 'visibility');\n", c.Rel, c.PK)
@@ -269,9 +209,6 @@ func (c ObjectChangelogTrigger) TriggerSQL() string {
 	return b.String()
 }
 
-// EmitObjectChangelogTriggers returns one trigger per object that opts into
-// object-table tracking (`track owner` / `track visibility`), sorted by table.
-// Empty when nothing opts in, keeping a non-tracking spec byte-identical.
 func (s *Spec) EmitObjectChangelogTriggers() []ObjectChangelogTrigger {
 	var out []ObjectChangelogTrigger
 	for _, obj := range s.Objects {
@@ -299,9 +236,6 @@ func (s *Spec) EmitObjectChangelogTriggers() []ObjectChangelogTrigger {
 	return out
 }
 
-// ChangelogSQL renders the full changelog layer (the shared table + every append
-// trigger — grant-store AND object-table), prefixed with a banner. Returns ""
-// when nothing is tracked.
 func (s *Spec) ChangelogSQL() string {
 	grantTrigs := s.EmitChangelogTriggers()
 	objTrigs := s.EmitObjectChangelogTriggers()

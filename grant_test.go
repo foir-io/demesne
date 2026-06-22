@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// A spec whose operator is a SCOPED grant (the general replacement for an
-// unconditional membership god-flag): the operator reaches a tenant subtree iff
-// it holds an active row in the impersonation_grants edge, and nothing more.
 const grantSpec = `
 topology {
   level platform virtual
@@ -75,8 +72,6 @@ func TestGrant_ScopedOperatorReplacesGodFlag(t *testing.T) {
 		byName[d.Name] = d
 	}
 
-	// (1) The grant-reach definer exists, is tenant-scoped, and gates on active +
-	//     non-expired — NOT an unconditional god predicate.
 	reach, ok := byName["impersonation_grants_reach"]
 	if !ok {
 		t.Fatalf("no impersonation_grants_reach definer generated; got %v", keysOf(byName))
@@ -90,13 +85,10 @@ func TestGrant_ScopedOperatorReplacesGodFlag(t *testing.T) {
 		}
 	}
 
-	// (2) There is NO unconditional god-flag definer (is_platform_admin et al.).
 	if _, bad := byName["is_platform_admin"]; bad {
 		t.Error("a god-flag definer is_platform_admin was generated — the operator must be grant-scoped")
 	}
 
-	// (3) The tenant role definer admits the operator via the SCOPED grant reach,
-	//     not via an unconditional disjunct.
 	ta, ok := byName["is_tenant_admin"]
 	if !ok {
 		t.Fatalf("no is_tenant_admin generated; got %v", keysOf(byName))
@@ -108,8 +100,6 @@ func TestGrant_ScopedOperatorReplacesGodFlag(t *testing.T) {
 		t.Errorf("is_tenant_admin still references a god-flag:\n%s", ta.Body)
 	}
 
-	// (4) RLS: the operator reaches a record only through the tenant-scoped grant
-	//     (no `... IS NULL` ambient cross-tenant view), and the closure holds.
 	rls, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit rls: %v", err)
@@ -126,9 +116,7 @@ func TestGrant_ScopedOperatorReplacesGodFlag(t *testing.T) {
 	if !strings.Contains(recSelect.Using, "auth.impersonation_grants_reach(") {
 		t.Errorf("records_select must grant the operator via the grant reach, got:\n%s", recSelect.Using)
 	}
-	// The reach is scoped to the row's own tenant_id (cascade), so a sibling
-	// tenant is unreachable. The old god-branch `AND project_id ... IS NULL` must
-	// be gone.
+
 	if strings.Contains(recSelect.Using, "IS NULL") {
 		t.Errorf("records_select still carries an ambient null-scope god view:\n%s", recSelect.Using)
 	}
@@ -137,14 +125,6 @@ func TestGrant_ScopedOperatorReplacesGodFlag(t *testing.T) {
 	}
 }
 
-// TestGrant_OperatorIsProjectScopedOnSubRows locks the rule that a grant on a
-// SUB-ROW object deeper than the grant's level (e.g. records, scoped
-// tenant>project, grant at tenant) is FOLDED into the tenant containment term —
-// so the selected project still constrains the operator — while a LEVEL-ENTITY
-// object (the project selector) keeps a top-level tenant-wide reach so the
-// operator can still see and pick projects. Without this an operator's session
-// would show every project's content in the granted tenant at once, defeating
-// the admin app's per-project scope.
 func TestGrant_OperatorIsProjectScopedOnSubRows(t *testing.T) {
 	s, err := Parse(grantSpec)
 	if err != nil {
@@ -167,7 +147,6 @@ func TestGrant_OperatorIsProjectScopedOnSubRows(t *testing.T) {
 		return ""
 	}
 
-	// Sub-row (records): grant folded into the tenant term, project still ANDs in.
 	rec := using("records_select")
 	if !strings.Contains(rec, "OR auth.impersonation_grants_reach(") {
 		t.Errorf("records: operator grant must be FOLDED into the tenant containment term (project-scoped), got:\n%s", rec)
@@ -176,8 +155,6 @@ func TestGrant_OperatorIsProjectScopedOnSubRows(t *testing.T) {
 		t.Errorf("records: must remain project-scoped (project_id claim term), got:\n%s", rec)
 	}
 
-	// Level-entity (projects): grant is a leading top-level disjunct (tenant-wide)
-	// so the operator can list/pick projects — NOT folded.
 	proj := using("projects_select")
 	if !strings.Contains(proj, "auth.impersonation_grants_reach(") {
 		t.Errorf("projects: operator must still reach the project list, got:\n%s", proj)

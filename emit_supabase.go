@@ -5,37 +5,10 @@ import (
 	"strings"
 )
 
-// Supabase deployment profile (EID-339) — the deployment-side analogue of an emit target.
-// Where an emit target (e.g. EID-338's TypeScript) renders the generated authorization
-// SURFACE for a language, a profile renders the deployment GLUE for a platform. Demesne's
-// generated RLS already reads `current_setting('request.jwt.claims', true)::json ->> '<key>'`
-// and policies are `TO authenticated` — which are EXACTLY Supabase's defaults — so the only
-// missing piece on Supabase is getting the spec's claims-contract keys INTO that GUC.
-//
-// On Supabase the JWT is minted by GoTrue and exposed to Postgres (via PostgREST) as the
-// `request.jwt.claims` GUC. Custom, app-controlled claims live in a user's `app_metadata`.
-// This profile emits the **custom access-token hook** — a Postgres function GoTrue calls at
-// token-mint time — that LIFTS each Demesne contract key from `app_metadata` to a top-level
-// claim, so the generated RLS predicates read them unchanged. Nothing about the emitted RLS
-// changes; the profile is pure deployment wiring, derived from the spec's claims contract.
-//
-// The adopter populates `app_metadata` with the contract keys via BuildClaims + Supabase's
-// admin API (see the deploy guide); the connection role stays `authenticated` (non-BYPASSRLS),
-// and `service_role` (BYPASSRLS) is reserved for trusted server paths — `demesne check`
-// verifies the role is not BYPASSRLS.
-
-// supabaseHookFn is the generated hook's function name (in schema public, where Supabase
-// auth hooks live and `supabase_auth_admin` can reach them).
 const supabaseHookFn = "demesne_access_token_hook"
 
-// supabaseGUC is the only claims GUC Supabase's PostgREST populates; the profile requires
-// the spec to use it (the engine's default), since a custom setting would never be set.
 const supabaseGUC = "request.jwt.claims"
 
-// EmitSupabaseProfile renders the Supabase deployment profile for the spec: the custom
-// access-token hook (lifting every claims-contract key from app_metadata into the JWT) plus
-// the grant/revoke statements Supabase requires for an auth hook. Errors when the spec
-// declares a non-default claims GUC (Supabase can only populate request.jwt.claims).
 func (s *Spec) EmitSupabaseProfile() (string, error) {
 	setting, cast := s.claimSetting()
 	if setting != supabaseGUC {
