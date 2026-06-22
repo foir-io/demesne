@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	demesne "github.com/eidestudio/demesne"
+	demesnepgx "github.com/eidestudio/demesne/pgx"
 	authz "github.com/eidestudio/demesne/examples/supabaseauthz"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // The generated FRAMEWORK, round-tripped against a real Supabase project (EID-289 + EID-339).
@@ -104,7 +106,7 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 	}
 
 	// session runs fn under a member's session (the generated WithRLS envelope) on one tx.
-	session := func(member, org, ws string, fn func(q authz.Querier)) {
+	session := func(member, org, ws string, fn func(q demesne.Querier)) {
 		blob, err := authz.Claims{Org: org, Ws: ws, MemberRef: member}.Mint()
 		if err != nil {
 			t.Fatalf("mint: %v", err)
@@ -121,12 +123,12 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 		if _, err := tx.ExecContext(ctx, setup[1], blob); err != nil { // install claims
 			t.Fatalf("set claims: %v", err)
 		}
-		fn(authz.FromSQL(tx))
+		fn(demesne.FromSQL(tx))
 	}
 
 	canView := func(member, org, ws, id string) authz.Decision {
 		var d authz.Decision
-		session(member, org, ws, func(q authz.Querier) {
+		session(member, org, ws, func(q demesne.Querier) {
 			got, err := authz.Note.CanView(ctx, q, id)
 			if err != nil {
 				t.Fatalf("CanView(%s): %v", id, err)
@@ -137,7 +139,7 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 	}
 	visible := func(member, org, ws string) []string {
 		var out []string
-		session(member, org, ws, func(q authz.Querier) {
+		session(member, org, ws, func(q demesne.Querier) {
 			ids, err := authz.Note.ListResources(ctx, q, nil, 100)
 			if err != nil {
 				t.Fatalf("ListResources: %v", err)
@@ -171,7 +173,7 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 	}
 
 	// CheckMany returns the visible subset of a batch.
-	session("m1", "o1", "w1", func(q authz.Querier) {
+	session("m1", "o1", "w1", func(q demesne.Querier) {
 		got, err := authz.Note.CheckMany(ctx, q, []string{"n1", "n2", "n3", "n4"})
 		if err != nil {
 			t.Fatalf("CheckMany: %v", err)
@@ -179,6 +181,51 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 		sort.Strings(got)
 		if !eqSlice(got, []string{"n1", "n2"}) {
 			t.Errorf("m1 CheckMany = %v, want [n1 n2]", got)
+		}
+	})
+
+	// pgx-native pass: the SAME generated surface, driven through the demesne/pgx adapter
+	// (FromPgx) over a pgxpool tx — the dominant-driver path and the #1 adoption friction
+	// the foir stress test flagged (EID-371 §3). Exercises the Close()-error wrap on real
+	// pgx.Rows (ListResources) and pgx.Row scanning (CanView).
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("pgxpool: %v", err)
+	}
+	defer pool.Close()
+	pgxSession := func(member, org, ws string, fn func(q demesne.Querier)) {
+		blob, err := authz.Claims{Org: org, Ws: ws, MemberRef: member}.Mint()
+		if err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+		setup := authz.SessionSetupSQL(true)
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("pgx begin: %v", err)
+		}
+		defer func() { _ = tx.Commit(ctx) }()
+		if _, err := tx.Exec(ctx, setup[0]); err != nil {
+			t.Fatalf("pgx set role: %v", err)
+		}
+		if _, err := tx.Exec(ctx, setup[1], blob); err != nil {
+			t.Fatalf("pgx set claims: %v", err)
+		}
+		fn(demesnepgx.FromPgx(tx))
+	}
+	pgxSession("m1", "o1", "w1", func(q demesne.Querier) {
+		if d, err := authz.Note.CanView(ctx, q, "n1"); err != nil || d != authz.Allow {
+			t.Errorf("pgx m1 CanView(n1) = %v, %v; want allow", d, err)
+		}
+		if d, err := authz.Note.CanView(ctx, q, "n3"); err != nil || d != authz.Deny {
+			t.Errorf("pgx m1 CanView(n3) = %v, %v; want deny", d, err)
+		}
+		ids, err := authz.Note.ListResources(ctx, q, nil, 100)
+		if err != nil {
+			t.Fatalf("pgx ListResources: %v", err)
+		}
+		sort.Strings(ids)
+		if !eqSlice(ids, []string{"n1", "n2"}) {
+			t.Errorf("pgx m1 ListResources = %v, want [n1 n2]", ids)
 		}
 	})
 }

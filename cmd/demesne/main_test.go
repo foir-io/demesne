@@ -134,8 +134,8 @@ func TestCLI_EmitFramework(t *testing.T) {
 		"package authz",
 		`demesne "github.com/eidestudio/demesne"`,
 		"type Claims struct {",
-		"func (docAccess) CanView(ctx context.Context, q Querier, id string) (Decision, error)",
-		"func CheckHandler(q Querier) http.HandlerFunc",
+		"func (docAccess) CanView(ctx context.Context, q demesne.Querier, id string) (Decision, error)",
+		"func CheckHandler(q demesne.Querier) http.HandlerFunc",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("framework output missing %q", want)
