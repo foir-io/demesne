@@ -46,9 +46,6 @@ object record {
   permission view = owner @rls maps select
 }
 
-// The app-defined containment/global template (the generic replacement for the
-// removed settings/platform sugar): four @scoped CRUD permissions. On a
-// global (virtual-leaf) object it composes to the platform-role branch.
 template contained {
   permission view   = @scoped @rls maps select
   permission create = @scoped @rls maps insert

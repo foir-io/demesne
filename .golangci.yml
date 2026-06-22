@@ -1,4 +1,4 @@
-# Mirrors foir-platform/.golangci.yml: cognitive-complexity gate via gocognit.
+# cognitive-complexity gate via gocognit.
 # Hard gate — every function must stay under min-complexity 30. The whole
 # package was refactored to satisfy this (no grandfathered offenders), so a
 # plain `golangci-lint run ./...` reports zero issues and CI fails on any

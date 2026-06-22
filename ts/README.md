@@ -1,7 +1,7 @@
 # Demesne — TypeScript emit target
 
 The TypeScript half of Demesne's generated Layer-2 (read glue) + Layer-3 (control-plane
-write) surface (EID-338). It mirrors the Go split exactly:
+write) surface. It mirrors the Go split exactly:
 
 | Go (engine) | TypeScript |
 |---|---|
@@ -21,7 +21,7 @@ reproduces every Go builder over that projection — **byte-for-byte**.
   app-level read builders, and the Layer-3 write builders (role-assignment, level-grant,
   resource-ACL). Faithful ports of the Go runtime; the Go `*_test.go` golden tables are
   ported into Vitest.
-- **`packages/example-app`** — a non-Foir worked example. Stands up a real Postgres
+- **`packages/example-app`** — a worked example. Stands up a real Postgres
   (`pg_ctl`, no Docker), applies the **emitted** RLS over a hand-written schema, and
   round-trips the runtime builders against it under the `authenticated` role — proving
   equal-by-delegation end-to-end (skips cleanly where Postgres is absent).

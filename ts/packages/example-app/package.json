@@ -2,7 +2,7 @@
   "name": "@demesne/example-app",
   "version": "0.0.0",
   "private": true,
-  "description": "Demesne TypeScript worked example — stands up a real Postgres, applies the emitted RLS, and round-trips the @demesne/runtime builders against it (EID-338).",
+  "description": "Demesne TypeScript worked example — stands up a real Postgres, applies the emitted RLS, and round-trips the @demesne/runtime builders against it.",
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {

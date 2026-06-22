@@ -23,7 +23,7 @@ jobs:
   lint:
     name: Go Lint
     # Hard cognitive-complexity gate (gocognit min-complexity 30), matching
-    # foir-platform. Covers both the root engine module and the nested
+    # the consumer repo. Covers both the root engine module and the nested
     # cmd/demesne module (separate go.mod, so it needs its own invocation).
     runs-on: ubuntu-latest
     steps:
