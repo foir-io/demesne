@@ -1,13 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { goCmp, goSort, goEncodeString, goJSONStringify } from "../src/goCompat.js";
 
-// U+2028 / U+2029 via fromCharCode so this test source stays pure ASCII.
 const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
 
 describe("goJSONStringify — byte-identical to Go encoding/json.Marshal(map[string]string)", () => {
-  // Each [input, expected] pair: `expected` is the literal stdout of a Go program that
-  // ran `json.Marshal(input)`. See the EID-338 design notes for the generator.
+
   const cases: Array<[Record<string, string>, string]> = [
     [
       { tenant_id: "t1", project_id: "p1", customer_id: "c1" },

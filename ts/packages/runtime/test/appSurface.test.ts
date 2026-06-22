@@ -8,9 +8,6 @@ import {
   type AppObjectSurface,
 } from "../src/index.js";
 
-// Ports app_surface_test.go (current main): TestAppSurface_ReadBuilders, _CustomPK,
-// _CheckEqualsPointCheck (shape), _EditPointCheck (passthrough), + the fast-path variant.
-
 const record: AppObjectSurface = {
   object: "record",
   table: "records",
