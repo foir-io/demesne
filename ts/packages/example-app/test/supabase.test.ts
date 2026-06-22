@@ -32,7 +32,9 @@ suite(`Supabase profile round-trip ${realUrl ? "(real project)" : "(local Supaba
 
   beforeAll(async () => {
     if (realUrl) {
-      client = new Client({ connectionString: realUrl });
+      // Supabase requires SSL on external connections; the pooler cert isn't in the local
+      // trust store, so don't verify it (a throwaway demo connection).
+      client = new Client({ connectionString: realUrl, ssl: { rejectUnauthorized: false } });
     } else {
       cluster = startCluster();
       client = new Client({ host: cluster.socketDir, user: "postgres", database: "postgres" });
