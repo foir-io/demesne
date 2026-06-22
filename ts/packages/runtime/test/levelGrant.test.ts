@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import { levelGrants, type GrantSurface } from "../src/index.js";
 import { fullGrant, minimalGrant, extraColsGrant } from "./fixtures.js";
 
-// Ports grant_runtime_test.go.
-
 describe("full surface (active + expiry + audit + reason column)", () => {
   it("grantInsert writes/projects the reason column, args in order", () => {
     const { sql, args } = levelGrants.grantInsert(

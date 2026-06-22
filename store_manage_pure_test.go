@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// The grant write-moat (@store_manage) dispatches over grant RELATIONS, so the
-// resource_grant governance object keeps working when record/file go pure. These
-// golden tests pin the generated dispatch (auth.resource_acl_manage(type,id) CASE
-// → <kind>_can_edit) and the per-kind can-edit definers, with two kinds (record +
-// file) sharing one discriminated store.
-
 const storeManageHead = `
 topology {
   level platform virtual
@@ -64,8 +58,6 @@ func TestStoreManagePure_EmitsDispatch(t *testing.T) {
 		t.Fatalf("validate pure: %v", err)
 	}
 
-	// The resource_acl write-moat policies call the per-kind dispatch over the row's
-	// own discriminator + id columns.
 	pRLS, err := pure.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit rls: %v", err)
@@ -75,7 +67,6 @@ func TestStoreManagePure_EmitsDispatch(t *testing.T) {
 		t.Errorf("resource_acl policies do not call the dispatch:\n%s", acl)
 	}
 
-	// The per-kind can-edit definers are EXISTS-over-the-resource shapes.
 	for _, name := range []string{"record_can_edit", "file_can_edit"} {
 		b := grantFnByName(t, pure, name)
 		if !strings.Contains(b, "EXISTS (SELECT 1 FROM ") {
@@ -83,7 +74,6 @@ func TestStoreManagePure_EmitsDispatch(t *testing.T) {
 		}
 	}
 
-	// The dispatch CASEs over both kinds, fail-closed.
 	mng := grantFnByName(t, pure, "resource_acl_manage")
 	for _, want := range []string{
 		"WHEN 'record' THEN auth.record_can_edit(p_id)",
@@ -95,7 +85,6 @@ func TestStoreManagePure_EmitsDispatch(t *testing.T) {
 	}
 }
 
-// onlyTable returns a copy of the RLSResult restricted to one table's policies.
 func onlyTable(res *RLSResult, table string) *RLSResult {
 	out := &RLSResult{}
 	for _, p := range res.Policies {

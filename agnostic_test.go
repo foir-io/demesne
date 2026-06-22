@@ -9,19 +9,6 @@ import (
 	"testing"
 )
 
-// EID-278 / v3 WS4 — deployment-agnostic completion. The engine must govern a
-// schema that follows NONE of Foir's `id` / `<level>_id` naming conventions. The
-// worked example (examples/agnostic.demesne) uses non-`id` primary keys
-// (asset_pk / space_pk), non-`<level>_id` tenancy FKs (tenant_ref / space_ref),
-// and non-`<level>_id` claim keys (tnt / spc). These tests assert the threaded
-// sites — containment, the level-entity self column, owner / grant / mode /
-// kernel predicates, the point-check, and schema binding — all compile against
-// those names, and that sibling isolation still holds.
-//
-// The complementary byte-identity half ("Foir, all id/<level>_id, emits exactly
-// as before") is the UNCHANGED existing oracle suite: every other *_test.go
-// passes with zero edits because each new knob defaults to the convention.
-
 func loadAgnostic(t *testing.T) *Spec {
 	t.Helper()
 	src, err := os.ReadFile(filepath.Join("examples", "agnostic.demesne"))
@@ -38,12 +25,6 @@ func loadAgnostic(t *testing.T) *Spec {
 	return s
 }
 
-// TestAgnostic_ScopeClaimDecoupling — the containment predicate pins the level's
-// declared SCOPE COLUMN to its declared CLAIM KEY, independently named: a sub-row
-// object pins `tenant_ref = claim('tnt')` and `space_ref = claim('spc')`; the
-// level-entity object pins its own PRIMARY KEY `space_pk = claim('spc')` for its
-// own node (NOT `id`, NOT `space_id`). The claims contract is the claim keys, not
-// the column names.
 func TestAgnostic_ScopeClaimDecoupling(t *testing.T) {
 	s := loadAgnostic(t)
 	res, err := s.EmitRLS()
@@ -56,19 +37,19 @@ func TestAgnostic_ScopeClaimDecoupling(t *testing.T) {
 		t.Fatalf("no assets_select (unsupported: %v)", res.Unsupported)
 	}
 	for _, frag := range []string{
-		// scope column (FK) = claim key — decoupled at BOTH non-virtual levels.
+
 		"tenant_ref = " + s.claim("tnt"),
 		"space_ref = " + s.claim("spc"),
-		// owner axis over a non-conventional column + its subject's claim.
+
 		"holder_ref = " + s.claim("member_ref"),
-		// the ambient membership-operator branch reads the leaf level's CLAIM KEY.
+
 		s.claim("spc") + " IS NULL",
 	} {
 		if !strings.Contains(asset.Using, frag) {
 			t.Errorf("assets_select missing %q in:\n%s", frag, asset.Using)
 		}
 	}
-	// No conventional name must leak — neither the column as a claim nor `<level>_id`.
+
 	for _, leaked := range []string{
 		s.claim("tenant_id"), s.claim("space_id"), s.claim("tenant_ref"),
 	} {
@@ -77,24 +58,20 @@ func TestAgnostic_ScopeClaimDecoupling(t *testing.T) {
 		}
 	}
 
-	// The level-entity object pins its own PRIMARY KEY for its own node, read
-	// against the level's claim key — the level-entity self column threaded the PK.
 	space := findPolicy(res, "spaces_select")
 	if space == nil {
 		t.Fatal("no spaces_select policy")
 	}
 	for _, frag := range []string{
-		"space_pk = " + s.claim("spc"),   // self node = PK = claim
-		"tenant_ref = " + s.claim("tnt"), // ancestor containment
-		"tenant_ref, space_pk)",          // role definer scope cols include the PK
+		"space_pk = " + s.claim("spc"),
+		"tenant_ref = " + s.claim("tnt"),
+		"tenant_ref, space_pk)",
 	} {
 		if !strings.Contains(space.Using, frag) {
 			t.Errorf("spaces_select missing %q in:\n%s", frag, space.Using)
 		}
 	}
 
-	// The claims contract is the declared CLAIM KEYS (tnt/spc), never the column
-	// names or the `<level>_id` convention.
 	contract, err := s.ClaimsContract()
 	if err != nil {
 		t.Fatal(err)
@@ -115,13 +92,9 @@ func TestAgnostic_ScopeClaimDecoupling(t *testing.T) {
 	}
 }
 
-// TestAgnostic_NonIDPrimaryKey — the row-identity sites all reference the declared
-// PK (asset_pk / space_pk), never a hard-coded `id`: the point-check, the kernel
-// reachability gate, the grant-edge predicate, and the runtime access surface.
 func TestAgnostic_NonIDPrimaryKey(t *testing.T) {
 	s := loadAgnostic(t)
 
-	// Point-check is over the declared PK.
 	pc, err := s.PointCheckSQL("asset")
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +103,6 @@ func TestAgnostic_NonIDPrimaryKey(t *testing.T) {
 		t.Errorf("PointCheckSQL not over the declared PK: %s", pc)
 	}
 
-	// The grant-edge fragment references <table>.<pk> as the record identity.
 	res, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -140,7 +112,6 @@ func TestAgnostic_NonIDPrimaryKey(t *testing.T) {
 		t.Errorf("grant fragment must reference assets.asset_pk:\n%v", asset)
 	}
 
-	// The kernel (realtime) gate matches the row by the declared PK.
 	defs, err := s.EmitDefiners()
 	if err != nil {
 		t.Fatalf("emit definers: %v", err)
@@ -161,7 +132,6 @@ func TestAgnostic_NonIDPrimaryKey(t *testing.T) {
 		t.Errorf("kernel gate still assumes an `id` PK:\n%s", kernel.Body)
 	}
 
-	// The runtime access surface (read/set visibility) is keyed on the declared PK.
 	surf, err := s.ResourceAccessSurface("asset")
 	if err != nil {
 		t.Fatalf("resource access surface: %v", err)
@@ -172,19 +142,12 @@ func TestAgnostic_NonIDPrimaryKey(t *testing.T) {
 	if got := surf.SetVisibilitySQL(); !strings.HasSuffix(got, "WHERE asset_pk = $2") {
 		t.Errorf("SetVisibilitySQL not over the declared PK: %s", got)
 	}
-	// The scope columns the surface writes are the declared FK names (root→leaf).
+
 	if !eqStrs(surf.ScopeCols, []string{"tenant_ref", "space_ref"}) {
 		t.Errorf("access surface scope cols = %v, want [tenant_ref space_ref]", surf.ScopeCols)
 	}
 }
 
-// TestAgnostic_ForwardIsolation — sibling isolation holds under the
-// non-conventional naming. The asset SELECT containment is a sargable AND-chain
-// of `<scope col> = claim(<claim key>)` over BOTH non-virtual levels, so a row
-// whose tenant_ref or space_ref differs from the caller's tnt/spc claims is
-// excluded (a caller in tenant A can never see tenant B's assets). We assert it
-// structurally on the emitted predicate, then prove the invariant generatively
-// over random custom-named topologies.
 func TestAgnostic_ForwardIsolation(t *testing.T) {
 	s := loadAgnostic(t)
 	res, err := s.EmitRLS()
@@ -195,20 +158,16 @@ func TestAgnostic_ForwardIsolation(t *testing.T) {
 	if asset == nil {
 		t.Fatal("no assets_select")
 	}
-	// The containment block is the AND-chain pinning every ancestor scope column.
+
 	containment := "tenant_ref = " + s.claim("tnt") + " AND space_ref = " + s.claim("spc")
 	if !strings.Contains(asset.Using, containment) {
 		t.Errorf("assets_select containment not the expected sargable AND-chain %q in:\n%s", containment, asset.Using)
 	}
-	// Isolation is fail-closed: the ONLY containment-independent branch is the
-	// virtual-root operator (the membership god-flag), gated by `<leaf claim> IS
-	// NULL`. No other top-level disjunct may be unconditional.
+
 	if !strings.Contains(asset.Using, "auth.is_ops("+s.claim("sub")+") AND "+s.claim("spc")+" IS NULL") {
 		t.Errorf("operator branch must be scope-gated (no ambient cross-tenant reach):\n%s", asset.Using)
 	}
 
-	// Generative: the isolation invariant survives ARBITRARY scope-column / claim-key
-	// naming (the EID-278 generalization of the V7 property).
 	rng := rand.New(rand.NewSource(0x2778))
 	for iter := 0; iter < 500; iter++ {
 		spec := genCustomNamedSpec(rng)
@@ -217,23 +176,20 @@ func TestAgnostic_ForwardIsolation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("iter %d PinnedColumns(%s): %v", iter, sub.Name, err)
 			}
-			// Empty pins iff the anchor is virtual (the sanctioned operator).
+
 			if (len(cols) == 0) != virtual {
 				t.Fatalf("iter %d subject %s: empty-pin %v must equal virtual-anchor %v", iter, sub.Name, cols == nil, virtual)
 			}
 			if virtual {
 				continue
 			}
-			// The deepest pinned dimension is the anchor's DECLARED claim key — so two
-			// subjects at sibling anchors pin the same dimension to different values,
-			// isolated by construction, whatever the level was named.
+
 			want := spec.Topology.LevelByName(sub.Anchor).claimKey()
 			if cols[len(cols)-1] != want {
 				t.Fatalf("iter %d subject %s deepest pin %q, want anchor claim key %q", iter, sub.Name, cols[len(cols)-1], want)
 			}
 		}
-		// And the emitted containment pins the custom SCOPE COLUMN to the custom
-		// CLAIM KEY at every level (the SQL-level isolation, custom-named).
+
 		res, err := spec.EmitRLS()
 		if err != nil {
 			t.Fatalf("iter %d emit: %v", iter, err)
@@ -254,12 +210,8 @@ func TestAgnostic_ForwardIsolation(t *testing.T) {
 	}
 }
 
-// genCustomNamedSpec builds a random linear topology whose every non-virtual level
-// declares DELIBERATELY non-conventional scope-column and claim-key names (col
-// l<i>_fk, claim l<i>_k), plus one `reach self`/`descendants` subject per level
-// and a single scoped object — so the emitter exercises the decoupled names.
 func genCustomNamedSpec(rng *rand.Rand) *Spec {
-	depth := 2 + rng.Intn(3) // 2..4 levels
+	depth := 2 + rng.Intn(3)
 	virtualRoot := rng.Intn(2) == 0
 	top := &Topology{}
 	names := make([]string, depth)
@@ -272,8 +224,8 @@ func genCustomNamedSpec(rng *rand.Rand) *Spec {
 			lv.Parents = []string{names[i-1]}
 		}
 		if !lv.Virtual {
-			lv.ScopeCol = names[i] + "_fk" // non-`<level>_id` column
-			lv.ClaimKey = names[i] + "_k"  // non-`<level>_id` claim
+			lv.ScopeCol = names[i] + "_fk"
+			lv.ClaimKey = names[i] + "_k"
 		}
 		top.Levels = append(top.Levels, lv)
 	}
@@ -285,8 +237,7 @@ func genCustomNamedSpec(rng *rand.Rand) *Spec {
 			})
 		}
 	}
-	// A leaf-scoped object with a single @scoped read so containment is the whole
-	// predicate (no other grant terms to obscure the isolation check).
+
 	var scoped []string
 	for _, l := range top.Levels {
 		if !l.Virtual {
@@ -306,29 +257,22 @@ func genCustomNamedSpec(rng *rand.Rand) *Spec {
 	return s
 }
 
-// TestAgnostic_BindsToSchema — the spec binds to a database whose columns carry
-// the non-conventional names, and a MISSING primary-key column is reported (the
-// PK is now part of the bind surface, not an `id` assumption).
 func TestAgnostic_BindsToSchema(t *testing.T) {
 	s := loadAgnostic(t)
 	sc := agnosticSchema()
 	if err := s.ValidateAgainst(sc); err != nil {
 		t.Fatalf("agnostic spec should bind to its matching schema, got: %v", err)
 	}
-	// Drop the asset table's declared PK → the bind fails on it (proving the PK is
-	// checked under its declared name, not `id`).
+
 	delete(sc.tables["assets"], "asset_pk")
 	if err := s.ValidateAgainst(sc); err == nil || !strings.Contains(err.Error(), `no column "asset_pk"`) {
 		t.Errorf("missing declared PK should be reported, got: %v", err)
 	}
 }
 
-// TestAgnostic_GrammarBindsKnobs — the new `pk` / `col` / `claim` clauses parse
-// into the right AST fields, and an absent clause defaults to the convention.
 func TestAgnostic_GrammarBindsKnobs(t *testing.T) {
 	s := loadAgnostic(t)
 
-	// Level overrides bind; the virtual root carries none (defaults).
 	tenant := s.Topology.LevelByName("tenant")
 	if tenant.ScopeCol != "tenant_ref" || tenant.ClaimKey != "tnt" {
 		t.Errorf("tenant level knobs = (%q,%q), want (tenant_ref,tnt)", tenant.ScopeCol, tenant.ClaimKey)
@@ -337,7 +281,7 @@ func TestAgnostic_GrammarBindsKnobs(t *testing.T) {
 	if space.ScopeCol != "space_ref" || space.ClaimKey != "spc" {
 		t.Errorf("space level knobs = (%q,%q), want (space_ref,spc)", space.ScopeCol, space.ClaimKey)
 	}
-	// Object PKs bind.
+
 	if o := findObject(s, "asset"); o == nil || o.PK != "asset_pk" {
 		t.Errorf("asset.PK = %q, want asset_pk", o.PK)
 	}
@@ -345,8 +289,6 @@ func TestAgnostic_GrammarBindsKnobs(t *testing.T) {
 		t.Errorf("space.PK = %q, want space_pk", o.PK)
 	}
 
-	// Defaults: a spec that declares NO knob falls back to the conventions, so the
-	// helper methods reproduce Foir's names exactly (the byte-identity guarantee).
 	d := mustSpec(t, `
 		topology { level tenant level project parent tenant }
 		subject admin { anchor tenant reach descendants identifies sub roles none }
@@ -364,7 +306,6 @@ func TestAgnostic_GrammarBindsKnobs(t *testing.T) {
 	}
 }
 
-// agnosticSchema returns a Schema satisfying examples/agnostic.demesne exactly.
 func agnosticSchema() *Schema {
 	sc := NewSchema()
 	for _, c := range []string{"asset_pk", "tenant_ref", "space_ref", "holder_ref", "share"} {

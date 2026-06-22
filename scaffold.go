@@ -6,34 +6,16 @@ import (
 	"strings"
 )
 
-// Scaffold heuristics (WS4): turn an introspected Schema into a STARTER
-// `.demesne` spec, so adopting Demesne on an existing database isn't a blank
-// page. The schema alone cannot decide policy — in particular it cannot tell a
-// tenancy LEVEL (a container every row is scoped within) from an owner PRINCIPAL
-// (a customer/user a row belongs to); both look like "a table many rows FK to."
-// So the output is explicitly a DRAFT: it infers the tenancy hierarchy from the
-// foreign-key graph, emits containment-only (`@scoped`) objects, and leaves owner
-// axes / roles / descriptors / subjects for the human to add. It is generated to
-// PARSE; it is not guaranteed to express the real policy.
-
-// ScaffoldOptions tunes starter-spec generation.
 type ScaffoldOptions struct {
-	// MinContainerRefs: a table referenced by at least this many distinct other
-	// tables is treated as a tenancy level. Default 3 (a real tenancy container is
-	// referenced widely; a lower bound pulls in owner-principal tables).
 	MinContainerRefs int
 }
 
-// scafFKGraph holds the foreign-key aggregates the scaffolder reasons over.
 type scafFKGraph struct {
-	refsTo  map[string]map[string]bool // container → set of referencing tables
-	colInto map[string]map[string]int  // container → fk column name → count
-	fkOut   map[string]map[string]bool // table → set of containers it references
+	refsTo  map[string]map[string]bool
+	colInto map[string]map[string]int
+	fkOut   map[string]map[string]bool
 }
 
-// scafBuildFKGraph aggregates the schema's foreign keys (ignoring self-FKs and
-// any FK that isn't a clean `<x>_id → <container>.id`, which don't signal a
-// tenancy level).
 func (sc *Schema) scafBuildFKGraph() scafFKGraph {
 	g := scafFKGraph{
 		refsTo:  map[string]map[string]bool{},
@@ -44,9 +26,7 @@ func (sc *Schema) scafBuildFKGraph() scafFKGraph {
 		if fk.Table == fk.RefTable {
 			continue
 		}
-		// Only clean `<x>_id → <container>.id` foreign keys signal a tenancy level.
-		// A FK to a non-`id` key (e.g. model_key → models.key) is a domain
-		// reference, not a containment axis whose scope column is `<level>_id`.
+
 		if !strings.HasSuffix(fk.Column, "_id") || fk.RefColumn != "id" {
 			continue
 		}
@@ -64,11 +44,9 @@ func (sc *Schema) scafBuildFKGraph() scafFKGraph {
 	return g
 }
 
-// scafDetectLevels picks the level containers: FK targets referenced by >=
-// threshold distinct tables, named from their dominant FK column (minus _id).
 func scafDetectLevels(g scafFKGraph, threshold int) (isLevel map[string]bool, levelName map[string]string) {
 	isLevel = map[string]bool{}
-	levelName = map[string]string{} // container table → level name
+	levelName = map[string]string{}
 	for c, refs := range g.refsTo {
 		if len(refs) < threshold {
 			continue
@@ -89,19 +67,15 @@ func scafDetectLevels(g scafFKGraph, threshold int) (isLevel map[string]bool, le
 	return isLevel, levelName
 }
 
-// scafComputeDepths computes each level's depth + parent: a level's parent is
-// the DEEPEST other level its own table references (so customers→{tenants,
-// projects} parents to project, not tenant). Depth memoised over the
-// level-only FK graph.
 func scafComputeDepths(g scafFKGraph, isLevel map[string]bool) (depth map[string]int, parentTable map[string]string) {
 	depth = map[string]int{}
-	parentTable = map[string]string{} // container → parent container
+	parentTable = map[string]string{}
 	var computeDepth func(c string) int
 	computeDepth = func(c string) int {
 		if d, ok := depth[c]; ok {
 			return d
 		}
-		depth[c] = 0 // guard against cycles
+		depth[c] = 0
 		best, bestD := "", -1
 		for ref := range g.fkOut[c] {
 			if !isLevel[ref] || ref == c {
@@ -126,9 +100,6 @@ func scafComputeDepths(g scafFKGraph, isLevel map[string]bool) (depth map[string
 	return depth, parentTable
 }
 
-// scafSelectTree keeps a single-root tree: choose the most-referenced root, then
-// keep only levels whose root-ward chain reaches it. Others are reported
-// (dropped), not emitted (a multi-root topology is invalid; the human picks).
 func scafSelectTree(g scafFKGraph, isLevel map[string]bool, levelName, parentTable map[string]string) (inTree map[string]bool, dropped []string) {
 	roots := []string{}
 	for c := range isLevel {
@@ -158,8 +129,6 @@ func scafSelectTree(g scafFKGraph, isLevel map[string]bool, levelName, parentTab
 	return inTree, dropped
 }
 
-// scafOrderKept orders the kept levels root→leaf (by depth, then name) for the
-// topology block.
 func scafOrderKept(inTree map[string]bool, depth map[string]int, levelName map[string]string) []string {
 	kept := []string{}
 	for c := range inTree {
@@ -174,19 +143,17 @@ func scafOrderKept(inTree map[string]bool, depth map[string]int, levelName map[s
 	return kept
 }
 
-// scafScopePath returns the longest root→leaf chain of level columns table t
-// fully carries (deepest-first prefix), or nil if it carries none.
 func (sc *Schema) scafScopePath(t string, kept []string, levelName, parentTable map[string]string) []string {
-	// The level columns this table carries.
+
 	has := map[string]bool{}
 	for _, c := range kept {
 		if sc.hasColumn(t, levelName[c]+"_id") {
 			has[levelName[c]] = true
 		}
 	}
-	// Longest root→leaf chain fully present.
+
 	var path []string
-	for _, c := range kept { // kept is root→leaf order
+	for _, c := range kept {
 		ln := levelName[c]
 		if !has[ln] {
 			continue
@@ -199,7 +166,6 @@ func (sc *Schema) scafScopePath(t string, kept []string, levelName, parentTable 
 	return path
 }
 
-// scafRenderTopology writes the topology block (and any dropped-container note).
 func scafRenderTopology(b *strings.Builder, kept []string, levelName, parentTable map[string]string, inTree map[string]bool, dropped []string) {
 	b.WriteString("topology {\n")
 	for _, c := range kept {
@@ -217,8 +183,6 @@ func scafRenderTopology(b *strings.Builder, kept []string, levelName, parentTabl
 	b.WriteString("\n")
 }
 
-// scafRenderObjects writes one @scoped object per non-level table whose level
-// columns form a root→leaf prefix, plus a note for any left unscoped.
 func (sc *Schema) scafRenderObjects(b *strings.Builder, kept []string, isLevel map[string]bool, levelName, parentTable map[string]string) {
 	objTables := []string{}
 	for t := range sc.tables {
@@ -256,7 +220,6 @@ func (sc *Schema) scafRenderObjects(b *strings.Builder, kept []string, isLevel m
 	}
 }
 
-// Scaffold renders a starter `.demesne` spec from the schema's foreign-key graph.
 func (sc *Schema) Scaffold(opts ScaffoldOptions) (string, error) {
 	threshold := opts.MinContainerRefs
 	if threshold <= 0 {
@@ -274,12 +237,11 @@ func (sc *Schema) Scaffold(opts ScaffoldOptions) (string, error) {
 	inTree, dropped := scafSelectTree(g, isLevel, levelName, parentTable)
 	kept := scafOrderKept(inTree, depth, levelName)
 
-	levelOfCol := map[string]string{} // "<name>_id" → level name (for object scoping)
+	levelOfCol := map[string]string{}
 	for _, c := range kept {
 		levelOfCol[levelName[c]+"_id"] = levelName[c]
 	}
 
-	// --- render ---------------------------------------------------------------
 	var b strings.Builder
 	fmt.Fprintf(&b, "// Demesne starter spec — GENERATED by Scaffold from %d tables, %d foreign keys.\n", len(sc.tables), len(sc.fks))
 	b.WriteString("// THIS IS A DRAFT. Every line is a heuristic guess from the FK graph — review it.\n")

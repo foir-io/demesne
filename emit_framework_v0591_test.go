@@ -17,10 +17,6 @@ func mustValidSpec(t *testing.T, src string) *Spec {
 	return s
 }
 
-// With >1 rolestore the holds surface is suffixed per rolestore
-// (Holds<Name>/AssignmentsSQL<Name>/ResolveHeld<Name>/holdsResolver<Name>) so each is
-// independently addressable (EID-371 §4.7). foir has exactly one rolestore, so this path
-// was unexercised there — prove it generates a distinct, parseable surface per rolestore.
 func TestEmitFramework_MultiRolestore(t *testing.T) {
 	const spec = `
 topology { level tenant level project parent tenant }
@@ -74,16 +70,12 @@ object doc {
 	if strings.Contains(src, "func Holds(ctx") {
 		t.Errorf("with >1 rolestore Holds must be suffixed, not bare:\n%s", src)
 	}
-	// Both @pdp verbs are covered by a rolestore vocabulary, so NO orphan banner.
+
 	if strings.Contains(src, "no rolestore vocabulary covers") {
 		t.Errorf("unexpected orphan banner — both vocabularies have rolestores:\n%s", src)
 	}
 }
 
-// A @pdp verb whose permission no rolestore vocabulary covers compiles (its Can<Verb>(held)
-// is emitted) but has no generated resolver to produce `held` — the emitter banners it so the
-// gap isn't silent (EID-371 §4.7). Here the `ops` vocab is `roles configurable` (a scope gate)
-// but has no rolestore block, so jobs:run has no resolver.
 func TestEmitFramework_OrphanPDPBanner(t *testing.T) {
 	const spec = `
 topology { level tenant level project parent tenant }
@@ -119,7 +111,7 @@ object doc {
 		t.Fatalf("EmitFramework: %v", err)
 	}
 	for _, want := range []string{
-		"these @pdp verbs need a permission no rolestore vocabulary covers",
+		"These @pdp verbs need a permission no rolestore vocabulary covers",
 		`doc.run (needs "jobs:run")`,
 	} {
 		if !strings.Contains(src, want) {

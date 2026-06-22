@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// A generic, deliberately non-Foir spec: a 2-level tenancy (tenant > team) under a
-// virtual root, a role vocabulary with a nested preset, a star preset and a rank
-// ladder, and a rolestore that declares a materialized permissions column. Proves
-// the holds-resolver derives everything from the spec — no baked names.
 const holdsSpec = `
 topology {
   level org    virtual
@@ -81,7 +77,7 @@ func TestPresetPermissions(t *testing.T) {
 	}{
 		{"viewer", []string{"docs:read", "admin:read"}},
 		{"editor", []string{"docs:read", "admin:read", "docs:write", "docs:publish"}},
-		// owner = * → the whole vocabulary.
+
 		{"owner", []string{"docs:read", "docs:write", "docs:publish", "admin:read", "admin:write"}},
 	}
 	for _, c := range cases {
@@ -92,7 +88,7 @@ func TestPresetPermissions(t *testing.T) {
 		if !equalSet(got, c.want) {
 			t.Errorf("%s: got %v want %v", c.preset, got, c.want)
 		}
-		// Deterministic + sorted.
+
 		if !sort.StringsAreSorted(got) {
 			t.Errorf("%s: result not sorted: %v", c.preset, got)
 		}
@@ -105,7 +101,6 @@ func TestPresetPermissionsErrors(t *testing.T) {
 		t.Error("expected error for unknown preset")
 	}
 
-	// A preset referencing a name that is neither a permission nor a preset.
 	bad := &Vocabulary{
 		Name:        "v",
 		Permissions: []string{"a:read"},
@@ -115,7 +110,6 @@ func TestPresetPermissionsErrors(t *testing.T) {
 		t.Error("expected error for a reference to neither a permission nor a preset")
 	}
 
-	// A direct self-cycle and a transitive cycle both fail closed.
 	selfCycle := &Vocabulary{
 		Name:    "v",
 		Presets: []*Preset{{Name: "p", Set: []string{"p"}}},
@@ -170,7 +164,6 @@ func TestAssignmentsSQL(t *testing.T) {
 		t.Errorf("AssignmentsSQL (materialized):\n got: %s\nwant: %s", got, want)
 	}
 
-	// Without a materialized column the perms column is dropped from the projection.
 	noPerms := strings.Replace(holdsSpec, "  permissions perms\n", "", 1)
 	r2, err := mustParseHolds(t, noPerms).HoldsResolver("")
 	if err != nil {
@@ -187,8 +180,6 @@ func TestAssignmentsSQL(t *testing.T) {
 	}
 }
 
-// Resolve with MATERIALIZED permissions — the Foir shape (custom roles carry an
-// arbitrary set). Proves the scope-containment match + dedup union.
 func TestResolveMaterialized(t *testing.T) {
 	s := mustParseHolds(t, holdsSpec)
 	r, err := s.HoldsResolver("")
@@ -196,22 +187,22 @@ func TestResolveMaterialized(t *testing.T) {
 		t.Fatalf("HoldsResolver: %v", err)
 	}
 	assignments := []RoleAssignment{
-		// tenant-wide viewer (team unpinned)
+
 		{Scope: []string{"T1", ""}, RoleKey: "viewer", Permissions: []string{"docs:read", "admin:read"}},
-		// project-scoped CUSTOM role (key is not a preset; perms are arbitrary)
+
 		{Scope: []string{"T1", "TM1"}, RoleKey: "custom", Permissions: []string{"docs:write"}},
-		// a different tenant
+
 		{Scope: []string{"T2", "TM9"}, RoleKey: "owner", Permissions: []string{"admin:write"}},
 	}
 	cases := []struct {
 		tenant, team string
 		want         []string
 	}{
-		{"T1", "TM1", []string{"docs:read", "admin:read", "docs:write"}}, // tenant-wide + custom
-		{"T1", "TM2", []string{"docs:read", "admin:read"}},               // tenant-wide only
-		{"T1", "", []string{"docs:read", "admin:read"}},                  // tenant-wide query: project grant excluded
-		{"T2", "TM9", []string{"admin:write"}},                           // other tenant
-		{"T3", "TM1", []string{}},                                        // no match
+		{"T1", "TM1", []string{"docs:read", "admin:read", "docs:write"}},
+		{"T1", "TM2", []string{"docs:read", "admin:read"}},
+		{"T1", "", []string{"docs:read", "admin:read"}},
+		{"T2", "TM9", []string{"admin:write"}},
+		{"T3", "TM1", []string{}},
 	}
 	for _, c := range cases {
 		h, err := r.Resolve(assignments, []string{c.tenant, c.team})
@@ -221,7 +212,7 @@ func TestResolveMaterialized(t *testing.T) {
 		if !equalSet(h.Permissions(), c.want) {
 			t.Errorf("(%s,%s): got %v want %v", c.tenant, c.team, h.Permissions(), c.want)
 		}
-		// Holds(perm) agrees with Permissions().
+
 		for _, p := range c.want {
 			if !h.Holds(p) {
 				t.Errorf("(%s,%s): Holds(%q) = false, expected true", c.tenant, c.team, p)
@@ -233,9 +224,6 @@ func TestResolveMaterialized(t *testing.T) {
 	}
 }
 
-// (uses the package-level contains helper from emit_rls.go)
-
-// Resolve with NO materialized column — role keys expand through the vocabulary.
 func TestResolveExpandKey(t *testing.T) {
 	noPerms := strings.Replace(holdsSpec, "  permissions perms\n", "", 1)
 	r, err := mustParseHolds(t, noPerms).HoldsResolver("")
@@ -243,27 +231,24 @@ func TestResolveExpandKey(t *testing.T) {
 		t.Fatalf("HoldsResolver: %v", err)
 	}
 	assignments := []RoleAssignment{
-		{Scope: []string{"T1", "TM1"}, RoleKey: "editor"}, // Permissions nil → expand
-		{Scope: []string{"T1", ""}, RoleKey: "owner"},     // tenant-wide owner = *
+		{Scope: []string{"T1", "TM1"}, RoleKey: "editor"},
+		{Scope: []string{"T1", ""}, RoleKey: "owner"},
 	}
 	h, err := r.Resolve(assignments, []string{"T1", "TM1"})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	// owner (*) subsumes everything, so the effective set is the whole vocabulary.
+
 	want := []string{"docs:read", "docs:write", "docs:publish", "admin:read", "admin:write"}
 	if !equalSet(h.Permissions(), want) {
 		t.Errorf("expand-key resolve: got %v want %v", h.Permissions(), want)
 	}
 
-	// An unknown role key with no materialized perms fails closed.
 	if _, err := r.Resolve([]RoleAssignment{{Scope: []string{"T1", "TM1"}, RoleKey: "ghost"}}, []string{"T1", "TM1"}); err == nil {
 		t.Error("expected error expanding an unknown role key")
 	}
 }
 
-// The vocabulary-name fallback: a rolestore whose name differs from the vocabulary
-// resolves the vocab via the `binds admin` subject's `roles`.
 func TestHoldsResolverVocabFallback(t *testing.T) {
 	spec := strings.Replace(holdsSpec, "rolestore roles {", "rolestore store {", 1)
 	r, err := mustParseHolds(t, spec).HoldsResolver("store")
@@ -275,11 +260,6 @@ func TestHoldsResolverVocabFallback(t *testing.T) {
 	}
 }
 
-// The ROOT scope column is a strict tenancy boundary: an empty-root (NULL-tenant)
-// assignment must NEVER match a real-tenant query — it matches only an empty-root
-// query, mirroring effPermsFromRecords' strict tenant equality. Regression guard for
-// the platform-root cross-tenant drift (a NULL-tenant admin role must not leak into
-// every tenant).
 func TestResolveRootStrict(t *testing.T) {
 	r, err := mustParseHolds(t, holdsSpec).HoldsResolver("")
 	if err != nil {
@@ -296,10 +276,6 @@ func TestResolveRootStrict(t *testing.T) {
 	}
 }
 
-// scopeContains generalises over N scope levels: root strict, every deeper level an
-// empty-wildcard. Exercised directly with a 3-column chain (the specs under test use
-// only 2), covering root-strict, tenant-wide/org-wide subtree coverage, the
-// shallower-query rejection, and a mid-level gap.
 func TestScopeContainsMultiLevel(t *testing.T) {
 	cases := []struct {
 		name              string
@@ -324,9 +300,6 @@ func TestScopeContainsMultiLevel(t *testing.T) {
 	}
 }
 
-// Materialized permissions are opaque pass-through at read time — a custom role may
-// carry a value OUTSIDE the vocabulary (validation is a write-time concern), exactly
-// as effPermsFromRecords surfaces whatever the column holds.
 func TestResolveMaterializedPassThrough(t *testing.T) {
 	r, err := mustParseHolds(t, holdsSpec).HoldsResolver("")
 	if err != nil {
@@ -344,8 +317,6 @@ func TestResolveMaterializedPassThrough(t *testing.T) {
 	}
 }
 
-// Empty input and the materialized/empty edge both yield an empty set (no error, no
-// spurious key expansion).
 func TestResolveEmptyAndNil(t *testing.T) {
 	r, err := mustParseHolds(t, holdsSpec).HoldsResolver("")
 	if err != nil {
@@ -354,15 +325,13 @@ func TestResolveEmptyAndNil(t *testing.T) {
 	if h, err := r.Resolve(nil, []string{"T1", "TM1"}); err != nil || len(h.Permissions()) != 0 {
 		t.Errorf("nil input should yield empty perms, got %v err=%v", h.Permissions(), err)
 	}
-	// A materialized assignment that grants nothing -> empty, NOT a key expansion.
+
 	asg := []RoleAssignment{{Scope: []string{"T1", "TM1"}, RoleKey: "empty-role", Permissions: []string{}}}
 	if h, err := r.Resolve(asg, []string{"T1", "TM1"}); err != nil || len(h.Permissions()) != 0 {
 		t.Errorf("empty materialized role should grant nothing, got %v err=%v", h.Permissions(), err)
 	}
 }
 
-// A rolestore with no resolvable vocabulary (no same-named vocab, no `binds admin`
-// subject) fails closed at build time.
 func TestHoldsResolverNoVocab(t *testing.T) {
 	spec := `
 topology { level root virtual  level tenant parent root }

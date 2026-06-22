@@ -10,8 +10,6 @@ import {
 } from "../src/index.js";
 import { runtimeClaims, virtualRootClaims, overrideClaims, noIdentityClaims } from "./fixtures.js";
 
-// Ports claims_test.go / runtime_test.go (MintClaims) + session_test.go.
-
 describe("claimsContract / mintClaims", () => {
   it("the flat contract is the entry keys, byte-sorted", () => {
     expect(claimsContract(runtimeClaims.entries)).toEqual(["customer_id", "project_id", "sub", "tenant_id"]);

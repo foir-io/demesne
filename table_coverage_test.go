@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// coverageSpec exercises every reference shape: a governed object, a rolestore
-// (assignment + roles tables), a level-grant edge, and a `via closure` (closure +
-// base tables) — none of which carry their own object, so they are policy-free
-// references, not ungoverned leaks.
 const coverageSpec = `
 topology { level platform virtual  level tenant parent platform  level project parent tenant }
 vocabulary admin { permission c:r  preset r @ project = c:r }
@@ -36,14 +32,14 @@ func TestTableCoverage(t *testing.T) {
 	s := mustSpec(t, coverageSpec)
 
 	dbTables := []string{
-		"docs",                 // governed (has the object)
-		"role_assignments",     // referenced (rolestore assignments)
-		"roles",                // referenced (rolestore roles)
-		"impersonation_grants", // referenced (grant edge)
-		"folder_closure",       // referenced (closure table)
-		"folders",              // referenced (closure base)
-		"audit_log",            // UNGOVERNED — the spec never mentions it
-		"secrets",              // UNGOVERNED — the spec never mentions it
+		"docs",
+		"role_assignments",
+		"roles",
+		"impersonation_grants",
+		"folder_closure",
+		"folders",
+		"audit_log",
+		"secrets",
 	}
 	cov := s.TableCoverage(dbTables)
 
@@ -53,14 +49,12 @@ func TestTableCoverage(t *testing.T) {
 	if !reflect.DeepEqual(cov.Referenced, []string{"folder_closure", "folders", "impersonation_grants", "role_assignments", "roles"}) {
 		t.Errorf("Referenced = %v", cov.Referenced)
 	}
-	// The leak signal: tables the spec doesn't mention at all.
+
 	if !reflect.DeepEqual(cov.Ungoverned, []string{"audit_log", "secrets"}) {
 		t.Errorf("Ungoverned = %v, want [audit_log secrets]", cov.Ungoverned)
 	}
 }
 
-// ConnectionRole is the spec-declared RLS role (default "authenticated"), exposed for
-// tooling that verifies it is not BYPASSRLS.
 func TestConnectionRole(t *testing.T) {
 	if got := mustSpec(t, coverageSpec).ConnectionRole(); got != "authenticated" {
 		t.Errorf("default ConnectionRole = %q, want authenticated", got)

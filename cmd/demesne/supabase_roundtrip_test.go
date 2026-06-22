@@ -10,21 +10,10 @@ import (
 	"testing"
 
 	demesne "github.com/eidestudio/demesne"
-	demesnepgx "github.com/eidestudio/demesne/pgx"
 	authz "github.com/eidestudio/demesne/examples/supabaseauthz"
+	demesnepgx "github.com/eidestudio/demesne/pgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// The generated FRAMEWORK, round-tripped against a real Supabase project (EID-289 + EID-339).
-// It proves the typed Go primitives enforce equal-by-delegation on Supabase's own
-// role + GUC conventions: the app installs the claims itself via the generated
-// SessionSetupSQL + Claims.Mint (the direct path; the access-token hook is the Supabase
-// JWT-mint path, proven separately by the TS round-trip), then the generated
-// authz.Note.CanView / ListResources / CheckMany run AS the non-BYPASSRLS authenticated
-// role — the live RLS predicate decides.
-//
-// Set $SUPABASE_DB_URL to a session-pooler (IPv4) connection string to run it; skipped
-// otherwise. It creates public.notes/note_acl + a `demesne` schema and drops them after.
 
 func TestSupabaseFramework_RoundTrip(t *testing.T) {
 	url := os.Getenv("SUPABASE_DB_URL")
@@ -49,7 +38,6 @@ func TestSupabaseFramework_RoundTrip(t *testing.T) {
 		t.Fatalf("ping: %v", err)
 	}
 
-	// Build the DDL from the spec via the engine (definers in `demesne`, RLS over public.notes).
 	src, err := os.ReadFile(filepath.Join("..", "..", "examples", "supabase.demesne"))
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
@@ -83,13 +71,11 @@ grant usage on schema demesne to authenticated;
 grant select, insert, update, delete on public.notes to authenticated;
 grant select, insert, update, delete on public.note_acl to authenticated;
 `
-	// A defer (registered AFTER `defer db.Close()`) runs BEFORE the pool closes — LIFO —
-	// so the drop executes on a live connection. (t.Cleanup would fire after db.Close.)
+
 	defer func() {
 		_, _ = db.ExecContext(ctx, `drop table if exists public.note_acl, public.notes cascade; drop schema if exists demesne cascade;`)
 	}()
 
-	// Apply (as the connection role; postgres is BYPASSRLS on Supabase, so DDL + seed work).
 	for _, stmt := range []string{
 		schema,
 		demesne.DefinersSQL(defs),
@@ -105,7 +91,6 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 		}
 	}
 
-	// session runs fn under a member's session (the generated WithRLS envelope) on one tx.
 	session := func(member, org, ws string, fn func(q demesne.Querier)) {
 		blob, err := authz.Claims{Org: org, Ws: ws, MemberRef: member}.Mint()
 		if err != nil {
@@ -117,10 +102,10 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 			t.Fatalf("begin: %v", err)
 		}
 		defer func() { _ = tx.Commit() }()
-		if _, err := tx.ExecContext(ctx, setup[0]); err != nil { // SET LOCAL ROLE authenticated
+		if _, err := tx.ExecContext(ctx, setup[0]); err != nil {
 			t.Fatalf("set role: %v", err)
 		}
-		if _, err := tx.ExecContext(ctx, setup[1], blob); err != nil { // install claims
+		if _, err := tx.ExecContext(ctx, setup[1], blob); err != nil {
 			t.Fatalf("set claims: %v", err)
 		}
 		fn(demesne.FromSQL(tx))
@@ -150,7 +135,6 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 		return out
 	}
 
-	// CanView: the generated typed check enforces under live RLS.
 	if d := canView("m1", "o1", "w1", "n1"); d != authz.Allow {
 		t.Errorf("m1 CanView(n1) = %v, want allow (owner)", d)
 	}
@@ -164,7 +148,6 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 		t.Errorf("m1 CanView(n4) = %v, want deny (cross-org, even though m1 owns it)", d)
 	}
 
-	// ListResources returns exactly the visible set.
 	if got := visible("m1", "o1", "w1"); !eqSlice(got, []string{"n1", "n2"}) {
 		t.Errorf("m1 ListResources = %v, want [n1 n2]", got)
 	}
@@ -172,7 +155,6 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 		t.Errorf("m2 ListResources = %v, want [n2 n3]", got)
 	}
 
-	// CheckMany returns the visible subset of a batch.
 	session("m1", "o1", "w1", func(q demesne.Querier) {
 		got, err := authz.Note.CheckMany(ctx, q, []string{"n1", "n2", "n3", "n4"})
 		if err != nil {
@@ -184,10 +166,6 @@ grant select, insert, update, delete on public.note_acl to authenticated;
 		}
 	})
 
-	// pgx-native pass: the SAME generated surface, driven through the demesne/pgx adapter
-	// (FromPgx) over a pgxpool tx — the dominant-driver path and the #1 adoption friction
-	// the foir stress test flagged (EID-371 §3). Exercises the Close()-error wrap on real
-	// pgx.Rows (ListResources) and pgx.Row scanning (CanView).
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
 		t.Fatalf("pgxpool: %v", err)

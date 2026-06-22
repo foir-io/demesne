@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// The ViaColumn discriminator (the unified owner_id/owner_kind shape) on PURE owner
-// relations: several owner kinds share one id column, each gated by a constant in a
-// kind column. `relation owner: customer via owner_id where owner_kind = "customer"`.
-// This is the owner-axis counterpart of the discriminated grant store, and what the
-// owner_id+owner_kind unification adopts.
 const discriminatedOwnerSpec = `
 topology {
   level platform virtual
@@ -54,7 +49,6 @@ func TestDiscriminatedOwnerColumn(t *testing.T) {
 	}
 	sel := policyByCmd(res, "records", "SELECT").Using
 
-	// The owner terms gate the shared owner_id column by the kind column.
 	for _, want := range []string{
 		"(owner_id = (current_setting('request.jwt.claims', true)::json ->> 'customer_id') AND owner_kind = 'customer')",
 		"(owner_id = (current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'admin')",
@@ -63,13 +57,11 @@ func TestDiscriminatedOwnerColumn(t *testing.T) {
 			t.Errorf("select policy missing owner term %q:\n%s", want, sel)
 		}
 	}
-	// @app_scope(exclude admin_owner) excludes admin-owned rows by the kind column —
-	// existence-negation (operator-private), NOT a principal match.
+
 	if !strings.Contains(sel, "owner_kind IS DISTINCT FROM 'admin'") {
 		t.Errorf("select policy missing the discriminated admin-owner exclusion:\n%s", sel)
 	}
 
-	// The accessor enumerator reports both owner kinds, present-gated by the kind col.
 	acc := grantFnByName(t, s, "records_accessors")
 	for _, want := range []string{
 		"'customer'::text AS principal_kind, owner_id AS principal_id",
@@ -81,8 +73,6 @@ func TestDiscriminatedOwnerColumn(t *testing.T) {
 		}
 	}
 
-	// The @kernel realtime gate also honors the owner discriminator (a customer
-	// never reaches an admin-owned row sharing an id).
 	kern := grantFnByName(t, s, "customer_can_access_record")
 	if !strings.Contains(kern, "r.owner_id = p_customer_id AND r.owner_kind = 'customer'") {
 		t.Errorf("kernel gate missing the owner_kind discriminator:\n%s", kern)

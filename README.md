@@ -29,20 +29,19 @@ subsumes ad-hoc record sharing.
 
 ## Status — what's live today
 
-Demesne is the **source of truth** for the authorization layer (EID-252 Phase B,
-complete). The platform no longer hand-authors policies or the PDP map:
+Demesne is the **source of truth** for the authorization layer. An adopting application no longer hand-authors policies or the PDP map:
 
-- A generator (`cmd/gen` in the platform) reads the spec and writes the admin
+- A generator (`cmd/gen` in your repo) reads the spec and writes the admin
   PDP maps + the JWT claims contract as committed Go, and the idempotent
   `CREATE OR REPLACE FUNCTION` + `DROP/CREATE POLICY` set as a goose migration.
   The migration applies that SQL; a spec change emits a new migration (goose
   migrations are immutable, so changes supersede rather than edit history).
 - Because every emitted `USING`/`WITH CHECK` and `SECURITY DEFINER` body is the
   same expression the differential oracle verified against `pg_policies` /
-  `pg_get_functiondef`, the cutover was a proven byte-for-byte **no-op** (fresh
-  DB with the generated migration == the prior hand-written set).
+  `pg_get_functiondef`, switching to the generated set is a proven byte-for-byte
+  **no-op** (a fresh DB with the generated migration matches a hand-written set).
 
-The oracle still runs, but with generation as the source of truth (EID-265 WS1)
+The oracle still runs, but with generation as the source of truth
 its generated-vs-live comparison is now (correctly) a **convergence / no-drift**
 check, not a fidelity-to-hand-written gate. The real semantic gate is **forward
 isolation** — proving the emitted policies actually isolate — in two halves:
@@ -51,7 +50,7 @@ isolation** — proving the emitted policies actually isolate — in two halves:
   the §6.2 scope-column model fails closed between siblings and grants
   unconditional reach only to a virtual-anchored subject — independent of the
   emitted SQL, no database;
-- the platform's **SQL-level** forward-isolation gate (where the DB is,
+- an adopter's **SQL-level** forward-isolation gate (where the DB is,
   `demesne_isolation_test.go`): it seeds sibling tenants + customers + records of
   every access mode and drives real principals against the LIVE generated
   policies, asserting tenant / project / owner / operator-grant (incl. expired) /
@@ -65,7 +64,7 @@ columns, indexes, and `GRANT`s remain hand-written migrations.
 ## Known limitations
 
 The engine is policy-agnostic in shape. The original single-deployment
-assumptions have been lifted into spec-declared parameters (EID-265 WS2): the
+assumptions have been lifted into spec-declared parameters: the
 claims accessor (`claims via`), the definer schema (`definers schema`), the
 descriptor mode vocabulary (`private` / `read "<sentinel>"` / `list "<kind>"`),
 the owner principal kind (the grant + realtime-gate signatures name the spec's
@@ -75,7 +74,7 @@ the admin plane's name — `is_<level>_<admin>` / `<admin>_has_<obj>_role` — s
 spec whose admin plane is named `staff` gets `is_tenant_staff`, not a baked
 `admin`). What honestly remains:
 
-The topology is no longer linear (EID-265 WS3): levels form a **DAG** — a
+The topology is no longer linear: levels form a **DAG** — a
 branching tree (multiple children) and multi-parent levels (`parents A, B`, whose
 object containment is a sargable OR of per-lineage predicates) — and
 unbounded-depth hierarchies are expressible with `via closure`, where the
@@ -110,11 +109,11 @@ That is deliberate. The strongest possible test of a security generator is
 **differential equivalence**: apply the generated artifacts to a real database
 in a rolled-back transaction, read back `pg_policies` / `pg_get_functiondef`, and
 assert the live objects equal the generated ones byte-for-byte. That oracle —
-along with a platform's actual spec and its generated migrations — lives in the
-*platform* repo, where the database is. Verification belongs where it can run.
+along with an adopter's actual spec and its generated migrations — lives in the
+adopter's repo, where the database is. Verification belongs where it can run.
 This module's own tests prove the **language and the emitter mechanics** on
 synthetic specs; see [`examples/example.demesne`](examples/example.demesne) for
-one complete, annotated worked instance.
+one complete worked instance.
 
 ## Usage
 
@@ -132,8 +131,7 @@ claims, err := spec.ClaimsContract()   // the JWT claims the policies read
 
 ## The spec language
 
-See [`examples/example.demesne`](examples/example.demesne) for a fully worked,
-commented spec (a fictional document app). In brief:
+See [`examples/example.demesne`](examples/example.demesne) for a fully worked spec (a fictional document app). In brief:
 
 | Block | Declares |
 | --- | --- |
@@ -148,6 +146,27 @@ commented spec (a fictional document app). In brief:
 Each permission names the layer(s) it compiles to (`@rls`, `@pdp`, `@kernel`) and,
 for RLS, the SQL command it maps to (`select`/`insert`/`update`/`delete`).
 
+## Canonical examples — the spec, not the SQL
+
+The hard patterns from the Zanzibar / Keto literature are each a few lines of `.demesne` that
+compile to the RLS you would otherwise hand-write (and get subtly wrong). Each ships with a
+test asserting the emitted policy actually encodes the reachability — running proof, not prose:
+
+| Pattern | Spec | Compiles to |
+| --- | --- | --- |
+| Folder → document inheritance (unbounded nesting) | [`inheritance.demesne`](examples/canonical/inheritance.demesne) | a `SECURITY DEFINER` reachability lookup over a trigger-maintained transitive-closure table — a viewer of any ancestor folder can read the document |
+| Groups of groups (transitive membership) | [`groups.demesne`](examples/canonical/groups.demesne) | a group-closure check — membership flows through nested groups |
+| Role-based access control | [`rbac.demesne`](examples/canonical/rbac.demesne) | role-resolution definers + the rank ladder (viewer / editor / owner) gating `select` vs `update` |
+| `viewer ∩ member − banned` (boolean algebra) | [`boolean.demesne`](examples/canonical/boolean.demesne) | one RLS predicate intersecting viewer and member and excluding the banned set |
+
+Proof: `go test . -run TestCanonical` (see the `canonical_*_test.go` files).
+
+## How it compares
+
+Demesne is a Zanzibar-class ReBAC model whose enforcement compiles into Postgres RLS rather
+than a runtime Check service. See **[CAPABILITIES.md](CAPABILITIES.md)** for a capability
+matrix and an honest comparison against Zanzibar, Ory Keto, OpenFGA, Cerbos, and Oso.
+
 ## Development
 
 ```sh
@@ -155,3 +174,7 @@ go build ./...
 go vet ./...
 go test ./...
 ```
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

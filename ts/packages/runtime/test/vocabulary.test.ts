@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import { presetPermissions, rankOf, presetsAtOrAbove, type Vocabulary } from "../src/index.js";
 import { rolesVocab } from "./fixtures.js";
 
-// Ports holds_test.go: TestPresetPermissions, TestPresetPermissionsErrors, TestRankHelpers.
-
 describe("presetPermissions — preset → flat permission set (sorted, deduped)", () => {
   it("viewer", () => {
     expect(presetPermissions(rolesVocab, "viewer")).toEqual(["admin:read", "docs:read"]);

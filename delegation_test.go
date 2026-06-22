@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// capVocab — a small vocabulary with a rank ladder, enough to exercise the cap and
-// (via the rank helpers) the floor a caller composes around it.
 const capVocabSpec = `
 topology { level tenant  level project parent tenant }
 vocabulary admin {
@@ -42,16 +40,15 @@ func TestCapGrant_Allowed(t *testing.T) {
 	v := capVocabulary(t)
 	held := []string{"a:read", "a:write", "b:read"}
 
-	// A subset of held → allowed, no failures.
 	got := v.CapGrant(held, []string{"a:read", "b:read"})
 	if !got.Allowed || len(got.Unknown) != 0 || len(got.Excess) != 0 {
 		t.Errorf("subset should be allowed cleanly, got %+v", got)
 	}
-	// Granting exactly what you hold → allowed.
+
 	if got := v.CapGrant(held, held); !got.Allowed {
 		t.Errorf("granting your full held set should be allowed, got %+v", got)
 	}
-	// Empty request is vacuously allowed.
+
 	if got := v.CapGrant(nil, nil); !got.Allowed {
 		t.Errorf("empty request should be allowed, got %+v", got)
 	}
@@ -61,12 +58,11 @@ func TestCapGrant_Excess(t *testing.T) {
 	v := capVocabulary(t)
 	held := []string{"a:read", "b:read"}
 
-	// b:write is valid but unheld → Excess, denied.
 	got := v.CapGrant(held, []string{"a:read", "b:write", "a:write"})
 	if got.Allowed {
 		t.Error("granting unheld valid perms must be denied")
 	}
-	if !reflect.DeepEqual(got.Excess, []string{"a:write", "b:write"}) { // sorted
+	if !reflect.DeepEqual(got.Excess, []string{"a:write", "b:write"}) {
 		t.Errorf("Excess = %v, want [a:write b:write]", got.Excess)
 	}
 	if len(got.Unknown) != 0 {
@@ -78,21 +74,18 @@ func TestCapGrant_Unknown(t *testing.T) {
 	v := capVocabulary(t)
 	held := []string{"a:read"}
 
-	// bogus perms are Unknown (not in the vocabulary); a valid unheld perm is Excess.
-	// The two are DISJOINT — an unknown perm is reported only as Unknown.
 	got := v.CapGrant(held, []string{"a:read", "zzz:bogus", "qqq:nope", "b:read"})
 	if got.Allowed {
 		t.Error("unknown perms must be denied")
 	}
-	if !reflect.DeepEqual(got.Unknown, []string{"qqq:nope", "zzz:bogus"}) { // sorted
+	if !reflect.DeepEqual(got.Unknown, []string{"qqq:nope", "zzz:bogus"}) {
 		t.Errorf("Unknown = %v, want [qqq:nope zzz:bogus]", got.Unknown)
 	}
-	if !reflect.DeepEqual(got.Excess, []string{"b:read"}) { // valid-but-unheld only
+	if !reflect.DeepEqual(got.Excess, []string{"b:read"}) {
 		t.Errorf("Excess = %v, want [b:read]", got.Excess)
 	}
 }
 
-// Duplicate requested perms are de-duplicated in both reports.
 func TestCapGrant_Dedup(t *testing.T) {
 	v := capVocabulary(t)
 	got := v.CapGrant([]string{"a:read"}, []string{"b:write", "b:write", "zzz", "zzz"})
@@ -104,14 +97,9 @@ func TestCapGrant_Dedup(t *testing.T) {
 	}
 }
 
-// CapGrant owns ONLY the permission intersection; a real grant guard composes it
-// with a rank FLOOR (RankOf / PresetsAtOrAbove, which the engine already ships). This
-// exercises the composition end-to-end: a grantor below the floor is denied whatever
-// the cap says, and at/above the floor the cap decides.
 func TestCapGrant_RankFloorComposition(t *testing.T) {
 	v := capVocabulary(t)
 
-	// owner > editor > viewer; the floor "editor" admits owner + editor, not viewer.
 	atOrAbove := v.PresetsAtOrAbove("editor")
 	if !reflect.DeepEqual(atOrAbove, []string{"owner", "editor"}) {
 		t.Fatalf("PresetsAtOrAbove(editor) = %v, want [owner editor]", atOrAbove)
@@ -125,7 +113,6 @@ func TestCapGrant_RankFloorComposition(t *testing.T) {
 		return false
 	}
 
-	// The composed guard: floor first, then the cap (the shape a caller wraps).
 	guard := func(role string, held, requested []string) (allowed bool) {
 		if !meetsFloor(role) {
 			return false
@@ -134,15 +121,14 @@ func TestCapGrant_RankFloorComposition(t *testing.T) {
 	}
 
 	held := []string{"a:read", "b:read"}
-	// A viewer (below the floor) is denied even though the cap alone would allow.
+
 	if v.CapGrant(held, []string{"a:read"}).Allowed != true {
 		t.Fatal("precondition: the cap alone allows a held subset")
 	}
 	if guard("viewer", held, []string{"a:read"}) {
 		t.Error("a below-floor grantor must be denied even when the cap would allow")
 	}
-	// An editor (at the floor) granting a held subset passes; granting an unheld perm
-	// is still capped.
+
 	if !guard("editor", held, []string{"a:read"}) {
 		t.Error("an at-floor grantor granting a held subset should pass")
 	}

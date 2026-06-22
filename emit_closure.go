@@ -6,19 +6,9 @@ import (
 	"strings"
 )
 
-// Closure maintenance (WS3 Phase C): the compiler generates a trigger that keeps
-// a transitive-reflexive closure table in sync with a self-referential hierarchy
-// (the base table). This is the RLS-native analogue of Zanzibar's Leopard index —
-// reachability becomes an indexed read (the <closure>_reachable definer) instead
-// of a recursive walk, at the cost of write-amplification on the hierarchy. That
-// cost is the EXPLICIT, opt-in `via closure` decision; nothing here is emitted
-// unless a relation asks for it.
-
-// ClosureTrigger is the generated maintenance for one closure table: a plpgsql
-// trigger function plus its AFTER INSERT/UPDATE/DELETE bindings on the base table.
 type ClosureTrigger struct {
 	Schema      string
-	TableSchema string // schema of the base table the trigger binds ON ("" ⇒ "public")
+	TableSchema string
 	Closure     string
 	Ancestor    string
 	Descendant  string
@@ -34,8 +24,6 @@ func (c ClosureTrigger) schema() string {
 	return "auth"
 }
 
-// tableSchema returns the base table's schema (default "public") — the trigger binds
-// ON the adopter's table, which may live outside the definer schema.
 func (c ClosureTrigger) tableSchema() string {
 	if c.TableSchema != "" {
 		return c.TableSchema
@@ -45,12 +33,6 @@ func (c ClosureTrigger) tableSchema() string {
 
 func (c ClosureTrigger) fnName() string { return c.schema() + "." + c.Closure + "_maintain" }
 
-// FunctionSQL renders the CREATE OR REPLACE FUNCTION that maintains the closure.
-// The algorithm is the standard incremental closure maintenance:
-//   - INSERT: add the self pair, then inherit every ancestor of the new parent.
-//   - DELETE: drop every pair touching the node (as ancestor or descendant).
-//   - UPDATE (reparent): detach the moved subtree from the node's OLD ancestors,
-//     then re-attach it under the NEW parent's ancestors (the parent included).
 func (c ClosureTrigger) FunctionSQL() string {
 	clo, anc, desc := c.Closure, c.Ancestor, c.Descendant
 	id, par := c.BaseID, c.BaseParent
@@ -92,7 +74,6 @@ END;
 $$;`, c.fnName(), clo, anc, desc, id, par)
 }
 
-// TriggerSQL renders the DROP/CREATE TRIGGER bindings (one per op).
 func (c ClosureTrigger) TriggerSQL() string {
 	var b strings.Builder
 	for _, op := range []string{"INSERT", "UPDATE", "DELETE"} {
@@ -103,10 +84,6 @@ func (c ClosureTrigger) TriggerSQL() string {
 	return b.String()
 }
 
-// EmitTriggers returns the closure-maintenance trigger for every distinct closure
-// table referenced by a `via closure` relation, sorted by closure name. Empty
-// when the spec declares no closure relation (so a non-closure spec — like Foir —
-// generates nothing here, and its output is unchanged).
 func (s *Spec) EmitTriggers() []ClosureTrigger {
 	seen := map[string]bool{}
 	var out []ClosureTrigger
@@ -128,9 +105,6 @@ func (s *Spec) EmitTriggers() []ClosureTrigger {
 	return out
 }
 
-// TriggersSQL renders the full closure-maintenance layer (functions then trigger
-// bindings) for the spec, prefixed with a COST banner so the write-amplification
-// is visible in the generated output. Returns "" when there are no closures.
 func (s *Spec) TriggersSQL() string {
 	trigs := s.EmitTriggers()
 	groups := s.EmitGroupTriggers()
@@ -157,16 +131,9 @@ func (s *Spec) TriggersSQL() string {
 	return b.String()
 }
 
-// GroupTrigger is the generated nested-group membership maintenance (v3 WS2): a
-// statement-level trigger that REBUILDS the transitive-membership closure from the
-// M2M membership edge via a recursive CTE. Unlike the single-parent closure
-// (which maintains incrementally), group membership is a DAG, so a full recompute
-// per membership-edge change is the simple, always-correct choice — and the
-// write-amplification is the explicit, opt-in price (group memberships are
-// low-write relative to the data they gate).
 type GroupTrigger struct {
 	Schema      string
-	TableSchema string // schema of the edge table the trigger binds ON ("" ⇒ "public")
+	TableSchema string
 	Closure     string
 	GroupCol    string
 	MemberCol   string
@@ -182,8 +149,6 @@ func (g GroupTrigger) schema() string {
 	return "auth"
 }
 
-// tableSchema returns the edge table's schema (default "public") — the trigger binds
-// ON the adopter's edge table, which may live outside the definer schema.
 func (g GroupTrigger) tableSchema() string {
 	if g.TableSchema != "" {
 		return g.TableSchema
@@ -193,7 +158,6 @@ func (g GroupTrigger) tableSchema() string {
 
 func (g GroupTrigger) fnName() string { return g.schema() + "." + g.Closure + "_rebuild" }
 
-// FunctionSQL renders the recursive-CTE closure rebuild.
 func (g GroupTrigger) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s()
 RETURNS trigger
@@ -222,9 +186,6 @@ END;
 $$;`, g.fnName(), g.Closure, g.GroupCol, g.MemberCol, g.EdgeMember, g.EdgeGroup, g.Edge)
 }
 
-// TriggerSQL renders the statement-level binding (recompute once per statement). TRUNCATE
-// is included so emptying the edge re-derives the closure rather than silently freezing it
-// (a frozen closure that still backs the floor would be a stale over-grant).
 func (g GroupTrigger) TriggerSQL() string {
 	name := g.Closure + "_rebuild"
 	var b strings.Builder
@@ -233,8 +194,6 @@ func (g GroupTrigger) TriggerSQL() string {
 	return b.String()
 }
 
-// EmitGroupTriggers returns the membership-rebuild trigger for every distinct
-// group closure referenced by a `via group` relation, sorted by closure name.
 func (s *Spec) EmitGroupTriggers() []GroupTrigger {
 	seen := map[string]bool{}
 	var out []GroupTrigger
@@ -256,29 +215,18 @@ func (s *Spec) EmitGroupTriggers() []GroupTrigger {
 	return out
 }
 
-// MaterializedFlat (WS3, EID-344) is a flat (resource_id, principal_kind, principal_id)
-// index for a `via group ... materialized` relation — the object row ⋈ the group
-// closure, trigger-maintained so the accessor (and, once oracle-gated, RLS) reads a
-// sargable point/reverse lookup instead of recursing the closure per row. Maintenance is
-// full-recompute (correct across every mutation path; the incremental / two-level
-// Leopard optimization is a later WS3 step). Nothing reads it until wired, so emitting it
-// is additive (byte-identical for any spec with no `materialized` relation).
 type MaterializedFlat struct {
-	Schema      string // definer schema — the flat table + rebuild fn live here
-	TableSchema string // the object/closure table schema
-	Flat        string // flat table name (<objTable>_<rel>_flat)
+	Schema      string
+	TableSchema string
+	Flat        string
 	ObjTable    string
 	ObjPK       string
-	Col         string // the object's group column
+	Col         string
 	Closure     string
 	GroupCol    string
 	MemberCol   string
-	Kind        string // principal_kind value (the relation's first type)
-	// ClaimExpr is the owner-plane claim expression (the subject identifier read from the
-	// request GUC, e.g. (current_setting('request.jwt.claims',true)::json ->> 'customer_id')).
-	// It is how the reverse ListResources fast-path (<flat>_resources) reads "who is asking"
-	// — the same claim the floor matches. "" when no owner subject resolves (then there is
-	// no reverse fast-path).
+	Kind        string
+
 	ClaimExpr string
 }
 
@@ -295,10 +243,9 @@ func (m MaterializedFlat) tableSchema() string {
 	return "public"
 }
 func (m MaterializedFlat) qFlat() string       { return m.schema() + "." + m.Flat }
-func (m MaterializedFlat) fnName() string       { return m.schema() + "." + m.Flat + "_rebuild" }
-func (m MaterializedFlat) reconcileFn() string  { return m.schema() + "." + m.Flat + "_reconcile" }
+func (m MaterializedFlat) fnName() string      { return m.schema() + "." + m.Flat + "_rebuild" }
+func (m MaterializedFlat) reconcileFn() string { return m.schema() + "." + m.Flat + "_reconcile" }
 
-// TableSQL creates the flat table + forward (resource) and reverse (principal) indexes.
 func (m MaterializedFlat) TableSQL() string {
 	return fmt.Sprintf(
 		"CREATE TABLE IF NOT EXISTS %[1]s (resource_id text NOT NULL, principal_kind text NOT NULL, principal_id text NOT NULL);\n"+
@@ -307,8 +254,6 @@ func (m MaterializedFlat) TableSQL() string {
 		m.qFlat(), m.Flat)
 }
 
-// FunctionSQL renders the full-recompute rebuild: flat = object row ⋈ closure (resource
-// → transitive group members), tagged with the relation's principal kind.
 func (m MaterializedFlat) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
 RETURNS trigger
@@ -332,13 +277,6 @@ END;
 $$;`, m.fnName(), m.qFlat(), m.ObjPK, m.Kind, m.MemberCol, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col)
 }
 
-// ReconcileSQL renders a defence-in-depth reconciler: auth.<flat>_reconcile() recomputes
-// the canonical object ⋈ closure, compares it to the live flat, RAISEs WARNING with the
-// drift counts (stale = over-grant, missing = under-grant), SELF-HEALS by rewriting the
-// flat to canonical, and returns the total drift. The maintenance triggers do NOT fire
-// under session_replication_role=replica (logical-replication apply, bulk load) — so a
-// silent stale flat (which the RLS floor reads as still-granted) needs a periodic /
-// post-deploy backstop. Takes the same rebuild lock so it serializes with live writers.
 func (m MaterializedFlat) ReconcileSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
 RETURNS integer
@@ -373,13 +311,6 @@ END;
 $$;`, m.reconcileFn(), m.schema(), m.qFlat(), m.ObjPK, m.Kind, m.MemberCol, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col)
 }
 
-// MemberDefiner is the SECURITY DEFINER point-lookup the RLS floor calls (WS3 step 2): is
-// p_principal in the flat for p_resource? An O(1) probe on the flat's resource index,
-// replacing the per-row closure walk (`<Closure>_member`). Emitted as part of the kernel
-// definer set (EmitDefiners), so the V11 definer-closure check and the definer oracle own
-// it; the flat stays PRIVATE — only this definer reads it (never granted to the querying
-// role), consistent with every other auth-substrate read (closures, grant stores).
-// flat == walk is gated by the WS3 oracle.
 func (m MaterializedFlat) MemberDefiner() GenFn {
 	return GenFn{
 		Schema:      m.schema(),
@@ -392,24 +323,8 @@ func (m MaterializedFlat) MemberDefiner() GenFn {
 
 func (m MaterializedFlat) resourcesFn() string { return m.schema() + "." + m.Flat + "_resources" }
 
-// HasReverse reports whether the reverse ListResources fast-path can be emitted — it needs
-// an owner-plane claim to read "who is asking" from the GUC.
 func (m MaterializedFlat) HasReverse() bool { return m.ClaimExpr != "" }
 
-// ResourcesDefiner is the reverse drive-from-flat ListResources fast-path (WS3 perf tail):
-// auth.<flat>_resources() returns the resource ids the calling subject can reach, read
-// from the GUC claim — so a grant-dominant LIST drives from this small set (`id IN (...)`)
-// and the LIMIT pushes down, instead of scanning the whole table under per-row RLS.
-//
-// It is computed TWO-LEVEL (the Leopard normalization): resource→userset is the object's
-// group column, userset→subject is the transitive-membership closure — i.e. the subject's
-// groups (closure WHERE member = claim) joined to the objects filed under them. This reads
-// the AUTHORITATIVE source (closure ⋈ object), not the one-level flat, so the LIST cannot
-// drift from the floor independently, and it bounds write-amplification (no extra
-// resource→subject denormalization beyond the already-maintained closure + the level-1
-// index). The result equals the floor's admit-set (flat == walk, oracle-gated); RLS still
-// runs over the candidates, so scope + the floor remain the enforcement — this is a
-// candidate-narrowing hint, never a second evaluator.
 func (m MaterializedFlat) ResourcesDefiner() GenFn {
 	return GenFn{
 		Schema:      m.schema(),
@@ -422,10 +337,6 @@ func (m MaterializedFlat) ResourcesDefiner() GenFn {
 	}
 }
 
-// IndexesSQL emits the two level-indexes the two-level reverse needs: level-1 on the
-// object's group column (group → resources) and level-2 on the closure member column
-// (subject → groups). IF NOT EXISTS + named by table/column so flats sharing a closure
-// create each once. The closure's (group) side is the group-closure's own concern.
 func (m MaterializedFlat) IndexesSQL() string {
 	return fmt.Sprintf(
 		"CREATE INDEX IF NOT EXISTS %[1]s_%[2]s_l1_idx ON %[3]s.%[1]s (%[2]s);\n"+
@@ -433,23 +344,17 @@ func (m MaterializedFlat) IndexesSQL() string {
 		m.ObjTable, m.Col, m.tableSchema(), m.Closure, m.MemberCol)
 }
 
-// TriggerSQL binds the rebuild to BOTH the object table (its group column / row set) and
-// the closure (membership) — statement-level, so the flat is recomputed once the group
-// closure trigger has settled.
 func (m MaterializedFlat) TriggerSQL() string {
 	var b strings.Builder
 	for _, tbl := range []string{m.ObjTable, m.Closure} {
 		name := m.Flat + "_rebuild_" + tbl
 		fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON %s.%s;\n", name, m.tableSchema(), tbl)
-		// TRUNCATE included so emptying the object/closure re-derives the flat rather than
-		// freezing it (a frozen flat the RLS floor reads would be a stale over-grant).
+
 		fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, m.tableSchema(), tbl, m.fnName())
 	}
 	return b.String()
 }
 
-// EmitMaterializedFlats returns a MaterializedFlat for every `via group ... materialized`
-// relation, in (object, relation) order.
 func (s *Spec) EmitMaterializedFlats() []MaterializedFlat {
 	var out []MaterializedFlat
 	for _, obj := range s.Objects {
@@ -480,14 +385,6 @@ func (s *Spec) EmitMaterializedFlats() []MaterializedFlat {
 	return out
 }
 
-// FlatsSQL renders the materialized-flat substrate for every `via group ... materialized`
-// relation, in this order so each statement's references already exist: the flat TABLE +
-// covering indexes, the full-recompute REBUILD function, and the (object + closure)
-// maintenance TRIGGERS. It is emitted BEFORE the definers in the full SQL — the accessor
-// reads the flat and the kernel's <flat>_member definer (emitted by EmitDefiners) reads it
-// too, so the table must exist first. Prefixed with a COST banner. Returns "" when the
-// spec declares no materialized relation — so a non-materialized spec (Foir) generates
-// nothing here and its output is byte-identical.
 func (s *Spec) FlatsSQL() string {
 	flats := s.EmitMaterializedFlats()
 	if len(flats) == 0 {

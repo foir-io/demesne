@@ -5,40 +5,29 @@ import (
 	"strings"
 )
 
-// Lexer for the Demesne spec grammar (RFC §8.2). The grammar is whitespace-
-// insensitive; `;` is a cosmetic separator (skipped like whitespace), and both
-// `//` and `#` start line comments.
-//
-// Compound tokens are the subtlety. `content:write` (PERMKEY) and
-// `records.v1.RecordsService/CreateRecord` (PROC) must each lex as ONE token,
-// while `relation owner: customer` must lex `owner` `:` `customer`. The rule:
-// inside an identifier run, a `.` `/` `:` is consumed only when immediately
-// followed by an identifier character (and `:*`, for the `self:*` macro);
-// otherwise the run stops and the separator is its own token.
-
 type tokKind int
 
 const (
 	tEOF tokKind = iota
 	tIdent
-	tPermKey // content:write, records:write:product, self:*
-	tProc    // svc.v1.Service/Method
-	tString  // "…"
+	tPermKey
+	tProc
+	tString
 	tLBrace
 	tRBrace
 	tLParen
 	tRParen
-	tGT    // >
-	tGE    // >=
-	tNE    // <>
-	tPlus  // +
-	tPipe  // |
-	tColon // : (standalone)
-	tArrow // ->
-	tAt    // @
-	tEq    // =
-	tComma // ,
-	tStar  // *
+	tGT
+	tGE
+	tNE
+	tPlus
+	tPipe
+	tColon
+	tArrow
+	tAt
+	tEq
+	tComma
+	tStar
 )
 
 func (k tokKind) String() string {
@@ -107,8 +96,6 @@ type lexer struct {
 	line int
 }
 
-// lex tokenizes the whole source. Returns an error with a line number on an
-// unexpected character or unterminated string.
 func lex(src string) ([]token, error) {
 	l := &lexer{src: src, line: 1}
 	var toks []token
@@ -229,7 +216,7 @@ func (l *lexer) skipLine() {
 
 func (l *lexer) lexString() (token, error) {
 	line := l.line
-	l.pos++ // opening quote
+	l.pos++
 	var b strings.Builder
 	for l.pos < len(l.src) {
 		c := l.src[l.pos]

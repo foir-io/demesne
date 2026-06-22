@@ -12,3 +12,5 @@ coverage.*
 
 # VS Code extension build artifact
 *.vsix
+
+.claude/

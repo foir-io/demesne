@@ -2,10 +2,6 @@ import { describe, it, expect } from "vitest";
 import { assignmentsSQL, scopeContains, resolve, type RoleAssignment } from "../src/index.js";
 import { rolesResolver, rolesResolverNoPerms } from "./fixtures.js";
 
-// Ports holds_test.go: TestScopeContainsMultiLevel, TestResolveMaterialized,
-// TestResolveExpandKey, TestResolveRootStrict, TestResolveMaterializedPassThrough,
-// TestResolveEmptyAndNil.
-
 describe("assignmentsSQL — the active-assignment read", () => {
   it("projects the scope cols, role key, and the materialized perms column when declared", () => {
     expect(assignmentsSQL(rolesResolver)).toBe(
@@ -48,11 +44,11 @@ describe("resolve — MATERIALIZED permissions (scope-containment + dedup union)
     { scope: ["T2", "TM9"], roleKey: "owner", permissions: ["admin:write"] },
   ];
   const cases: Array<[string, string, string[]]> = [
-    ["T1", "TM1", ["admin:read", "docs:read", "docs:write"]], // tenant-wide + custom
-    ["T1", "TM2", ["admin:read", "docs:read"]], // tenant-wide only
-    ["T1", "", ["admin:read", "docs:read"]], // tenant-wide query: project grant excluded
-    ["T2", "TM9", ["admin:write"]], // other tenant
-    ["T3", "TM1", []], // no match
+    ["T1", "TM1", ["admin:read", "docs:read", "docs:write"]],
+    ["T1", "TM2", ["admin:read", "docs:read"]],
+    ["T1", "", ["admin:read", "docs:read"]],
+    ["T2", "TM9", ["admin:write"]],
+    ["T3", "TM1", []],
   ];
   it.each(cases)("(%s,%s)", (tenant, team, want) => {
     const eff = resolve(rolesResolver, assignments, [tenant, team]);
@@ -63,7 +59,7 @@ describe("resolve — MATERIALIZED permissions (scope-containment + dedup union)
 
   it("eff.holds can be passed standalone as the authorize callback", () => {
     const eff = resolve(rolesResolver, assignments, ["T1", "TM1"]);
-    const cb = eff.holds; // detached — must still close over the resolved set
+    const cb = eff.holds;
     expect(cb("docs:write")).toBe(true);
     expect(cb("admin:write")).toBe(false);
   });

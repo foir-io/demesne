@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import { resourceAccess } from "../src/index.js";
 import { recordAccess } from "./fixtures.js";
 
-// Ports access_runtime_test.go (the discriminated/shared grant-store shape).
-
 describe("resource access surface (discriminated store)", () => {
   it("projects the read-mode and grant-kind sets", () => {
     expect(resourceAccess.isReadMode(recordAccess, "public_project")).toBe(true);

@@ -47,8 +47,6 @@ func TestChangelog_TrackedGrantEmitsFeed(t *testing.T) {
 	}
 }
 
-// A non-tracked grant store emits NO changelog — the modifier is opt-in, so any existing
-// spec (Foir, until it opts in) is byte-identical.
 func TestChangelog_UntrackedEmitsNothing(t *testing.T) {
 	spec := strings.Replace(trackedGrantSpec, `"doc" tracked`, `"doc"`, 1)
 	s, err := Parse(spec)
@@ -66,8 +64,6 @@ func TestChangelog_UntrackedEmitsNothing(t *testing.T) {
 	}
 }
 
-// trackedObjectSpec opts the OBJECT TABLE into the changelog (EID-350) via
-// `track owner` + `track visibility`, on top of a tracked grant store.
 const trackedObjectSpec = `
 topology { level tenant level project parent tenant }
 vocabulary cust { permission self:read }
@@ -96,18 +92,18 @@ func TestChangelog_TrackObjectOwnerAndVisibility(t *testing.T) {
 	}
 	sql := s.ChangelogSQL()
 	for _, want := range []string{
-		// the shared feed table is emitted once (grant store + object table share it)
+
 		"CREATE TABLE IF NOT EXISTS auth._authz_changelog",
-		// owner transfer: old owner revoke + new owner grant, keyed by principal
+
 		"CREATE OR REPLACE FUNCTION auth.docs_obj_changelog()",
 		"IF (OLD.owner_id IS DISTINCT FROM NEW.owner_id) OR (OLD.owner_kind IS DISTINCT FROM NEW.owner_kind) THEN",
 		"VALUES ('doc', NEW.id, COALESCE(OLD.owner_kind, ''), OLD.owner_id, 'revoke')",
 		"VALUES ('doc', NEW.id, COALESCE(NEW.owner_kind, ''), NEW.owner_id, 'grant')",
-		// visibility flip: resource-scoped (empty principal)
+
 		"IF (OLD.access_mode IS DISTINCT FROM NEW.access_mode) THEN",
 		"VALUES ('doc', NEW.id, '', '', 'visibility')",
 		"'op', 'visibility'",
-		// fires only on the tracked columns
+
 		"CREATE TRIGGER docs_obj_changelog AFTER UPDATE OF owner_id, owner_kind, access_mode ON public.docs FOR EACH ROW",
 	} {
 		if !strings.Contains(sql, want) {
@@ -116,11 +112,8 @@ func TestChangelog_TrackObjectOwnerAndVisibility(t *testing.T) {
 	}
 }
 
-// `track owner` requires a discriminated owner column; `track visibility` requires
-// a mode term — both fail closed at validation (else the emitted AFTER UPDATE OF
-// would carry an empty column list).
 func TestChangelog_TrackOwnerNeedsDiscriminatedOwner(t *testing.T) {
-	// trackedGrantSpec's owner is a plain `via customer_id` (no discriminator).
+
 	spec := strings.Replace(trackedGrantSpec, "  permission view =", "  track owner\n  permission view =", 1)
 	s, err := Parse(spec)
 	if err != nil {
@@ -132,7 +125,7 @@ func TestChangelog_TrackOwnerNeedsDiscriminatedOwner(t *testing.T) {
 }
 
 func TestChangelog_TrackVisibilityNeedsModeTerm(t *testing.T) {
-	// trackedGrantSpec has no `mode <col>` term.
+
 	spec := strings.Replace(trackedGrantSpec, "  permission view =", "  track visibility\n  permission view =", 1)
 	s, err := Parse(spec)
 	if err != nil {
@@ -143,7 +136,6 @@ func TestChangelog_TrackVisibilityNeedsModeTerm(t *testing.T) {
 	}
 }
 
-// A single-kind (undiscriminated) tracked store uses the store name as `rel`.
 func TestChangelog_UndiscriminatedRelIsTableName(t *testing.T) {
 	spec := strings.Replace(trackedGrantSpec,
 		`via grant racl(resource_id, principal_kind, principal_id, access) where resource_type = "doc" tracked`,

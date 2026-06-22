@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// v3 WS1 — the permission algebra is no longer union-only: intersection (`and`),
-// exclusion (`and not`), parentheses, and precedence all compile to RLS. A
-// union-only spec is unchanged (proven byte-identically by the existing emit
-// tests); these prove the new operators.
 const boolSpec = `
 topology { level tenant level project parent tenant }
 vocabulary v { permission self:read }
@@ -34,8 +30,6 @@ func TestBoolean_IntersectionExclusionPrecedence(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 
-	// Parse structure: view = AND(owner, shared); edit = AND(owner, NOT banned);
-	// del = AND(OR(owner, shared), NOT banned).
 	perms := map[string]*Perm{}
 	for _, pm := range s.Objects[0].Perms {
 		perms[pm.Verb] = pm
@@ -60,30 +54,27 @@ func TestBoolean_IntersectionExclusionPrecedence(t *testing.T) {
 	}
 	c := "(current_setting('request.jwt.claims', true)::json ->> 'cust')"
 
-	// (1) intersection → AND of both predicates.
 	if !strings.Contains(by["docs_select"], "(owner_id = "+c+") AND (shared_with = "+c+")") {
 		t.Errorf("intersection not emitted:\n%s", by["docs_select"])
 	}
-	// (2) exclusion → `(P) IS NOT TRUE` (a no-ban / NULL is not excluded; banned is).
+
 	if !strings.Contains(by["docs_update"], "(owner_id = "+c+") AND ((banned_id = "+c+") IS NOT TRUE)") {
 		t.Errorf("exclusion not emitted correctly:\n%s", by["docs_update"])
 	}
-	// (3) precedence: the parenthesised union binds before the exclusion.
+
 	if !strings.Contains(by["docs_delete"], "(owner_id = "+c+" OR shared_with = "+c+") AND ((banned_id = "+c+") IS NOT TRUE)") {
 		t.Errorf("precedence/grouping wrong:\n%s", by["docs_delete"])
 	}
 }
 
-// A permission must be positively gated: a bare `not`, or a `not` as a union
-// branch, is fail-open and rejected.
 func TestBoolean_PolarityFailsClosed(t *testing.T) {
 	head := `topology { level a }
 		vocabulary v { permission self:read }
 		subject s { anchor a reach self identifies sub roles configurable v binds owner }
 		object o { table t scoped a relation x: s via xc relation y: s via yc `
 	for _, bad := range []string{
-		"permission view = not x @rls maps select }",       // bare negation
-		"permission view = x or not y @rls maps select }",  // negated union branch
+		"permission view = not x @rls maps select }",
+		"permission view = x or not y @rls maps select }",
 	} {
 		spec, err := Parse(head + bad)
 		if err != nil {
@@ -93,7 +84,7 @@ func TestBoolean_PolarityFailsClosed(t *testing.T) {
 			t.Errorf("%q should be rejected as not positively gated, got: %v", bad, err)
 		}
 	}
-	// `x and not y` IS positively gated → accepted.
+
 	ok, err := Parse(head + "permission view = x and not y @rls maps select }")
 	if err != nil {
 		t.Fatal(err)
@@ -103,8 +94,6 @@ func TestBoolean_PolarityFailsClosed(t *testing.T) {
 	}
 }
 
-// A union-only permission still produces a flat OR with no extra parens (the
-// byte-identity guarantee for existing specs, at the node level).
 func TestBoolean_UnionStaysFlat(t *testing.T) {
 	s := mustSpec(t, `
 		topology { level tenant level project parent tenant }
@@ -120,9 +109,7 @@ func TestBoolean_UnionStaysFlat(t *testing.T) {
 	c := "(current_setting('request.jwt.claims', true)::json ->> 'cust')"
 	for _, p := range rls.Policies {
 		if p.Name == "docs_select" {
-			// The block (inside the containment wrapper) is a flat OR — the two
-			// owner fragments are not per-leaf parenthesised, and no AND/NOT/COALESCE
-			// structure is introduced by a union.
+
 			want := "owner_id = " + c + " OR shared_with = " + c
 			if !strings.Contains(p.Using, want) {
 				t.Errorf("union not a flat OR:\n%s", p.Using)

@@ -1,16 +1,3 @@
-// Demesne Supabase profile worked example (EID-339). The roundtrip.demesne model, tuned
-// for a REAL Supabase project's layout:
-//
-//   - tables live in `public` (where Supabase app tables go; the request roles already
-//     reach it) — the idiomatic Supabase placement.
-//   - definers schema "demesne": the SECURITY DEFINER kernel goes in a DEDICATED schema,
-//     NOT Supabase's reserved `auth` (the engine default), which is owned by GoTrue.
-//   - the custom access-token hook is emitted into `public` (where supabase_auth_admin
-//     reaches it) by `demesne emit <spec> --profile supabase`.
-//
-// The claims contract (org / ws / member_ref) flows: app_metadata -> the hook lifts it ->
-// request.jwt.claims -> the generated RLS reads it. The connection role is `authenticated`
-// (non-BYPASSRLS); `service_role` (BYPASSRLS) must stay off the request path.
 
 definers schema "demesne"
 

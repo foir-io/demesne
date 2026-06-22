@@ -1,6 +1,3 @@
-// The demesne CLI is a SEPARATE module so the engine
-// (github.com/eidestudio/demesne) stays stdlib-pure: only this CLI links a
-// Postgres driver, for the live-database subcommands.
 module github.com/eidestudio/demesne/cmd/demesne
 
 go 1.26.1

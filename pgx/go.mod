@@ -1,7 +1,3 @@
-// The demesne/pgx adapter is a SEPARATE module so the engine stays stdlib-pure: only this
-// adapter links pgx. It turns a pgx connection/pool/tx into a demesne.Querier for the
-// generated framework (EmitFramework) — the dominant Go Postgres driver, so its adapter
-// ships rather than being hand-rewritten by every adopter (EID-371 §3).
 module github.com/eidestudio/demesne/pgx
 
 go 1.26.1

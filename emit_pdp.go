@@ -6,24 +6,12 @@ import (
 	"strings"
 )
 
-// PDP emitter (RFC §8.2 V8/V10) — compiles a `procedures` + `ungoverned` pair
-// for one emit-site (a vocabulary) into the admin authorization Policy Decision
-// Point: a procedure → required-permission map plus the explicitly-exempt set.
-// For Foir's `admin` emit-site this is the shape of services/platform/internal/
-// authz.Policy + authz.Ungoverned; the platform oracle asserts they match, and
-// the V8 coverage guard (proto reflection, platform-side) asserts every write
-// RPC is classified.
-
-// PDP is one emit-site's compiled decision table.
 type PDP struct {
 	EmitSite   string
-	Policy     map[string]string // procedure → permission
-	Ungoverned map[string]string // procedure → reason
+	Policy     map[string]string
+	Ungoverned map[string]string
 }
 
-// EmitPDP compiles every PDP emit-site in the spec, keyed by vocabulary name.
-// It rejects: a procedure governed and exempt at once; a permission not in the
-// emit-site's vocabulary; an emit-site with no matching vocabulary (V10).
 func (s *Spec) EmitPDP() (map[string]*PDP, error) {
 	vocabPerms := map[string]map[string]bool{}
 	for _, v := range s.Vocabs {
@@ -78,8 +66,6 @@ func (s *Spec) EmitPDP() (map[string]*PDP, error) {
 	return out, nil
 }
 
-// EmitFieldScopes compiles the api-public field→scope blocks into a
-// site → (field → scope) map. Rejects a field mapped to two different scopes.
 func (s *Spec) EmitFieldScopes() (map[string]map[string]string, error) {
 	out := map[string]map[string]string{}
 	var errs []string
@@ -102,9 +88,6 @@ func (s *Spec) EmitFieldScopes() (map[string]map[string]string, error) {
 	return out, nil
 }
 
-// RenderGo emits a deterministic Go source fragment for an emit-site's Policy —
-// the Phase-B generated artifact (the hand-written authz.Policy is deleted).
-// Procedures are sorted for stable output.
 func (p *PDP) RenderGo(varName string) string {
 	procs := make([]string, 0, len(p.Policy))
 	for k := range p.Policy {

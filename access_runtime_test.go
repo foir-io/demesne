@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// The access runtime surface projects the descriptor layout and builds the
-// read/write SQL from it — one source of truth, so a handler never re-derives the
-// grant store's columns / discriminator / accessor name.
 func TestResourceAccessSurface(t *testing.T) {
 	s, err := Parse(adminOwnerSpec)
 	if err != nil {
@@ -24,7 +21,7 @@ func TestResourceAccessSurface(t *testing.T) {
 	if r.Table != "records" || strings.Join(r.ScopeCols, ",") != "tenant_id,project_id" || r.ModeCol != "access_mode" {
 		t.Errorf("projection wrong: table=%q scope=%v mode=%q", r.Table, r.ScopeCols, r.ModeCol)
 	}
-	// adminOwnerSpec opens read on "public_project" and lists "customer" grants.
+
 	if !r.IsReadMode("public_project") || r.IsReadMode("private") {
 		t.Errorf("read-mode projection wrong")
 	}
@@ -42,8 +39,6 @@ func TestResourceAccessSurface(t *testing.T) {
 		t.Errorf("AccessorsSQL = %q", got)
 	}
 
-	// GrantInsert carries the scope, the resource_type discriminator, the grant
-	// tuple, and the matching conflict key — the discriminated-store shape.
 	sql, args := r.GrantInsert([]string{"t1", "p1"}, "rec1", "customer", "cust9", "read")
 	wantSQL := "INSERT INTO resource_acl (tenant_id, project_id, resource_type, resource_id, principal_kind, principal_id, access) " +
 		"VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (resource_type, resource_id, principal_kind, principal_id, access) DO NOTHING RETURNING created_at"
@@ -54,7 +49,6 @@ func TestResourceAccessSurface(t *testing.T) {
 		t.Errorf("GrantInsert args = %v", args)
 	}
 
-	// RevokeDelete with an access level pins all five columns; without, omits it.
 	del, dargs := r.RevokeDelete("rec1", "customer", "cust9", "read")
 	if del != "DELETE FROM resource_acl WHERE resource_id = $1 AND resource_type = $2 AND principal_kind = $3 AND principal_id = $4 AND access = $5" {
 		t.Errorf("RevokeDelete = %q", del)

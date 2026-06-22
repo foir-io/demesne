@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// Demesne v3 WS3 — the general tuple_to_userset: a comment borrows the parent
-// DOCUMENT's view permission. The generated `document_can_view(id)` definer runs
-// the document's full predicate for the referenced row, so the borrowed grant may
-// be anything that object's policy expresses (here owner; in general roles / ACLs
-// / groups / boolean) — evaluated at the related object, in the database.
 const viaObjectSpec = `
 topology { level tenant level project parent tenant }
 vocabulary v { permission self:read }
@@ -45,7 +40,7 @@ func TestViaObject_CrossObjectReference(t *testing.T) {
 	if cs == nil {
 		t.Fatalf("no comments_select (unsupported: %v)", rls.Unsupported)
 	}
-	// The comment's policy calls the document's borrowed-permission definer.
+
 	if !strings.Contains(cs.Using, "auth.document_can_view(document_id)") {
 		t.Errorf("comments_select missing the cross-object reference:\n%s", cs.Using)
 	}
@@ -64,7 +59,7 @@ func TestViaObject_CrossObjectReference(t *testing.T) {
 		t.Fatal("no document_can_view definer (V11 would dangle)")
 	}
 	c := "(current_setting('request.jwt.claims', true)::json ->> 'cust')"
-	// It runs the document's FULL predicate (containment + owner) at the related row.
+
 	if !strings.HasPrefix(can.Body, "EXISTS (SELECT 1 FROM documents WHERE documents.id = p_document_id AND (") {
 		t.Errorf("definer does not wrap the document predicate at the related row:\n%s", can.Body)
 	}

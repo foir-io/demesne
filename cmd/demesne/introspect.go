@@ -4,14 +4,11 @@ import (
 	"database/sql"
 
 	demesne "github.com/eidestudio/demesne"
-	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver "pgx"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type introspectMeta struct{ tables, columns, fks int }
 
-// introspect reads the target database's public schema (columns + foreign keys)
-// into the engine's plain-data Schema. This is the ONLY place the CLI touches a
-// database; the engine itself stays pure.
 func introspect(dsn string) (*demesne.Schema, introspectMeta, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -73,9 +70,6 @@ func introspect(dsn string) (*demesne.Schema, introspectMeta, error) {
 	return sc, meta, nil
 }
 
-// roleBypassesRLS reports whether the named Postgres role exists and has the
-// BYPASSRLS attribute (which would let it read past every policy, including FORCE'd
-// ones — defeating the moat). Used by `check` to verify the session role is safe.
 func roleBypassesRLS(dsn, role string) (exists, bypass bool, err error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -93,8 +87,6 @@ func roleBypassesRLS(dsn, role string) (exists, bypass bool, err error) {
 	}
 }
 
-// livePolicySurface returns the set of "<table>.<policy>" RLS policies live on the
-// given governed tables (for the diff surface check).
 func livePolicySurface(dsn string, governed []string) (map[string]bool, error) {
 	tset := map[string]bool{}
 	for _, t := range governed {

@@ -1,0 +1,16 @@
+topology {
+  level org       virtual
+  level tenant    parent org
+  level workspace parent tenant
+}
+
+subject member { anchor workspace; reach self; identifies member_id; roles none; binds owner }
+
+object doc {
+  table  docs
+  scoped tenant > workspace
+  relation tenant:   tenant via tenant_id
+  relation owner:    member via owner_id
+  relation audience: member via group group_closure(grp, mem) edge group_memberships(member_id, group_id) on audience_group
+  permission view = owner + audience   @rls maps select
+}

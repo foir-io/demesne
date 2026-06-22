@@ -7,21 +7,6 @@ import (
 	"strings"
 )
 
-// Validate runs the semantic rules V1–V10 (RFC §8.2) over a parsed Spec and
-// returns ALL violations joined (fail-loud, never emit weaker SQL). A nil error
-// means the spec is inside the bounded-emitter envelope.
-//
-// Scope: the rules checkable from the spec alone live here in the pure engine.
-// Two have a platform-side tail that needs the database / proto descriptors and
-// runs in foir-platform under the oracle:
-//   - V6 — the suffix/prefix nesting is checked here; asserting the physical
-//     table actually carries those columns needs schema introspection.
-//   - V8 — PDP coverage exhaustiveness needs reflecting each service's proto
-//     descriptor; the engine checks block well-formedness, the oracle checks
-//     "every write RPC is classified".
-//
-// V7 (generative isolation) is a property test (isolation_test.go), not a
-// per-spec rule.
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true}
 var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true}
@@ -34,12 +19,9 @@ func Validate(s *Spec) error {
 		}
 	}
 
-	// V1 — tree topology (WS3: relaxed from a strict linear chain to a branching
-	// tree; surfaces unknown-parent / multi-root / cycle / disconnected).
 	chain, err := s.Topology.Chain()
 	if err != nil {
-		// Topology errors are foundational; report and stop (downstream rules
-		// dereference the chain).
+
 		return err
 	}
 	levelNames := map[string]bool{}
@@ -50,7 +32,6 @@ func Validate(s *Spec) error {
 	vocabNames, vocabErr := valCheckVocabs(s)
 	add(vocabErr)
 
-	// Grant stores confer reach at a topology level — the level must resolve.
 	add(valCheckGrants(s, levelNames))
 
 	add(valCheckClaimsBlock(s))
@@ -59,13 +40,8 @@ func Validate(s *Spec) error {
 		add(validateSubject(s, sub, levelNames, vocabNames))
 	}
 
-	// Explicit plane-role bindings must be unambiguous: at most one owner per
-	// anchor level, at most one admin per spec (EID-265 WS2 — the binding REPLACES
-	// the former first-match shape inference, so ambiguity is an error, not a
-	// silent pick).
 	add(valCheckPlaneBindings(s))
 
-	// V5 — claims contract is derivable (also validates anchors resolve).
 	if _, err := s.ClaimsContract(); err != nil {
 		add(err)
 	}
@@ -74,42 +50,21 @@ func Validate(s *Spec) error {
 		add(validateObject(s, o, chain))
 	}
 
-	// Cross-object references (v3 WS3) must reference a real object and form NO
-	// cycle — a cycle would make the generated `<X>_can_<v>` definers mutually
-	// recursive and loop forever at query time.
 	add(validateCrossObjectAcyclic(s))
 
-	// Grant stores: grant relations sharing a physical store MUST all be
-	// discriminated with DISTINCT discriminator values — otherwise their rows are
-	// indistinguishable and one object's grant would leak onto another's reads.
 	add(validateGrantStores(s))
 
-	// @store_manage write-moat: the governance object's table must be a discriminated
-	// grant store with ≥1 grant relation (the kinds the dispatch CASEs over).
 	add(validateStoreManage(s))
 
-	// V10 — every PDP block targets a declared vocabulary (emit-site).
 	add(valCheckEmitSites(s, vocabNames))
 
-	// V11 — definer closure. The V9 promise is that the compiler owns 100% of the
-	// SECURITY DEFINER surface: every auth.<fn>() the emitted RLS calls must be one
-	// the kernel generates. Enforce it by construction so a dangling reference
-	// (e.g. a `via edge` relation whose definer nothing emits) cannot ship — the
-	// DB oracle would catch it only for the migrated subset, and never for a
-	// third-party consumer of the engine.
 	add(validateDefinerClosure(s))
 
-	// V12 — async floor-asymmetry. The async-affordance tier (WS4) caches a grant relation
-	// in an index read ONLY by the affordance Check path; the RLS floor must NEVER reference
-	// that index. Prove it by re-emitting the whole floor surface and asserting zero async
-	// tokens. No-op for a spec with no `async` relation.
 	add(validateAsyncFloorAsymmetry(s))
 
 	return errors.Join(errs...)
 }
 
-// asyncTokensInBodies returns the async-surface tokens that appear in any of the given SQL
-// bodies — the pure detection core of the V12 floor-asymmetry oracle (testable in isolation).
 func asyncTokensInBodies(bodies, tokens []string) []string {
 	var found []string
 	seen := map[string]bool{}
@@ -127,17 +82,6 @@ func asyncTokensInBodies(bodies, tokens []string) []string {
 	return found
 }
 
-// validateAsyncFloorAsymmetry (V12) is the load-bearing fence for the async-affordance tier:
-// no RLS floor artifact may reference an `async` relation's index surface. It re-emits the
-// COMPLETE floor surface — every RLS policy body, every SECURITY DEFINER kernel body, AND
-// every function/trigger that WRITES a table the floor reads (the materialized-flat
-// rebuild/reconcile, the closure/group maintenance, the changelog append trigger) — and
-// asserts none references an async-index token. Because EmitRLS + EmitDefiners + the
-// floor-read writers are the single, total source of the floor, an empty scan is a
-// by-construction proof that a stale async cache can never gate a fetch (it can only
-// mis-render an affordance, which the real fetch corrects). The async index itself is
-// emitted on a SEPARATE surface (not scanned here), so this never false-positives. No-op +
-// byte-identical for a spec with no `async` relation.
 func validateAsyncFloorAsymmetry(s *Spec) error {
 	tokens := s.asyncSurfaceTokens()
 	if len(tokens) == 0 {
@@ -158,8 +102,7 @@ func validateAsyncFloorAsymmetry(s *Spec) error {
 	for _, d := range defs {
 		bodies = append(bodies, d.Body)
 	}
-	// The floor-read WRITERS (their bodies are not kernel GenFns): the materialized flat
-	// rebuild/reconcile + member, the closure/group maintenance, the changelog append trigger.
+
 	bodies = append(bodies, s.FlatsSQL(), s.TriggersSQL(), s.ChangelogSQL())
 
 	var errs []error
@@ -169,8 +112,6 @@ func validateAsyncFloorAsymmetry(s *Spec) error {
 	return errors.Join(errs...)
 }
 
-// valCheckVocabs builds the set of declared vocabulary names and validates each
-// vocabulary, surfacing duplicates.
 func valCheckVocabs(s *Spec) (map[string]bool, error) {
 	var errs []error
 	vocabNames := map[string]bool{}
@@ -186,8 +127,6 @@ func valCheckVocabs(s *Spec) (map[string]bool, error) {
 	return vocabNames, errors.Join(errs...)
 }
 
-// valCheckGrants enforces that each grant store confers reach at a resolvable
-// topology level and names a complete edge.
 func valCheckGrants(s *Spec, levels map[string]bool) error {
 	var errs []error
 	for _, g := range s.Grants {
@@ -201,7 +140,6 @@ func valCheckGrants(s *Spec, levels map[string]bool) error {
 	return errors.Join(errs...)
 }
 
-// valCheckClaimsBlock validates the optional claims block's setting name and cast.
 func valCheckClaimsBlock(s *Spec) error {
 	if s.Claims == nil {
 		return nil
@@ -216,8 +154,6 @@ func valCheckClaimsBlock(s *Spec) error {
 	return errors.Join(errs...)
 }
 
-// valCheckPlaneBindings enforces that explicit plane-role bindings are
-// unambiguous: at most one owner per anchor level, at most one admin per spec.
 func valCheckPlaneBindings(s *Spec) error {
 	var errs []error
 	ownerAt := map[string]string{}
@@ -239,8 +175,6 @@ func valCheckPlaneBindings(s *Spec) error {
 	return errors.Join(errs...)
 }
 
-// valCheckEmitSites enforces V10: every PDP/ungoverned block targets a declared
-// vocabulary.
 func valCheckEmitSites(s *Spec, vocabs map[string]bool) error {
 	var errs []error
 	for _, pr := range s.Procedures {
@@ -256,18 +190,12 @@ func valCheckEmitSites(s *Spec, vocabs map[string]bool) error {
 	return errors.Join(errs...)
 }
 
-// validateDefinerClosure emits the RLS + the kernel and asserts the set of
-// definers the policies reference is a subset of the set the kernel generates.
-// A spec outside the bounded emitter (EmitRLS error) surfaces here too, so
-// Validate is the single comprehensive gate.
 func validateDefinerClosure(s *Spec) error {
 	res, err := s.EmitRLS()
 	if err != nil {
 		return fmt.Errorf("definer closure (V11): RLS does not emit: %w", err)
 	}
-	// A declared @rls permission that the emitter could not compile is a spec
-	// defect, not a silent no-op — fail loud (an uncompiled policy means the row
-	// is unreachable, never weaker SQL). reqClaim failures land here.
+
 	if len(res.Unsupported) > 0 {
 		var errs []error
 		for _, u := range res.Unsupported {
@@ -318,8 +246,7 @@ func validateVocabulary(v *Vocabulary) error {
 	for _, pr := range v.Presets {
 		presetNames[pr.Name] = true
 	}
-	// Preset members must be a declared permission of this vocab or another
-	// preset in it.
+
 	for _, pr := range v.Presets {
 		if pr.Star {
 			continue
@@ -332,7 +259,7 @@ func validateVocabulary(v *Vocabulary) error {
 				pr.Pos.Line, pr.Name, item, v.Name))
 		}
 	}
-	// Rank ladder entries must be presets of this vocabulary.
+
 	for _, r := range v.Rank {
 		if !presetNames[r] {
 			errs = append(errs, fmt.Errorf("line %d: rank ladder names %q which is not a preset of vocabulary %q",
@@ -345,7 +272,6 @@ func validateVocabulary(v *Vocabulary) error {
 func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) error {
 	var errs []error
 
-	// V2 — bounded reach + anchor resolves.
 	if sub.Reach != "self" && sub.Reach != "descendants" && sub.Reach != "grant" {
 		errs = append(errs, fmt.Errorf("line %d: subject %q has reach %q — only self|descendants|grant are emittable (V2)",
 			sub.Pos.Line, sub.Name, sub.Reach))
@@ -354,9 +280,6 @@ func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) erro
 		errs = append(errs, fmt.Errorf("line %d: subject %q anchors at unknown level %q (V2)", sub.Pos.Line, sub.Name, sub.Anchor))
 	}
 
-	// A grant-reach subject's reach is conferred entirely by a declared Grant edge
-	// (the scoped-operator form, replacing an unconditional membership god-flag);
-	// it must name a declared grant.
 	if sub.Reach == "grant" {
 		if sub.ReachGrant == "" {
 			errs = append(errs, fmt.Errorf("line %d: subject %q has `reach via grant` but names no grant", sub.Pos.Line, sub.Name))
@@ -365,21 +288,16 @@ func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) erro
 		}
 	}
 
-	// roles vocabulary must exist when configurable.
 	if sub.Roles != "" && !vocabs[sub.Roles] {
 		errs = append(errs, fmt.Errorf("line %d: subject %q roles reference unknown vocabulary %q", sub.Pos.Line, sub.Name, sub.Roles))
 	}
 
-	// The explicit plane-role binding (EID-265 WS2) must name a known role.
 	switch sub.Binds {
 	case "", "owner", "admin":
 	default:
 		errs = append(errs, fmt.Errorf("line %d: subject %q has unknown binding %q (binds owner|admin)", sub.Pos.Line, sub.Name, sub.Binds))
 	}
 
-	// V7-precondition / safety: a subject that pins NO scope column has
-	// unconditional reach and MUST anchor at a virtual level (the sanctioned
-	// operator bypass). An accidental empty-pin subject is a cross-tenant leak.
 	if levels[sub.Anchor] {
 		cols, virtual, err := s.PinnedColumns(sub)
 		if err != nil {
@@ -390,8 +308,6 @@ func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) erro
 		}
 	}
 
-	// V9 — membership identity resolves through a compiler-owned table+flag
-	// (the compiler generates the definer; the spec never names an external fn).
 	if sub.Membership != nil && (sub.Membership.Table == "" || sub.Membership.IDCol == "" || sub.Membership.FlagCol == "") {
 		errs = append(errs, fmt.Errorf("line %d: subject %q membership must name a table, id column and flag column (V9)", sub.Pos.Line, sub.Name))
 	}
@@ -406,23 +322,15 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 		}
 	}
 
-	// V6 — scope-column nesting (WS3 tree/DAG-aware).
 	add(valCheckScopePath(s, o, chain))
 
-	// Level-entity objects: the declared level must be a real topology level and
-	// must be the object's deepest scoped level (the object IS that node).
 	add(valCheckLevelEntity(o, chain))
 
 	relByName, relErr := valCheckObjectRelations(s, o)
 	add(relErr)
 
-	// At most one grant relation per object — two would collide in the generated
-	// definer naming (both `<table>_grants[_<obj>]`).
 	add(valCheckGrantRelCount(o))
 
-	// `track owner` / `track visibility` (EID-350) must reference columns the object
-	// actually declares, else the emitted AFTER UPDATE OF trigger would have an empty
-	// column list (invalid SQL) — fail closed at validation instead.
 	add(valCheckTrackChangelog(o))
 
 	for _, pm := range o.Perms {
@@ -431,12 +339,6 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 	return errors.Join(errs...)
 }
 
-// valCheckScopePath enforces V6 scope-column nesting (WS3 tree/DAG-aware). The
-// object's `scoped` chain must list, in topological order, EVERY non-virtual
-// ancestor of its deepest level across all root→leaf paths (a single-parent leaf
-// → its one path; a multi-parent leaf → the union of its lineages, e.g. org_id +
-// team_id + folder_id). It pins every ancestor column, never the leaf alone,
-// never a stray level outside the leaf's ancestry.
 func valCheckScopePath(s *Spec, o *Object, chain []*Level) error {
 	leafLevel := ""
 	if len(o.Scoped) > 0 {
@@ -450,10 +352,7 @@ func valCheckScopePath(s *Spec, o *Object, chain []*Level) error {
 		return fmt.Errorf("line %d: object %q declares no scoped path (V6)", o.Pos.Line, o.Name)
 	}
 	if leafIsVirtual {
-		// GLOBAL object (v3 WS6): scoped at a VIRTUAL level (the platform root). It
-		// carries no containment columns — its access is the platform-role subject
-		// branch, not a scope chain — so its scoped path is exactly that one virtual
-		// root, never a non-virtual ancestry.
+
 		if len(o.Scoped) != 1 {
 			return fmt.Errorf("line %d: object %q is scoped at virtual level %q (a global object) but declares a multi-level path %v — a global object carries no containment columns (V6)",
 				o.Pos.Line, o.Name, leafLevel, o.Scoped)
@@ -470,7 +369,7 @@ func valCheckScopePath(s *Spec, o *Object, chain []*Level) error {
 			inAncestry[l.Name] = true
 		}
 	}
-	var want []string // topological order, non-virtual
+	var want []string
 	for _, l := range chain {
 		if inAncestry[l.Name] && !l.Virtual {
 			want = append(want, l.Name)
@@ -487,8 +386,6 @@ func valCheckScopePath(s *Spec, o *Object, chain []*Level) error {
 	return nil
 }
 
-// valCheckLevelEntity enforces that a level-entity object's declared level is a
-// real topology level and is the object's deepest scoped level.
 func valCheckLevelEntity(o *Object, chain []*Level) error {
 	if o.Level == "" {
 		return nil
@@ -509,9 +406,6 @@ func valCheckLevelEntity(o *Object, chain []*Level) error {
 	return errors.Join(errs...)
 }
 
-// valCheckObjectRelations validates each relation (duplicates, V9 representation
-// presence, and ViaMemberIn well-formedness) and returns the relation lookup map
-// used by the per-permission checks.
 func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 	var errs []error
 	relByName := map[string]*Relation{}
@@ -520,27 +414,19 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 			errs = append(errs, fmt.Errorf("line %d: object %q has duplicate relation %q", r.Pos.Line, o.Name, r.Name))
 		}
 		relByName[r.Name] = r
-		// V9 — every relation is backed by a compiler-owned representation
-		// (guaranteed by the parser; assert defensively that none is nil).
+
 		if r.Repr == nil {
 			errs = append(errs, fmt.Errorf("line %d: object %q relation %q has no representation (V9)", r.Pos.Line, o.Name, r.Name))
 		}
-		// A scoped role-membership (v3 WS6) must name a real scope level, and each
-		// argument must be EXACTLY one of a claim (`@key`) or a row column.
+
 		if mi, ok := r.Repr.(ViaMemberIn); ok {
 			errs = append(errs, valCheckViaMemberIn(s, o, r, mi)...)
 		}
-		// `via group ... materialized` is fail-closed restricted to a SINGLE kind: the flat
-		// stores only one principal_kind (the relation's first type) and the floor matches
-		// principal_id alone, so a multi-kind materialized relation would silently tag and
-		// honour only the first kind. Reject it at compile time rather than emit a half-truth
-		// flat (WS3). Non-materialized multi-kind via-group keeps the same single-kind closure
-		// behaviour and is unaffected.
+
 		if g, ok := r.Repr.(ViaGroup); ok && g.Materialized && len(r.Types) > 1 {
 			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via group ... materialized` with multiple kinds %v — a materialized via-group must be single-kind (the flat tags only one principal_kind and the floor matches the id alone)", r.Pos.Line, o.Name, r.Name, r.Types))
 		}
-		// `via grant ... async` REQUIRES `tracked` — the async affordance index is built off
-		// the changelog feed, which only exists for a tracked store (WS4). Fail closed.
+
 		if g, ok := r.Repr.(ViaGrant); ok && g.Async && !g.Tracked {
 			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via grant ... async` without `tracked` — the async affordance index is maintained off the changelog, which requires `tracked`", r.Pos.Line, o.Name, r.Name))
 		}
@@ -548,8 +434,6 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 	return relByName, errors.Join(errs...)
 }
 
-// valCheckViaMemberIn validates a ViaMemberIn relation's level and argument
-// sources.
 func valCheckViaMemberIn(s *Spec, o *Object, r *Relation, mi ViaMemberIn) []error {
 	var errs []error
 	if s.Topology.LevelByName(mi.Level) == nil {
@@ -563,8 +447,6 @@ func valCheckViaMemberIn(s *Spec, o *Object, r *Relation, mi ViaMemberIn) []erro
 	return errs
 }
 
-// valCheckGrantRelCount enforces at most one `via grant` relation per object —
-// two would collide in the generated definer naming.
 func valCheckGrantRelCount(o *Object) error {
 	grantRels := 0
 	for _, r := range o.Relations {
@@ -578,11 +460,6 @@ func valCheckGrantRelCount(o *Object) error {
 	return nil
 }
 
-// valCheckTrackChangelog enforces that `track owner` / `track visibility`
-// (EID-350) reference columns the object declares: `track owner` needs a
-// discriminated owner ViaColumn (the unified owner_id/owner_kind), `track
-// visibility` needs a `mode <col>` term. Without them the emitted object-table
-// trigger would carry an empty `AFTER UPDATE OF` column list — fail closed here.
 func valCheckTrackChangelog(o *Object) error {
 	if o.TrackOwner {
 		if _, _, ok := o.ownerChangelogCols(); !ok {
@@ -597,15 +474,6 @@ func valCheckTrackChangelog(o *Object) error {
 	return nil
 }
 
-// validateGrantStores enforces the discriminated-store contract for the access-class
-// grant RELATIONS (`via grant`): when more than one object points its grant relation
-// at the SAME physical table, every such relation must be discriminated
-// (`where <col> = "<val>"`), all on the SAME discriminator column, with DISTINCT
-// values — otherwise two object types' grant rows are indistinguishable in the shared
-// store and a grant on one would be read as a grant on another (a cross-type leak). A
-// table used by exactly one grant relation may be bare or discriminated. Also: every
-// grantee KIND (the relation's types) must name a claim-bearing subject, else the
-// grant term it emits can never match (fail-closed on misconfig).
 func validateGrantStores(s *Spec) error {
 	type edgeRef struct {
 		obj *Object
@@ -618,12 +486,11 @@ func validateGrantStores(s *Spec) error {
 		if g == nil {
 			continue
 		}
-		// A discriminator must be complete (both column and value).
+
 		if (g.DiscrimCol == "") != (g.DiscrimVal == "") {
 			errs = append(errs, fmt.Errorf("object %q grant relation: a discriminator needs both a column and a value (`where <col> = \"<val>\"`)", o.Name))
 		}
-		// Every grantee kind must be a claim-bearing subject (the principal a grant of
-		// that kind is read against).
+
 		for _, k := range rel.Types {
 			if sub := s.subjectByName(k); sub == nil || sub.Identifies == "" {
 				errs = append(errs, fmt.Errorf("object %q grant relation kind %q is not a claim-bearing subject (no `subject %s { ... identifies <claim> }`)", o.Name, k, k))
@@ -633,10 +500,10 @@ func validateGrantStores(s *Spec) error {
 	}
 	for table, refs := range byTable {
 		if len(refs) < 2 {
-			continue // single owner — bare or discriminated, both fine
+			continue
 		}
 		col := refs[0].g.DiscrimCol
-		seen := map[string]string{} // discrim value -> first object that used it
+		seen := map[string]string{}
 		for _, r := range refs {
 			if r.g.DiscrimCol == "" {
 				errs = append(errs, fmt.Errorf("object %q shares grant store %q with another grant relation but is not discriminated — add `where <col> = \"<val>\"`", r.obj.Name, table))
@@ -654,11 +521,6 @@ func validateGrantStores(s *Spec) error {
 	return errors.Join(errs...)
 }
 
-// validateStoreManage checks the @store_manage write-moat builtin: the object
-// using it must be backed by a discriminated grant store with at least one grant
-// relation (the resource KINDS the generated dispatch CASEs over). Without a
-// discriminator the dispatch has no column to switch on; without grant relations it
-// has nothing to dispatch to.
 func validateStoreManage(s *Spec) error {
 	var errs []error
 	for _, o := range s.Objects {
@@ -679,10 +541,6 @@ func validateStoreManage(s *Spec) error {
 	return errors.Join(errs...)
 }
 
-// validateCrossObjectAcyclic rejects an unknown target or a cycle in the
-// cross-object (`via object`) reference graph (object O → Other per ViaObject
-// relation). A cycle would make the generated `<X>_can_<v>` definers mutually
-// recursive and loop forever at query time.
 func validateCrossObjectAcyclic(s *Spec) error {
 	edges := map[string][]string{}
 	for _, o := range s.Objects {
@@ -697,7 +555,7 @@ func validateCrossObjectAcyclic(s *Spec) error {
 			edges[o.Name] = append(edges[o.Name], vo.Object)
 		}
 	}
-	color := map[string]int{} // 0 unvisited, 1 on-stack, 2 done
+	color := map[string]int{}
 	var dfs func(n string) bool
 	dfs = func(n string) bool {
 		color[n] = 1
@@ -720,10 +578,6 @@ func validateCrossObjectAcyclic(s *Spec) error {
 	return nil
 }
 
-// permPositive reports whether a permission node grants access on its own — every
-// branch reaches a positive (non-negated) term. A leaf is positive; a `not` is
-// negative; an `and` is positive if ANY child is (a positive gates the negations);
-// an `or` is positive only if EVERY branch is (a negated union branch is fail-open).
 func permPositive(n *PermNode) bool {
 	if n == nil {
 		return false
@@ -759,30 +613,20 @@ func validatePerm(s *Spec, o *Object, pm *Perm, rels map[string]*Relation) error
 		}
 	}
 
-	// Polarity (v3 WS1): a permission must be POSITIVELY GATED — every path to a
-	// grant ends in a real (non-negated) term.
 	add(valCheckPermPolarity(o, pm))
 
-	// Layer values must be known.
 	hasRLS, hasKernel, hasPDP, layerErr := valCheckPermLayers(o, pm)
 	add(layerErr)
 
-	// The bounded ABAC guard: the only attribute predicate allowed (§8.2).
 	add(valCheckPermGuard(o, pm, hasRLS))
 
-	// V4 — layer feasibility.
 	add(valCheckPermMaps(o, pm, hasRLS, hasKernel))
 
-	// V3 — every term resolves and is classifiable.
 	add(valCheckPermTerms(s, o, pm, rels, hasRLS, hasKernel, hasPDP))
 
 	return errors.Join(errs...)
 }
 
-// valCheckPermPolarity enforces the v3 WS1 polarity rule: a `not` (exclusion) is
-// fail-OPEN unless AND'd with a positive grant that gates it. A bare `not`, or a
-// `not` as a union branch, is rejected so exclusion is fail-closed by
-// construction.
 func valCheckPermPolarity(o *Object, pm *Perm) error {
 	if pm.Tree != nil && !permPositive(pm.Tree) {
 		return fmt.Errorf("line %d: permission %s.%s is not positively gated — a `not` (exclusion) must be combined with `and` with a positive grant, never used alone or as a union (`+`/`or`) branch", pm.Pos.Line, o.Name, pm.Verb)
@@ -790,8 +634,6 @@ func valCheckPermPolarity(o *Object, pm *Perm) error {
 	return nil
 }
 
-// valCheckPermLayers validates the permission's layer tags and reports which row/
-// capability layers are present.
 func valCheckPermLayers(o *Object, pm *Perm) (hasRLS, hasKernel, hasPDP bool, err error) {
 	var errs []error
 	for _, l := range pm.Layers {
@@ -813,8 +655,6 @@ func valCheckPermLayers(o *Object, pm *Perm) (hasRLS, hasKernel, hasPDP bool, er
 	return hasRLS, hasKernel, hasPDP, errors.Join(errs...)
 }
 
-// valCheckPermGuard validates the bounded ABAC guard: its operator must be = or
-// <>, and a guarded permission must ride RLS.
 func valCheckPermGuard(o *Object, pm *Perm, hasRLS bool) error {
 	if pm.Guard == nil {
 		return nil
@@ -829,8 +669,6 @@ func valCheckPermGuard(o *Object, pm *Perm, hasRLS bool) error {
 	return errors.Join(errs...)
 }
 
-// valCheckPermMaps enforces V4 layer feasibility: a row layer (rls/kernel) cannot
-// see a capability verb, and an @rls mapping must be a table op.
 func valCheckPermMaps(o *Object, pm *Perm, hasRLS, hasKernel bool) error {
 	var errs []error
 	mapsIsCapability := isPermKeyLit(pm.Maps)
@@ -846,9 +684,6 @@ func valCheckPermMaps(o *Object, pm *Perm, hasRLS, hasKernel bool) error {
 	return errors.Join(errs...)
 }
 
-// valCheckPermTerms enforces V3: every term resolves and is classifiable. A
-// relation term must name a declared relation; a walk term's head must too; a
-// @builtin is inline; a PERMKEY term is only meaningful on a @pdp permission.
 func valCheckPermTerms(s *Spec, o *Object, pm *Perm, rels map[string]*Relation, hasRLS, hasKernel, hasPDP bool) error {
 	var errs []error
 	add := func(e error) {
@@ -878,18 +713,13 @@ func valCheckPermTerms(s *Spec, o *Object, pm *Perm, rels map[string]*Relation, 
 					pm.Pos.Line, o.Name, pm.Verb, t.Ident))
 				continue
 			}
-			// A role-walk into a parent (`parent->verb`) is always a definer
-			// traversal; a direct relation inherits its repr's class. Nothing to
-			// reject here yet (no explicit @inline/@definer override syntax), but
-			// the classification is what the emitter consumes.
+
 			_ = r.CostClass()
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// valCheckGrantRefTerm validates a `via grant <name>` term — a row-layer term
-// conferred by a declared grant.
 func valCheckGrantRefTerm(s *Spec, o *Object, pm *Perm, t *Term, hasRLS bool) error {
 	var errs []error
 	if s.grantByName(t.GrantRef) == nil {
@@ -901,8 +731,6 @@ func valCheckGrantRefTerm(s *Spec, o *Object, pm *Perm, t *Term, hasRLS bool) er
 	return errors.Join(errs...)
 }
 
-// valCheckModeTerm validates a column-condition (visibility) term — a row-layer
-// read grant. It must be on @rls; an actor-scoped form must name a real subject.
 func valCheckModeTerm(s *Spec, o *Object, pm *Perm, t *Term, hasRLS bool) error {
 	var errs []error
 	if !hasRLS {
@@ -914,15 +742,12 @@ func valCheckModeTerm(s *Spec, o *Object, pm *Perm, t *Term, hasRLS bool) error 
 	return errors.Join(errs...)
 }
 
-// valCheckBuiltinTerm validates a @builtin term and its builtin-specific
-// constraints (@app_scope exclude axis, @open, @public, @kind).
 func valCheckBuiltinTerm(o *Object, pm *Perm, t *Term, rels map[string]*Relation, hasRLS bool) error {
 	var errs []error
 	if !knownBuiltins[t.Builtin] {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|scoped|session|open|store_manage)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
 	}
-	// `@app_scope(exclude <rel>)` — the excluded axis must be a declared owner
-	// column relation (its presence is what gets excluded).
+
 	if t.ExcludeRel != "" {
 		if r := rels[t.ExcludeRel]; r == nil {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s @app_scope(exclude %q) names no relation", pm.Pos.Line, o.Name, pm.Verb, t.ExcludeRel))
@@ -930,16 +755,15 @@ func valCheckBuiltinTerm(o *Object, pm *Perm, t *Term, rels map[string]*Relation
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s @app_scope(exclude %q) must exclude an owner column relation", pm.Pos.Line, o.Name, pm.Verb, t.ExcludeRel))
 		}
 	}
-	// @open is the unrestricted-INSERT bootstrap only — never a read/update/
-	// delete grant (that would be a blanket leak).
+
 	if t.Builtin == "open" && pm.Maps != "insert" {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @open but maps to %q — @open is only valid on an insert (a bootstrap write the row engine cannot gate)", pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
 	}
-	// @public is a world-READ grant only — never a write.
+
 	if t.Builtin == "public" && pm.Maps != "select" {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @public but maps to %q — @public is a world-read grant, valid only on select", pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
 	}
-	// @kind("<value>") needs a non-empty kind value and is a row-layer grant.
+
 	if t.Builtin == "kind" {
 		if t.KindVal == "" {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @kind with an empty value — `@kind(\"<value>\")`", pm.Pos.Line, o.Name, pm.Verb))
@@ -951,8 +775,6 @@ func valCheckBuiltinTerm(o *Object, pm *Perm, t *Term, rels map[string]*Relation
 	return errors.Join(errs...)
 }
 
-// valCheckGrantSelectorTerm validates a grant relation with an access class
-// (`grantee:read`) — a row-layer (@rls) grant that must carry a non-empty class.
 func valCheckGrantSelectorTerm(o *Object, pm *Perm, t *Term, rels map[string]*Relation, hasRLS bool) error {
 	var errs []error
 	_, access, _ := grantSelector(t.Ident, rels)
@@ -967,7 +789,6 @@ func valCheckGrantSelectorTerm(o *Object, pm *Perm, t *Term, rels map[string]*Re
 	return errors.Join(errs...)
 }
 
-// isPermKeyLit reports whether a literal looks like a PERMKEY (contains ':').
 func isPermKeyLit(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] == ':' {

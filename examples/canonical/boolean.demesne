@@ -1,0 +1,25 @@
+topology {
+  level tenant
+  level team parent tenant
+}
+
+vocabulary access {
+  permission self:read
+}
+
+subject user {
+  anchor team
+  reach self
+  identifies uid
+  roles configurable access
+  binds owner
+}
+
+object resource {
+  table  resources
+  scoped tenant > team
+  relation viewer: user via viewer_id
+  relation member: user via member_id
+  relation banned: user via banned_id
+  permission view = viewer and member and not banned @rls maps select
+}
