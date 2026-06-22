@@ -43,6 +43,16 @@ func (s *Spec) MintClaims(values map[string]string) (string, error) {
 // explicit contract (the sorted key set) and renders the deterministic blob. Generated
 // framework code — which bakes the contract in rather than carrying a *Spec — calls this.
 func MintClaimsValues(contract []string, values map[string]string) (string, error) {
+	return MintClaimsValuesWithExtra(contract, values, nil)
+}
+
+// MintClaimsValuesWithExtra is MintClaimsValues plus a set of EXTRA, non-contract keys an
+// adopter's deployment carries (a derived discriminator, a secrets-DB key, …) that the
+// spec's claims contract does not model (EID-371 §4.3). The contract `values` are still
+// validated against the contract; the `extra` keys are merged in WITHOUT validation — the
+// adopter owns them. An `extra` key that shadows a contract key wins. Deterministic
+// sorted-key JSON.
+func MintClaimsValuesWithExtra(contract []string, values, extra map[string]string) (string, error) {
 	known := make(map[string]bool, len(contract))
 	for _, k := range contract {
 		known[k] = true
@@ -57,7 +67,14 @@ func MintClaimsValues(contract []string, values map[string]string) (string, erro
 		sort.Strings(bad)
 		return "", fmt.Errorf("MintClaims: key(s) not in the claims contract: %v", bad)
 	}
-	b, err := json.Marshal(values) // encoding/json sorts map keys → deterministic
+	merged := make(map[string]string, len(values)+len(extra))
+	for k, v := range values {
+		merged[k] = v
+	}
+	for k, v := range extra {
+		merged[k] = v
+	}
+	b, err := json.Marshal(merged) // encoding/json sorts map keys → deterministic
 	if err != nil {
 		return "", err
 	}
@@ -157,6 +174,9 @@ func ComposeCan(pointGoverned, pointAllow bool, pdp Decision) Decision {
 func (s *Spec) PointCheckSQL(object string) (string, error) {
 	for _, o := range s.Objects {
 		if o.Name == object {
+			if !o.pointCheckable() {
+				return "", fmt.Errorf("PointCheckSQL: object %q has a composite primary key (%v) — no single-column row identity to point-check", object, o.PKCols)
+			}
 			return fmt.Sprintf("SELECT EXISTS (SELECT 1 FROM %s WHERE %s = $1)", o.Table, o.pk()), nil
 		}
 	}

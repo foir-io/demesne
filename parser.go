@@ -595,7 +595,24 @@ func (p *parser) parseObject() (*Object, error) {
 		return nil, err
 	}
 	if p.acceptKw("pk") { // optional: the table's primary-key column (default "id")
-		if o.PK, err = p.ident(); err != nil {
+		if p.peekKind() == tLParen { // composite: `pk (a, b, …)` → not point-checkable
+			p.advance()
+			for {
+				col, cerr := p.ident()
+				if cerr != nil {
+					return nil, cerr
+				}
+				o.PKCols = append(o.PKCols, col)
+				if p.peekKind() == tComma {
+					p.advance()
+					continue
+				}
+				break
+			}
+			if _, err = p.expect(tRParen); err != nil {
+				return nil, err
+			}
+		} else if o.PK, err = p.ident(); err != nil {
 			return nil, err
 		}
 	}
