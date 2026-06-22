@@ -222,7 +222,13 @@ func schCheckRelationRefs(b *schBinder, o *Object, r *Relation) {
 			}
 		}
 	case ViaComposition:
-		b.reqTable(repr.Table, rc)
+		if b.reqTable(repr.Table, rc) {
+			b.reqCol(repr.Table, repr.ChildCol, rc)
+			b.reqCol(repr.Table, repr.ParentCol, rc)
+			if repr.KindCol != "" {
+				b.reqCol(repr.Table, repr.KindCol, rc+" kind")
+			}
+		}
 	case ViaClosure:
 		b.reqCol(o.Table, repr.Col, rc)
 		if b.reqTable(repr.Closure, rc) {

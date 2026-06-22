@@ -933,13 +933,31 @@ func (p *parser) parseReprRole() (Repr, error) {
 	return vr, nil
 }
 
-// parseReprComposition: composition <Table>
+// parseReprComposition: composition <Table>(<child>, <parent>) [where <col> = "<v>"]
 func (p *parser) parseReprComposition() (Repr, error) {
-	tbl, err := p.ident()
+	tbl, cols, err := p.parseTableCols()
 	if err != nil {
 		return nil, err
 	}
-	return ViaComposition{Table: tbl}, nil
+	if len(cols) != 2 {
+		return nil, p.errf("via composition needs 2 columns (child, parent), got %d", len(cols))
+	}
+	vc := ViaComposition{Table: tbl, ChildCol: cols[0], ParentCol: cols[1]}
+	if p.acceptKw("where") {
+		col, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tEq); err != nil {
+			return nil, err
+		}
+		val, err := p.expect(tString)
+		if err != nil {
+			return nil, err
+		}
+		vc.KindCol, vc.KindVal = col, val.lit
+	}
+	return vc, nil
 }
 
 // parseReprClosure: closure <Closure>(<anc>,<desc>) base <Base>(<id>,<parent>) on <col>

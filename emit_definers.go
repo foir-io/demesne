@@ -151,6 +151,9 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	if err := s.defEmitCrossObject(&out, seen, virtual); err != nil {
 		return nil, err
 	}
+	if err := s.defEmitComposition(&out, seen, virtual); err != nil {
+		return nil, err
+	}
 	if err := s.defEmitStoreManage(&out, seen, virtual); err != nil {
 		return nil, err
 	}
@@ -391,20 +394,21 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 			return fmt.Errorf("object %q: cannot soundly enumerate accessors (auth.%s would under-report) — %s", obj.Name, name, reason)
 		}
 		seen[name] = true
-		*out = append(*out, s.pureAccessorDefiner(obj))
+		*out = append(*out, s.pureAccessorDefiners(obj)...)
 	}
 	return nil
 }
 
-// accessorReprCovered reports whether the accessor enumerator (pureAccessorDefiner)
+// accessorReprCovered reports whether the accessor enumerator (pureAccessorDefiners)
 // has a reverse branch for a relation's Repr today: owner (ViaColumn), grant
-// (ViaGrant), and the role plane (ViaRole). The transitive / cross-object reprs
-// (edge, closure, group, object, composition, memberin) have NO accessor branch yet,
-// so an enumerator built over a SELECT permission that uses one silently under-reports.
-// WS1's reverse builders extend this set; until then those shapes fail closed.
+// (ViaGrant), the role plane (ViaRole), nested groups (ViaGroup), hierarchy closure
+// (ViaClosure), and composition cascade (ViaComposition — its 1-hop parent dual). The
+// remaining reprs (edge, object handled specially, memberin) have NO accessor branch
+// yet, so an enumerator built over a SELECT permission that uses one would silently
+// under-report; WS1's reverse builders extend this set, until then those fail closed.
 func accessorReprCovered(r Repr) bool {
 	switch r.(type) {
-	case ViaColumn, ViaGrant, ViaRole, ViaGroup, ViaClosure:
+	case ViaColumn, ViaGrant, ViaRole, ViaGroup, ViaClosure, ViaComposition:
 		return true
 	default:
 		return false
@@ -708,6 +712,165 @@ func (s *Spec) defEmitCrossObject(out *[]GenFn, seen map[string]bool, virtual ma
 	return nil
 }
 
+// defEmitComposition emits the 1-hop composition-parent cascade definers (EID-364):
+// auth.<obj>_composition_<rel>(p_<obj>_id, p_access) is true iff the row p_<obj>_id is
+// the composed CHILD of a PARENT the caller may access at p_access. It EXISTS-checks a
+// <repr.Table> edge whose <ChildCol> = the row (and, when discriminated, <KindCol> =
+// <KindVal>), joined to the PARENT row at <ParentCol>, and runs the object's OWN per-verb
+// RLS predicate there — chosen by access (read→select, write→update, delete→delete) — so
+// the borrowed access may be owner / ACL / public / role, evaluated at the parent. The
+// parent predicate is built from the object with composition relations PRUNED, so a
+// composition term can never re-enter this definer: the cascade is strictly 1-hop, with
+// no recursion and no cycle hang. Claims read from the GUC inside the inlined predicate
+// (like the cross-object borrow); the row id + access class are the only parameters.
+func (s *Spec) defEmitComposition(out *[]GenFn, seen map[string]bool, virtual map[string]bool) error {
+	// access class → the @rls op whose predicate that class cascades. 'write' borrows
+	// EDIT (update), never CREATE (insert) — children are never created by cascade.
+	branches := []struct{ access, op string }{
+		{"read", "select"}, {"write", "update"}, {"delete", "delete"},
+	}
+	for _, obj := range s.Objects {
+		base := obj.withoutComposition() // the 1-hop parent base (no re-entry)
+		for _, r := range obj.Relations {
+			vc, ok := r.Repr.(ViaComposition)
+			if !ok {
+				continue
+			}
+			name := obj.Name + "_composition_" + r.Name
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			var cases []string
+			for _, b := range branches {
+				pred, err := s.opPredicate(base, b.op, virtual)
+				if err != nil {
+					return err
+				}
+				if pred == "" {
+					continue // object has no @rls perm at this op → no cascade branch
+				}
+				// Each branch is a CORRELATED EXISTS over the object table at the parent
+				// row (like the cross-object borrow), NOT a join: the parent predicate
+				// references the object's columns UNQUALIFIED (tenant_id, owner_id, …), and
+				// the edge table shares some of those names (tenant_id/project_id) — a join
+				// would make them ambiguous, so the inner SELECT scopes them to the object.
+				cases = append(cases, fmt.Sprintf("WHEN '%s' THEN EXISTS (SELECT 1 FROM %s WHERE %s.%s = e.%s AND (%s))",
+					b.access, obj.Table, obj.Table, obj.pk(), vc.ParentCol, pred))
+			}
+			if len(cases) == 0 {
+				return fmt.Errorf("object %q composition relation %q: object has no cascadable @rls verb predicate", obj.Name, r.Name)
+			}
+			kindFilter := ""
+			if vc.KindCol != "" {
+				kindFilter = fmt.Sprintf(" AND e.%s = '%s'", vc.KindCol, vc.KindVal)
+			}
+			body := fmt.Sprintf(
+				"EXISTS (SELECT 1 FROM %s e WHERE e.%s = p_%s_id%s AND CASE p_access %s ELSE false END)",
+				vc.Table, vc.ChildCol, obj.Name, kindFilter, strings.Join(cases, " "))
+			*out = append(*out, GenFn{
+				Name: name,
+				Sig:  fmt.Sprintf("p_%s_id text, p_access text", obj.Name),
+				Body: body,
+			})
+		}
+	}
+	return nil
+}
+
+// opPredicate returns obj's @rls predicate for the permission mapped to <op>
+// (select/update/delete), or "" if the object has no such permission. Like
+// objectVerbPredicate but keyed on the mapref (the access class) rather than the verb
+// name, so the composition cascade can pick EDIT for a write and DELETE for a delete.
+func (s *Spec) opPredicate(obj *Object, op string, virtual map[string]bool) (string, error) {
+	for _, pm := range obj.Perms {
+		if contains(pm.Layers, "rls") && pm.Maps == op {
+			cust := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1])
+			return s.rlsPredicate(obj, pm, cust, virtual)
+		}
+	}
+	return "", nil
+}
+
+// withoutComposition returns a shallow copy of the object with every composition
+// relation removed and every permission's expression (Tree + Expr) pruned of its
+// composition leaves — the 1-hop base used to evaluate a composition PARENT's access
+// without re-entering the cascade definer.
+func (o *Object) withoutComposition() *Object {
+	comp := map[string]bool{}
+	var rels []*Relation
+	for _, r := range o.Relations {
+		if _, ok := r.Repr.(ViaComposition); ok {
+			comp[r.Name] = true
+			continue
+		}
+		rels = append(rels, r)
+	}
+	cp := *o
+	cp.Relations = rels
+	perms := make([]*Perm, 0, len(o.Perms))
+	for _, pm := range o.Perms {
+		pc := *pm
+		pc.Tree = pruneCompLeaves(pm.Tree, comp)
+		pc.Expr = pruneCompExpr(pm.Expr, comp)
+		perms = append(perms, &pc)
+	}
+	cp.Perms = perms
+	return &cp
+}
+
+// pruneCompLeaves returns a copy of the permission tree with every leaf naming a
+// composition relation removed (an emptied OR/AND/NOT subtree collapses to nil).
+func pruneCompLeaves(n *PermNode, comp map[string]bool) *PermNode {
+	if n == nil {
+		return nil
+	}
+	switch n.Op {
+	case "leaf":
+		if n.Term != nil && comp[n.Term.Ident] {
+			return nil
+		}
+		return n
+	case "or", "and":
+		var kids []*PermNode
+		for _, k := range n.Kids {
+			if pk := pruneCompLeaves(k, comp); pk != nil {
+				kids = append(kids, pk)
+			}
+		}
+		if len(kids) == 0 {
+			return nil
+		}
+		if len(kids) == 1 && n.Op == "or" {
+			return kids[0] // a single survivor needs no union wrapper
+		}
+		cp := *n
+		cp.Kids = kids
+		return &cp
+	case "not":
+		pk := pruneCompLeaves(n.Kids[0], comp)
+		if pk == nil {
+			return nil
+		}
+		cp := *n
+		cp.Kids = []*PermNode{pk}
+		return &cp
+	}
+	return n
+}
+
+// pruneCompExpr drops composition leaves from a permission's flat term list.
+func pruneCompExpr(expr []*Term, comp map[string]bool) []*Term {
+	out := make([]*Term, 0, len(expr))
+	for _, t := range expr {
+		if comp[t.Ident] {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 // defEmitStoreManage emits the write-moat dispatch (v0.28.0): for every discriminated
 // grant store named by a @store_manage write-governance object,
 // auth.<store>_manage(p_type, p_id) CASEs the discriminator to the matching KIND's
@@ -987,7 +1150,7 @@ func (s *Spec) ownerPrincipalName(obj *Object) string {
 // rows from the object's `via grant` relation, and the admin-owner exclusion from
 // the `@app_scope(exclude <rel>)` term — emitting the SAME branches in the same
 // order the SELECT predicate composes — owner branch(es), then GRANT, then ROLE.
-func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
+func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 	rels := map[string]*Relation{}
 	for _, r := range obj.Relations {
 		rels[r.Name] = r
@@ -1005,7 +1168,7 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 	// flat bucketed path below, which stays byte-identical.
 	if sel != nil && accessorTreeOp(sel.Tree) != "" {
 		if composed, ok := s.accessorTreeSQL(obj, sel.Tree, rels); ok {
-			return accessorGenFn(obj.Table, []string{composed})
+			return []GenFn{accessorGenFn(obj.Table, []string{composed})}
 		}
 	}
 
@@ -1045,7 +1208,61 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 	// read borrow from an enumerable, covered object).
 	branches = append(branches, s.defObjectAccessorBranches(obj, sel, rels)...)
 
-	return accessorGenFn(obj.Table, branches)
+	// COMPOSITION (EID-364) — a composed child's accessors are its composition PARENT's
+	// DIRECT accessors (the reverse dual of the pruned 1-hop cascade). When the object
+	// has a composition relation the enumerator SPLITS: <table>_direct_accessors holds the
+	// non-composition branches above, and <table>_accessors unions it with one cascade
+	// branch per parent edge — each recursing into _direct_accessors (never <table>_accessors
+	// itself), so the reverse walk is strictly 1-hop with no cycle, matching the RLS prune.
+	comp := s.defCompositionAccessorBranches(obj, sel, rels)
+	if len(comp) == 0 {
+		return []GenFn{accessorGenFn(obj.Table, branches)} // byte-identical: no split
+	}
+	direct := accessorGenFnNamed(obj.Table+"_direct_accessors", branches)
+	full := accessorGenFn(obj.Table, append(
+		[]string{fmt.Sprintf("SELECT d.source, d.principal_kind, d.principal_id, d.access FROM %s.%s_direct_accessors(p_id) d", s.definerSchema(), obj.Table)},
+		comp...))
+	return []GenFn{direct, full}
+}
+
+// defCompositionAccessorBranches renders the COMPOSITION enumeration branches — one per
+// ViaComposition relation in the SELECT permission. Each reverse-reads the structural
+// edge table: for this row (the child), the DIRECT accessors of every composition PARENT
+// it points at. It recurses into <table>_direct_accessors (the non-composition dual), so
+// the cascade is 1-hop and cannot loop, exactly as the forward definer prunes composition
+// from the parent predicate.
+func (s *Spec) defCompositionAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+	if sel == nil {
+		return nil
+	}
+	var branches []string
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		vc, ok := r.Repr.(ViaComposition)
+		if !ok {
+			continue
+		}
+		branches = append(branches, compositionAccessorBranch(obj.Table, s.definerSchema(), vc))
+	}
+	return branches
+}
+
+// compositionAccessorBranch is one ViaComposition relation's reverse branch: the DIRECT
+// accessors of each parent the child row (p_id) is composed under via <Table>.
+func compositionAccessorBranch(table, schema string, vc ViaComposition) string {
+	conds := []string{fmt.Sprintf("e.%s = p_id", vc.ChildCol)}
+	if vc.KindCol != "" {
+		conds = append(conds, fmt.Sprintf("e.%s = '%s'", vc.KindCol, vc.KindVal))
+	}
+	return fmt.Sprintf(
+		"SELECT a.source, a.principal_kind, a.principal_id, a.access\n    FROM %s e\n    JOIN LATERAL %s.%s_direct_accessors(e.%s) a ON true\n    WHERE %s",
+		vc.Table, schema, table, vc.ParentCol, strings.Join(conds, " AND "))
 }
 
 // defGroupAccessorBranches renders the GROUP enumeration branches — one per ViaGroup
@@ -1446,8 +1663,15 @@ func (s *Spec) roleAccessorBranch(obj *Object, adminExcl string) (string, bool) 
 // accessorGenFn wraps the UNION-ALL of accessor branches in the set-returning
 // SECURITY DEFINER shape shared by the descriptor and pure enumerators.
 func accessorGenFn(table string, branches []string) GenFn {
+	return accessorGenFnNamed(table+"_accessors", branches)
+}
+
+// accessorGenFnNamed is accessorGenFn with an explicit function name — used to emit the
+// <table>_direct_accessors split alongside <table>_accessors when an object cascades
+// composition (the full enumerator unions the direct one with the 1-hop parent walk).
+func accessorGenFnNamed(name string, branches []string) GenFn {
 	return GenFn{
-		Name:    table + "_accessors",
+		Name:    name,
 		Sig:     "p_id text",
 		Returns: "TABLE(source text, principal_kind text, principal_id text, access text)",
 		RawBody: true,

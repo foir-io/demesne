@@ -32,6 +32,7 @@ The compiled mechanisms fall into three cost classes:
 | 9 | Role (computed userset) | `computed_userset` rewrite | `rolestore … ; subject admin roles configurable admin` + `vocabulary/preset/rank` | role definer `is_<level>_<role>` `EXISTS` (+ verb PDP) | Definer | ✅ |
 | 10 | Nested groups (userset-of-usersets) | group-in-group `this#member` | `relation … via group C(group,member) edge E(member,group) on col` | membership-closure + transitive term | Closure | ✅ |
 | 11 | Cross-object reference | `tuple_to_userset` (this#rel → that#rel) | `relation … via object Other->verb on col` | borrow the other object's predicate via definer at the related row | Definer | ✅ |
+| 11b | Composition-parent cascade (1-hop) | `tuple_to_userset` over a structural EDGE table, same object, calling verb | `relation … via composition Edge(child, parent) [where kind = "v"]` | a definer over the edge runs the PARENT row's own predicate at the CALLING verb (read/write/delete), with composition **pruned** from that predicate → strictly 1-hop, no recursion / cycle hang; the accessor enumerator splits `<t>_direct_accessors` + the 1-hop reverse cascade | Definer | ✅ |
 | **Composition & verbs** |
 | 12 | Union / intersection / exclusion | `userset_rewrite` (∪ / ∩ / ∖) | `permission p = a + b` / `a and b` / `a and not b` | boolean predicate composition; negation fail-closed | (max of operands) | ✅ |
 | 13 | Verb-level capability | — (RLS can't see verbs) | `permission publish = content:publish @pdp` | app-layer `PDP.Authorize` | (PDP) | ✅ |

@@ -872,10 +872,12 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		}
 		return []string{fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), repr.Table, s.claim(custClaim), pk, access)}, nil
 	case ViaComposition:
-		if err := reqClaim(custClaim, obj, "composition relation "+t.Ident); err != nil {
-			return nil, err
-		}
-		return []string{fmt.Sprintf("%s.%s_composition_%s(%s, %s, '%s')", s.definerSchema(), obj.Name, r.Name, s.claim(custClaim), pk, access)}, nil
+		// 1-hop composition cascade (EID-364): this row is accessible if the caller can
+		// access (at the SAME verb) its composition PARENT, reached via the structural
+		// edge table. The compiler owns auth.<obj>_composition_<rel>(<row pk>, <access>);
+		// claims read from the GUC inside the definer (like via object), so none is
+		// threaded through the call here.
+		return []string{fmt.Sprintf("%s.%s_composition_%s(%s, '%s')", s.definerSchema(), obj.Name, r.Name, pk, access)}, nil
 	case ViaClosure:
 		// Unbounded-depth reachability (WS3 Phase C): the row's hierarchy node
 		// (repr.Col) is reachable from the subject's granted ancestor (its claim)

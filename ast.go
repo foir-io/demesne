@@ -459,8 +459,27 @@ type ViaRole struct {
 	RankMin string
 }
 
-// ViaComposition: `via composition <Table>` — 1-hop composition-parent cascade.
-type ViaComposition struct{ Table string }
+// ViaComposition: `via composition <Table>(<child>, <parent>) [where <col> = "<v>"]`
+// — a 1-hop composition-parent cascade over a STRUCTURAL edge table (EID-364). This
+// row is accessible (at the SAME verb the calling permission carries) iff it is the
+// composed CHILD of a PARENT the caller may access: an edge in <Table> whose
+// <ChildCol> equals this row's pk (and, when discriminated, whose <KindCol> = <KindVal>)
+// points at a <ParentCol> the caller passes the object's own predicate for. It
+// compiles to a SECURITY DEFINER auth.<obj>_composition_<rel>(<row pk>, <access>) that
+// EXISTS-checks the edge joined to the PARENT row and runs the object's per-verb RLS
+// predicate there — with composition relations PRUNED, so the cascade is strictly
+// 1-hop (a composition term in the parent predicate would re-enter this definer →
+// unbounded recursion / a cycle hang). Unlike ViaObject (cross-object, FK COLUMN, a
+// STATIC verb), this is SAME-object, EDGE-table-mediated, and cascades the calling
+// verb — the shape a record→record composition grant needs. Claims read from the GUC
+// inside the inlined predicate (like ViaObject); only the row id + access class are args.
+type ViaComposition struct {
+	Table     string // the structural edge table (e.g. record_relationships)
+	ChildCol  string // the edge column equal to THIS row's pk (the composed child)
+	ParentCol string // the edge column naming the parent row whose access is borrowed
+	KindCol   string // "" when the edge is not kind-discriminated
+	KindVal   string // the constant this relation's edges carry in KindCol
+}
 
 // ViaClosure: `via closure <Closure>(<anc>,<desc>) base <Base>(<id>,<parent>) on <col>`
 // — UNBOUNDED-depth reachability over a self-referential hierarchy (WS3 Phase C).
@@ -515,8 +534,8 @@ type ViaGroup struct {
 // this object's <col>." It compiles to a SECURITY DEFINER that runs the OTHER
 // object's FULL <verb> RLS predicate for the row at <col> — so the borrowed
 // permission may itself be roles / ACLs / groups / boolean, evaluated at the
-// related object, still entirely in the database. (Supersedes the never-finished
-// ViaComposition.)
+// related object, still entirely in the database. (ViaComposition is the sibling
+// primitive: the SAME-object 1-hop cascade over a structural EDGE table.)
 type ViaObject struct {
 	Object string // the other object whose permission is borrowed
 	Verb   string // its permission verb
