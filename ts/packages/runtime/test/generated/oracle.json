@@ -1,0 +1,1548 @@
+{
+  "adminOwner": {
+    "cases": [
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, true)",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET LOCAL ROLE authenticated",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET LOCAL ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, true)"
+        ],
+        "input": {
+          "local": true
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, false)",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET ROLE authenticated",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, false)"
+        ],
+        "input": {
+          "local": false
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1)",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.checkSQL"
+      },
+      {
+        "expect": "SELECT id FROM records WHERE id = ANY($1)",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.checkManySQL"
+      },
+      {
+        "expect": "SELECT id FROM records WHERE ($1::text IS NULL OR id::text \u003e $1::text) ORDER BY id::text LIMIT $2",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.listResourcesSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.checkEditSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.listResourcesFastSQL"
+      },
+      {
+        "expect": "SELECT ra.tenant_id, ra.project_id, r.key FROM ra ra JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'admin' AND ra.principal_id = $1 AND ra.revoked_at IS NULL",
+        "kind": "holds.assignmentsSQL"
+      },
+      {
+        "expect": "UPDATE ra SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+        "kind": "roleAssignment.revokeSQL"
+      },
+      {
+        "expect": "SELECT id, principal_kind, principal_id, role_id, tenant_id, project_id, revoked_at FROM ra WHERE role_id = $1",
+        "kind": "roleAssignment.listForRoleSQL"
+      },
+      {
+        "expect": "SELECT a.id, a.principal_id, a.role_id, r.key FROM ra a JOIN roles r ON r.id = a.role_id WHERE a.principal_kind = 'admin' AND a.principal_id = $1 AND a.revoked_at IS NULL",
+        "kind": "roleAssignment.listForPrincipalSQL"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "admin",
+            "u1",
+            "r1",
+            "s1",
+            "s2"
+          ],
+          "sql": "INSERT INTO ra (id, principal_kind, principal_id, role_id, tenant_id, project_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, principal_kind, principal_id, role_id, tenant_id, project_id, revoked_at"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignInsert"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "admin",
+            "u1",
+            "r1",
+            "s1",
+            "s2"
+          ],
+          "sql": "INSERT INTO ra (id, principal_kind, principal_id, role_id, tenant_id, project_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (principal_kind, principal_id, role_id, COALESCE(tenant_id, ''), COALESCE(project_id, '')) DO UPDATE SET revoked_at = NULL RETURNING id, principal_kind, principal_id, role_id, tenant_id, project_id, revoked_at"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignTouchInsert"
+      },
+      {
+        "expect": "SELECT access_mode FROM records WHERE id = $1",
+        "input": {
+          "object": "record"
+        },
+        "kind": "resourceAccess.modeSQL"
+      },
+      {
+        "expect": "UPDATE records SET access_mode = $1 WHERE id = $2",
+        "input": {
+          "object": "record"
+        },
+        "kind": "resourceAccess.setVisibilitySQL"
+      },
+      {
+        "expect": "SELECT principal_kind, principal_id, access, created_at FROM resource_acl WHERE resource_id = $1 AND resource_type = $2 ORDER BY created_at",
+        "input": {
+          "object": "record"
+        },
+        "kind": "resourceAccess.listGrantsSQL"
+      },
+      {
+        "expect": "SELECT source, principal_kind, principal_id, access FROM auth.records_accessors($1)",
+        "input": {
+          "object": "record"
+        },
+        "kind": "resourceAccess.accessorsSQL"
+      },
+      {
+        "expect": [
+          "rec1",
+          "record"
+        ],
+        "input": {
+          "object": "record"
+        },
+        "kind": "resourceAccess.listGrantsArgs"
+      },
+      {
+        "expect": {
+          "args": [
+            "s1",
+            "s2",
+            "record",
+            "rec1",
+            "k1",
+            "p1",
+            "read"
+          ],
+          "sql": "INSERT INTO resource_acl (tenant_id, project_id, resource_type, resource_id, principal_kind, principal_id, access) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (resource_type, resource_id, principal_kind, principal_id, access) DO NOTHING RETURNING created_at"
+        },
+        "input": {
+          "access": "read",
+          "kind": "k1",
+          "object": "record",
+          "principalID": "p1",
+          "resourceID": "rec1",
+          "scope": [
+            "s1",
+            "s2"
+          ]
+        },
+        "kind": "resourceAccess.grantInsert"
+      },
+      {
+        "expect": {
+          "args": [
+            "rec1",
+            "record",
+            "k1",
+            "p1",
+            "read"
+          ],
+          "sql": "DELETE FROM resource_acl WHERE resource_id = $1 AND resource_type = $2 AND principal_kind = $3 AND principal_id = $4 AND access = $5"
+        },
+        "input": {
+          "access": "read",
+          "kind": "k1",
+          "object": "record",
+          "principalID": "p1",
+          "resourceID": "rec1"
+        },
+        "kind": "resourceAccess.revokeDelete"
+      }
+    ],
+    "projections": {
+      "appSurface": [
+        {
+          "object": "record",
+          "table": "records",
+          "pk": "id",
+          "flatListFn": "",
+          "asyncCheckSQL": "",
+          "editCheckSQL": ""
+        }
+      ],
+      "claims": {
+        "setting": "request.jwt.claims",
+        "cast": "json",
+        "role": "authenticated",
+        "contract": [
+          "customer_id",
+          "project_id",
+          "sub",
+          "tenant_id"
+        ],
+        "entries": [
+          {
+            "key": "customer_id",
+            "level": "",
+            "subjects": [
+              "customer"
+            ]
+          },
+          {
+            "key": "project_id",
+            "level": "project",
+            "subjects": []
+          },
+          {
+            "key": "sub",
+            "level": "",
+            "subjects": [
+              "admin",
+              "service"
+            ]
+          },
+          {
+            "key": "tenant_id",
+            "level": "tenant",
+            "subjects": []
+          }
+        ],
+        "subjects": [
+          {
+            "name": "admin",
+            "identifies": "sub"
+          },
+          {
+            "name": "customer",
+            "identifies": "customer_id"
+          },
+          {
+            "name": "service",
+            "identifies": "sub"
+          }
+        ],
+        "levels": [
+          {
+            "name": "platform",
+            "claimKey": "platform_id",
+            "virtual": true
+          },
+          {
+            "name": "tenant",
+            "claimKey": "tenant_id",
+            "virtual": false
+          },
+          {
+            "name": "project",
+            "claimKey": "project_id",
+            "virtual": false
+          }
+        ]
+      },
+      "holdsResolver": {
+        "assignments": "ra",
+        "kindCol": "principal_kind",
+        "kindVal": "admin",
+        "subjectCol": "principal_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "roleCol": "role_id",
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "",
+        "vocab": {
+          "name": "admin",
+          "permissions": [
+            "c:r"
+          ],
+          "presets": [
+            {
+              "name": "pa",
+              "star": false,
+              "set": [
+                "c:r"
+              ]
+            }
+          ],
+          "rank": []
+        }
+      },
+      "resourceAccess": {
+        "record": {
+          "table": "records",
+          "scopeCols": [
+            "tenant_id",
+            "project_id"
+          ],
+          "modeCol": "access_mode",
+          "pk": "id",
+          "readModes": [
+            "public_project"
+          ],
+          "grantKinds": [
+            "customer"
+          ],
+          "aclTable": "resource_acl",
+          "recordCol": "resource_id",
+          "kindCol": "principal_kind",
+          "principalCol": "principal_id",
+          "accessCol": "access",
+          "discrimCol": "resource_type",
+          "discrimVal": "record",
+          "accessorFn": "auth.records_accessors"
+        }
+      },
+      "roleAssignment": {
+        "assignments": "ra",
+        "pk": "id",
+        "kindCol": "principal_kind",
+        "kindVal": "admin",
+        "subjectCol": "principal_id",
+        "roleCol": "role_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "grantedAtCol": "",
+        "grantedByCol": "",
+        "revokedByCol": "",
+        "extraCols": [],
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": ""
+      }
+    }
+  },
+  "fullGrant": {
+    "cases": [
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, true)",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET LOCAL ROLE authenticated",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET LOCAL ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, true)"
+        ],
+        "input": {
+          "local": true
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, false)",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET ROLE authenticated",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, false)"
+        ],
+        "input": {
+          "local": false
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT EXISTS (SELECT 1 FROM things WHERE id = $1)",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.checkSQL"
+      },
+      {
+        "expect": "SELECT id FROM things WHERE id = ANY($1)",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.checkManySQL"
+      },
+      {
+        "expect": "SELECT id FROM things WHERE ($1::text IS NULL OR id::text \u003e $1::text) ORDER BY id::text LIMIT $2",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.listResourcesSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.checkEditSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.listResourcesFastSQL"
+      },
+      {
+        "expect": "UPDATE impersonation_grants SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL RETURNING id, grantee_id, tenant_id, granted_by, expires_at, created_at, revoked_at, revoked_by, reason",
+        "input": {
+          "grant": "impersonation"
+        },
+        "kind": "levelGrant.revokeSQL"
+      },
+      {
+        "expect": "SELECT id, grantee_id, tenant_id, granted_by, expires_at, created_at, revoked_at, revoked_by, reason FROM impersonation_grants WHERE ($1::text IS NULL OR grantee_id = $1) AND ($2::text IS NULL OR tenant_id = $2) AND (NOT $3::boolean OR (revoked_at IS NULL AND expires_at \u003e now())) ORDER BY created_at DESC",
+        "input": {
+          "grant": "impersonation"
+        },
+        "kind": "levelGrant.listSQL"
+      },
+      {
+        "expect": {
+          "args": [
+            "g1",
+            "u1",
+            "l1",
+            "gb1",
+            "2030-01-01T00:00:00Z",
+            "x_reason"
+          ],
+          "sql": "INSERT INTO impersonation_grants (id, grantee_id, tenant_id, granted_by, expires_at, reason) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, grantee_id, tenant_id, granted_by, expires_at, created_at, revoked_at, revoked_by, reason"
+        },
+        "input": {
+          "expiresAt": "2030-01-01T00:00:00Z",
+          "extra": {
+            "reason": "x_reason"
+          },
+          "grant": "impersonation",
+          "grantID": "g1",
+          "grantedBy": "gb1",
+          "granteeID": "u1",
+          "levelID": "l1"
+        },
+        "kind": "levelGrant.grantInsert"
+      }
+    ],
+    "projections": {
+      "appSurface": [
+        {
+          "object": "thing",
+          "table": "things",
+          "pk": "id",
+          "flatListFn": "",
+          "asyncCheckSQL": "",
+          "editCheckSQL": ""
+        }
+      ],
+      "claims": {
+        "setting": "request.jwt.claims",
+        "cast": "json",
+        "role": "authenticated",
+        "contract": [
+          "sub",
+          "tenant_id"
+        ],
+        "entries": [
+          {
+            "key": "sub",
+            "level": "",
+            "subjects": [
+              "admin",
+              "operator"
+            ]
+          },
+          {
+            "key": "tenant_id",
+            "level": "tenant",
+            "subjects": []
+          }
+        ],
+        "subjects": [
+          {
+            "name": "operator",
+            "identifies": "sub"
+          },
+          {
+            "name": "admin",
+            "identifies": "sub"
+          }
+        ],
+        "levels": [
+          {
+            "name": "platform",
+            "claimKey": "platform_id",
+            "virtual": true
+          },
+          {
+            "name": "tenant",
+            "claimKey": "tenant_id",
+            "virtual": false
+          }
+        ]
+      },
+      "grants": {
+        "impersonation": {
+          "name": "impersonation",
+          "level": "tenant",
+          "table": "impersonation_grants",
+          "granteeCol": "grantee_id",
+          "levelCol": "tenant_id",
+          "activeCol": "revoked_at",
+          "expiresCol": "expires_at",
+          "pk": "id",
+          "grantedByCol": "granted_by",
+          "revokedByCol": "revoked_by",
+          "createdAtCol": "created_at",
+          "extraCols": [
+            "reason"
+          ]
+        }
+      }
+    }
+  },
+  "fullRoleStore": {
+    "cases": [
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, true)",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET LOCAL ROLE authenticated",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET LOCAL ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, true)"
+        ],
+        "input": {
+          "local": true
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, false)",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET ROLE authenticated",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, false)"
+        ],
+        "input": {
+          "local": false
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT EXISTS (SELECT 1 FROM things WHERE id = $1)",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.checkSQL"
+      },
+      {
+        "expect": "SELECT id FROM things WHERE id = ANY($1)",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.checkManySQL"
+      },
+      {
+        "expect": "SELECT id FROM things WHERE ($1::text IS NULL OR id::text \u003e $1::text) ORDER BY id::text LIMIT $2",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.listResourcesSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.checkEditSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.listResourcesFastSQL"
+      },
+      {
+        "expect": "SELECT ra.tenant_id, ra.project_id, r.key, r.permissions FROM role_assignments ra JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'admin' AND ra.principal_id = $1 AND ra.revoked_at IS NULL",
+        "kind": "holds.assignmentsSQL"
+      },
+      {
+        "expect": "UPDATE role_assignments SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL",
+        "kind": "roleAssignment.revokeSQL"
+      },
+      {
+        "expect": "SELECT id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_at, granted_by, revoked_at, revoked_by FROM role_assignments WHERE role_id = $1 ORDER BY granted_at DESC",
+        "kind": "roleAssignment.listForRoleSQL"
+      },
+      {
+        "expect": "SELECT a.id, a.principal_id, a.role_id, a.granted_at, a.granted_by, r.key, r.permissions FROM role_assignments a JOIN roles r ON r.id = a.role_id WHERE a.principal_kind = 'admin' AND a.principal_id = $1 AND a.revoked_at IS NULL",
+        "kind": "roleAssignment.listForPrincipalSQL"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "admin",
+            "u1",
+            "r1",
+            "s1",
+            "s2",
+            "g1"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_at, granted_by, revoked_at, revoked_by"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignInsert"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "admin",
+            "u1",
+            "r1",
+            "s1",
+            "s2",
+            "g1"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_by) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (principal_kind, principal_id, role_id, COALESCE(tenant_id, ''), COALESCE(project_id, '')) DO UPDATE SET revoked_at = NULL, revoked_by = NULL, granted_at = now(), granted_by = EXCLUDED.granted_by RETURNING id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_at, granted_by, revoked_at, revoked_by"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignTouchInsert"
+      }
+    ],
+    "projections": {
+      "appSurface": [
+        {
+          "object": "thing",
+          "table": "things",
+          "pk": "id",
+          "flatListFn": "",
+          "asyncCheckSQL": "",
+          "editCheckSQL": ""
+        }
+      ],
+      "claims": {
+        "setting": "request.jwt.claims",
+        "cast": "json",
+        "role": "authenticated",
+        "contract": [
+          "project_id",
+          "sub",
+          "tenant_id"
+        ],
+        "entries": [
+          {
+            "key": "project_id",
+            "level": "project",
+            "subjects": []
+          },
+          {
+            "key": "sub",
+            "level": "",
+            "subjects": [
+              "admin"
+            ]
+          },
+          {
+            "key": "tenant_id",
+            "level": "tenant",
+            "subjects": []
+          }
+        ],
+        "subjects": [
+          {
+            "name": "admin",
+            "identifies": "sub"
+          }
+        ],
+        "levels": [
+          {
+            "name": "tenant",
+            "claimKey": "tenant_id",
+            "virtual": false
+          },
+          {
+            "name": "project",
+            "claimKey": "project_id",
+            "virtual": false
+          }
+        ]
+      },
+      "holdsResolver": {
+        "assignments": "role_assignments",
+        "kindCol": "principal_kind",
+        "kindVal": "admin",
+        "subjectCol": "principal_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "roleCol": "role_id",
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "permissions",
+        "vocab": {
+          "name": "admin",
+          "permissions": [
+            "a:read"
+          ],
+          "presets": [
+            {
+              "name": "v",
+              "star": false,
+              "set": [
+                "a:read"
+              ]
+            }
+          ],
+          "rank": []
+        }
+      },
+      "roleAssignment": {
+        "assignments": "role_assignments",
+        "pk": "id",
+        "kindCol": "principal_kind",
+        "kindVal": "admin",
+        "subjectCol": "principal_id",
+        "roleCol": "role_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "grantedAtCol": "granted_at",
+        "grantedByCol": "granted_by",
+        "revokedByCol": "revoked_by",
+        "extraCols": [],
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "permissions"
+      }
+    }
+  },
+  "holds": {
+    "cases": [
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, true)",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET LOCAL ROLE authenticated",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET LOCAL ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, true)"
+        ],
+        "input": {
+          "local": true
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, false)",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET ROLE authenticated",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, false)"
+        ],
+        "input": {
+          "local": false
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT ra.tenant_id, ra.team_id, r.key, r.perms FROM role_assignments ra JOIN roles_tbl r ON r.id = ra.role_id WHERE ra.principal_kind = 'member' AND ra.principal_id = $1 AND ra.revoked_at IS NULL",
+        "kind": "holds.assignmentsSQL"
+      },
+      {
+        "expect": "UPDATE role_assignments SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+        "kind": "roleAssignment.revokeSQL"
+      },
+      {
+        "expect": "SELECT id, principal_kind, principal_id, role_id, tenant_id, team_id, revoked_at FROM role_assignments WHERE role_id = $1",
+        "kind": "roleAssignment.listForRoleSQL"
+      },
+      {
+        "expect": "SELECT a.id, a.principal_id, a.role_id, r.key, r.perms FROM role_assignments a JOIN roles_tbl r ON r.id = a.role_id WHERE a.principal_kind = 'member' AND a.principal_id = $1 AND a.revoked_at IS NULL",
+        "kind": "roleAssignment.listForPrincipalSQL"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "member",
+            "u1",
+            "r1",
+            "s1",
+            "s2"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, team_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, principal_kind, principal_id, role_id, tenant_id, team_id, revoked_at"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignInsert"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "member",
+            "u1",
+            "r1",
+            "s1",
+            "s2"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, team_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (principal_kind, principal_id, role_id, COALESCE(tenant_id, ''), COALESCE(team_id, '')) DO UPDATE SET revoked_at = NULL RETURNING id, principal_kind, principal_id, role_id, tenant_id, team_id, revoked_at"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignTouchInsert"
+      }
+    ],
+    "projections": {
+      "claims": {
+        "setting": "request.jwt.claims",
+        "cast": "json",
+        "role": "authenticated",
+        "contract": [
+          "sub",
+          "team_id",
+          "tenant_id"
+        ],
+        "entries": [
+          {
+            "key": "sub",
+            "level": "",
+            "subjects": [
+              "member"
+            ]
+          },
+          {
+            "key": "team_id",
+            "level": "team",
+            "subjects": []
+          },
+          {
+            "key": "tenant_id",
+            "level": "tenant",
+            "subjects": []
+          }
+        ],
+        "subjects": [
+          {
+            "name": "member",
+            "identifies": "sub"
+          }
+        ],
+        "levels": [
+          {
+            "name": "org",
+            "claimKey": "org_id",
+            "virtual": true
+          },
+          {
+            "name": "tenant",
+            "claimKey": "tenant_id",
+            "virtual": false
+          },
+          {
+            "name": "team",
+            "claimKey": "team_id",
+            "virtual": false
+          }
+        ]
+      },
+      "holdsResolver": {
+        "assignments": "role_assignments",
+        "kindCol": "principal_kind",
+        "kindVal": "member",
+        "subjectCol": "principal_id",
+        "scopeCols": [
+          "tenant_id",
+          "team_id"
+        ],
+        "revokedCol": "revoked_at",
+        "roleCol": "role_id",
+        "rolesTable": "roles_tbl",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "perms",
+        "vocab": {
+          "name": "roles",
+          "permissions": [
+            "docs:read",
+            "docs:write",
+            "docs:publish",
+            "admin:read",
+            "admin:write"
+          ],
+          "presets": [
+            {
+              "name": "viewer",
+              "star": false,
+              "set": [
+                "docs:read",
+                "admin:read"
+              ]
+            },
+            {
+              "name": "editor",
+              "star": false,
+              "set": [
+                "viewer",
+                "docs:write",
+                "docs:publish"
+              ]
+            },
+            {
+              "name": "owner",
+              "star": true,
+              "set": []
+            }
+          ],
+          "rank": [
+            "owner",
+            "editor",
+            "viewer"
+          ]
+        }
+      },
+      "roleAssignment": {
+        "assignments": "role_assignments",
+        "pk": "id",
+        "kindCol": "principal_kind",
+        "kindVal": "member",
+        "subjectCol": "principal_id",
+        "roleCol": "role_id",
+        "scopeCols": [
+          "tenant_id",
+          "team_id"
+        ],
+        "revokedCol": "revoked_at",
+        "grantedAtCol": "",
+        "grantedByCol": "",
+        "revokedByCol": "",
+        "extraCols": [],
+        "rolesTable": "roles_tbl",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "perms"
+      }
+    }
+  },
+  "rpScoped": {
+    "cases": [
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, true)",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET LOCAL ROLE authenticated",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET LOCAL ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, true)"
+        ],
+        "input": {
+          "local": true
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, false)",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET ROLE authenticated",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, false)"
+        ],
+        "input": {
+          "local": false
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT EXISTS (SELECT 1 FROM things WHERE id = $1)",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.checkSQL"
+      },
+      {
+        "expect": "SELECT id FROM things WHERE id = ANY($1)",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.checkManySQL"
+      },
+      {
+        "expect": "SELECT id FROM things WHERE ($1::text IS NULL OR id::text \u003e $1::text) ORDER BY id::text LIMIT $2",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.listResourcesSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.checkEditSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "thing"
+        },
+        "kind": "appSurface.listResourcesFastSQL"
+      },
+      {
+        "expect": "SELECT ra.tenant_id, ra.project_id, r.key FROM role_assignments ra JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'admin' AND ra.principal_id = $1 AND ra.revoked_at IS NULL",
+        "kind": "holds.assignmentsSQL"
+      },
+      {
+        "expect": "UPDATE role_assignments SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL",
+        "kind": "roleAssignment.revokeSQL"
+      },
+      {
+        "expect": "SELECT id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_at, granted_by, revoked_at, revoked_by, client_id FROM role_assignments WHERE role_id = $1 ORDER BY granted_at DESC",
+        "kind": "roleAssignment.listForRoleSQL"
+      },
+      {
+        "expect": "SELECT a.id, a.principal_id, a.role_id, a.granted_at, a.granted_by, r.key FROM role_assignments a JOIN roles r ON r.id = a.role_id WHERE a.principal_kind = 'admin' AND a.principal_id = $1 AND a.revoked_at IS NULL",
+        "kind": "roleAssignment.listForPrincipalSQL"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "admin",
+            "u1",
+            "r1",
+            "s1",
+            "s2",
+            "g1",
+            "x_client_id"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_by, client_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_at, granted_by, revoked_at, revoked_by, client_id"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {
+            "client_id": "x_client_id"
+          },
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignInsert"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "admin",
+            "u1",
+            "r1",
+            "s1",
+            "s2",
+            "g1",
+            "x_client_id"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_by, client_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (principal_kind, principal_id, role_id, COALESCE(tenant_id, ''), COALESCE(project_id, ''), COALESCE(client_id, '')) DO UPDATE SET revoked_at = NULL, revoked_by = NULL, granted_at = now(), granted_by = EXCLUDED.granted_by RETURNING id, principal_kind, principal_id, role_id, tenant_id, project_id, granted_at, granted_by, revoked_at, revoked_by, client_id"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {
+            "client_id": "x_client_id"
+          },
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignTouchInsert"
+      }
+    ],
+    "projections": {
+      "appSurface": [
+        {
+          "object": "thing",
+          "table": "things",
+          "pk": "id",
+          "flatListFn": "",
+          "asyncCheckSQL": "",
+          "editCheckSQL": ""
+        }
+      ],
+      "claims": {
+        "setting": "request.jwt.claims",
+        "cast": "json",
+        "role": "authenticated",
+        "contract": [
+          "project_id",
+          "sub",
+          "tenant_id"
+        ],
+        "entries": [
+          {
+            "key": "project_id",
+            "level": "project",
+            "subjects": []
+          },
+          {
+            "key": "sub",
+            "level": "",
+            "subjects": [
+              "admin"
+            ]
+          },
+          {
+            "key": "tenant_id",
+            "level": "tenant",
+            "subjects": []
+          }
+        ],
+        "subjects": [
+          {
+            "name": "admin",
+            "identifies": "sub"
+          }
+        ],
+        "levels": [
+          {
+            "name": "tenant",
+            "claimKey": "tenant_id",
+            "virtual": false
+          },
+          {
+            "name": "project",
+            "claimKey": "project_id",
+            "virtual": false
+          }
+        ]
+      },
+      "holdsResolver": {
+        "assignments": "role_assignments",
+        "kindCol": "principal_kind",
+        "kindVal": "admin",
+        "subjectCol": "principal_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "roleCol": "role_id",
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "",
+        "vocab": {
+          "name": "admin",
+          "permissions": [
+            "a:read"
+          ],
+          "presets": [
+            {
+              "name": "v",
+              "star": false,
+              "set": [
+                "a:read"
+              ]
+            }
+          ],
+          "rank": []
+        }
+      },
+      "roleAssignment": {
+        "assignments": "role_assignments",
+        "pk": "id",
+        "kindCol": "principal_kind",
+        "kindVal": "admin",
+        "subjectCol": "principal_id",
+        "roleCol": "role_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "grantedAtCol": "granted_at",
+        "grantedByCol": "granted_by",
+        "revokedByCol": "revoked_by",
+        "extraCols": [
+          "client_id"
+        ],
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": ""
+      }
+    }
+  },
+  "runtime": {
+    "cases": [
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, true)",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET LOCAL ROLE authenticated",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET LOCAL ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, true)"
+        ],
+        "input": {
+          "local": true
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, false)",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET ROLE authenticated",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, false)"
+        ],
+        "input": {
+          "local": false
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1)",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.checkSQL"
+      },
+      {
+        "expect": "SELECT id FROM records WHERE id = ANY($1)",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.checkManySQL"
+      },
+      {
+        "expect": "SELECT id FROM records WHERE ($1::text IS NULL OR id::text \u003e $1::text) ORDER BY id::text LIMIT $2",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.listResourcesSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.checkEditSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.listResourcesFastSQL"
+      }
+    ],
+    "projections": {
+      "appSurface": [
+        {
+          "object": "record",
+          "table": "records",
+          "pk": "id",
+          "flatListFn": "",
+          "asyncCheckSQL": "",
+          "editCheckSQL": ""
+        }
+      ],
+      "claims": {
+        "setting": "request.jwt.claims",
+        "cast": "json",
+        "role": "authenticated",
+        "contract": [
+          "customer_id",
+          "project_id",
+          "sub",
+          "tenant_id"
+        ],
+        "entries": [
+          {
+            "key": "customer_id",
+            "level": "",
+            "subjects": [
+              "customer"
+            ]
+          },
+          {
+            "key": "project_id",
+            "level": "project",
+            "subjects": []
+          },
+          {
+            "key": "sub",
+            "level": "",
+            "subjects": [
+              "admin"
+            ]
+          },
+          {
+            "key": "tenant_id",
+            "level": "tenant",
+            "subjects": []
+          }
+        ],
+        "subjects": [
+          {
+            "name": "admin",
+            "identifies": "sub"
+          },
+          {
+            "name": "customer",
+            "identifies": "customer_id"
+          }
+        ],
+        "levels": [
+          {
+            "name": "tenant",
+            "claimKey": "tenant_id",
+            "virtual": false
+          },
+          {
+            "name": "project",
+            "claimKey": "project_id",
+            "virtual": false
+          }
+        ]
+      }
+    }
+  }
+}

@@ -24,6 +24,10 @@ USAGE:
   demesne validate <spec.demesne>              parse + validate a spec
   demesne emit     <spec.demesne> [kind]       print generated SQL/Go
                                                kind: rls|definers|enablement|triggers|claims|pdp|all (default all)
+                                               --target ts: emit TypeScript (@demesne/runtime)
+                                                            kind: claims|pdp|projections|all
+                                               --profile supabase: emit the Supabase
+                                                            deployment profile (access-token hook)
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
   demesne scaffold   [-i] <dsn>                generate a STARTER spec from the schema (-i: interactive)
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role
@@ -120,6 +124,8 @@ func cmdValidate(args []string) error {
 }
 
 func cmdEmit(args []string) error {
+	target, args := stripTargetFlag(args)
+	profile, args := stripProfileFlag(args)
 	if err := need(args, 1, "<spec.demesne>"); err != nil {
 		return err
 	}
@@ -130,6 +136,18 @@ func cmdEmit(args []string) error {
 	kind := "all"
 	if len(args) > 1 {
 		kind = args[1]
+	}
+	// A deployment profile is platform glue, independent of the target language.
+	if profile != "" {
+		return emitProfile(s, profile)
+	}
+	switch target {
+	case "go":
+		// default target unchanged.
+	case "ts":
+		return emitTS(s, kind)
+	default:
+		return fmt.Errorf("unknown --target %q (go|ts)", target)
 	}
 	switch kind {
 	case "definers":
@@ -155,6 +173,96 @@ func cmdEmit(args []string) error {
 	default:
 		return fmt.Errorf("unknown emit kind %q (rls|definers|enablement|triggers|claims|pdp|all)", kind)
 	}
+}
+
+// stripFlag removes a `--<name> <v>` / `--<name>=<v>` flag from args (anywhere,
+// order-independent), returning its value (or def) and the remaining positionals.
+func stripFlag(args []string, name, def string) (string, []string) {
+	val := def
+	pfx := "--" + name + "="
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--"+name:
+			if i+1 < len(args) {
+				val = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, pfx):
+			val = strings.TrimPrefix(a, pfx)
+		default:
+			out = append(out, a)
+		}
+	}
+	return val, out
+}
+
+// stripTargetFlag (the emit-target language) / stripProfileFlag (the deployment profile).
+func stripTargetFlag(args []string) (string, []string)  { return stripFlag(args, "target", "go") }
+func stripProfileFlag(args []string) (string, []string) { return stripFlag(args, "profile", "") }
+
+// emitProfile dispatches a deployment profile — the platform-specific deployment glue
+// (the deployment-side analogue of an emit target).
+func emitProfile(s *demesne.Spec, profile string) error {
+	switch profile {
+	case "supabase":
+		out, err := s.EmitSupabaseProfile()
+		if err != nil {
+			return err
+		}
+		fmt.Println(out)
+		return nil
+	default:
+		return fmt.Errorf("unknown --profile %q (supabase)", profile)
+	}
+}
+
+// emitTS dispatches the TypeScript emit target: the generated projection module
+// (@demesne/runtime) and the standalone codegen artifacts. The SQL/DDL kinds are
+// language-neutral and have no TypeScript form.
+func emitTS(s *demesne.Spec, kind string) error {
+	switch kind {
+	case "all", "projections":
+		out, err := s.EmitTS()
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return nil
+	case "claims":
+		out, err := s.RenderClaimsContractTS("ClaimsContract")
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return nil
+	case "pdp":
+		return emitPDPTS(s)
+	case "rls", "policies", "definers", "enablement", "triggers":
+		return fmt.Errorf("emit kind %q is language-neutral SQL/DDL — it has no TypeScript target; emit it without --target ts", kind)
+	default:
+		return fmt.Errorf("unknown emit kind %q for --target ts (claims|pdp|projections|all)", kind)
+	}
+}
+
+// emitPDPTS renders each emit-site's Policy as a standalone TypeScript const (sorted).
+func emitPDPTS(s *demesne.Spec) error {
+	pdps, err := s.EmitPDP()
+	if err != nil {
+		return err
+	}
+	sites := make([]string, 0, len(pdps))
+	for k := range pdps {
+		sites = append(sites, k)
+	}
+	sort.Strings(sites)
+	for i, site := range sites {
+		if i > 0 {
+			fmt.Print("\n")
+		}
+		fmt.Print(pdps[site].RenderTS(site + "Policy"))
+	}
+	return nil
 }
 
 func emitDefinersSQL(s *demesne.Spec) error {

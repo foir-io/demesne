@@ -1,0 +1,22 @@
+{
+  "name": "@demesne/example-app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Demesne TypeScript worked example — stands up a real Postgres, applies the emitted RLS, and round-trips the @demesne/runtime builders against it (EID-338).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@demesne/runtime": "workspace:*",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
