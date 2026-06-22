@@ -67,6 +67,47 @@ func TestEmitFramework_ExampleArtifact(t *testing.T) {
 	}
 }
 
+// The Supabase worked example's framework package (examples/supabaseauthz/authz.go),
+// generated from supabase.demesne and imported by the Go round-trip in cmd/demesne. Built
+// by `go build ./...`; this golden keeps it in sync.
+//
+// Regenerate:  UPDATE_ORACLE=1 go test -run TestEmitFramework_SupabaseArtifact
+func TestEmitFramework_SupabaseArtifact(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("examples", "supabase.demesne"))
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	s, err := Parse(string(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	gen, err := s.EmitFramework("supabaseauthz")
+	if err != nil {
+		t.Fatalf("EmitFramework: %v", err)
+	}
+	path := filepath.Join("examples", "supabaseauthz", "authz.go")
+	if os.Getenv("UPDATE_ORACLE") != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(gen), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("wrote %s", path)
+		return
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%s missing — run: UPDATE_ORACLE=1 go test -run TestEmitFramework_SupabaseArtifact", path)
+	}
+	if string(got) != gen {
+		t.Errorf("%s out of date — run: UPDATE_ORACLE=1 go test -run TestEmitFramework_SupabaseArtifact", path)
+	}
+}
+
 // The generated package must COMPILE against the engine — the real proof it is valid Go.
 func TestEmitFramework_Compiles(t *testing.T) {
 	if testing.Short() {
