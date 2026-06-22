@@ -83,6 +83,12 @@ func (s *Spec) EmitAppSurface() (*AppCheckSurface, error) {
 	}
 	out := &AppCheckSurface{Objects: make([]AppObjectSurface, 0, len(s.Objects))}
 	for _, o := range s.Objects {
+		// A composite-PK object has no single-column row identity to bind `WHERE <id> =
+		// $1`, so it carries no point-check surface (EID-371 §4.1). Skip it rather than
+		// emit a `WHERE id = $1` that errors at runtime (the framework banners it).
+		if !o.pointCheckable() {
+			continue
+		}
 		editSQL, err := s.editPointCheckSQL(o)
 		if err != nil {
 			return nil, fmt.Errorf("EmitAppSurface: %s edit point-check: %w", o.Name, err)
