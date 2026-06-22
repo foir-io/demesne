@@ -6,7 +6,7 @@ module github.com/eidestudio/demesne/cmd/demesne
 go 1.26.1
 
 require (
-	github.com/eidestudio/demesne v0.18.0
+	github.com/eidestudio/demesne v0.59.0
 	github.com/eidestudio/demesne/pgx v0.0.0
 	github.com/jackc/pgx/v5 v5.9.1
 )
