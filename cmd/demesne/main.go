@@ -23,7 +23,8 @@ const usage = `demesne — RLS-compiled ReBAC authorization, point it at your da
 USAGE:
   demesne validate <spec.demesne>              parse + validate a spec
   demesne emit     <spec.demesne> [kind]       print generated SQL/Go
-                                               kind: rls|definers|enablement|triggers|claims|pdp|all (default all)
+                                               kind: rls|definers|enablement|triggers|claims|pdp|framework|all (default all)
+                                               framework [pkg]: typed Go app package (default pkg "authz")
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
   demesne scaffold   [-i] <dsn>                generate a STARTER spec from the schema (-i: interactive)
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role
@@ -150,10 +151,21 @@ func cmdEmit(args []string) error {
 		return nil
 	case "pdp":
 		return emitPDPReport(s)
+	case "framework":
+		pkg := "authz"
+		if len(args) > 2 {
+			pkg = args[2]
+		}
+		out, err := s.EmitFramework(pkg)
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return nil
 	case "all":
 		return emitAllSQL(s)
 	default:
-		return fmt.Errorf("unknown emit kind %q (rls|definers|enablement|triggers|claims|pdp|all)", kind)
+		return fmt.Errorf("unknown emit kind %q (rls|definers|enablement|triggers|claims|pdp|framework|all)", kind)
 	}
 }
 

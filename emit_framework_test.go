@@ -36,6 +36,37 @@ func TestEmitFramework_Shape(t *testing.T) {
 	}
 }
 
+// The committed worked-example package (examples/authz/authz.go) is generated from
+// example.demesne and built by `go build ./...` — an always-on compile proof + a readable
+// reference. This golden test keeps it in lockstep with the emitter.
+//
+// Regenerate:  UPDATE_ORACLE=1 go test -run TestEmitFramework_ExampleArtifact
+func TestEmitFramework_ExampleArtifact(t *testing.T) {
+	s := loadExample(t)
+	src, err := s.EmitFramework("authz")
+	if err != nil {
+		t.Fatalf("EmitFramework: %v", err)
+	}
+	path := filepath.Join("examples", "authz", "authz.go")
+	if os.Getenv("UPDATE_ORACLE") != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("wrote %s", path)
+		return
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%s missing — run: UPDATE_ORACLE=1 go test -run TestEmitFramework_ExampleArtifact", path)
+	}
+	if string(got) != src {
+		t.Errorf("%s out of date — run: UPDATE_ORACLE=1 go test -run TestEmitFramework_ExampleArtifact", path)
+	}
+}
+
 // The generated package must COMPILE against the engine — the real proof it is valid Go.
 func TestEmitFramework_Compiles(t *testing.T) {
 	if testing.Short() {
