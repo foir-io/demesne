@@ -189,7 +189,10 @@ type HoldsResolver struct {
 	// key through the vocabulary instead.
 	PermsCol string
 
-	vocab *Vocabulary
+	// Vocab is the vocabulary the resolver expands role keys through (the source of
+	// PresetPermissions). Exported so generated framework code can construct a resolver
+	// from baked projection data.
+	Vocab *Vocabulary
 }
 
 // HoldsResolver builds the resolver for a named rolestore (pass "" for the spec's
@@ -231,7 +234,7 @@ func (s *Spec) HoldsResolver(rolestore string) (*HoldsResolver, error) {
 		RolesID:     rs.RolesID,
 		KeyCol:      rs.KeyCol,
 		PermsCol:    rs.PermsCol,
-		vocab:       vocab,
+		Vocab:       vocab,
 	}, nil
 }
 
@@ -253,7 +256,7 @@ func (s *Spec) rolestoreVocab(rs *RoleStore) (*Vocabulary, error) {
 // Vocabulary returns the vocabulary the resolver expands role keys through (the
 // source of PresetPermissions). Exposed so a caller can seed / validate a
 // materialized permissions column from the same expansion the resolver uses.
-func (r *HoldsResolver) Vocabulary() *Vocabulary { return r.vocab }
+func (r *HoldsResolver) Vocabulary() *Vocabulary { return r.Vocab }
 
 // AssignmentsSQL renders the read: every ACTIVE role assignment a principal holds,
 // across ALL scopes, projected as the scope columns (root->leaf) then the role key,
@@ -357,7 +360,7 @@ func (r *HoldsResolver) Resolve(assignments []RoleAssignment, scope []string) (E
 			// custom role whose set is not a vocabulary preset). Empty -> grants nothing.
 			perms = a.Permissions
 		} else {
-			expanded, err := r.vocab.PresetPermissions(a.RoleKey)
+			expanded, err := r.Vocab.PresetPermissions(a.RoleKey)
 			if err != nil {
 				return EffectivePerms{}, fmt.Errorf("Resolve: assignment role %q: %w", a.RoleKey, err)
 			}

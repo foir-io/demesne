@@ -36,6 +36,13 @@ func (s *Spec) MintClaims(values map[string]string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return MintClaimsValues(contract, values)
+}
+
+// MintClaimsValues is the plain-data form of MintClaims: it validates `values` against an
+// explicit contract (the sorted key set) and renders the deterministic blob. Generated
+// framework code — which bakes the contract in rather than carrying a *Spec — calls this.
+func MintClaimsValues(contract []string, values map[string]string) (string, error) {
 	known := make(map[string]bool, len(contract))
 	for _, k := range contract {
 		known[k] = true
