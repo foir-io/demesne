@@ -40,18 +40,15 @@ func (s *Spec) EmitFramework(pkg string) (string, error) {
 		return "", err
 	}
 
-	var skipped []*Object
-	for _, o := range s.Objects {
-		if !o.pointCheckable() {
-			skipped = append(skipped, o)
-		}
-	}
+	skipped := s.compositePKObjects()
+	orphanPDP := s.orphanPDPVerbs()
 
 	g := &fwGen{pkg: pkg, spec: s}
 	g.header()
 	g.preamble()
 	g.claims(contract)
 	g.banner(skipped)
+	g.pdpBanner(orphanPDP)
 	for _, o := range surf.Objects {
 		obj := s.objectByName(o.Object)
 		if obj == nil {
@@ -78,6 +75,48 @@ func (s *Spec) EmitFramework(pkg string) (string, error) {
 		return "", fmt.Errorf("EmitFramework: generated code does not parse: %w", err)
 	}
 	return string(formatted), nil
+}
+
+// compositePKObjects lists the objects with no single-column row identity (EID-371 §4.1).
+func (s *Spec) compositePKObjects() []*Object {
+	var skipped []*Object
+	for _, o := range s.Objects {
+		if !o.pointCheckable() {
+			skipped = append(skipped, o)
+		}
+	}
+	return skipped
+}
+
+// orphanPDPVerbs lists @pdp verbs (object.verb) whose required permission no rolestore
+// vocabulary covers — their Can<Verb>(held) is emitted, but no generated Holds resolver can
+// produce `held` for them (EID-371 §4.7).
+func (s *Spec) orphanPDPVerbs() []string {
+	covered := map[string]bool{}
+	for _, rs := range s.RoleStores {
+		if v, err := s.rolestoreVocab(rs); err == nil && v != nil {
+			for _, p := range v.Permissions {
+				covered[p] = true
+			}
+		}
+	}
+	var orphan []string
+	for _, o := range s.Objects {
+		if !o.pointCheckable() {
+			continue
+		}
+		for _, pm := range o.Perms {
+			if !containsStr(pm.Layers, "pdp") {
+				continue
+			}
+			for _, tok := range pm.Expr {
+				if tok.Ident != "" && !covered[tok.Ident] {
+					orphan = append(orphan, fmt.Sprintf("%s.%s (needs %q)", o.Name, pm.Verb, tok.Ident))
+				}
+			}
+		}
+	}
+	return orphan
 }
 
 type fwGen struct {
@@ -189,6 +228,22 @@ func (g *fwGen) banner(skipped []*Object) {
 	g.b.WriteString("// (EID-371 §4.1). Check access to such rows via your own predicate or a related object:\n")
 	for _, o := range skipped {
 		fmt.Fprintf(&g.b, "//   - %s (table %s, pk %s)\n", o.Name, o.Table, strings.Join(o.PKCols, ", "))
+	}
+	g.b.WriteString("\n")
+}
+
+// pdpBanner warns about @pdp verbs whose required permission no rolestore vocabulary covers —
+// their Can<Verb>(held) is emitted, but no generated Holds can produce `held` for them, so
+// the caller must resolve it themselves or add a rolestore (EID-371 §4.7).
+func (g *fwGen) pdpBanner(orphan []string) {
+	if len(orphan) == 0 {
+		return
+	}
+	g.b.WriteString("// NOTE: these @pdp verbs need a permission no rolestore vocabulary covers, so NO generated\n")
+	g.b.WriteString("// Holds resolver can produce their `held` input — resolve it yourself, or add a rolestore\n")
+	g.b.WriteString("// for the permission's vocabulary (EID-371 §4.7):\n")
+	for _, v := range orphan {
+		fmt.Fprintf(&g.b, "//   - %s\n", v)
 	}
 	g.b.WriteString("\n")
 }
