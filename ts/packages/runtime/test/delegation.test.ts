@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import { capGrant, presetsAtOrAbove } from "../src/index.js";
 import { capVocab } from "./fixtures.js";
 
-// Ports delegation_test.go: TestCapGrant_Allowed/Excess/Unknown/Dedup/RankFloorComposition.
-
 describe("capGrant — the intersection cap", () => {
   it("a subset of held is allowed cleanly", () => {
     const got = capGrant(capVocab, ["a:read", "a:write", "b:read"], ["a:read", "b:read"]);
@@ -39,7 +37,7 @@ describe("capGrant — the intersection cap", () => {
 });
 
 describe("rank-floor composition (the shape a real grant guard wraps)", () => {
-  const atOrAbove = presetsAtOrAbove(capVocab, "editor"); // [owner, editor]
+  const atOrAbove = presetsAtOrAbove(capVocab, "editor");
   const meetsFloor = (role: string) => atOrAbove.includes(role);
   const guard = (role: string, held: string[], requested: string[]) =>
     meetsFloor(role) && capGrant(capVocab, held, requested).allowed;
@@ -50,7 +48,7 @@ describe("rank-floor composition (the shape a real grant guard wraps)", () => {
     expect(atOrAbove).toEqual(["owner", "editor"]);
   });
   it("a below-floor grantor is denied even when the cap alone would allow", () => {
-    expect(capGrant(capVocab, held, ["a:read"]).allowed).toBe(true); // precondition
+    expect(capGrant(capVocab, held, ["a:read"]).allowed).toBe(true);
     expect(guard("viewer", held, ["a:read"])).toBe(false);
   });
   it("an at-floor grantor granting a held subset passes; an unheld perm is still capped", () => {

@@ -16,15 +16,6 @@ import {
   resourceAccess,
 } from "../src/index.js";
 
-// The cross-language differential oracle (EID-338 / WS6). oracle.json is written by the
-// Go test TestOracle_Manifest: for a battery of specs it carries the EMITTED projections
-// plus the EXPECTED output of every Go builder. Here we feed each projection into
-// @demesne/runtime and assert the TS builder reproduces the Go output byte-for-byte —
-// proving the emitter's field names and the runtime's logic both agree with the engine.
-//
-// Regenerate after an intentional engine change:
-//   UPDATE_ORACLE=1 go test -run TestOracle_Manifest
-
 interface OracleCase {
   kind: string;
   input?: Record<string, unknown>;
@@ -39,13 +30,11 @@ const oracle = JSON.parse(
   readFileSync(fileURLToPath(new URL("./generated/oracle.json", import.meta.url)), "utf8"),
 ) as Record<string, SpecEntry>;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function appObj(proj: any, name: unknown): any {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   return proj.appSurface.find((o: any) => o.object === name);
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 function runCase(proj: any, c: OracleCase): unknown {
   const i: any = c.input ?? {};
   switch (c.kind) {
@@ -107,7 +96,6 @@ function runCase(proj: any, c: OracleCase): unknown {
       throw new Error(`oracle: unknown case kind "${c.kind}"`);
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any */
 
 describe("cross-language oracle — TS runtime over emitted projections == Go builders", () => {
   let total = 0;

@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import { roleAssignments, touchOnConflict } from "../src/index.js";
 import { fullRoleAssign, minimalRoleAssign, rpScopedRoleAssign, pkOverrideRoleAssign } from "./fixtures.js";
 
-// Ports role_assignment_runtime_test.go.
-
 describe("touchOnConflict — general across grant edges", () => {
   it("a role-assignment tuple", () => {
     expect(

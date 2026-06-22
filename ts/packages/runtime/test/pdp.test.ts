@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import { authorize, composeCan, Decision } from "../src/index.js";
 import { adminPdp } from "./fixtures.js";
 
-// Ports runtime_test.go: TestComposeCan (the 8-row truth table) + TestRuntime_PDPAuthorize.
-
 describe("composeCan — the 8-row truth table (branch order is load-bearing)", () => {
   const cases: Array<[string, boolean, boolean, Decision, Decision]> = [
     ["neither governs", false, false, Decision.NotGoverned, Decision.NotGoverned],
