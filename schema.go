@@ -205,6 +205,19 @@ func (s *Spec) schCheckObjectRefs(b *schBinder, o *Object) {
 	}
 }
 
+// schCheckComposition checks the edge table + the child/parent (and optional kind)
+// columns a via-composition relation references.
+func schCheckComposition(b *schBinder, repr ViaComposition, rc string) {
+	if !b.reqTable(repr.Table, rc) {
+		return
+	}
+	b.reqCol(repr.Table, repr.ChildCol, rc)
+	b.reqCol(repr.Table, repr.ParentCol, rc)
+	if repr.KindCol != "" {
+		b.reqCol(repr.Table, repr.KindCol, rc+" kind")
+	}
+}
+
 // schCheckRelationRefs checks the tables/columns a single relation references,
 // dispatching on its representation.
 func schCheckRelationRefs(b *schBinder, o *Object, r *Relation) {
@@ -222,13 +235,7 @@ func schCheckRelationRefs(b *schBinder, o *Object, r *Relation) {
 			}
 		}
 	case ViaComposition:
-		if b.reqTable(repr.Table, rc) {
-			b.reqCol(repr.Table, repr.ChildCol, rc)
-			b.reqCol(repr.Table, repr.ParentCol, rc)
-			if repr.KindCol != "" {
-				b.reqCol(repr.Table, repr.KindCol, rc+" kind")
-			}
-		}
+		schCheckComposition(b, repr, rc)
 	case ViaClosure:
 		b.reqCol(o.Table, repr.Col, rc)
 		if b.reqTable(repr.Closure, rc) {
