@@ -348,8 +348,13 @@ type Object struct {
 	// level-entity object) the level self column. "" defaults to the `id`
 	// convention. Declaring it de-Foirs the assumption that every governed table's
 	// PK is named `id` (EID-278 / v3 WS4).
-	PK    string
-	Level string // non-empty if this object IS a topology level node (its
+	PK string
+	// PKCols, when set, declares a COMPOSITE primary key (`pk (a, b, …)`) — the table
+	// has no single-column row identity, so the object is NOT point-checkable: the
+	// framework codegen skips its Can / ListResources / CheckMany surface and the app
+	// surface omits it (EID-371 §4.1). Mutually exclusive with the single-column PK.
+	PKCols []string
+	Level  string // non-empty if this object IS a topology level node (its
 	// own pk = the level; self column is the table PK, operator is
 	// ungated) — the admin/level-entity plane (e.g. projects)
 	Scoped    []string // levelchain — the root-anchored prefix of the chain
@@ -416,6 +421,12 @@ func (o *Object) pk() string {
 	}
 	return "id"
 }
+
+// pointCheckable reports whether the object has a single-column row identity the point-
+// check surface (PointCheckSQL and the framework's Can / ListResources / CheckMany) can
+// address. A composite-PK object (declared `pk (a, b, …)`) is NOT point-checkable —
+// `WHERE <id> = $1` has no single column to bind (EID-371 §4.1).
+func (o *Object) pointCheckable() bool { return len(o.PKCols) == 0 }
 
 // HasGrantStore reports whether the object is a content object with an access grant
 // store — a descriptor `grants` edge OR a `via grant` relation. Such objects get a
