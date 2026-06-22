@@ -26,6 +26,8 @@ USAGE:
                                                kind: rls|definers|enablement|triggers|claims|pdp|all (default all)
                                                --target ts: emit TypeScript (@demesne/runtime)
                                                             kind: claims|pdp|projections|all
+                                               --profile supabase: emit the Supabase
+                                                            deployment profile (access-token hook)
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
   demesne scaffold   [-i] <dsn>                generate a STARTER spec from the schema (-i: interactive)
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role
@@ -123,6 +125,7 @@ func cmdValidate(args []string) error {
 
 func cmdEmit(args []string) error {
 	target, args := stripTargetFlag(args)
+	profile, args := stripProfileFlag(args)
 	if err := need(args, 1, "<spec.demesne>"); err != nil {
 		return err
 	}
@@ -133,6 +136,10 @@ func cmdEmit(args []string) error {
 	kind := "all"
 	if len(args) > 1 {
 		kind = args[1]
+	}
+	// A deployment profile is platform glue, independent of the target language.
+	if profile != "" {
+		return emitProfile(s, profile)
 	}
 	switch target {
 	case "go":
@@ -168,25 +175,46 @@ func cmdEmit(args []string) error {
 	}
 }
 
-// stripTargetFlag removes a `--target <v>` / `--target=<v>` flag from args (anywhere,
-// order-independent), returning the target (default "go") and the remaining positionals.
-func stripTargetFlag(args []string) (string, []string) {
-	target := "go"
+// stripFlag removes a `--<name> <v>` / `--<name>=<v>` flag from args (anywhere,
+// order-independent), returning its value (or def) and the remaining positionals.
+func stripFlag(args []string, name, def string) (string, []string) {
+	val := def
+	pfx := "--" + name + "="
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
-		case a == "--target":
+		case a == "--"+name:
 			if i+1 < len(args) {
-				target = args[i+1]
+				val = args[i+1]
 				i++
 			}
-		case strings.HasPrefix(a, "--target="):
-			target = strings.TrimPrefix(a, "--target=")
+		case strings.HasPrefix(a, pfx):
+			val = strings.TrimPrefix(a, pfx)
 		default:
 			out = append(out, a)
 		}
 	}
-	return target, out
+	return val, out
+}
+
+// stripTargetFlag (the emit-target language) / stripProfileFlag (the deployment profile).
+func stripTargetFlag(args []string) (string, []string)  { return stripFlag(args, "target", "go") }
+func stripProfileFlag(args []string) (string, []string) { return stripFlag(args, "profile", "") }
+
+// emitProfile dispatches a deployment profile — the platform-specific deployment glue
+// (the deployment-side analogue of an emit target).
+func emitProfile(s *demesne.Spec, profile string) error {
+	switch profile {
+	case "supabase":
+		out, err := s.EmitSupabaseProfile()
+		if err != nil {
+			return err
+		}
+		fmt.Println(out)
+		return nil
+	default:
+		return fmt.Errorf("unknown --profile %q (supabase)", profile)
+	}
 }
 
 // emitTS dispatches the TypeScript emit target: the generated projection module
