@@ -185,6 +185,22 @@ func (docAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []string)
 	return out, rows.Err()
 }
 
+type CapSet struct {
+	Doc DocCaps
+}
+
+type DocCaps struct {
+	Publish bool
+}
+
+func Caps(held demesne.EffectivePerms) CapSet {
+	return CapSet{
+		Doc: DocCaps{
+			Publish: held.Holds("docs:publish"),
+		},
+	}
+}
+
 var holdsResolver = &demesne.HoldsResolver{
 	Assignments: "role_grants",
 	KindCol:     "grantee_kind",
@@ -245,6 +261,8 @@ func Check(ctx context.Context, q demesne.Querier, object, verb, id string) (Dec
 		return Doc.CanView(ctx, q, id)
 	case "doc.edit":
 		return Doc.CanEdit(ctx, q, id)
+	case "doc.publish":
+		return NotGoverned, demesne.CapabilityGateErr(object, verb)
 	default:
 		return NotGoverned, nil
 	}

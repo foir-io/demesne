@@ -307,6 +307,7 @@ The generated package gives you:
 
 - a `Claims` struct and the session envelope;
 - per-object `Can<Verb>(ctx, q, id)` methods;
+- `Caps(held)` — a typed boolean per verb-gate permission, for UI affordances;
 - scoped query builders, `ListResources` and `CheckMany`;
 - a per-rolestore holds resolver;
 - a reusable `Check(ctx, q, object, verb, id)`;
@@ -348,8 +349,10 @@ that has already run `SessionSetupSQL` and the `Claims.Mint()` result.
   resolve.
 - *Extra claims.* `Claims.Extra` carries deployment claims the spec's contract
   doesn't model.
-- *Which verbs get a row check.* Only `select` (read) and `update` (edit) get one.
-  `@pdp` verbs decide on held permissions via `Can<Verb>(held)`. Insert and delete
+- *Which verbs get a row check.* Only `select` (read) and `update` (edit) get one,
+  and the reusable `Check` covers those. `@pdp` verbs decide on held permissions —
+  call `Can<Verb>(held)`, or read `Caps(held)` for a boolean; passing one to `Check`
+  returns a capability-gate error, never a silent `NotGoverned`. Insert and delete
   have no pre-flight check.
 - *Multiple rolestores.* The holds surface is suffixed per rolestore (`HoldsStaff`,
   `HoldsOps`, …). A `@pdp` verb whose permission no rolestore vocabulary covers is

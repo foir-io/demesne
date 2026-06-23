@@ -90,6 +90,10 @@ func (p *PDP) Authorize(procedure string, holds func(perm string) bool) Decision
 	return NotGoverned
 }
 
+func CapabilityGateErr(object, verb string) error {
+	return fmt.Errorf("%s.%s is a capability (@pdp) verb with no row-level check — resolve held permissions and call Can%s(held) on the %s object", object, verb, goExport(verb), goExport(object))
+}
+
 func ComposeCan(pointGoverned, pointAllow bool, pdp Decision) Decision {
 	if !pointGoverned && pdp == NotGoverned {
 		return NotGoverned

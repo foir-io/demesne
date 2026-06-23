@@ -92,6 +92,14 @@ export const doc = {
   },
 };
 
+export function caps(held: EffectivePerms) {
+  return {
+    doc: {
+      publish: held.holds("docs:publish"),
+    },
+  };
+}
+
 export const holdsResolver: HoldsResolver = {
   "assignments": "role_grants",
   "kindCol": "grantee_kind",
@@ -171,6 +179,8 @@ export async function check(q: Querier, object: string, verb: string, id: string
       return doc.canView(q, id);
     case "doc.edit":
       return doc.canEdit(q, id);
+    case "doc.publish":
+      throw new Error("doc.publish is a capability (@pdp) verb with no row-level check — resolve held permissions and call canPublish(held) on the doc object");
     default:
       return Decision.NotGoverned;
   }

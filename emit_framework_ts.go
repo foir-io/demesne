@@ -28,6 +28,7 @@ func (s *Spec) EmitFrameworkTS() (string, error) {
 		}
 		g.object(o, obj)
 	}
+	g.capsFuncTS()
 	for _, rs := range s.RoleStores {
 		suffix := ""
 		if len(s.RoleStores) > 1 {
@@ -44,9 +45,11 @@ func (s *Spec) EmitFrameworkTS() (string, error) {
 }
 
 type fwTSGen struct {
-	spec   *Spec
-	b      strings.Builder
-	checks []fwTSCheck
+	spec      *Spec
+	b         strings.Builder
+	checks    []fwTSCheck
+	pdpChecks []fwTSCheck
+	capsObjs  []capsObjTS
 
 	needCompose bool
 	needResolve bool
@@ -56,6 +59,16 @@ type fwTSGen struct {
 }
 
 type fwTSCheck struct{ object, verb, method string }
+
+type capsObjTS struct {
+	name  string
+	verbs []capsVerbTS
+}
+
+type capsVerbTS struct {
+	name string
+	expr string
+}
 
 func (g *fwTSGen) assemble() string {
 	var head strings.Builder
@@ -175,12 +188,15 @@ func (g *fwTSGen) object(o AppObjectSurface, obj *Object) {
 		g.b.WriteString(s)
 	}
 
+	co := capsObjTS{name: name}
 	for _, pm := range obj.Perms {
 		method := "can" + goExport(pm.Verb)
 		switch {
 		case containsStr(pm.Layers, "pdp"):
 			g.needEff = true
 			emit(g.pdpCanTS(method, pm))
+			g.pdpChecks = append(g.pdpChecks, fwTSCheck{o.Object, pm.Verb, ""})
+			co.verbs = append(co.verbs, capsVerbTS{name: unexport(pm.Verb), expr: capsExprTS(pm)})
 		case pm.Maps == "select":
 			g.needCompose = true
 			emit(g.rowCanTS(method, o.CheckSQL()))
@@ -203,6 +219,9 @@ func (g *fwTSGen) object(o AppObjectSurface, obj *Object) {
 	emit(g.checkManyTS(o.CheckManySQL(), o.PK))
 
 	g.b.WriteString("};\n\n")
+	if len(co.verbs) > 0 {
+		g.capsObjs = append(g.capsObjs, co)
+	}
 }
 
 func (g *fwTSGen) rowCanTS(method, sql string) string {
@@ -280,7 +299,43 @@ func (g *fwTSGen) checkFunc() {
 	for _, c := range g.checks {
 		fmt.Fprintf(&g.b, "    case %s:\n      return %s(q, id);\n", tsStr(c.object+"."+c.verb), c.method)
 	}
+	for _, c := range g.pdpChecks {
+		fmt.Fprintf(&g.b, "    case %s:\n      throw new Error(%s);\n", tsStr(c.object+"."+c.verb), tsStr(capabilityGateMsg(c.object, c.verb)))
+	}
 	g.b.WriteString("    default:\n      return Decision.NotGoverned;\n  }\n}\n\n")
+}
+
+func capabilityGateMsg(object, verb string) string {
+	return fmt.Sprintf("%s.%s is a capability (@pdp) verb with no row-level check — resolve held permissions and call can%s(held) on the %s object", object, verb, goExport(verb), unexport(object))
+}
+
+func capsExprTS(pm *Perm) string {
+	var checks []string
+	for _, t := range pm.Expr {
+		if t.Ident != "" {
+			checks = append(checks, fmt.Sprintf("held.holds(%s)", tsStr(t.Ident)))
+		}
+	}
+	if len(checks) == 0 {
+		return "true"
+	}
+	return strings.Join(checks, " && ")
+}
+
+func (g *fwTSGen) capsFuncTS() {
+	if len(g.capsObjs) == 0 {
+		return
+	}
+	g.b.WriteString("export function caps(held: EffectivePerms) {\n")
+	g.b.WriteString("  return {\n")
+	for _, co := range g.capsObjs {
+		fmt.Fprintf(&g.b, "    %s: {\n", co.name)
+		for _, v := range co.verbs {
+			fmt.Fprintf(&g.b, "      %s: %s,\n", v.name, v.expr)
+		}
+		g.b.WriteString("    },\n")
+	}
+	g.b.WriteString("  };\n}\n\n")
 }
 
 func (g *fwTSGen) checkHandler() {

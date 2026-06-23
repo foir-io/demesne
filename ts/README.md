@@ -20,13 +20,27 @@ A spec's projection is the interface between the two sides. It is the per-spec d
 
 - `mint` and `sessionSetupSQL` for claims and session setup;
 - per-object `canView` / `canEdit`, plus `listResources` and `checkMany`;
-- `can<Verb>(held)` for verb permissions;
+- `can<Verb>(held)` for verb permissions, and `caps(held)` — a typed, synchronous boolean per verb for UI affordance gating;
 - the `holds` resolver and a reusable `check`;
 - `checkHandler`, a framework-agnostic `Request` → `Response` entry point.
 
 The framework module bakes the same per-spec SQL the Go `EmitFramework` bakes. Both come from `EmitAppSurface`. It delegates the shared logic to `@demesne/runtime`, so the generated `canView` runs the very predicate the RLS policy enforces — there is no second evaluator to drift.
 
 `packages/example-app/generated/framework.ts` is the committed worked example. `test/framework.test.ts` round-trips it against a live Postgres.
+
+## Gating UI affordances
+
+`caps(held)` turns the verb-gate vocabulary into a typed, synchronous boolean tree — no magic strings, no `Decision` unwrapping. Resolve `held` once, then read a boolean per verb. It is a UI hint only: enforcement stays the RLS floor and the verb gate, so removing a `caps` check never grants access — the database still says no.
+
+```ts
+const c = caps(held);
+
+{c.doc.publish && <PublishButton />}       // React
+{#if c.doc.publish}<PublishButton />{/if}  // Svelte
+<PublishButton v-if="c.doc.publish" />     // Vue
+```
+
+The Go surface mirrors it as `Caps(held).Doc.Publish`. `check(object, verb, id)` covers the row verbs; a verb-gate verb passed to `check` throws and points you to `caps` / `can<Verb>(held)` rather than silently answering "ungoverned".
 
 ## Packages
 

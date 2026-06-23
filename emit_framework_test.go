@@ -30,6 +30,11 @@ func TestEmitFramework_Shape(t *testing.T) {
 		"func Check(ctx context.Context, q demesne.Querier, object, verb, id string) (Decision, error)",
 		"func CheckHandler(q demesne.Querier) http.HandlerFunc",
 		"demesne.ComposeCan(true, ok, demesne.NotGoverned)",
+		"func Caps(held demesne.EffectivePerms) CapSet",
+		"type DocCaps struct {",
+		"Publish: held.Holds(\"docs:publish\")",
+		`case "doc.publish":`,
+		"return NotGoverned, demesne.CapabilityGateErr(object, verb)",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("generated framework missing %q", want)
