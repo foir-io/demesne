@@ -174,6 +174,13 @@ type Template struct {
 	Pos   Pos
 }
 
+type Gate struct {
+	Verb     string
+	Relation string
+	Perm     string
+	Pos      Pos
+}
+
 type Object struct {
 	Name  string
 	Table string
@@ -186,6 +193,7 @@ type Object struct {
 	Scoped    []string
 	Relations []*Relation
 	Perms     []*Perm
+	Gates     []*Gate
 
 	Use  string
 	Omit []string

@@ -661,11 +661,39 @@ func (p *parser) parseObjectBody(o *Object) error {
 			default:
 				return p.errf("object %q: `track` expects `owner` or `visibility`, got %q", o.Name, what)
 			}
+		case p.isKw("gate"):
+			g, err := p.parseGate()
+			if err != nil {
+				return err
+			}
+			o.Gates = append(o.Gates, g)
 		default:
 			return p.errf("unexpected %s %q in object %q", p.peekKind(), p.cur().lit, o.Name)
 		}
 	}
 	return nil
+}
+
+func (p *parser) parseGate() (*Gate, error) {
+	g := &Gate{Pos: Pos{p.cur().line}}
+	p.advance()
+	var err error
+	if g.Verb, err = p.ident(); err != nil {
+		return nil, err
+	}
+	if err := p.expectKw("via"); err != nil {
+		return nil, err
+	}
+	if g.Relation, err = p.ident(); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tArrow); err != nil {
+		return nil, err
+	}
+	if g.Perm, err = p.ident(); err != nil {
+		return nil, err
+	}
+	return g, nil
 }
 
 func (p *parser) parseTemplate() (*Template, error) {

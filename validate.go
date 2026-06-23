@@ -333,8 +333,47 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 
 	add(valCheckTrackChangelog(o))
 
+	add(valCheckGates(s, o, relByName))
+
 	for _, pm := range o.Perms {
 		add(validatePerm(s, o, pm, relByName))
+	}
+	return errors.Join(errs...)
+}
+
+func valCheckGates(s *Spec, o *Object, relByName map[string]*Relation) error {
+	var errs []error
+	objHasVerb := func(obj *Object, verb string) bool {
+		for _, pm := range obj.Perms {
+			if pm.Verb == verb {
+				return true
+			}
+		}
+		return false
+	}
+	for _, g := range o.Gates {
+		if !objHasVerb(o, g.Verb) {
+			errs = append(errs, fmt.Errorf("line %d: object %q gate `%s via %s -> %s` gates verb %q, which the object does not declare as a permission", g.Pos.Line, o.Name, g.Verb, g.Relation, g.Perm, g.Verb))
+		}
+		r := relByName[g.Relation]
+		if r == nil {
+			errs = append(errs, fmt.Errorf("line %d: object %q gate references unknown relation %q", g.Pos.Line, o.Name, g.Relation))
+			continue
+		}
+		if len(r.Types) == 0 {
+			errs = append(errs, fmt.Errorf("line %d: object %q gate relation %q resolves to no object type", g.Pos.Line, o.Name, g.Relation))
+			continue
+		}
+		for _, tname := range r.Types {
+			target := s.objectByName(tname)
+			if target == nil {
+				errs = append(errs, fmt.Errorf("line %d: object %q gate relation %q targets %q, which is not a governed object", g.Pos.Line, o.Name, g.Relation, tname))
+				continue
+			}
+			if !objHasVerb(target, g.Perm) {
+				errs = append(errs, fmt.Errorf("line %d: object %q gate `%s via %s -> %s`: target object %q has no permission %q", g.Pos.Line, o.Name, g.Verb, g.Relation, g.Perm, tname, g.Perm))
+			}
+		}
 	}
 	return errors.Join(errs...)
 }
