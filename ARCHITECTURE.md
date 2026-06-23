@@ -1,15 +1,15 @@
 # How Demesne works
 
-Demesne is a general, Zanzibar-class authorization model whose **enforcement
-compiles into Postgres Row-Level Security** instead of running as a separate
+Demesne is a general, Zanzibar-class authorization model whose enforcement
+compiles into Postgres Row-Level Security (RLS) instead of running as a separate
 "Check" service. You write one declarative spec describing your tenancy and
-access rules; the compiler emits the trusted SQL functions + RLS policies that
-the database enforces on every query — plus a thin app-layer PDP for the verb
+access rules; the compiler emits the trusted SQL functions and RLS policies that
+the database enforces on every query, plus a thin app-layer PDP for the verb
 checks RLS structurally can't make.
 
-The relationships it reasons over are **your existing domain tables** (foreign
-keys, junction/edge tables, role assignments). There is no separate tuple store
-and no dual-write.
+The relationships it reasons over are your existing domain tables (foreign keys,
+junction/edge tables, role assignments). There is no separate tuple store and no
+dual-write.
 
 ---
 
@@ -45,16 +45,16 @@ and no dual-write.
 
 ---
 
-## 2. How it models *any* multi-tenant app
+## 2. How it models any multi-tenant app
 
 A tenancy + authorization model decomposes into a handful of declarative
-primitives. Each compiles to a SQL fragment in one of three **cost classes**:
+primitives. Each compiles to a SQL fragment in one of three cost classes:
 
-- **Inline** — a sargable column comparison (`x = claim`); the planner uses your
+- **Inline**: a sargable column comparison (`x = claim`); the planner uses your
   indexes. Cheapest.
-- **Definer** — a `SECURITY DEFINER EXISTS(...)` over an edge/role table. One
+- **Definer**: a `SECURITY DEFINER EXISTS(...)` over an edge/role table. One
   indexed subquery.
-- **Closure** — a trigger-maintained transitive-closure table + an indexed
+- **Closure**: a trigger-maintained transitive-closure table + an indexed
   lookup. Read-cheap, write-amplified; opt-in.
 
 ```
@@ -101,9 +101,9 @@ hierarchies, boolean composition, and a platform/global plane above tenancy.
 ## 3. Demesne vs. the Zanzibar-inspired systems
 
 Zanzibar systems (Google Zanzibar, SpiceDB/AuthZed, OpenFGA, Ory Keto) keep a
-**central relation-tuple store** and answer a **runtime `Check` RPC** by walking
-the tuple graph. Demesne keeps the same expressive model but **compiles the
-decision into the database** and reads the relationships **in place**.
+central relation-tuple store and answer a runtime `Check` RPC by walking the
+tuple graph. Demesne keeps the same expressive model but compiles the decision
+into the database and reads the relationships in place.
 
 ```
             ZANZIBAR-STYLE (SpiceDB / OpenFGA / Keto)     DEMESNE
@@ -138,11 +138,10 @@ REACH       any datastore, language-agnostic, its         Postgres-specific (tha
                                                           no extra service to run or scale
 ```
 
-The moat, stated plainly: because enforcement *is* RLS, authorization can't be
-forgotten or bypassed (it rides every query, including ad-hoc ones), there's no
-second source of truth to keep consistent, and there's no Check service on the
-hot path. The cost is that it's Postgres-bound and every rule must be expressible
-as a SQL predicate.
+Because enforcement is RLS, authorization rides every query, including ad-hoc
+ones, and can't be forgotten or bypassed. There's no second source of truth to
+keep consistent, and no Check service on the hot path. The cost: it's
+Postgres-bound, and every rule must be expressible as a SQL predicate.
 
 ---
 
@@ -192,9 +191,9 @@ as a SQL predicate.
    COMMIT;
 ```
 
-The app role is a **non-BYPASSRLS** role; system/bootstrap paths use a separate
-BYPASSRLS pool deliberately. So the only way to read a governed table on the
-request path is through the policy.
+The app role is a non-BYPASSRLS role; system and bootstrap paths use a separate
+BYPASSRLS pool. The only way to read a governed table on the request path is
+through the policy.
 
 ---
 
@@ -223,7 +222,7 @@ request path is through the policy.
 ```
 
 Change `+ staff` to `and not banned`, add `via group team_members(...)` for team
-sharing, add `via closure folder_tree(...)` for inherited folder permissions —
-each is one spec line that re-compiles into the same kind of RLS predicate, in a
+sharing, or add `via closure folder_tree(...)` for inherited folder permissions.
+Each is one spec line that re-compiles into the same kind of RLS predicate, in a
 known cost class, with the differential oracle proving the live database matches.
 ```

@@ -8,7 +8,7 @@ and the spec-to-enforcement workflow; this file is the short version of what mat
 - **No comments in code.** Strip them. Only `// Code generated … DO NOT EDIT.` and functional
   directives survive. A comment belongs only when there is a firm, concrete reason; if it is a
   maybe, remove it and make the code clearer.
-- The engine (`/`) is **standard-library only.** Third-party dependencies (a database driver)
+- The engine (`/`) is standard-library only. Third-party dependencies (a database driver)
   live in the separate `cmd/demesne` and `pgx` modules.
 - Keep every suite green and `golangci-lint` clean. Regenerate golden examples with
   `UPDATE_ORACLE=1`; never hand-edit a generated file.
