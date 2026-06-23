@@ -5,6 +5,7 @@ import {
   claimsSetSQL,
   setRoleSQL,
   sessionSetupSQL,
+  mintClaimsValuesWithExtra,
   checkSQL,
   checkManySQL,
   listResourcesSQL,
@@ -44,6 +45,8 @@ function runCase(proj: any, c: OracleCase): unknown {
       return setRoleSQL(proj.claims, i.local);
     case "claims.sessionSetupSQL":
       return sessionSetupSQL(proj.claims, i.local);
+    case "claims.mintWithExtra":
+      return mintClaimsValuesWithExtra(proj.claims.contract, i.values, i.extra);
 
     case "appSurface.checkSQL":
       return checkSQL(appObj(proj, i.object));

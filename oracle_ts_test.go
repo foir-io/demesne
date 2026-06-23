@@ -57,6 +57,25 @@ func buildOracleEntry(s *Spec) (map[string]any, error) {
 		)
 	}
 
+	contract, err := s.ClaimsContract()
+	if err != nil {
+		return nil, err
+	}
+	mintVals := map[string]any{}
+	mintValsStr := map[string]string{}
+	for _, k := range contract {
+		mintVals[k] = "v_" + k
+		mintValsStr[k] = "v_" + k
+	}
+	mintExtra := map[string]any{"role": "authenticated"}
+	mintExtraStr := map[string]string{"role": "authenticated"}
+	minted, err := MintClaimsValuesWithExtra(contract, mintValsStr, mintExtraStr)
+	if err != nil {
+		return nil, err
+	}
+	cases = append(cases, oracleCase("claims.mintWithExtra",
+		map[string]any{"values": mintVals, "extra": mintExtra}, minted))
+
 	if surf, err := s.EmitAppSurface(); err == nil {
 		objs := make([]tsAppObject, len(surf.Objects))
 		for i, o := range surf.Objects {

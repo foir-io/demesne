@@ -74,7 +74,7 @@ func TestStripTargetFlag(t *testing.T) {
 func TestCLI_EmitTS(t *testing.T) {
 	spec := writeSpec(t)
 
-	for _, kind := range []string{"claims", "pdp", "projections", "all"} {
+	for _, kind := range []string{"claims", "pdp", "projections", "framework", "all"} {
 		if err := cmdEmit([]string{spec, kind, "--target", "ts"}); err != nil {
 			t.Errorf("emit %s --target ts: %v", kind, err)
 		}
@@ -96,6 +96,27 @@ func TestCLI_EmitTS(t *testing.T) {
 	})
 	if !strings.Contains(out, `from "@demesne/runtime"`) || !strings.Contains(out, "export const claims: Claims") {
 		t.Errorf("projections output is not the expected TypeScript module:\n%s", out)
+	}
+}
+
+func TestCLI_EmitFrameworkTS(t *testing.T) {
+	spec := writeSpec(t)
+	out := captureStdout(t, func() {
+		if err := cmdEmit([]string{spec, "framework", "--target", "ts"}); err != nil {
+			t.Fatalf("emit framework --target ts: %v", err)
+		}
+	})
+	for _, want := range []string{
+		`import { Decision, composeCan, mintClaimsValuesWithExtra } from "@demesne/runtime";`,
+		"export { Decision };",
+		"export interface Claims {",
+		"export const doc = {",
+		"async canView(q: Querier, id: string): Promise<Decision> {",
+		"export function checkHandler(q: Querier): (req: Request) => Promise<Response> {",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("framework --target ts missing %q:\n%s", want, out)
+		}
 	}
 }
 

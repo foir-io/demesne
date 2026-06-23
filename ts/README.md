@@ -7,11 +7,21 @@ write) surface. It mirrors the Go split exactly:
 |---|---|
 | hand-written runtime helpers in the `demesne` lib (`MintClaims`, `AssignInsert`, `Resolve`, …) | hand-written **`@demesne/runtime`** (`packages/runtime`) |
 | `Render*Go` — render per-spec **data** as Go source | `emit_ts.go` `EmitTS` — render the per-spec **projection** as a TS module |
+| `EmitFramework` — typed Go package over the engine (`Can<Verb>`, `Holds`, `Check`) | `EmitFrameworkTS` — typed TS module over `@demesne/runtime` (`canView`, `holds`, `check`) |
 
 The projection IS the interface: `demesne emit <spec> --target ts` serializes a spec's
 projections (claims contract, app surface, PDP, holds-resolver, role-assignment, level
 grants, resource ACL) as typed TS literals that import `@demesne/runtime`. The runtime
 reproduces every Go builder over that projection — **byte-for-byte**.
+
+`demesne emit <spec> framework --target ts` goes one step further: it renders a typed,
+ready-to-call module — `mint`/`sessionSetupSQL`, a per-object `canView`/`canEdit` +
+`listResources`/`checkMany`, `@pdp` `can<Verb>(held)`, the `holds` resolver, a reusable
+`check`, and a framework-agnostic `checkHandler` (`Request` → `Response`). It bakes the
+same per-spec SQL the Go `EmitFramework` bakes (both from `EmitAppSurface`) and delegates
+the shared logic to `@demesne/runtime`, so the generated `canView` runs the very predicate
+the RLS policy enforces. `packages/example-app/generated/framework.ts` is the committed
+worked example; `test/framework.test.ts` round-trips it against a live Postgres.
 
 ## Packages
 
