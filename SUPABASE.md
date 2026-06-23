@@ -1,15 +1,21 @@
 # Deploying Demesne on Supabase
 
-The Supabase profile is the deployment-side analogue of an emit target (the TypeScript
-target is in [`ts/`](ts/README.md)). Demesne's generated RLS already reads
-`current_setting('request.jwt.claims', true)::json ->> '<key>'` with policies `TO
-authenticated`, which are exactly Supabase's defaults, so dropping into Supabase is small.
-The only missing piece is getting the spec's claims-contract keys into that GUC.
+This guide is for running Demesne-generated Row-Level Security on Supabase. If you already
+have a `.demesne` spec, it takes you from the emitted SQL to a project where the database
+enforces your rules on every request.
 
-On Supabase the JWT is minted by GoTrue and exposed to Postgres (via PostgREST) as the
-`request.jwt.claims` GUC; app-controlled claims live in a user's `app_metadata`. The
-profile emits a custom access-token hook that lifts each contract key from `app_metadata`
-to a top-level claim, so the generated RLS reads them unchanged.
+Supabase is a close fit out of the box. The RLS that Demesne emits reads its claims from
+`current_setting('request.jwt.claims', true)::json ->> '<key>'` with policies `TO
+authenticated`, and those are Supabase's defaults. The one thing you have to set up is
+getting your spec's claims into that setting.
+
+## How the claims get to the database
+
+On Supabase, GoTrue mints the JWT and PostgREST exposes it to Postgres as the
+`request.jwt.claims` setting. The claims your app controls live in a user's
+`app_metadata`. Demesne's Supabase profile emits a custom access-token hook that copies
+each claim from `app_metadata` up to a top-level claim, so the generated RLS reads them
+without any change.
 
 ```
 buildClaims(principal)  ──►  user.app_metadata
@@ -18,20 +24,21 @@ buildClaims(principal)  ──►  user.app_metadata
         ──►  the generated RLS reads it and filters
 ```
 
-A worked, runnable example lives in
-[`ts/packages/example-app`](ts/packages/example-app) (`test/supabase.test.ts`).
+A complete, runnable example lives in [`ts/packages/example-app`](ts/packages/example-app),
+in `test/supabase.test.ts`. The TypeScript emit target itself lives in [`ts/`](ts/README.md).
 
-## One-time caveat: keep the definer kernel out of `auth`
+## Before you start: keep the kernel out of `auth`
 
-Demesne's SECURITY DEFINER kernel defaults to the `auth` schema, but on Supabase `auth`
-is reserved for GoTrue. Put the kernel in a dedicated schema instead:
+Demesne generates a set of trusted `SECURITY DEFINER` functions that the policies call.
+By default they go in the `auth` schema, but Supabase reserves `auth` for GoTrue. Put them
+in a dedicated schema instead:
 
 ```
 definers schema "demesne"   // in your .demesne spec — NOT "auth"
 ```
 
-Governed tables stay in `public`, where Supabase app tables live and the request roles
-already reach.
+Your governed tables stay in `public`, alongside the rest of your Supabase app tables,
+where the request roles already have access.
 
 ## Deploy steps
 
@@ -45,7 +52,7 @@ demesne emit app.demesne all > authz.sql
 #   grant execute on all functions in schema demesne to authenticated;
 ```
 
-### 2. Emit + register the access-token hook
+### 2. Emit and register the access-token hook
 
 ```sh
 demesne emit app.demesne --profile supabase > supabase-hook.sql
@@ -53,7 +60,7 @@ demesne emit app.demesne --profile supabase > supabase-hook.sql
 # supabase_auth_admin (and revokes it from authenticated/anon/public).
 ```
 
-Register it as the Custom Access Token hook:
+Register it as the Custom Access Token hook one of two ways:
 
 - Dashboard → Authentication → Hooks → "Custom Access Token" → select
   `public.demesne_access_token_hook`, or
@@ -66,8 +73,8 @@ Register it as the Custom Access Token hook:
 
 ### 3. Populate `app_metadata` from the engine
 
-When you provision or re-scope a user, set its `app_metadata` to the claims `buildClaims`
-derives from your spec, with no hand-mapped field names:
+When you provision or re-scope a user, set its `app_metadata` to the claims that
+`buildClaims` derives from your spec. You don't map any field names by hand:
 
 ```ts
 import { buildClaims } from "@demesne/runtime";
@@ -83,9 +90,12 @@ await supabaseAdmin.auth.admin.updateUserById(userId, { app_metadata });
 ```
 
 On the user's next token mint, the hook lifts those keys into `request.jwt.claims` and the
-RLS enforces them. (A change to `app_metadata` takes effect on the next token refresh.)
+RLS enforces them. A change to `app_metadata` takes effect on the next token refresh.
 
-## Role safety (the moat)
+## Role safety
+
+Pick the right connection role. Two of Supabase's built-in roles run under RLS; one
+bypasses it.
 
 | Role | Use | RLS |
 |---|---|---|
@@ -93,10 +103,11 @@ RLS enforces them. (A change to `app_metadata` takes effect on the next token re
 | `anon` | unauthenticated requests | enforced |
 | `service_role` | **trusted server-side / bootstrap only — never the request path** | bypassed (BYPASSRLS) |
 
-A request-path query under `service_role` silently bypasses every policy — defeating the moat.
-Keep `service_role` to server code that intends to bypass (seeding, admin jobs).
+A request-path query under `service_role` silently bypasses every policy. That defeats the
+enforcement floor — the moat your spec is supposed to provide. Keep `service_role` for
+server code that means to bypass RLS, such as seeding and admin jobs.
 
-Verify the connection role is safe against your live database:
+Check that your connection role is safe against the live database:
 
 ```sh
 demesne check app.demesne "$SUPABASE_DB_URL"
@@ -105,8 +116,8 @@ demesne check app.demesne "$SUPABASE_DB_URL"
 
 ## Verify end-to-end
 
-The example round-trips the whole flow against a real project (or a local
-Supabase-shaped Postgres if `$SUPABASE_DB_URL` is unset):
+The example runs the whole flow against a real project. If `$SUPABASE_DB_URL` is unset, it
+runs against a local Supabase-shaped Postgres instead:
 
 ```sh
 # Use the Session-pooler / IPv4 connection string from the dashboard (Connect → Session
@@ -115,6 +126,6 @@ SUPABASE_DB_URL="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase
   pnpm --filter @demesne/example-app exec vitest run supabase
 ```
 
-It asserts the hook lifts the contract keys, the RLS returns exactly the rows the subject
-may see (owner + open, scoped by containment), and that `service_role` reads past the
-policy.
+It checks three things: the hook lifts the contract keys, the RLS returns exactly the rows
+the subject may see (owner plus open records, scoped by containment), and `service_role`
+reads past the policy.
