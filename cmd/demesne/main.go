@@ -17,7 +17,7 @@ USAGE:
   demesne emit     <spec.demesne> [kind]       print generated SQL/Go
                                                kind: rls|definers|enablement|triggers|claims|pdp|framework|all (default all)
                                                --target ts: emit TypeScript (@demesne/runtime)
-                                                            kind: claims|pdp|projections|all
+                                                            kind: claims|pdp|projections|framework|all
                                                --profile supabase: emit the Supabase
                                                             deployment profile (access-token hook)
                                                framework [pkg]: typed Go app package (default pkg "authz")
@@ -232,10 +232,17 @@ func emitTS(s *demesne.Spec, kind string) error {
 		return nil
 	case "pdp":
 		return emitPDPTS(s)
+	case "framework":
+		out, err := s.EmitFrameworkTS()
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return nil
 	case "rls", "policies", "definers", "enablement", "triggers":
 		return fmt.Errorf("emit kind %q is language-neutral SQL/DDL — it has no TypeScript target; emit it without --target ts", kind)
 	default:
-		return fmt.Errorf("unknown emit kind %q for --target ts (claims|pdp|projections|all)", kind)
+		return fmt.Errorf("unknown emit kind %q for --target ts (claims|pdp|projections|framework|all)", kind)
 	}
 }
 
