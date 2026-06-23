@@ -74,6 +74,7 @@ Demesne is a Zanzibar-class relationship model, but it compiles into Postgres in
 
 ## What to expect
 
+- **Authorization, not authentication.** Demesne reads the session your auth provider issues — Clerk, BetterAuth, Supabase Auth — and decides what each user can reach. Signing users in stays with your provider; Demesne sits alongside it.
 - **Postgres only.** Compiling to RLS is the whole idea; a Supabase deployment profile ships ([SUPABASE.md](SUPABASE.md)).
 - **A library and CLI, not a service** — nothing extra to run or scale next to your database.
 - **Every rule must be expressible as a SQL predicate.** Reverse "who can see this?" queries are supported but deliberately conservative (fail-closed), not exhaustive.

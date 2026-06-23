@@ -4,6 +4,14 @@ Demesne is a Zanzibar-class relationship model, the same declarative who-relates
 
 This page lays out the differences side by side, explains the one structural choice that drives them, and is honest about when another system is the better fit.
 
+## Demesne and your auth provider
+
+Demesne does not authenticate anyone. It assumes you already run an authentication provider — Clerk, BetterAuth, Supabase Auth, Auth0 — that signs users in and issues a session. Demesne reads the claims in that session and decides what the user can reach. The question is never Demesne *or* Clerk; it is Demesne reading the session Clerk mints.
+
+The confusion comes from the permission helpers those providers ship — Clerk's organization roles, BetterAuth's access-control plugin. That overlap is the real comparison, and the difference is where the check runs. Their helpers are application-layer: an `if (user.has(...))` at a call site, which guards only the paths that remember to ask. Demesne compiles the same kind of rule into RLS, so a missed check, a background job, or a raw query is still filtered by the database. Run both: the provider proves who you are; Demesne enforces what you can touch.
+
+The systems in the matrix below are Demesne's real peers — authorization engines that decide access, not providers that sign users in.
+
 ## Capability matrix
 
 | | **Demesne** | **Zanzibar** | **Ory Keto** | **OpenFGA** | **Cerbos** | **Oso** |

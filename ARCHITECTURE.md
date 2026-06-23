@@ -10,7 +10,7 @@ This document explains the model from the inside: how a spec maps to SQL, what e
 
 ## 1. The mental model
 
-One declarative file is your policy. The compiler turns it into three things that ship together: the database enforcement layer, the app-layer check for verbs, and the runtime glue that carries claims into each request. The diagram below shows that fan-out and where each piece lands.
+One declarative file is your policy. The compiler turns it into three things that ship together: the database enforcement layer, the app-layer check for verbs, and the runtime glue that carries claims into each request.
 
 ```
                     ┌─────────────────────────────────────────────┐
@@ -46,15 +46,13 @@ The database layer is the moat: the part of the system an unguarded query path c
 
 ## 2. How it models any multi-tenant app
 
-A tenancy and authorization model breaks down into a handful of declarative primitives. The point of this section is that each primitive compiles to a known SQL shape with a known cost, so you can reason about performance from the spec alone.
+A tenancy and authorization model breaks down into a handful of declarative primitives. Each one compiles to a known SQL shape with a known cost, so you can reason about performance from the spec alone.
 
 Every primitive lands in one of three cost classes:
 
 - **Inline**: a sargable column comparison (`x = claim`). The planner uses your indexes. Cheapest.
 - **Definer**: a `SECURITY DEFINER EXISTS(...)` over an edge or role table. One indexed subquery.
 - **Closure**: a trigger-maintained transitive-closure table plus an indexed lookup. Cheap to read, costly to write, and opt-in.
-
-The table below lists each construct, the SQL it compiles to, and its cost class.
 
 ```
 WHAT YOU DECLARE                          WHAT IT COMPILES TO              COST
@@ -97,7 +95,7 @@ Together these cover the whole space: single- or multi-level tenancy, multi-pare
 
 ## 3. Demesne vs. the Zanzibar-inspired systems
 
-Zanzibar systems — Google Zanzibar, SpiceDB/AuthZed, OpenFGA, Ory Keto — keep a central relation-tuple store and answer a runtime `Check` RPC by walking the tuple graph. Demesne keeps the same expressive model but compiles the decision into the database and reads the relationships in place. The table below puts the two side by side, row by row, so you can see where the design diverges.
+Zanzibar systems — Google Zanzibar, SpiceDB/AuthZed, OpenFGA, Ory Keto — keep a central relation-tuple store and answer a runtime `Check` RPC by walking the tuple graph. Demesne keeps the same expressive model but compiles the decision into the database and reads the relationships in place.
 
 ```
             ZANZIBAR-STYLE (SpiceDB / OpenFGA / Keto)     DEMESNE
@@ -138,7 +136,7 @@ Because enforcement is RLS, authorization rides every query, including ad-hoc on
 
 ## 4. From spec to running database, then to a live request
 
-This section follows the spec through two phases. At build time the CLI introspects your schema, validates the spec, and emits the SQL. At request time Postgres applies the generated policy to each query using the caller's claims. The diagram traces both phases end to end.
+This section follows the spec through two phases. At build time the CLI introspects your schema, validates the spec, and emits the SQL. At request time Postgres applies the generated policy to each query using the caller's claims.
 
 ```
   ══════════════ BUILD TIME   (demesne CLI / library) ══════════════════════════
