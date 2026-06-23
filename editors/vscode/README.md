@@ -12,7 +12,7 @@ permission/scope keys (`content:write`, `records:read:*`); operators (`->`, `+`,
 
 ## Install (local / unpublished)
 
-This is a standard TextMate-grammar extension — no build step.
+This is a standard TextMate-grammar extension. No build step.
 
 ```sh
 # symlink (or copy) into your VS Code extensions dir, then reload VS Code

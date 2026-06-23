@@ -1,8 +1,8 @@
 # How Demesne compares
 
-Demesne sits in the Zanzibar-class / policy-as-code landscape but makes one structural choice
-the others don't: it compiles authorization **into Postgres** as Row-Level Security, so the
-decision rides every query instead of being an API the application must remember to call.
+Demesne sits in the Zanzibar-class / policy-as-code landscape, with one structural difference: it
+compiles authorization into Postgres as Row-Level Security, so the decision rides every query
+instead of living in an API the application must remember to call.
 
 ## Capability matrix
 
@@ -20,23 +20,21 @@ decision rides every query instead of being an API the application must remember
 
 ## Where Demesne is different
 
-The moat is the enforcement locus: Demesne compiles one spec into a fail-closed Postgres RLS
-floor (a `SECURITY DEFINER` role-resolution kernel, `USING`/`WITH CHECK` policies, `FORCE
-RLS`), so authorization rides every query inside the database rather than being an API the
-application has to remember to call — a forgotten check or an ad-hoc raw query is still
-filtered, which is exactly the property every system here trades away by living outside the
-data path. Because authz reads the *same* domain rows in the *same* transaction, there is no
+The moat is the enforcement locus. Demesne compiles one spec into a fail-closed Postgres RLS
+floor: a `SECURITY DEFINER` role-resolution kernel, `USING`/`WITH CHECK` policies, and `FORCE
+RLS`. Authorization rides every query inside the database, so a forgotten check or an ad-hoc raw
+query is still filtered. Every other system here lives outside the data path and trades that
+property away. Because authz reads the same domain rows in the same transaction, there is no
 second datastore, no dual-write, and no consistency token to reconcile two timelines. The same
 spec also generates an equivalence-checked app layer (`Check` / `ListResources` / `CheckMany`
-plus typed Go and TypeScript codegen), so the in-app surface is verified against the floor
-rather than being the sole gate.
+plus typed Go and TypeScript codegen), so the in-app surface is verified against the floor and is
+not the sole gate.
 
-Honestly, this is **not** a planet-scale, datastore-agnostic standalone `Check` service:
-Demesne is Postgres-only (a Supabase profile ships), it is a library/compiler + CLI rather than
-a globally replicated service, and every rule must be SQL-expressible. Its reverse
-"who-can-access" answers are coverage-gated and fail-closed, **not provably complete** — the
-dimension where OpenFGA's native `ListObjects`, Cerbos's `PlanResources`, and Oso's
-same-policy list filtering are stronger.
+Demesne is not a planet-scale, datastore-agnostic standalone `Check` service. It is Postgres-only
+(a Supabase profile ships), a library/compiler + CLI rather than a globally replicated service,
+and every rule must be SQL-expressible. Its reverse who-can-access answers are coverage-gated and
+fail-closed, not provably complete. OpenFGA's native `ListObjects`, Cerbos's `PlanResources`, and
+Oso's same-policy list filtering are stronger there.
 
 ## Pick another system instead when…
 

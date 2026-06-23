@@ -1,15 +1,15 @@
 # Deploying Demesne on Supabase
 
-The **Supabase profile** — the deployment-side analogue of an emit target (the TypeScript
+The Supabase profile is the deployment-side analogue of an emit target (the TypeScript
 target is in [`ts/`](ts/README.md)). Demesne's generated RLS already reads
 `current_setting('request.jwt.claims', true)::json ->> '<key>'` with policies `TO
-authenticated` — which are **exactly Supabase's defaults** — so dropping into Supabase is
-small: the only missing piece is getting the spec's claims-contract keys into that GUC.
+authenticated`, which are exactly Supabase's defaults, so dropping into Supabase is small.
+The only missing piece is getting the spec's claims-contract keys into that GUC.
 
 On Supabase the JWT is minted by GoTrue and exposed to Postgres (via PostgREST) as the
 `request.jwt.claims` GUC; app-controlled claims live in a user's `app_metadata`. The
-profile emits a **custom access-token hook** that lifts each contract key from
-`app_metadata` to a top-level claim, so the generated RLS reads them unchanged.
+profile emits a custom access-token hook that lifts each contract key from `app_metadata`
+to a top-level claim, so the generated RLS reads them unchanged.
 
 ```
 buildClaims(principal)  ──►  user.app_metadata
@@ -23,15 +23,15 @@ A worked, runnable example lives in
 
 ## One-time caveat: keep the definer kernel out of `auth`
 
-Demesne's SECURITY DEFINER kernel defaults to the `auth` schema — but on Supabase `auth`
-is **reserved** for GoTrue. Put the kernel in a dedicated schema instead:
+Demesne's SECURITY DEFINER kernel defaults to the `auth` schema, but on Supabase `auth`
+is reserved for GoTrue. Put the kernel in a dedicated schema instead:
 
 ```
 definers schema "demesne"   // in your .demesne spec — NOT "auth"
 ```
 
-Governed tables stay in `public` (where Supabase app tables live; the request roles
-already reach it).
+Governed tables stay in `public`, where Supabase app tables live and the request roles
+already reach.
 
 ## Deploy steps
 
@@ -53,10 +53,10 @@ demesne emit app.demesne --profile supabase > supabase-hook.sql
 # supabase_auth_admin (and revokes it from authenticated/anon/public).
 ```
 
-Register it as the **Custom Access Token** hook:
+Register it as the Custom Access Token hook:
 
 - Dashboard → Authentication → Hooks → "Custom Access Token" → select
-  `public.demesne_access_token_hook`, **or**
+  `public.demesne_access_token_hook`, or
 - `supabase/config.toml`:
   ```toml
   [auth.hook.custom_access_token]
@@ -67,7 +67,7 @@ Register it as the **Custom Access Token** hook:
 ### 3. Populate `app_metadata` from the engine
 
 When you provision or re-scope a user, set its `app_metadata` to the claims `buildClaims`
-derives from your spec — no hand-mapped field names:
+derives from your spec, with no hand-mapped field names:
 
 ```ts
 import { buildClaims } from "@demesne/runtime";
@@ -89,12 +89,12 @@ RLS enforces them. (A change to `app_metadata` takes effect on the next token re
 
 | Role | Use | RLS |
 |---|---|---|
-| `authenticated` | the request path (the connection role the policies target) | **enforced** (non-BYPASSRLS) |
+| `authenticated` | the request path (the connection role the policies target) | enforced (non-BYPASSRLS) |
 | `anon` | unauthenticated requests | enforced |
-| `service_role` | **trusted server-side / bootstrap only — never the request path** | **bypassed** (BYPASSRLS) |
+| `service_role` | **trusted server-side / bootstrap only — never the request path** | bypassed (BYPASSRLS) |
 
-A request-path query under `service_role` silently bypasses every policy — defeating the
-moat. Keep `service_role` to server code that intends to bypass (seeding, admin jobs).
+A request-path query under `service_role` silently bypasses every policy — defeating the moat.
+Keep `service_role` to server code that intends to bypass (seeding, admin jobs).
 
 Verify the connection role is safe against your live database:
 

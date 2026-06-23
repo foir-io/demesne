@@ -5,12 +5,12 @@ Guide for an agent (or a human) working in this repository.
 ## What this is
 
 Demesne is a Go compiler and library that turns one authorization spec (`.demesne`) into
-Postgres Row-Level Security — the enforcement floor — plus a typed application surface in Go
+Postgres Row-Level Security (the enforcement floor) plus a typed application surface in Go
 and TypeScript. There is no running authorization service; enforcement lives in the database.
 
 ## Repository layout
 
-- `/` — the engine, module `github.com/eidestudio/demesne`. **Standard library only.** The
+- `/` — the engine, module `github.com/eidestudio/demesne`. Standard library only. The
   lexer, parser, AST, validator, every `Emit*` target (RLS, definers, triggers, PDP, claims,
   app surface, framework codegen, changelog, TypeScript, Supabase profile), and the runtime
   helpers.
