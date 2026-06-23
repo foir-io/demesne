@@ -1,19 +1,16 @@
 # How Demesne works
 
-Demesne is a general, Zanzibar-class authorization model whose enforcement
-compiles into Postgres Row-Level Security (RLS) instead of running as a separate
-"Check" service. You write one declarative spec describing your tenancy and
-access rules; the compiler emits the trusted SQL functions and RLS policies that
-the database enforces on every query, plus a thin app-layer PDP for the verb
-checks RLS structurally can't make.
+Demesne lets you write your authorization rules once and have Postgres enforce them on every query. You describe your tenancy and access rules in one declarative spec. The compiler turns that spec into the trusted SQL functions and Row-Level Security (RLS) policies the database applies automatically, plus a thin app-layer check for the permissions RLS can't express.
 
-The relationships it reasons over are your existing domain tables (foreign keys,
-junction/edge tables, role assignments). There is no separate tuple store and no
-dual-write.
+This is the Zanzibar idea — a declarative schema of who-relates-to-what — without the separate authorization service. The relationships Demesne reasons over are your existing domain tables: foreign keys, junction or edge tables, role assignments. There is no separate tuple store and no dual-write.
+
+This document explains the model from the inside: how a spec maps to SQL, what each construct costs to evaluate, how it compares to Zanzibar systems, and how a request flows through the generated policies. If you want to adopt Demesne on a real database, start with [GUIDE.md](GUIDE.md); this is the conceptual companion.
 
 ---
 
-## 1. The mental model (one screen)
+## 1. The mental model
+
+One declarative file is your policy. The compiler turns it into three things that ship together: the database enforcement layer, the app-layer check for verbs, and the runtime glue that carries claims into each request. The diagram below shows that fan-out and where each piece lands.
 
 ```
                     ┌─────────────────────────────────────────────┐
@@ -43,19 +40,21 @@ dual-write.
          └────────────────────────────────────────────────────────────────────┘
 ```
 
+The database layer is the moat: the part of the system an unguarded query path can't get around, because the policy lives on the data itself. The app-layer check handles permissions that aren't about rows, such as "can this user publish?". The runtime glue mints the JWT claims a session carries and sets them on the connection so the policies can read them.
+
 ---
 
 ## 2. How it models any multi-tenant app
 
-A tenancy + authorization model decomposes into a handful of declarative
-primitives. Each compiles to a SQL fragment in one of three cost classes:
+A tenancy and authorization model breaks down into a handful of declarative primitives. The point of this section is that each primitive compiles to a known SQL shape with a known cost, so you can reason about performance from the spec alone.
 
-- **Inline**: a sargable column comparison (`x = claim`); the planner uses your
-  indexes. Cheapest.
-- **Definer**: a `SECURITY DEFINER EXISTS(...)` over an edge/role table. One
-  indexed subquery.
-- **Closure**: a trigger-maintained transitive-closure table + an indexed
-  lookup. Read-cheap, write-amplified; opt-in.
+Every primitive lands in one of three cost classes:
+
+- **Inline**: a sargable column comparison (`x = claim`). The planner uses your indexes. Cheapest.
+- **Definer**: a `SECURITY DEFINER EXISTS(...)` over an edge or role table. One indexed subquery.
+- **Closure**: a trigger-maintained transitive-closure table plus an indexed lookup. Cheap to read, costly to write, and opt-in.
+
+The table below lists each construct, the SQL it compiles to, and its cost class.
 
 ```
 WHAT YOU DECLARE                          WHAT IT COMPILES TO              COST
@@ -92,18 +91,13 @@ descriptor { owner … ; mode … ; grants via edge … }   ← the per-record A
   owner-origination  +  public/private modes  +  a principal-kinded grant list
 ```
 
-These cover the whole space: single- or multi-level tenancy, multi-parent DAGs,
-owner/ACL sharing, roles, nested groups, cross-object borrowing, unbounded
-hierarchies, boolean composition, and a platform/global plane above tenancy.
+Together these cover the whole space: single- or multi-level tenancy, multi-parent DAGs, owner and ACL sharing, roles, nested groups, cross-object borrowing, unbounded hierarchies, boolean composition, and a platform or global plane above tenancy.
 
 ---
 
 ## 3. Demesne vs. the Zanzibar-inspired systems
 
-Zanzibar systems (Google Zanzibar, SpiceDB/AuthZed, OpenFGA, Ory Keto) keep a
-central relation-tuple store and answer a runtime `Check` RPC by walking the
-tuple graph. Demesne keeps the same expressive model but compiles the decision
-into the database and reads the relationships in place.
+Zanzibar systems — Google Zanzibar, SpiceDB/AuthZed, OpenFGA, Ory Keto — keep a central relation-tuple store and answer a runtime `Check` RPC by walking the tuple graph. Demesne keeps the same expressive model but compiles the decision into the database and reads the relationships in place. The table below puts the two side by side, row by row, so you can see where the design diverges.
 
 ```
             ZANZIBAR-STYLE (SpiceDB / OpenFGA / Keto)     DEMESNE
@@ -138,14 +132,13 @@ REACH       any datastore, language-agnostic, its         Postgres-specific (tha
                                                           no extra service to run or scale
 ```
 
-Because enforcement is RLS, authorization rides every query, including ad-hoc
-ones, and can't be forgotten or bypassed. There's no second source of truth to
-keep consistent, and no Check service on the hot path. The cost: it's
-Postgres-bound, and every rule must be expressible as a SQL predicate.
+Because enforcement is RLS, authorization rides every query, including ad-hoc ones, and can't be forgotten or bypassed. There is no second source of truth to keep consistent, and no `Check` service on the hot path. The trade-off: Demesne is Postgres-bound, and every rule must be expressible as a SQL predicate.
 
 ---
 
-## 4. Generation (DB side, via the CLI)  →  Runtime
+## 4. From spec to running database, then to a live request
+
+This section follows the spec through two phases. At build time the CLI introspects your schema, validates the spec, and emits the SQL. At request time Postgres applies the generated policy to each query using the caller's claims. The diagram traces both phases end to end.
 
 ```
   ══════════════ BUILD TIME   (demesne CLI / library) ══════════════════════════
@@ -191,13 +184,17 @@ Postgres-bound, and every rule must be expressible as a SQL predicate.
    COMMIT;
 ```
 
-The app role is a non-BYPASSRLS role; system and bootstrap paths use a separate
-BYPASSRLS pool. The only way to read a governed table on the request path is
-through the policy.
+A few details the diagram leans on:
+
+- The validation steps run V1 through V11, a numbered set of semantic checks. The emitter is bounded: it never emits SQL weaker than what you wrote.
+- `demesne diff` is the oracle that compares the generated output against the live database. It proves the policies in Postgres match what the compiler emitted, byte for byte.
+- The app role is a non-`BYPASSRLS` role. System and bootstrap paths use a separate `BYPASSRLS` pool. The only way to read a governed table on the request path is through the policy.
 
 ---
 
 ## 5. One relationship, end to end
+
+This worked example shows the whole pipeline at the smallest scale: one rule in the spec, the RLS predicate it generates, and what happens when a query runs. The rule:
 
 > *"A document is visible to its owner, to platform staff, or to anyone it's been
 > shared with — and only ever within its own org+project."*
@@ -221,8 +218,13 @@ through the policy.
             No application authz code. No Check RPC. No tuple store.
 ```
 
-Change `+ staff` to `and not banned`, add `via group team_members(...)` for team
-sharing, or add `via closure folder_tree(...)` for inherited folder permissions.
-Each is one spec line that re-compiles into the same kind of RLS predicate, in a
-known cost class, with the differential oracle proving the live database matches.
-```
+Each change to the rule is one spec line that recompiles into the same kind of RLS predicate, in a known cost class, with the diff oracle proving the live database matches. For example: change `+ staff` to `and not banned`, add `via group team_members(...)` for team sharing, or add `via closure folder_tree(...)` for inherited folder permissions.
+
+---
+
+## 6. Limitations
+
+Two modelling boundaries are worth stating plainly, because they shape what you can express:
+
+- **A descriptor owner resolves to a single claim-bearing principal.** Each governed record has one owning principal, identified by one claim. A record owned jointly by two distinct claim-bearing principals is not modelled. Co-ownership has to be expressed through a grant list or a shared role, not through two owners.
+- **Multi-parent is confined to object containment.** A DAG with more than one parent is supported for objects in the containment hierarchy. A subject or a role sitting at a multi-parent level is not: rather than pick one lineage to follow, the model fails closed and grants nothing through that path.

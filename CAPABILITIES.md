@@ -1,8 +1,8 @@
 # How Demesne compares
 
-Demesne sits in the Zanzibar-class / policy-as-code landscape, with one structural difference: it
-compiles authorization into Postgres as Row-Level Security, so the decision rides every query
-instead of living in an API the application must remember to call.
+Demesne is a Zanzibar-class relationship model, the same declarative who-relates-to-what idea behind systems like Ory Keto, OpenFGA, Cerbos, and Oso. What sets it apart is where the decision runs. Demesne compiles your rules into Postgres Row-Level Security, so access is enforced on every query rather than in an API the application has to remember to call.
+
+This page lays out the differences side by side, explains the one structural choice that drives them, and is honest about when another system is the better fit.
 
 ## Capability matrix
 
@@ -20,21 +20,22 @@ instead of living in an API the application must remember to call.
 
 ## Where Demesne is different
 
-The moat is the enforcement locus. Demesne compiles one spec into a fail-closed Postgres RLS
-floor: a `SECURITY DEFINER` role-resolution kernel, `USING`/`WITH CHECK` policies, and `FORCE
-RLS`. Authorization rides every query inside the database, so a forgotten check or an ad-hoc raw
-query is still filtered. Every other system here lives outside the data path and trades that
-property away. Because authz reads the same domain rows in the same transaction, there is no
-second datastore, no dual-write, and no consistency token to reconcile two timelines. The same
-spec also generates an equivalence-checked app layer (`Check` / `ListResources` / `CheckMany`
-plus typed Go and TypeScript codegen), so the in-app surface is verified against the floor and is
-not the sole gate.
+The one structural choice is where authorization runs: inside the database, on the data path, rather than in a service alongside it. Demesne compiles one spec into a fail-closed Postgres Row-Level Security floor — the layer queries can't get under. That floor is a trusted `SECURITY DEFINER` role-resolution kernel, the `USING` and `WITH CHECK` policies that call it, and `FORCE RLS` to apply them to everyone.
 
-Demesne is not a planet-scale, datastore-agnostic standalone `Check` service. It is Postgres-only
-(a Supabase profile ships), a library/compiler + CLI rather than a globally replicated service,
-and every rule must be SQL-expressible. Its reverse who-can-access answers are coverage-gated and
-fail-closed, not provably complete. OpenFGA's native `ListObjects`, Cerbos's `PlanResources`, and
-Oso's same-policy list filtering are stronger there.
+A few things follow from that:
+
+- Access rides every query. A forgotten check or an ad-hoc raw query is still filtered, because the rule is part of the data path, not a step the caller chooses to take.
+- There is no second datastore. Authorization reads the same domain tables in the same transaction, so there is no dual-write to keep in sync and no consistency token reconciling two timelines.
+- The application layer is checked against the floor. The same spec generates a typed Go and TypeScript surface (`Check`, `ListResources`, `CheckMany`), and that surface is equivalence-checked against the policies the database enforces. The in-app code is a convenience, not the only gate.
+
+Every other system in the matrix lives outside the data path, so it can only protect the calls that remember to ask.
+
+That trade has costs, and they are real:
+
+- Demesne is Postgres-only. Compiling to RLS is the whole point; a Supabase deployment profile ships.
+- It is a library, compiler, and CLI, not a globally replicated service. There is nothing extra to run or scale next to your database, but also no planet-scale standalone `Check` service to call.
+- Every rule must be expressible as a SQL predicate.
+- Reverse "who can access this?" answers are coverage-gated and fail-closed. They are deliberately conservative, not provably complete. OpenFGA's native `ListObjects`, Cerbos's `PlanResources`, and Oso's same-policy list filtering are stronger here.
 
 ## Pick another system instead when…
 
