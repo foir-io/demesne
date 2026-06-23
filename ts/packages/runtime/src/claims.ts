@@ -17,6 +17,20 @@ export function mintClaims(claims: Claims, values: Record<string, string>): stri
   return goJSONStringify(values);
 }
 
+export function mintClaimsValuesWithExtra(
+  contract: readonly string[],
+  values: Record<string, string>,
+  extra?: Record<string, string>,
+): string {
+  const known = new Set(contract);
+  const bad = Object.keys(values).filter((k) => !known.has(k));
+  if (bad.length > 0) {
+    bad.sort(goCmp);
+    throw new Error(`mintClaims: key(s) not in the claims contract: [${bad.join(" ")}]`);
+  }
+  return goJSONStringify({ ...values, ...(extra ?? {}) });
+}
+
 export function buildClaims(claims: Claims, principal: Principal): Record<string, string> {
   const subject = claims.subjects.find((s) => s.name === principal.subject);
   if (subject === undefined) {
