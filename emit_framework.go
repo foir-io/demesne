@@ -131,7 +131,7 @@ func (g *fwGen) header() {
 	g.b.WriteString("\t\"context\"\n")
 	g.b.WriteString("\t\"encoding/json\"\n")
 	g.b.WriteString("\t\"net/http\"\n\n")
-	g.b.WriteString("\tdemesne \"github.com/eidestudio/demesne\"\n")
+	g.b.WriteString("\tdemesne \"github.com/foir-io/demesne\"\n")
 	g.b.WriteString(")\n\n")
 }
 

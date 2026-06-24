@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	demesne "github.com/eidestudio/demesne"
+	demesne "github.com/foir-io/demesne"
 )
 
 type Decision = demesne.Decision

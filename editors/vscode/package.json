@@ -6,7 +6,7 @@
   "publisher": "eidestudio",
   "license": "Apache-2.0",
   "private": true,
-  "repository": { "type": "git", "url": "https://github.com/eidestudio/demesne.git", "directory": "editors/vscode" },
+  "repository": { "type": "git", "url": "https://github.com/foir-io/demesne.git", "directory": "editors/vscode" },
   "engines": { "vscode": "^1.60.0" },
   "categories": ["Programming Languages"],
   "contributes": {

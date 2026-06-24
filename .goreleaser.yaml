@@ -57,6 +57,6 @@ changelog:
 
 release:
   github:
-    owner: eidestudio
+    owner: foir-io
     name: demesne
   prerelease: auto

@@ -5,11 +5,11 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eidestudio/demesne.git",
+    "url": "git+https://github.com/foir-io/demesne.git",
     "directory": "ts/packages/runtime"
   },
-  "homepage": "https://github.com/eidestudio/demesne#readme",
-  "bugs": "https://github.com/eidestudio/demesne/issues",
+  "homepage": "https://github.com/foir-io/demesne#readme",
+  "bugs": "https://github.com/foir-io/demesne/issues",
   "keywords": [
     "authorization",
     "rls",

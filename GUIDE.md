@@ -333,7 +333,7 @@ os.WriteFile("internal/authz/authz.go", []byte(src), 0o644)
 
 **Wiring a connection.** Adapt your driver to `demesne.Querier`. Use
 `demesne.FromSQL(db)` for `database/sql`, or
-`github.com/eidestudio/demesne/pgx`.`FromPgx(pool)` for pgx — a separate module, so
+`github.com/foir-io/demesne/pgx`.`FromPgx(pool)` for pgx — a separate module, so
 the engine stays stdlib-pure. Run the generated `Can<Verb>` inside a transaction
 that has already run `SessionSetupSQL` and the `Claims.Mint()` result.
 

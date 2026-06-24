@@ -3,7 +3,7 @@ package pgx
 import (
 	"testing"
 
-	demesne "github.com/eidestudio/demesne"
+	demesne "github.com/foir-io/demesne"
 )
 
 func TestFromPgx_Interfaces(t *testing.T) {

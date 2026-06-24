@@ -190,7 +190,7 @@ func TestCLI_EmitFramework(t *testing.T) {
 	})
 	for _, want := range []string{
 		"package authz",
-		`demesne "github.com/eidestudio/demesne"`,
+		`demesne "github.com/foir-io/demesne"`,
 		"type Claims struct {",
 		"func (docAccess) CanView(ctx context.Context, q demesne.Querier, id string) (Decision, error)",
 		"func CheckHandler(q demesne.Querier) http.HandlerFunc",
