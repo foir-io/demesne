@@ -10,13 +10,13 @@ and TypeScript. There is no running authorization service; enforcement lives in 
 
 ## Repository layout
 
-- `/` — the engine, module `github.com/eidestudio/demesne`. Standard library only. The
+- `/` — the engine, module `github.com/foir-io/demesne`. Standard library only. The
   lexer, parser, AST, validator, every `Emit*` target (RLS, definers, triggers, PDP, claims,
   app surface, framework codegen, changelog, TypeScript, Supabase profile), and the runtime
   helpers.
 - `cmd/demesne/` — the CLI, a separate module that links pgx for the live-database
-  subcommands. Has `replace github.com/eidestudio/demesne => ../..`.
-- `pgx/` — module `github.com/eidestudio/demesne/pgx`, the pgx adapter (`FromPgx`). A separate
+  subcommands. Has `replace github.com/foir-io/demesne => ../..`.
+- `pgx/` — module `github.com/foir-io/demesne/pgx`, the pgx adapter (`FromPgx`). A separate
   module so the engine stays standard-library only.
 - `examples/` — worked `.demesne` specs plus committed generated packages (`examples/authz`,
   `examples/supabaseauthz`) that serve as compile proofs and golden references.

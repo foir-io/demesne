@@ -10,6 +10,6 @@
 // platform's actual spec, the generated migrations, and the differential-
 // equivalence oracle (generated == live pg_policies/pg_proc) live in the
 // platform repo, where the database is — verification belongs where it can run.
-module github.com/eidestudio/demesne
+module github.com/foir-io/demesne
 
 go 1.26.1

@@ -3,7 +3,7 @@ package pgx
 import (
 	"context"
 
-	demesne "github.com/eidestudio/demesne"
+	demesne "github.com/foir-io/demesne"
 	"github.com/jackc/pgx/v5"
 )
 

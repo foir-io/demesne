@@ -3,7 +3,7 @@ package main
 import (
 	"database/sql"
 
-	demesne "github.com/eidestudio/demesne"
+	demesne "github.com/foir-io/demesne"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 

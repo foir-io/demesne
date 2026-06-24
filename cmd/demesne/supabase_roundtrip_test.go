@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	demesne "github.com/eidestudio/demesne"
-	authz "github.com/eidestudio/demesne/examples/supabaseauthz"
-	demesnepgx "github.com/eidestudio/demesne/pgx"
+	demesne "github.com/foir-io/demesne"
+	authz "github.com/foir-io/demesne/examples/supabaseauthz"
+	demesnepgx "github.com/foir-io/demesne/pgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

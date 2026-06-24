@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	demesne "github.com/eidestudio/demesne"
+	demesne "github.com/foir-io/demesne"
 )
 
 const usage = `demesne — RLS-compiled ReBAC authorization, point it at your database.

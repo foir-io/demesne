@@ -16,7 +16,7 @@ func TestEmitFramework_Shape(t *testing.T) {
 	}
 	for _, want := range []string{
 		"package authz",
-		`demesne "github.com/eidestudio/demesne"`,
+		`demesne "github.com/foir-io/demesne"`,
 		"type Decision = demesne.Decision",
 		"func (c Claims) Mint() (string, error)",
 		"demesne.MintClaimsValuesWithExtra(claimsContract, c.values(), c.Extra)",
@@ -173,7 +173,7 @@ func TestEmitFramework_Compiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "authz", "authz.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gomod := "module fwtest\n\ngo 1.26.1\n\nrequire github.com/eidestudio/demesne v0.0.0\n\nreplace github.com/eidestudio/demesne => " + repo + "\n"
+	gomod := "module fwtest\n\ngo 1.26.1\n\nrequire github.com/foir-io/demesne v0.0.0\n\nreplace github.com/foir-io/demesne => " + repo + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644); err != nil {
 		t.Fatal(err)
 	}

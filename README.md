@@ -27,7 +27,7 @@ A spec describes four things:
 From those, Demesne emits the RLS policies, the `SECURITY DEFINER` kernel, the verb-gate map, and the claims contract. Every trusted function is generated, so there's no opaque hand-written SQL to audit — and the test suite applies the generated SQL to a real Postgres and checks the live policies match what it emitted, byte for byte.
 
 ```go
-import "github.com/eidestudio/demesne"
+import "github.com/foir-io/demesne"
 
 spec, _ := demesne.Parse(src)      // text → AST
 demesne.Validate(spec)             // static checks
