@@ -13,7 +13,7 @@ This package is a thin launcher: on install, npm pulls the one
 `@foir/demesne-cli-<platform>` optional dependency that matches your OS and CPU, and the `demesne`
 bin execs that binary. No Go toolchain required.
 
-Prefer Go? `go install github.com/eidestudio/demesne/cmd/demesne@latest`.
+Prefer a standalone binary? Grab one from the [GitHub releases](https://github.com/eidestudio/demesne/releases), or build from source — clone the repo and run `go build ./cmd/demesne`.
 
 See the [project README](https://github.com/eidestudio/demesne#readme) for the spec grammar and
 the full command reference (`demesne help`). Licensed under Apache-2.0.

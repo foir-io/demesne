@@ -22,8 +22,8 @@ function resolveBinary() {
   const pkg = PLATFORM_PACKAGES[key];
   if (!pkg) {
     fail(
-      `no prebuilt binary for ${key}. Install Go and run: ` +
-        "go install github.com/eidestudio/demesne/cmd/demesne@latest"
+      `no prebuilt binary for ${key}. Build from source: clone ` +
+        "github.com/eidestudio/demesne and run 'go build ./cmd/demesne'"
     );
   }
   const binName = process.platform === "win32" ? "demesne.exe" : "demesne";
