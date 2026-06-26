@@ -287,6 +287,21 @@ pure helpers, and none of them re-evaluate policy in app code.
   `EffectivePerms.Permissions()` as `held`. It owns only the intersection and
   validity. The rest is adopter glue you wrap around it: a rank floor (via `RankOf`
   / `PresetsAtOrAbove`), a higher-plane bypass, and the principal-kind check.
+- `Spec.Vocabularies()` and `Spec.ExpandedPresets(rolestore)` — the introspection
+  read for a role-management or permission-admin UI built from the compiled spec, the
+  single source of the vocabulary, with nothing re-declared. `Vocabularies()` returns
+  every declared vocabulary and its permissions in declaration order, and marks each
+  parameterized permission: one that carries the open `*` model segment (`docs:read:*`)
+  rather than a concrete one (`docs:read`), so a picker can split the model segment
+  itself. `ExpandedPresets(rolestore)` resolves each preset of that rolestore's bound
+  vocabulary to a flat permission set. It expands both `+` preset references and the
+  `= *` wildcard to the full vocabulary, reusing the `PresetPermissions` logic and the
+  same rolestore-to-vocabulary binding the generated `Holds` surface uses. Each
+  permission list is sorted. The map is unordered, so sort its keys for a stable
+  display. A vocabulary with no presets yields an empty map. It returns generic data
+  only: which permissions exist, which are parameterized, and what each preset resolves
+  to. It never decides what any of that means; the bucketing, labeling, and layout are
+  your UI's job, not the engine's.
 - `Spec.GrantSurface(name)` — the control-plane write side of a `grant … via edge`
   store (operator or impersonation reach), the dual of the reach definer.
   - `GrantInsert(id, grantee, level, grantedBy, expiresAt, extra)` — issue a grant,

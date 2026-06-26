@@ -112,7 +112,8 @@ export const holdsResolver: HoldsResolver = {
     "permissions": [
       "docs:read",
       "docs:write",
-      "docs:publish"
+      "docs:publish",
+      "docs:read:*"
     ],
     "presets": [
       {
@@ -160,6 +161,10 @@ export async function holds(q: Querier, principalId: string, scope: string[]): P
   }));
   return resolveHeld(assignments, scope);
 }
+
+// These vocabulary permissions are parameterized (a '*' model segment) and have no static
+// caps field — check them with held.holds("<domain>:<verb>:<model>") directly:
+//   - docs:read:*
 
 export function caps(held: EffectivePerms) {
   return {
