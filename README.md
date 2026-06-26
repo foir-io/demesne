@@ -55,6 +55,19 @@ Adopting Demesne on an existing database is a short loop: introspect the schema,
 
 Permissions are a small boolean algebra over those terms — union, intersection, and fail-closed negation — so `viewer and not banned` or `(owner or shared) and not banned` compile straight to an RLS predicate.
 
+## Spec introspection
+
+The compiled spec is the single source of your vocabulary, so you can build a role-management or permission-admin UI from it without re-declaring the permission list. `spec.Vocabularies()` returns each declared vocabulary and its permissions, and marks each parameterized one: a permission that carries the open `*` model segment, like `docs:read:*` rather than a concrete `docs:read`. `spec.ExpandedPresets(rolestore)` maps each preset of that rolestore's vocabulary to its fully resolved permission set, and expands both `+` references and the `= *` wildcard. Demesne returns generic data. How you bucket, label, and lay it out is your UI's job.
+
+```go
+for _, v := range spec.Vocabularies() {
+	for _, p := range v.Permissions {
+		// p.Name, p.Parameterized → drive a permission picker
+	}
+}
+presets, _ := spec.ExpandedPresets("staff") // preset → resolved permissions, for a role editor
+```
+
 ## Worked examples
 
 The patterns that are easy to get subtly wrong by hand are each a few lines of spec, and each ships with a test that asserts the generated policy actually enforces the intended reach:

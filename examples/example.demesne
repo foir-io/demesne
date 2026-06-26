@@ -9,6 +9,7 @@ vocabulary staff {
   permission docs:read
   permission docs:write
   permission docs:publish
+  permission docs:read:*
 
   preset ws_viewer   @ workspace = docs:read
   preset ws_editor   @ workspace = ws_viewer + docs:write + docs:publish
