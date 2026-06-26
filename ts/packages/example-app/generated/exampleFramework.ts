@@ -185,7 +185,7 @@ export async function holdsRoles(q: Querier, principalId: string, scope: string[
   return resolveHeldRoles(assignments, scope);
 }
 
-export function roles(held: EffectiveRoles) {
+export function roleTiers(held: EffectiveRoles) {
   return {
     platformAdmin: held.holds("platform_admin"),
     wsViewer: held.holds("ws_viewer"),

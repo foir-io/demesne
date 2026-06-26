@@ -19,6 +19,9 @@ func (s *Spec) EmitFramework(pkg string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := s.checkAccessorCollisions(surf.Objects); err != nil {
+		return "", err
+	}
 
 	skipped := s.compositePKObjects()
 	orphanPDP := s.orphanPDPVerbs()
@@ -61,7 +64,7 @@ func (s *Spec) EmitFramework(pkg string) (string, error) {
 		}
 		if v != nil && !emittedRoles[v.Name] {
 			emittedRoles[v.Name] = true
-			if err := g.rolesFunc(v, suffix); err != nil {
+			if err := g.roleTiersFunc(v, suffix); err != nil {
 				return "", err
 			}
 		}
@@ -459,6 +462,50 @@ func (s *Spec) roleTierFields(vocab *Vocabulary) ([]roleField, error) {
 	return fields, nil
 }
 
+func (s *Spec) frameworkReservedNames() map[string]bool {
+	reserved := map[string]bool{}
+	add := func(n string) { reserved[strings.ToLower(goExport(n))] = true }
+	for _, n := range []string{
+		"Decision", "Allow", "Deny", "NotGoverned",
+		"Claims", "Mint", "Querier",
+		"ConnectionRole", "claimsContract", "claimsGUC",
+		"SetRoleSQL", "ClaimsSetSQL", "SessionSetupSQL",
+		"Check", "CheckHandler",
+	} {
+		add(n)
+	}
+	for _, rs := range s.RoleStores {
+		suffix := ""
+		if len(s.RoleStores) > 1 {
+			suffix = goExport(rs.Name)
+		}
+		for _, base := range []string{
+			"HoldsResolver", "AssignmentsSQL", "ResolveHeld", "Holds",
+			"ResolveHeldRoles", "HoldsRoles", "RoleTiers", "RoleSet", "Caps", "CapSet",
+		} {
+			add(base + suffix)
+		}
+		if v, err := s.rolestoreVocab(rs); err == nil && v != nil {
+			if domains, _, derr := vocabCapsTree(v.Permissions); derr == nil {
+				for _, d := range domains {
+					add(d.exp + "Caps" + suffix)
+				}
+			}
+		}
+	}
+	return reserved
+}
+
+func (s *Spec) checkAccessorCollisions(objects []AppObjectSurface) error {
+	reserved := s.frameworkReservedNames()
+	for _, o := range objects {
+		if reserved[strings.ToLower(goExport(o.Object))] {
+			return fmt.Errorf("framework emit: object %q generates the accessor %q, which collides with a generated framework helper of the same name; rename the object (the role-tier accessor is RoleTiers/roleTiers, verb caps is Caps/caps, the reusable check is Check/check)", o.Object, goExport(o.Object))
+		}
+	}
+	return nil
+}
+
 func (g *fwGen) holdsRoles(rs *RoleStore, suffix string) error {
 	r, err := g.spec.HoldsResolver(rs.Name)
 	if err != nil {
@@ -489,7 +536,7 @@ func (g *fwGen) holdsRoles(rs *RoleStore, suffix string) error {
 	return nil
 }
 
-func (g *fwGen) rolesFunc(v *Vocabulary, suffix string) error {
+func (g *fwGen) roleTiersFunc(v *Vocabulary, suffix string) error {
 	fields, err := g.spec.roleTierFields(v)
 	if err != nil {
 		return err
@@ -503,7 +550,7 @@ func (g *fwGen) rolesFunc(v *Vocabulary, suffix string) error {
 		fmt.Fprintf(&g.b, "\t%s bool\n", f.exp)
 	}
 	g.b.WriteString("}\n\n")
-	fmt.Fprintf(&g.b, "func Roles%s(held demesne.EffectiveRoles) %s {\n", suffix, set)
+	fmt.Fprintf(&g.b, "func RoleTiers%s(held demesne.EffectiveRoles) %s {\n", suffix, set)
 	fmt.Fprintf(&g.b, "\treturn %s{\n", set)
 	for _, f := range fields {
 		fmt.Fprintf(&g.b, "\t\t%s: held.Holds(%q),\n", f.exp, f.key)

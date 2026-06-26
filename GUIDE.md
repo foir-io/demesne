@@ -318,7 +318,7 @@ The generated package gives you:
 - a `Claims` struct and the session envelope;
 - per-object `Can<Verb>(ctx, q, id)` methods;
 - `Caps(held)` — a typed boolean per verb-gate permission, for UI affordances;
-- `Roles(held)` — a typed boolean per role tier, plane and scoped, for UI affordances;
+- `RoleTiers(held)` — a typed boolean per role tier, plane and scoped, for UI affordances;
 - scoped query builders, `ListResources` and `CheckMany`;
 - a per-rolestore holds resolver;
 - a reusable `Check(ctx, q, object, verb, id)`;
@@ -366,10 +366,10 @@ that has already run `SessionSetupSQL` and the `Claims.Mint()` result.
   returns a capability-gate error, never a silent `NotGoverned`. Insert and delete
   have no pre-flight check.
 - *Two affordance axes.* `Caps(held)` answers the verb axis: can this principal
-  publish? `Roles(held)` answers the role-tier axis: is this principal a platform
+  publish? `RoleTiers(held)` answers the role-tier axis: is this principal a platform
   admin, or a tenant owner? A wildcard role or a global plane membership can't be read
   off the verb set, so the two stay separate accessors over separate held sets. Both
-  are UI hints; the floor still decides. `Roles` reads a held-roles set
+  are UI hints; the floor still decides. `RoleTiers` reads a held-roles set
   (`EffectiveRoles`), resolved by the generated `HoldsRoles` / `ResolveHeldRoles`, or
   built from a session with `demesne.NewEffectiveRoles`. A preset at a `virtual` level
   is a plane role and lists first; the rolestore's scoped presets follow.

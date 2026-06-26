@@ -36,7 +36,7 @@ func TestEmitFramework_Shape(t *testing.T) {
 		"Publish: held.Holds(\"docs:publish\")",
 		"func ResolveHeldRoles(assignments []demesne.RoleAssignment, scope []string) demesne.EffectiveRoles",
 		"func HoldsRoles(ctx context.Context, q demesne.Querier, principalID string, scope []string) (demesne.EffectiveRoles, error)",
-		"func Roles(held demesne.EffectiveRoles) RoleSet",
+		"func RoleTiers(held demesne.EffectiveRoles) RoleSet",
 		"type RoleSet struct {",
 		"PlatformAdmin bool",
 		"PlatformAdmin: held.Holds(\"platform_admin\"),",
@@ -157,17 +157,10 @@ func TestEmitFramework_SupabaseArtifact(t *testing.T) {
 	}
 }
 
-func TestEmitFramework_Compiles(t *testing.T) {
-	if testing.Short() {
-		t.Skip("-short: skipping the go-build compile proof")
-	}
+func buildFrameworkModule(t *testing.T, src string) (string, bool) {
+	t.Helper()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain unavailable")
-	}
-	s := loadExample(t)
-	src, err := s.EmitFramework("authz")
-	if err != nil {
-		t.Fatalf("EmitFramework: %v", err)
 	}
 	repo, err := os.Getwd()
 	if err != nil {
@@ -187,7 +180,20 @@ func TestEmitFramework_Compiles(t *testing.T) {
 	cmd := exec.Command("go", "build", "./...")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOFLAGS=-mod=mod", "GOWORK=off")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	return string(out), err == nil
+}
+
+func TestEmitFramework_Compiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short: skipping the go-build compile proof")
+	}
+	s := loadExample(t)
+	src, err := s.EmitFramework("authz")
+	if err != nil {
+		t.Fatalf("EmitFramework: %v", err)
+	}
+	if out, ok := buildFrameworkModule(t, src); !ok {
 		t.Fatalf("generated framework does not compile:\n%s\n--- generated ---\n%s", out, src)
 	}
 }

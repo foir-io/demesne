@@ -37,7 +37,7 @@ func TestEmitFrameworkTS_Shape(t *testing.T) {
 		"export async function holds(q: Querier, principalId: string, scope: string[]): Promise<EffectivePerms> {",
 		"export function resolveHeldRoles(assignments: RoleAssignment[], scope: string[]): EffectiveRoles {",
 		"export async function holdsRoles(q: Querier, principalId: string, scope: string[]): Promise<EffectiveRoles> {",
-		"export function roles(held: EffectiveRoles) {",
+		"export function roleTiers(held: EffectiveRoles) {",
 		`platformAdmin: held.holds("platform_admin"),`,
 		`tenantOwner: held.holds("tenant_owner"),`,
 		"export async function check(q: Querier, object: string, verb: string, id: string): Promise<Decision> {",

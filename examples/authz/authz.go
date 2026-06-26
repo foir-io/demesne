@@ -286,7 +286,7 @@ type RoleSet struct {
 	TenantOwner   bool
 }
 
-func Roles(held demesne.EffectiveRoles) RoleSet {
+func RoleTiers(held demesne.EffectiveRoles) RoleSet {
 	return RoleSet{
 		PlatformAdmin: held.Holds("platform_admin"),
 		WsViewer:      held.Holds("ws_viewer"),

@@ -108,7 +108,7 @@ func TestEmitFramework_RoleTier(t *testing.T) {
 		t.Fatalf("EmitFramework: %v", err)
 	}
 	for _, want := range []string{
-		"func Roles(held demesne.EffectiveRoles) RoleSet",
+		"func RoleTiers(held demesne.EffectiveRoles) RoleSet",
 		"PlatformAdmin bool",
 		"ProjectAdmin  bool",
 		"TenantOwner   bool",
@@ -127,7 +127,7 @@ func TestEmitFramework_RoleTier(t *testing.T) {
 		t.Fatalf("EmitFrameworkTS: %v", err)
 	}
 	for _, want := range []string{
-		"export function roles(held: EffectiveRoles) {",
+		"export function roleTiers(held: EffectiveRoles) {",
 		`platformAdmin: held.holds("platform_admin"),`,
 		`projectAdmin: held.holds("project_admin"),`,
 		`tenantOwner: held.holds("tenant_owner"),`,
@@ -145,6 +145,113 @@ func TestEmitFramework_RoleTier(t *testing.T) {
 	}
 }
 
+const governedRolesSpec = `
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin {
+  permission content:read
+  permission content:write
+  preset project_admin @ project = content:read + content:write
+  preset tenant_owner  @ tenant  = *
+  rank tenant_owner > project_admin
+}
+vocabulary platform {
+  permission platform:manage
+  preset platform_admin @ platform = platform:manage
+}
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject staff { anchor platform; reach descendants; identifies sub; roles configurable platform }
+subject admin { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+object roles {
+  table  roles
+  scoped tenant > project
+  relation owner: admin via owner_id
+  permission view = owner @rls maps select
+  permission edit = owner @rls maps update
+}
+`
+
+func TestEmitFramework_GovernedRolesObjectCompiles(t *testing.T) {
+	s := mustValidSpec(t, governedRolesSpec)
+	src, err := s.EmitFramework("authz")
+	if err != nil {
+		t.Fatalf("EmitFramework: %v", err)
+	}
+	for _, want := range []string{
+		"var Roles = rolesAccess{}",
+		"func RoleTiers(held demesne.EffectiveRoles) RoleSet",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("a governed `roles` object and the role-tier accessor must coexist; missing %q", want)
+		}
+	}
+	tsSrc, err := s.EmitFrameworkTS()
+	if err != nil {
+		t.Fatalf("EmitFrameworkTS: %v", err)
+	}
+	for _, want := range []string{
+		"export const roles = {",
+		"export function roleTiers(held: EffectiveRoles) {",
+	} {
+		if !strings.Contains(tsSrc, want) {
+			t.Errorf("TS: a governed `roles` object and roleTiers must coexist; missing %q", want)
+		}
+	}
+	if testing.Short() {
+		t.Skip("-short: skipping the go-build compile proof")
+	}
+	if out, ok := buildFrameworkModule(t, src); !ok {
+		t.Fatalf("framework governing a `roles` object does not compile:\n%s\n--- generated ---\n%s", out, src)
+	}
+}
+
+const governedCheckSpec = `
+topology { level tenant }
+vocabulary v {
+  permission a:read
+  preset viewer @ tenant = a:read
+}
+rolestore v {
+  assignments role_assignments
+  kind        principal_kind = "x"
+  subject     principal_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject u { anchor tenant; reach descendants; identifies sub; roles configurable v; binds admin }
+object check {
+  table  checks
+  scoped tenant
+  relation owner: u via owner_id
+  permission view = owner @rls maps select
+}
+`
+
+func TestEmitFramework_ReservedNameCollisionFires(t *testing.T) {
+	s := mustValidSpec(t, governedCheckSpec)
+	_, err := s.EmitFramework("authz")
+	if err == nil {
+		t.Fatal("Go emit must fail closed: object `check` collides with the generated Check helper")
+	}
+	if !strings.Contains(err.Error(), "collides") {
+		t.Errorf("error should name the collision, got: %v", err)
+	}
+	if _, tsErr := s.EmitFrameworkTS(); tsErr == nil {
+		t.Fatal("TS emit must fail closed for the `check` collision too")
+	}
+}
+
 func TestEmitFramework_NoRoleTierWhenNoPresets(t *testing.T) {
 	const spec = `
 topology { level tenant }
@@ -157,7 +264,7 @@ object note { table notes scoped tenant relation o: u via owner_id permission vi
 	if err != nil {
 		t.Fatalf("EmitFramework: %v", err)
 	}
-	if strings.Contains(src, "type RoleSet struct") || strings.Contains(src, "func Roles(") {
+	if strings.Contains(src, "type RoleSet struct") || strings.Contains(src, "func RoleTiers(") {
 		t.Errorf("a spec with no rolestore/presets must emit no role tier:\n%s", src)
 	}
 }

@@ -15,6 +15,9 @@ func (s *Spec) EmitFrameworkTS() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := s.checkAccessorCollisions(surf.Objects); err != nil {
+		return "", err
+	}
 
 	g := &fwTSGen{spec: s}
 	g.claims(contract)
@@ -51,7 +54,7 @@ func (s *Spec) EmitFrameworkTS() (string, error) {
 		g.holdsRolesTS(suffix)
 		if v != nil && !emittedRoles[v.Name] {
 			emittedRoles[v.Name] = true
-			if err := g.rolesFuncTS(v, suffix); err != nil {
+			if err := g.roleTiersFuncTS(v, suffix); err != nil {
 				return "", err
 			}
 		}
@@ -369,7 +372,7 @@ func (g *fwTSGen) holdsRolesTS(suffix string) {
 	g.b.WriteString("}\n\n")
 }
 
-func (g *fwTSGen) rolesFuncTS(v *Vocabulary, suffix string) error {
+func (g *fwTSGen) roleTiersFuncTS(v *Vocabulary, suffix string) error {
 	fields, err := g.spec.roleTierFields(v)
 	if err != nil {
 		return err
@@ -378,7 +381,7 @@ func (g *fwTSGen) rolesFuncTS(v *Vocabulary, suffix string) error {
 		return nil
 	}
 	g.needEffRoles = true
-	fmt.Fprintf(&g.b, "export function roles%s(held: EffectiveRoles) {\n", suffix)
+	fmt.Fprintf(&g.b, "export function roleTiers%s(held: EffectiveRoles) {\n", suffix)
 	g.b.WriteString("  return {\n")
 	for _, f := range fields {
 		fmt.Fprintf(&g.b, "    %s: held.holds(%s),\n", unexport(f.exp), tsStr(f.key))
