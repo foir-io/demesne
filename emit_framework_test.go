@@ -34,6 +34,13 @@ func TestEmitFramework_Shape(t *testing.T) {
 		"Docs DocsCaps",
 		"type DocsCaps struct {",
 		"Publish: held.Holds(\"docs:publish\")",
+		"func ResolveHeldRoles(assignments []demesne.RoleAssignment, scope []string) demesne.EffectiveRoles",
+		"func HoldsRoles(ctx context.Context, q demesne.Querier, principalID string, scope []string) (demesne.EffectiveRoles, error)",
+		"func Roles(held demesne.EffectiveRoles) RoleSet",
+		"type RoleSet struct {",
+		"PlatformAdmin bool",
+		"PlatformAdmin: held.Holds(\"platform_admin\"),",
+		"TenantOwner:   held.Holds(\"tenant_owner\"),",
 		`case "doc.publish":`,
 		"return NotGoverned, demesne.CapabilityGateErr(object, verb)",
 	} {

@@ -21,6 +21,11 @@ vocabulary member {
   permission self:write
 }
 
+vocabulary platform {
+  permission platform:manage
+  preset platform_admin @ org = platform:manage
+}
+
 rolestore staff {
   assignments role_grants
   kind        grantee_kind = "staff"
@@ -30,7 +35,8 @@ rolestore staff {
   revoked     revoked_at
 }
 
-subject root   { anchor org;       reach descendants; identifies sub via membership staff_users(id, is_root) active status = "ACTIVE"; roles none }
+subject root          { anchor org; reach descendants; identifies sub via membership staff_users(id, is_root) active status = "ACTIVE"; roles none }
+subject platform_staff { anchor org; reach descendants; identifies sub; roles configurable platform }
 subject staff  { anchor tenant;    reach descendants; identifies sub;        roles configurable staff;  binds admin }
 subject member { anchor workspace; reach self;        identifies member_id;  roles configurable member; binds owner }
 subject service { anchor workspace; reach self;       identifies sub;        roles none }

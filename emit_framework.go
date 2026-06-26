@@ -37,6 +37,7 @@ func (s *Spec) EmitFramework(pkg string) (string, error) {
 		g.object(o, obj)
 	}
 	emittedCaps := map[string]bool{}
+	emittedRoles := map[string]bool{}
 	for _, rs := range s.RoleStores {
 		suffix := ""
 		if len(s.RoleStores) > 1 {
@@ -52,6 +53,15 @@ func (s *Spec) EmitFramework(pkg string) (string, error) {
 		if v != nil && !emittedCaps[v.Name] {
 			emittedCaps[v.Name] = true
 			if err := g.vocabCapsFunc(v, suffix); err != nil {
+				return "", err
+			}
+		}
+		if err := g.holdsRoles(rs, suffix); err != nil {
+			return "", err
+		}
+		if v != nil && !emittedRoles[v.Name] {
+			emittedRoles[v.Name] = true
+			if err := g.rolesFunc(v, suffix); err != nil {
 				return "", err
 			}
 		}
@@ -402,6 +412,101 @@ func (g *fwGen) vocabCapsFunc(v *Vocabulary, suffix string) error {
 			fmt.Fprintf(&g.b, "\t\t\t%s: held.Holds(%q),\n", f.exp, f.perm)
 		}
 		g.b.WriteString("\t\t},\n")
+	}
+	g.b.WriteString("\t}\n}\n\n")
+	return nil
+}
+
+type roleField struct{ exp, key string }
+
+func (s *Spec) roleTierFields(vocab *Vocabulary) ([]roleField, error) {
+	virtual := s.defVirtualLevels()
+	var fields []roleField
+	seenKey := map[string]bool{}
+	seenExp := map[string]bool{}
+	add := func(key string) error {
+		if key == "" || seenKey[key] {
+			return nil
+		}
+		seenKey[key] = true
+		exp := goExport(key)
+		if seenExp[exp] {
+			return fmt.Errorf("role tier: preset %q collides on field %s", key, exp)
+		}
+		seenExp[exp] = true
+		fields = append(fields, roleField{exp: exp, key: key})
+		return nil
+	}
+	for _, v := range s.Vocabs {
+		for _, p := range v.Presets {
+			if p.Level != "" && virtual[p.Level] {
+				if err := add(p.Name); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	if vocab != nil {
+		for _, p := range vocab.Presets {
+			if p.Level == "" || virtual[p.Level] {
+				continue
+			}
+			if err := add(p.Name); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return fields, nil
+}
+
+func (g *fwGen) holdsRoles(rs *RoleStore, suffix string) error {
+	r, err := g.spec.HoldsResolver(rs.Name)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(&g.b, "func ResolveHeldRoles%s(assignments []demesne.RoleAssignment, scope []string) demesne.EffectiveRoles {\n", suffix)
+	g.b.WriteString("\treturn demesne.ResolveRoles(assignments, scope)\n}\n\n")
+
+	fmt.Fprintf(&g.b, "func HoldsRoles%s(ctx context.Context, q demesne.Querier, principalID string, scope []string) (demesne.EffectiveRoles, error) {\n", suffix)
+	fmt.Fprintf(&g.b, "\trows, err := q.QueryContext(ctx, AssignmentsSQL%s, principalID)\n", suffix)
+	g.b.WriteString("\tif err != nil {\n\t\treturn demesne.EffectiveRoles{}, err\n\t}\n\tdefer rows.Close()\n")
+	g.b.WriteString("\tvar assignments []demesne.RoleAssignment\n")
+	g.b.WriteString("\tfor rows.Next() {\n")
+	fmt.Fprintf(&g.b, "\t\ta := demesne.RoleAssignment{Scope: make([]string, %d)}\n", len(r.ScopeCols))
+	dest := make([]string, 0, len(r.ScopeCols)+2)
+	for i := range r.ScopeCols {
+		dest = append(dest, fmt.Sprintf("&a.Scope[%d]", i))
+	}
+	dest = append(dest, "&a.RoleKey")
+	if r.PermsCol != "" {
+		dest = append(dest, "&a.Permissions")
+	}
+	fmt.Fprintf(&g.b, "\t\tif err := rows.Scan(%s); err != nil {\n", strings.Join(dest, ", "))
+	g.b.WriteString("\t\t\treturn demesne.EffectiveRoles{}, err\n\t\t}\n")
+	g.b.WriteString("\t\tassignments = append(assignments, a)\n\t}\n")
+	g.b.WriteString("\tif err := rows.Err(); err != nil {\n\t\treturn demesne.EffectiveRoles{}, err\n\t}\n")
+	fmt.Fprintf(&g.b, "\treturn ResolveHeldRoles%s(assignments, scope), nil\n}\n\n", suffix)
+	return nil
+}
+
+func (g *fwGen) rolesFunc(v *Vocabulary, suffix string) error {
+	fields, err := g.spec.roleTierFields(v)
+	if err != nil {
+		return err
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	set := "RoleSet" + suffix
+	fmt.Fprintf(&g.b, "type %s struct {\n", set)
+	for _, f := range fields {
+		fmt.Fprintf(&g.b, "\t%s bool\n", f.exp)
+	}
+	g.b.WriteString("}\n\n")
+	fmt.Fprintf(&g.b, "func Roles%s(held demesne.EffectiveRoles) %s {\n", suffix, set)
+	fmt.Fprintf(&g.b, "\treturn %s{\n", set)
+	for _, f := range fields {
+		fmt.Fprintf(&g.b, "\t\t%s: held.Holds(%q),\n", f.exp, f.key)
 	}
 	g.b.WriteString("\t}\n}\n\n")
 	return nil

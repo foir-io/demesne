@@ -255,6 +255,46 @@ func Caps(held demesne.EffectivePerms) CapSet {
 	}
 }
 
+func ResolveHeldRoles(assignments []demesne.RoleAssignment, scope []string) demesne.EffectiveRoles {
+	return demesne.ResolveRoles(assignments, scope)
+}
+
+func HoldsRoles(ctx context.Context, q demesne.Querier, principalID string, scope []string) (demesne.EffectiveRoles, error) {
+	rows, err := q.QueryContext(ctx, AssignmentsSQL, principalID)
+	if err != nil {
+		return demesne.EffectiveRoles{}, err
+	}
+	defer rows.Close()
+	var assignments []demesne.RoleAssignment
+	for rows.Next() {
+		a := demesne.RoleAssignment{Scope: make([]string, 2)}
+		if err := rows.Scan(&a.Scope[0], &a.Scope[1], &a.RoleKey); err != nil {
+			return demesne.EffectiveRoles{}, err
+		}
+		assignments = append(assignments, a)
+	}
+	if err := rows.Err(); err != nil {
+		return demesne.EffectiveRoles{}, err
+	}
+	return ResolveHeldRoles(assignments, scope), nil
+}
+
+type RoleSet struct {
+	PlatformAdmin bool
+	WsViewer      bool
+	WsEditor      bool
+	TenantOwner   bool
+}
+
+func Roles(held demesne.EffectiveRoles) RoleSet {
+	return RoleSet{
+		PlatformAdmin: held.Holds("platform_admin"),
+		WsViewer:      held.Holds("ws_viewer"),
+		WsEditor:      held.Holds("ws_editor"),
+		TenantOwner:   held.Holds("tenant_owner"),
+	}
+}
+
 func Check(ctx context.Context, q demesne.Querier, object, verb, id string) (Decision, error) {
 	switch object + "." + verb {
 	case "workspace.view":

@@ -246,3 +246,50 @@ func scopeContains(assignment, query []string) bool {
 	}
 	return true
 }
+
+type EffectiveRoles struct {
+	roles map[string]bool
+}
+
+func NewEffectiveRoles(keys ...string) EffectiveRoles {
+	e := EffectiveRoles{roles: make(map[string]bool, len(keys))}
+	for _, k := range keys {
+		if k != "" {
+			e.roles[k] = true
+		}
+	}
+	return e
+}
+
+func (e EffectiveRoles) Holds(roleKey string) bool { return e.roles[roleKey] }
+
+func (e EffectiveRoles) Roles() []string {
+	out := make([]string, 0, len(e.roles))
+	for k := range e.roles {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func ResolveRoles(assignments []RoleAssignment, scope []string) EffectiveRoles {
+	e := EffectiveRoles{roles: map[string]bool{}}
+	for _, a := range assignments {
+		if a.RoleKey == "" {
+			continue
+		}
+		if scopeAllEmpty(a.Scope) || scopeContains(a.Scope, scope) {
+			e.roles[a.RoleKey] = true
+		}
+	}
+	return e
+}
+
+func scopeAllEmpty(scope []string) bool {
+	for _, s := range scope {
+		if s != "" {
+			return false
+		}
+	}
+	return true
+}

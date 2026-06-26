@@ -21,7 +21,8 @@ A spec's projection is the interface between the two sides. It is the per-spec d
 - `mint` and `sessionSetupSQL` for claims and session setup;
 - per-object `canView` / `canEdit`, plus `listResources` and `checkMany`;
 - `can<Verb>(held)` for verb permissions, and `caps(held)` — a typed, synchronous boolean per verb for UI affordance gating;
-- the `holds` resolver and a reusable `check`;
+- `roles(held)` — a typed, synchronous boolean per role tier (platform plane + scoped roles) for UI affordance gating;
+- the `holds` and `holdsRoles` resolvers and a reusable `check`;
 - `checkHandler`, a framework-agnostic `Request` → `Response` entry point.
 
 The framework module bakes the same per-spec SQL the Go `EmitFramework` bakes. Both come from `EmitAppSurface`. It delegates the shared logic to `@foir/demesne`, so the generated `canView` runs the very predicate the RLS policy enforces — there is no second evaluator to drift.
@@ -41,6 +42,22 @@ const c = caps(held);
 ```
 
 The Go surface mirrors it as `Caps(held).Docs.Publish`. Parameterized permissions (a `*` model segment, e.g. `records:write:*`) get no static field — a banner lists them; check those with raw `held.holds(...)`. `check(object, verb, id)` covers the row verbs; a verb-gate verb passed to `check` throws and points you to `can<Verb>(held)` rather than silently answering "ungoverned".
+
+## Gating on role tier
+
+`caps(held)` answers the verb axis ("can this principal *publish*?"). `roles(held)` answers the orthogonal role-tier axis ("is this principal a *platform admin*? a *tenant owner*?") — the thing a wildcard role (`tenant_owner = *`) or a global plane membership can't be recovered from the verb set. It projects the spec's role presets into a typed, synchronous boolean: the platform-plane roles first, then the rolestore's scoped roles. Same contract as `caps`: a UI hint only, with enforcement staying the RLS floor and the generated SQL definers.
+
+The input is a held-_roles_ set (`EffectiveRoles`), parallel to `caps`'s held-_verbs_ set. Build it either server-side from assignments (`holdsRoles(q, principalId, scope)` / `resolveHeldRoles(assignments, scope)`) or directly from a session's facts with `newEffectiveRoles([...])` — include the scoped role keys effective at the current scope, plus `"platform_admin"` if the session carries the platform-admin flag.
+
+```ts
+const r = roles(held);
+
+{r.platformAdmin && <CrossTenantConsole />}    // React — staff operator surface
+{#if r.tenantOwner}<TenantSettings />{/if}     // Svelte — own-tenant self-service
+<InviteButton v-if="r.tenantOwner" />          // Vue
+```
+
+The Go surface mirrors it as `Roles(held).PlatformAdmin` / `Roles(held).TenantOwner`. Scope semantics match the floor: a scoped role is held only at or below the scope it was granted at (root-strict), while a global plane role (granted with an empty scope) is held in every scope — exactly how a platform admin reaches across tenants.
 
 ## Packages
 

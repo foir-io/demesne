@@ -29,6 +29,7 @@ func (s *Spec) EmitFrameworkTS() (string, error) {
 		g.object(o, obj)
 	}
 	emittedCaps := map[string]bool{}
+	emittedRoles := map[string]bool{}
 	for _, rs := range s.RoleStores {
 		suffix := ""
 		if len(s.RoleStores) > 1 {
@@ -47,6 +48,13 @@ func (s *Spec) EmitFrameworkTS() (string, error) {
 				return "", err
 			}
 		}
+		g.holdsRolesTS(suffix)
+		if v != nil && !emittedRoles[v.Name] {
+			emittedRoles[v.Name] = true
+			if err := g.rolesFuncTS(v, suffix); err != nil {
+				return "", err
+			}
+		}
 	}
 	g.checkFunc()
 	g.checkHandler()
@@ -60,11 +68,13 @@ type fwTSGen struct {
 	checks    []fwTSCheck
 	pdpChecks []fwTSCheck
 
-	needCompose bool
-	needResolve bool
-	needEff     bool
-	needHolds   bool
-	needRA      bool
+	needCompose      bool
+	needResolve      bool
+	needResolveRoles bool
+	needEff          bool
+	needEffRoles     bool
+	needHolds        bool
+	needRA           bool
 }
 
 type fwTSCheck struct{ object, verb, method string }
@@ -80,12 +90,18 @@ func (g *fwTSGen) assemble() string {
 	if g.needResolve {
 		values = append(values, "resolve")
 	}
+	if g.needResolveRoles {
+		values = append(values, "resolveRoles")
+	}
 	sort.Strings(values)
 	fmt.Fprintf(&head, "import { %s } from \"@foir/demesne\";\n", strings.Join(values, ", "))
 
 	var types []string
 	if g.needEff {
 		types = append(types, "EffectivePerms")
+	}
+	if g.needEffRoles {
+		types = append(types, "EffectiveRoles")
 	}
 	if g.needHolds {
 		types = append(types, "HoldsResolver")
@@ -328,6 +344,44 @@ func (g *fwTSGen) vocabCapsFuncTS(v *Vocabulary, suffix string) error {
 			fmt.Fprintf(&g.b, "      %s: held.holds(%s),\n", unexport(f.exp), tsStr(f.perm))
 		}
 		g.b.WriteString("    },\n")
+	}
+	g.b.WriteString("  };\n}\n\n")
+	return nil
+}
+
+func (g *fwTSGen) holdsRolesTS(suffix string) {
+	g.needResolveRoles = true
+	g.needEffRoles = true
+	g.needRA = true
+
+	fmt.Fprintf(&g.b, "export function resolveHeldRoles%s(assignments: RoleAssignment[], scope: string[]): EffectiveRoles {\n", suffix)
+	g.b.WriteString("  return resolveRoles(assignments, scope);\n")
+	g.b.WriteString("}\n\n")
+
+	fmt.Fprintf(&g.b, "export async function holdsRoles%s(q: Querier, principalId: string, scope: string[]): Promise<EffectiveRoles> {\n", suffix)
+	fmt.Fprintf(&g.b, "  const { rows } = await q.query(assignmentsSQL%s, [principalId]);\n", suffix)
+	g.b.WriteString("  const assignments: RoleAssignment[] = rows.map((row) => ({\n")
+	fmt.Fprintf(&g.b, "    scope: holdsResolver%s.scopeCols.map((c) => String(row[c])),\n", suffix)
+	fmt.Fprintf(&g.b, "    roleKey: String(row[holdsResolver%s.keyCol]),\n", suffix)
+	fmt.Fprintf(&g.b, "    permissions: holdsResolver%s.permsCol !== \"\" ? (row[holdsResolver%s.permsCol] as string[]) : [],\n", suffix, suffix)
+	g.b.WriteString("  }));\n")
+	fmt.Fprintf(&g.b, "  return resolveHeldRoles%s(assignments, scope);\n", suffix)
+	g.b.WriteString("}\n\n")
+}
+
+func (g *fwTSGen) rolesFuncTS(v *Vocabulary, suffix string) error {
+	fields, err := g.spec.roleTierFields(v)
+	if err != nil {
+		return err
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	g.needEffRoles = true
+	fmt.Fprintf(&g.b, "export function roles%s(held: EffectiveRoles) {\n", suffix)
+	g.b.WriteString("  return {\n")
+	for _, f := range fields {
+		fmt.Fprintf(&g.b, "    %s: held.holds(%s),\n", unexport(f.exp), tsStr(f.key))
 	}
 	g.b.WriteString("  };\n}\n\n")
 	return nil
