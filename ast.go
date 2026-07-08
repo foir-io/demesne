@@ -387,7 +387,11 @@ type Term struct {
 
 	KindVal string
 	SelfCol string
-	Pos     Pos
+
+	WithinLevel    string
+	WithinNullable bool
+
+	Pos Pos
 }
 
 type Procedures struct {
