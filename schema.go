@@ -149,9 +149,15 @@ func (s *Spec) schCheckObjectRefs(b *schBinder, o *Object) {
 	}
 
 	for _, pm := range o.Perms {
+		if pm.SelfCheck != "" {
+			b.reqCol(o.Table, pm.SelfCheck, oc+" selfcheck")
+		}
 		for _, t := range pm.Expr {
 			if t.ModeCol != "" {
 				b.reqCol(o.Table, t.ModeCol, oc+" mode term")
+			}
+			if t.SelfCol != "" {
+				b.reqCol(o.Table, t.SelfCol, oc+" @self term")
 			}
 		}
 	}
