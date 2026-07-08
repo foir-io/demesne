@@ -72,6 +72,9 @@ func (s *Spec) EmitRLS() (*RLSResult, error) {
 			if !contains(pm.Layers, "rls") {
 				continue
 			}
+			if pm.PredicateOnly {
+				continue
+			}
 			pred, err := s.rlsPredicate(obj, pm, custSubj, virtual)
 			if err != nil {
 				res.Unsupported = append(res.Unsupported, fmt.Sprintf("%s.%s: %v", obj.Name, pm.Verb, err))
@@ -274,6 +277,9 @@ func (s *Spec) rlsSubjectBranches(obj *Object, virtual map[string]bool, objLeaf 
 func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, objIsGlobal bool, top []string, grantInject map[string][]string) ([]string, map[string][]string) {
 	g := s.grantByName(sub.ReachGrant)
 	if g == nil || !contains(obj.Scoped, g.Level) {
+		return top, grantInject
+	}
+	if g.Table == obj.Table {
 		return top, grantInject
 	}
 	reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), s.scopeCol(obj, g.Level))

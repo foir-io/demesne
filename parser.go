@@ -1188,6 +1188,10 @@ func (p *parser) parseObjectPerm() (*Perm, error) {
 		}
 	}
 
+	if p.acceptKw("predicate") {
+		pm.PredicateOnly = true
+	}
+
 	if p.acceptKw("guard") {
 		g := &Guard{Pos: Pos{p.cur().line}}
 		if g.Col, err = p.ident(); err != nil {
