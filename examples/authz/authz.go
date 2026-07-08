@@ -199,7 +199,7 @@ var holdsResolver = &demesne.HoldsResolver{
 	PermsCol:    "",
 	Vocab: &demesne.Vocabulary{
 		Name:        "staff",
-		Permissions: []string{"docs:read", "docs:write", "docs:publish"},
+		Permissions: []string{"docs:read", "docs:write", "docs:publish", "docs:read:*"},
 		Presets: []*demesne.Preset{
 			{Name: "ws_viewer", Level: "workspace", Star: false, Set: []string{"docs:read"}},
 			{Name: "ws_editor", Level: "workspace", Star: false, Set: []string{"ws_viewer", "docs:write", "docs:publish"}},
@@ -234,6 +234,10 @@ func Holds(ctx context.Context, q demesne.Querier, principalID string, scope []s
 	}
 	return ResolveHeld(assignments, scope)
 }
+
+// These vocabulary permissions are parameterized (a '*' model segment) and have no static
+// caps field — check them with held.Holds("<domain>:<verb>:<model>") directly:
+//   - docs:read:*
 
 type CapSet struct {
 	Docs DocsCaps

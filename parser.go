@@ -1209,6 +1209,12 @@ func (p *parser) parseObjectPerm() (*Perm, error) {
 		g.Val = lit.lit
 		pm.Guard = g
 	}
+
+	if p.acceptKw("selfcheck") {
+		if pm.SelfCheck, err = p.ident(); err != nil {
+			return nil, err
+		}
+	}
 	return pm, nil
 }
 
@@ -1374,6 +1380,20 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 			return err
 		}
 		t.KindVal = val.lit
+		if _, err := p.expect(tRParen); err != nil {
+			return err
+		}
+	}
+
+	if b == "self" {
+		if _, err := p.expect(tLParen); err != nil {
+			return err
+		}
+		col, err := p.ident()
+		if err != nil {
+			return err
+		}
+		t.SelfCol = col
 		if _, err := p.expect(tRParen); err != nil {
 			return err
 		}
@@ -1718,6 +1738,8 @@ func (t *Term) String() string {
 	switch {
 	case t.GrantRef != "":
 		return "via grant " + t.GrantRef
+	case t.Builtin == "self":
+		return "@self(" + t.SelfCol + ")"
 	case t.Builtin != "":
 		return "@" + t.Builtin
 	case t.WalkVerb != "":

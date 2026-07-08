@@ -1,4 +1,10 @@
-# Demesne
+<p align="center">
+  <img src="assets/logo.png" width="220" alt="Demesne, Zanzibar-style authz framework compiled to RLS">
+</p>
+
+<h1 align="center">Demesne</h1>
+
+---
 
 Write your authorization rules once, in a single spec file. Demesne compiles them into Postgres Row-Level Security, so the database enforces access on every query — a forgotten `WHERE` clause, a background job, or an ad-hoc `psql` session can't reach data the rules forbid.
 
@@ -54,6 +60,19 @@ Adopting Demesne on an existing database is a short loop: introspect the schema,
 | `grant` | a scoped, revocable, expiring grant of reach into part of the hierarchy |
 
 Permissions are a small boolean algebra over those terms — union, intersection, and fail-closed negation — so `viewer and not banned` or `(owner or shared) and not banned` compile straight to an RLS predicate.
+
+## Spec introspection
+
+The compiled spec is the single source of your vocabulary, so you can build a role-management or permission-admin UI from it without re-declaring the permission list. `spec.Vocabularies()` returns each declared vocabulary and its permissions, and marks each parameterized one: a permission that carries the open `*` model segment, like `docs:read:*` rather than a concrete `docs:read`. `spec.ExpandedPresets(rolestore)` maps each preset of that rolestore's vocabulary to its fully resolved permission set, and expands both `+` references and the `= *` wildcard. Demesne returns generic data. How you bucket, label, and lay it out is your UI's job.
+
+```go
+for _, v := range spec.Vocabularies() {
+	for _, p := range v.Permissions {
+		// p.Name, p.Parameterized → drive a permission picker
+	}
+}
+presets, _ := spec.ExpandedPresets("staff") // preset → resolved permissions, for a role editor
+```
 
 ## Worked examples
 

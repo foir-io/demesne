@@ -334,13 +334,14 @@ func (ViaClosure) isRepr()     {}
 func (ViaGrant) isRepr()       {}
 
 type Perm struct {
-	Verb   string
-	Expr   []*Term
-	Tree   *PermNode
-	Layers []string
-	Maps   string
-	Guard  *Guard
-	Pos    Pos
+	Verb      string
+	Expr      []*Term
+	Tree      *PermNode
+	Layers    []string
+	Maps      string
+	Guard     *Guard
+	SelfCheck string
+	Pos       Pos
 }
 
 type PermNode struct {
@@ -385,6 +386,7 @@ type Term struct {
 	GrantRef string
 
 	KindVal string
+	SelfCol string
 	Pos     Pos
 }
 
