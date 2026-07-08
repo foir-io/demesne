@@ -239,7 +239,12 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 	if len(branches) == 0 {
 		return "", fmt.Errorf("object %q permission %q: no emittable grant — a global object needs a platform-role subject", obj.Name, pm.Verb)
 	}
-	return strings.Join(branches, " OR "), nil
+	pred := strings.Join(branches, " OR ")
+	if pm.SelfCheck != "" {
+		guard := fmt.Sprintf("(%s IS NULL OR %s = %s)", pm.SelfCheck, pm.SelfCheck, s.claim(s.adminIdentify()))
+		pred = fmt.Sprintf("%s AND (%s)", guard, pred)
+	}
+	return pred, nil
 }
 
 func (s *Spec) rlsSubjectBranches(obj *Object, virtual map[string]bool, objLeaf string, objIsGlobal, objHasStaffTerm bool) ([]string, map[string][]string) {
@@ -305,6 +310,15 @@ func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string) ([]string
 	for _, t := range pm.Expr {
 		if t.Builtin == "public" && !contains(top, "true") {
 			top = append(top, "true")
+		}
+	}
+	for _, t := range pm.Expr {
+		if t.Builtin != "self" {
+			continue
+		}
+		frag := fmt.Sprintf("%s = %s", t.SelfCol, s.claim(s.adminIdentify()))
+		if !contains(top, frag) {
+			top = append(top, frag)
 		}
 	}
 	return top, scopedGrant, nil
@@ -437,7 +451,7 @@ func (s *Spec) rlsLeafFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]
 	if n.Term.Builtin == "scoped" {
 		return nil, nil
 	}
-	if n.Term.GrantRef != "" || n.Term.Builtin == "public" {
+	if n.Term.GrantRef != "" || n.Term.Builtin == "public" || n.Term.Builtin == "self" {
 		return nil, nil
 	}
 	frags, err := s.emitTerm(obj, pm, n.Term, rels, custClaim)
