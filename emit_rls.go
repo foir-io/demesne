@@ -276,6 +276,9 @@ func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, obj
 	if g == nil || !contains(obj.Scoped, g.Level) {
 		return top, grantInject
 	}
+	if g.Table == obj.Table {
+		return top, grantInject
+	}
 	reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), s.scopeCol(obj, g.Level))
 	if g.Level != objLeaf && !obj.IsLevelEntity() && !objIsGlobal {
 
