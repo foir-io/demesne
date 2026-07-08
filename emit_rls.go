@@ -72,6 +72,9 @@ func (s *Spec) EmitRLS() (*RLSResult, error) {
 			if !contains(pm.Layers, "rls") {
 				continue
 			}
+			if pm.PredicateOnly {
+				continue
+			}
 			pred, err := s.rlsPredicate(obj, pm, custSubj, virtual)
 			if err != nil {
 				res.Unsupported = append(res.Unsupported, fmt.Sprintf("%s.%s: %v", obj.Name, pm.Verb, err))
