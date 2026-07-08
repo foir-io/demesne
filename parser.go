@@ -1345,15 +1345,11 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 	b := t.Builtin
 
 	if b == "session" && p.peekKind() == tLParen {
-		p.advance()
-		rel, err := p.ident()
+		rel, err := p.parenIdent()
 		if err != nil {
 			return err
 		}
 		t.SessionRel = rel
-		if _, err := p.expect(tRParen); err != nil {
-			return err
-		}
 	}
 
 	if b == "app_scope" && p.peekKind() == tLParen {
@@ -1386,19 +1382,47 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 	}
 
 	if b == "self" {
-		if _, err := p.expect(tLParen); err != nil {
-			return err
-		}
-		col, err := p.ident()
+		col, err := p.parenIdent()
 		if err != nil {
 			return err
 		}
 		t.SelfCol = col
-		if _, err := p.expect(tRParen); err != nil {
-			return err
-		}
+	}
+
+	if b == "within" {
+		return p.parseWithin(t)
 	}
 	return nil
+}
+
+func (p *parser) parenIdent() (string, error) {
+	if _, err := p.expect(tLParen); err != nil {
+		return "", err
+	}
+	id, err := p.ident()
+	if err != nil {
+		return "", err
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (p *parser) parseWithin(t *Term) error {
+	if _, err := p.expect(tLParen); err != nil {
+		return err
+	}
+	lvl, err := p.ident()
+	if err != nil {
+		return err
+	}
+	t.WithinLevel = lvl
+	if p.acceptKw("nullable") {
+		t.WithinNullable = true
+	}
+	_, err = p.expect(tRParen)
+	return err
 }
 
 func (p *parser) parseTermMode(t *Term) error {
@@ -1740,6 +1764,11 @@ func (t *Term) String() string {
 		return "via grant " + t.GrantRef
 	case t.Builtin == "self":
 		return "@self(" + t.SelfCol + ")"
+	case t.Builtin == "within":
+		if t.WithinNullable {
+			return "@within(" + t.WithinLevel + " nullable)"
+		}
+		return "@within(" + t.WithinLevel + ")"
 	case t.Builtin != "":
 		return "@" + t.Builtin
 	case t.WalkVerb != "":

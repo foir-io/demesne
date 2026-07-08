@@ -520,7 +520,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		return s.rlsEmitMode(t, custClaim), nil
 	}
 	if t.WalkVerb != "" {
-		return s.rlsEmitWalk(t, rels)
+		return s.rlsEmitWalk(obj, t, rels)
 	}
 
 	if relName, access, ok := grantSelector(t.Ident, rels); ok {
@@ -542,7 +542,7 @@ func (s *Spec) rlsEmitMode(t *Term, custClaim string) []string {
 	return []string{frag}
 }
 
-func (s *Spec) rlsEmitWalk(t *Term, rels map[string]*Relation) ([]string, error) {
+func (s *Spec) rlsEmitWalk(obj *Object, t *Term, rels map[string]*Relation) ([]string, error) {
 	parent := rels[t.Ident]
 	if parent == nil {
 		return nil, fmt.Errorf("role-walk references unknown relation %q", t.Ident)
@@ -551,7 +551,27 @@ func (s *Spec) rlsEmitWalk(t *Term, rels map[string]*Relation) ([]string, error)
 	if !ok {
 		return nil, fmt.Errorf("role-walk parent %q must be a column relation", t.Ident)
 	}
-	return []string{fmt.Sprintf("%s.is_%s_%s(%s, %s)", s.definerSchema(), parent.Types[0], s.adminName(), s.claim(s.adminIdentify()), col.Column)}, nil
+	level := parent.Types[0]
+	path, err := s.Topology.AncestorPath(level)
+	if err != nil {
+		return nil, fmt.Errorf("role-walk %q->%s: %w", t.Ident, t.WalkVerb, err)
+	}
+	var nonVirtual []*Level
+	for _, lvl := range path {
+		if lvl.Virtual {
+			continue
+		}
+		nonVirtual = append(nonVirtual, lvl)
+	}
+	args := []string{s.claim(s.adminIdentify())}
+	for i, lvl := range nonVirtual {
+		if i == len(nonVirtual)-1 {
+			args = append(args, col.Column)
+		} else {
+			args = append(args, s.scopeCol(obj, lvl.Name))
+		}
+	}
+	return []string{fmt.Sprintf("%s.is_%s_%s(%s)", s.definerSchema(), level, s.adminName(), strings.Join(args, ", "))}, nil
 }
 
 func (s *Spec) rlsEmitBuiltin(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, custClaim string) ([]string, bool, error) {
@@ -571,6 +591,13 @@ func (s *Spec) rlsEmitBuiltin(obj *Object, pm *Perm, t *Term, rels map[string]*R
 	case t.Builtin == "kind":
 
 		return []string{fmt.Sprintf("%s = '%s'", s.claim("kind"), t.KindVal)}, true, nil
+	case t.Builtin == "within":
+		col := s.scopeCol(obj, t.WithinLevel)
+		claim := s.claim(s.claimKeyForLevel(t.WithinLevel))
+		if t.WithinNullable {
+			return []string{fmt.Sprintf("(%s IS NULL OR %s = %s)", col, col, claim)}, true, nil
+		}
+		return []string{fmt.Sprintf("%s = %s", col, claim)}, true, nil
 	case t.Builtin != "":
 		return nil, true, fmt.Errorf("builtin @%s is not emittable in RLS", t.Builtin)
 	case isPermKeyLit(t.Ident):

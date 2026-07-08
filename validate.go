@@ -9,7 +9,7 @@ import (
 
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true}
-var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true}
+var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true, "within": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -737,7 +737,7 @@ func valCheckPermTerms(s *Spec, o *Object, pm *Perm, rels map[string]*Relation, 
 		case t.ModeCol != "":
 			add(valCheckModeTerm(s, o, pm, t, hasRLS))
 		case t.Builtin != "":
-			add(valCheckBuiltinTerm(o, pm, t, rels, hasRLS))
+			add(valCheckBuiltinTerm(s, o, pm, t, rels, hasRLS))
 		case isGrantSelectorTerm(t.Ident, rels):
 			add(valCheckGrantSelectorTerm(o, pm, t, rels, hasRLS))
 		case isPermKeyLit(t.Ident):
@@ -781,7 +781,7 @@ func valCheckModeTerm(s *Spec, o *Object, pm *Perm, t *Term, hasRLS bool) error 
 	return errors.Join(errs...)
 }
 
-func valCheckBuiltinTerm(o *Object, pm *Perm, t *Term, rels map[string]*Relation, hasRLS bool) error {
+func valCheckBuiltinTerm(s *Spec, o *Object, pm *Perm, t *Term, rels map[string]*Relation, hasRLS bool) error {
 	var errs []error
 	if !knownBuiltins[t.Builtin] {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|scoped|session|open|store_manage|public|kind|self)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
@@ -818,6 +818,15 @@ func valCheckBuiltinTerm(o *Object, pm *Perm, t *Term, rels map[string]*Relation
 		}
 		if !hasRLS {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @self but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
+		}
+	}
+
+	if t.Builtin == "within" {
+		if s.Topology.LevelByName(t.WithinLevel) == nil {
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @within(%q) which is not a topology level", pm.Pos.Line, o.Name, pm.Verb, t.WithinLevel))
+		}
+		if !hasRLS {
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @within but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
 		}
 	}
 	return errors.Join(errs...)
