@@ -17,8 +17,17 @@ object thing {
 }
 `
 
-func TestSelfTerm_TopLevelDisjunctBoundToPrincipal(t *testing.T) {
+func mustValidSelfSpec(t *testing.T) *Spec {
+	t.Helper()
 	s := mustSpec(t, selfTermSpec)
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	return s
+}
+
+func TestSelfTerm_TopLevelDisjunctBoundToPrincipal(t *testing.T) {
+	s := mustValidSelfSpec(t)
 	rls, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -40,7 +49,7 @@ func TestSelfTerm_TopLevelDisjunctBoundToPrincipal(t *testing.T) {
 }
 
 func TestSelfCheck_WrapsInsertGuardBoundToPrincipal(t *testing.T) {
-	s := mustSpec(t, selfTermSpec)
+	s := mustValidSelfSpec(t)
 	rls, err := s.EmitRLS()
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -58,5 +67,21 @@ func TestSelfCheck_WrapsInsertGuardBoundToPrincipal(t *testing.T) {
 	}
 	if strings.Contains(ci.Check, "'sub'") {
 		t.Errorf("selfcheck must resolve the principal claim, not a hardcoded 'sub':\n%s", ci.Check)
+	}
+}
+
+func TestSelfTerm_SchemaBindingRequiresColumn(t *testing.T) {
+	s := mustValidSelfSpec(t)
+	sc := NewSchema()
+	sc.AddColumn("things", "id", "text", false)
+	sc.AddColumn("things", "tenant_id", "text", false)
+
+	if err := s.ValidateAgainst(sc); err == nil || !strings.Contains(err.Error(), "actor_col") {
+		t.Errorf("ValidateAgainst must reject a missing @self / selfcheck column, got: %v", err)
+	}
+
+	sc.AddColumn("things", "actor_col", "text", true)
+	if err := s.ValidateAgainst(sc); err != nil {
+		t.Errorf("ValidateAgainst should pass once actor_col exists: %v", err)
 	}
 }

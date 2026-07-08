@@ -9,7 +9,7 @@ import (
 
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true}
-var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true}
+var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -784,7 +784,7 @@ func valCheckModeTerm(s *Spec, o *Object, pm *Perm, t *Term, hasRLS bool) error 
 func valCheckBuiltinTerm(o *Object, pm *Perm, t *Term, rels map[string]*Relation, hasRLS bool) error {
 	var errs []error
 	if !knownBuiltins[t.Builtin] {
-		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|scoped|session|open|store_manage)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|scoped|session|open|store_manage|public|kind|self)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
 	}
 
 	if t.ExcludeRel != "" {
@@ -809,6 +809,15 @@ func valCheckBuiltinTerm(o *Object, pm *Perm, t *Term, rels map[string]*Relation
 		}
 		if !hasRLS {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @kind but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
+		}
+	}
+
+	if t.Builtin == "self" {
+		if t.SelfCol == "" {
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @self with no column — `@self(<column>)`", pm.Pos.Line, o.Name, pm.Verb))
+		}
+		if !hasRLS {
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @self but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
 		}
 	}
 	return errors.Join(errs...)
