@@ -52,6 +52,8 @@ func Validate(s *Spec) error {
 
 	add(validateCrossObjectAcyclic(s))
 
+	add(validatePredicateOnlyReferenced(s))
+
 	add(validateGrantStores(s))
 
 	add(validateStoreManage(s))
@@ -185,6 +187,27 @@ func valCheckEmitSites(s *Spec, vocabs map[string]bool) error {
 	for _, u := range s.Ungoverned {
 		if !vocabs[u.EmitSite] {
 			errs = append(errs, fmt.Errorf("line %d: ungoverned block targets unknown vocabulary %q (V10)", u.Pos.Line, u.EmitSite))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func validatePredicateOnlyReferenced(s *Spec) error {
+	referenced := map[string]bool{}
+	for _, obj := range s.Objects {
+		for _, r := range obj.Relations {
+			if vo, ok := r.Repr.(ViaObject); ok {
+				referenced[vo.Object+"."+vo.Verb] = true
+			}
+		}
+	}
+	var errs []error
+	for _, obj := range s.Objects {
+		for _, pm := range obj.Perms {
+			if pm.PredicateOnly && !referenced[obj.Name+"."+pm.Verb] {
+				errs = append(errs, fmt.Errorf("line %d: permission %s.%s is `predicate` (predicate-only) but no `via object %s->%s` borrows it — a lent authority that is never borrowed is dead, unverified SQL",
+					pm.Pos.Line, obj.Name, pm.Verb, obj.Name, pm.Verb))
+			}
 		}
 	}
 	return errors.Join(errs...)
@@ -719,6 +742,16 @@ func valCheckPermMaps(o *Object, pm *Perm, hasRLS, hasKernel bool) error {
 	if hasRLS && pm.Maps != "" && !mapsIsTableOp {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s is @rls but maps to %q, not a table op (select|insert|update|delete) (V4)",
 			pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
+	}
+	if pm.PredicateOnly {
+		if !hasRLS {
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s is `predicate` but not @rls — a predicate-only permission lends an @rls authority to other objects",
+				pm.Pos.Line, o.Name, pm.Verb))
+		}
+		if pm.Maps != "" {
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s is both `predicate` and `maps %s` — a predicate-only permission emits no policy of its own",
+				pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
+		}
 	}
 	return errors.Join(errs...)
 }

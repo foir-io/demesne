@@ -334,14 +334,15 @@ func (ViaClosure) isRepr()     {}
 func (ViaGrant) isRepr()       {}
 
 type Perm struct {
-	Verb      string
-	Expr      []*Term
-	Tree      *PermNode
-	Layers    []string
-	Maps      string
-	Guard     *Guard
-	SelfCheck string
-	Pos       Pos
+	Verb          string
+	Expr          []*Term
+	Tree          *PermNode
+	Layers        []string
+	Maps          string
+	Guard         *Guard
+	SelfCheck     string
+	PredicateOnly bool
+	Pos           Pos
 }
 
 type PermNode struct {
