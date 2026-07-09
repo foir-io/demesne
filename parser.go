@@ -631,12 +631,7 @@ func (p *parser) parseObjectBody(o *Object) error {
 			}
 			o.Perms = append(o.Perms, pm)
 		case p.isKw("use"):
-			p.advance()
-			if o.Use != "" {
-				return p.errf("object %q declares `use` more than once", o.Name)
-			}
-			var err error
-			if o.Use, err = p.ident(); err != nil {
+			if err := p.parseUse(o); err != nil {
 				return err
 			}
 		case p.isKw("omit"):
@@ -647,19 +642,8 @@ func (p *parser) parseObjectBody(o *Object) error {
 			}
 			o.Omit = append(o.Omit, v)
 		case p.isKw("track"):
-
-			p.advance()
-			what, err := p.ident()
-			if err != nil {
+			if err := p.parseTrack(o); err != nil {
 				return err
-			}
-			switch what {
-			case "owner":
-				o.TrackOwner = true
-			case "visibility":
-				o.TrackVisibility = true
-			default:
-				return p.errf("object %q: `track` expects `owner` or `visibility`, got %q", o.Name, what)
 			}
 		case p.isKw("gate"):
 			g, err := p.parseGate()
@@ -667,6 +651,16 @@ func (p *parser) parseObjectBody(o *Object) error {
 				return err
 			}
 			o.Gates = append(o.Gates, g)
+		case p.isKw("fields"):
+			if err := p.parseFieldsDecl(o); err != nil {
+				return err
+			}
+		case p.isKw("field"):
+			f, err := p.parseFieldRule(o)
+			if err != nil {
+				return err
+			}
+			o.Fields = append(o.Fields, f)
 		default:
 			return p.errf("unexpected %s %q in object %q", p.peekKind(), p.cur().lit, o.Name)
 		}
@@ -694,6 +688,121 @@ func (p *parser) parseGate() (*Gate, error) {
 		return nil, err
 	}
 	return g, nil
+}
+
+func (p *parser) parseUse(o *Object) error {
+	p.advance()
+	if o.Use != "" {
+		return p.errf("object %q declares `use` more than once", o.Name)
+	}
+	u, err := p.ident()
+	if err != nil {
+		return err
+	}
+	o.Use = u
+	return nil
+}
+
+func (p *parser) parseTrack(o *Object) error {
+	p.advance()
+	what, err := p.ident()
+	if err != nil {
+		return err
+	}
+	switch what {
+	case "owner":
+		o.TrackOwner = true
+	case "visibility":
+		o.TrackVisibility = true
+	default:
+		return p.errf("object %q: `track` expects `owner` or `visibility`, got %q", o.Name, what)
+	}
+	return nil
+}
+
+func (p *parser) parseFieldsDecl(o *Object) error {
+	p.advance()
+	if len(o.FieldPrincipals) > 0 {
+		return p.errf("object %q declares `fields` more than once", o.Name)
+	}
+	if _, err := p.expect(tLBrace); err != nil {
+		return err
+	}
+	for p.peekKind() != tRBrace && p.peekKind() != tEOF {
+		tok, err := p.ident()
+		if err != nil {
+			return err
+		}
+		o.FieldPrincipals = append(o.FieldPrincipals, tok)
+	}
+	if _, err := p.expect(tRBrace); err != nil {
+		return err
+	}
+	if len(o.FieldPrincipals) == 0 {
+		return p.errf("object %q: `fields { ... }` declares no principals", o.Name)
+	}
+	return nil
+}
+
+func (p *parser) parseFieldRule(o *Object) (*FieldRule, error) {
+	f := &FieldRule{Pos: Pos{p.cur().line}}
+	p.advance()
+	name, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	f.Name = name
+	if _, err := p.expect(tLBrace); err != nil {
+		return nil, err
+	}
+	for p.peekKind() != tRBrace && p.peekKind() != tEOF {
+		switch {
+		case p.isKw("read"):
+			p.advance()
+			if _, err := p.expect(tEq); err != nil {
+				return nil, err
+			}
+			if f.Read, err = p.parseTokenUnion(); err != nil {
+				return nil, err
+			}
+		case p.isKw("write"):
+			p.advance()
+			if _, err := p.expect(tEq); err != nil {
+				return nil, err
+			}
+			if f.Write, err = p.parseTokenUnion(); err != nil {
+				return nil, err
+			}
+		case p.isKw("column"):
+			p.advance()
+			if f.Column, err = p.ident(); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, p.errf("unexpected %s %q in field %q of object %q (expected read, write, or column)", p.peekKind(), p.cur().lit, f.Name, o.Name)
+		}
+	}
+	if _, err := p.expect(tRBrace); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func (p *parser) parseTokenUnion() ([]string, error) {
+	first, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	toks := []string{first}
+	for p.peekKind() == tPlus {
+		p.advance()
+		t, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		toks = append(toks, t)
+	}
+	return toks, nil
 }
 
 func (p *parser) parseTemplate() (*Template, error) {

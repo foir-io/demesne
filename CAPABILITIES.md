@@ -18,6 +18,7 @@ The systems in the matrix below are Demesne's real peers — authorization engin
 |---|---|---|---|---|---|---|
 | **Enforcement locus** | Inside Postgres, on the query's own plan (RLS) | External ACL service | External service | External service | External sidecar PDP | External (Oso Cloud) or in-proc lib |
 | **Authorization model** | ReBAC relations + verb-gate PDP | ReBAC (relation tuples + userset rewrites) | ReBAC (Zanzibar tuples) | ReBAC + ABAC (CEL conditions) | RBAC + ABAC + derived roles | RBAC / ReBAC / ABAC (Polar) |
+| **Field-level access** | First-class `field` rules → generated read/write checker (+ column-privilege floor for real columns) | Model each field as a sub-object/relation | Via tuples | Via relations + CEL conditions | ABAC attribute conditions | ABAC attributes in Polar |
 | **Decision point** | The SQL query itself (predicates + `SECURITY DEFINER EXISTS`) | Out-of-band `Check` RPC vs Spanner snapshot | Out-of-process gRPC/REST `Check` | Out-of-process `Check` / `ListObjects` | In-process CEL eval over request payload | SDK call to Edge, or returned SQL filter |
 | **Consistency** | Same rows, same transaction — no lag, no token | Strong via TrueTime + zookies | Eventually consistent | Eventually consistent | Stateless; freshness = caller's attrs | Eventually consistent facts |
 | **Reverse queries (who-can-access)** | Coverage-gated, fail-closed — not provably complete | `Expand` (tree) | Partial, depth-bounded | First-class `ListObjects` / `ListUsers` | `PlanResources` partial eval + ORM adapters | First-class list / SQL `WHERE` filter |
@@ -42,7 +43,7 @@ That trade has costs, and they are real:
 
 - Demesne is Postgres-only. Compiling to RLS is the whole point; a Supabase deployment profile ships.
 - It is a library, compiler, and CLI, not a globally replicated service. There is nothing extra to run or scale next to your database, but also no planet-scale standalone `Check` service to call.
-- Every rule must be expressible as a SQL predicate.
+- Every rule that rides the RLS floor must be expressible as a SQL predicate; rules the floor can't express — verb gates and field-level read/write — compile to the equivalence-checked app-layer checker instead (with a column-privilege floor for field rules over real columns).
 - Reverse "who can access this?" answers are coverage-gated and fail-closed. They are deliberately conservative, not provably complete. OpenFGA's native `ListObjects`, Cerbos's `PlanResources`, and Oso's same-policy list filtering are stronger here.
 
 ## Pick another system instead when…
