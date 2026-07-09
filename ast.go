@@ -181,6 +181,14 @@ type Gate struct {
 	Pos      Pos
 }
 
+type FieldRule struct {
+	Name   string
+	Read   []string
+	Write  []string
+	Column string
+	Pos    Pos
+}
+
 type Object struct {
 	Name  string
 	Table string
@@ -194,6 +202,9 @@ type Object struct {
 	Relations []*Relation
 	Perms     []*Perm
 	Gates     []*Gate
+
+	FieldPrincipals []string
+	Fields          []*FieldRule
 
 	Use  string
 	Omit []string

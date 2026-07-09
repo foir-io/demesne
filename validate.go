@@ -361,6 +361,39 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 	for _, pm := range o.Perms {
 		add(validatePerm(s, o, pm, relByName))
 	}
+
+	add(valCheckFieldAccess(o))
+	return errors.Join(errs...)
+}
+
+func valCheckFieldAccess(o *Object) error {
+	if len(o.FieldPrincipals) == 0 {
+		if len(o.Fields) > 0 {
+			return fmt.Errorf("line %d: object %q declares field rules but no `fields { ... }` principal set", o.Fields[0].Pos.Line, o.Name)
+		}
+		return nil
+	}
+	declared := map[string]bool{}
+	var errs []error
+	for _, p := range o.FieldPrincipals {
+		if declared[p] {
+			errs = append(errs, fmt.Errorf("line %d: object %q declares field principal %q more than once", o.Pos.Line, o.Name, p))
+		}
+		declared[p] = true
+	}
+	seen := map[string]bool{}
+	for _, f := range o.Fields {
+		if seen[f.Name] {
+			errs = append(errs, fmt.Errorf("line %d: object %q declares field %q more than once", f.Pos.Line, o.Name, f.Name))
+		}
+		seen[f.Name] = true
+		toks := append(append([]string{}, f.Read...), f.Write...)
+		for _, tok := range toks {
+			if !declared[tok] {
+				errs = append(errs, fmt.Errorf("line %d: object %q field %q references %q, which is not a declared field principal (fields { ... })", f.Pos.Line, o.Name, f.Name, tok))
+			}
+		}
+	}
 	return errors.Join(errs...)
 }
 
