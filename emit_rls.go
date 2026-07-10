@@ -580,7 +580,11 @@ func (s *Spec) rlsEmitWalk(obj *Object, t *Term, rels map[string]*Relation) ([]s
 	return []string{fmt.Sprintf("%s.is_%s_%s(%s)", s.definerSchema(), level, s.adminName(), strings.Join(args, ", "))}, nil
 }
 
-func (s *Spec) memberinReachFrag(level string) (string, error) {
+func (s *Spec) memberinReachFrag(level string, member bool) (string, error) {
+	if member {
+		name := fmt.Sprintf("%s_memberin_%s", s.adminName(), level)
+		return fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), name, s.claim(s.adminIdentify()), s.claim(s.claimKeyForLevel(level))), nil
+	}
 	path, err := s.Topology.AncestorPath(level)
 	if err != nil {
 		return "", fmt.Errorf("memberin %s reachedby: %w", level, err)
@@ -726,7 +730,7 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		name := fmt.Sprintf("%s_memberin_%s", s.adminName(), repr.Level)
 		frag := fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), name, s.argSrcSQL(repr.Principal), s.argSrcSQL(repr.Scope))
 		if repr.ReachedBy {
-			reach, err := s.memberinReachFrag(repr.Level)
+			reach, err := s.memberinReachFrag(repr.Level, repr.ReachMember)
 			if err != nil {
 				return nil, err
 			}
