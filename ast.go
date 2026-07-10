@@ -332,6 +332,7 @@ type ViaMemberIn struct {
 	Level     string
 	Principal ArgSrc
 	Scope     ArgSrc
+	ReachedBy bool
 }
 
 func (ViaMemberIn) isRepr()    {}

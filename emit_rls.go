@@ -580,6 +580,21 @@ func (s *Spec) rlsEmitWalk(obj *Object, t *Term, rels map[string]*Relation) ([]s
 	return []string{fmt.Sprintf("%s.is_%s_%s(%s)", s.definerSchema(), level, s.adminName(), strings.Join(args, ", "))}, nil
 }
 
+func (s *Spec) memberinReachFrag(level string) (string, error) {
+	path, err := s.Topology.AncestorPath(level)
+	if err != nil {
+		return "", fmt.Errorf("memberin %s reachedby: %w", level, err)
+	}
+	args := []string{s.claim(s.adminIdentify())}
+	for _, lvl := range path {
+		if lvl.Virtual {
+			continue
+		}
+		args = append(args, s.claim(s.claimKeyForLevel(lvl.Name)))
+	}
+	return fmt.Sprintf("%s.is_%s_%s(%s)", s.definerSchema(), level, s.adminName(), strings.Join(args, ", ")), nil
+}
+
 func (s *Spec) rlsEmitBuiltin(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, custClaim string) ([]string, bool, error) {
 	switch {
 	case t.Builtin == "open":
@@ -709,7 +724,15 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 	case ViaMemberIn:
 
 		name := fmt.Sprintf("%s_memberin_%s", s.adminName(), repr.Level)
-		return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), name, s.argSrcSQL(repr.Principal), s.argSrcSQL(repr.Scope))}, nil
+		frag := fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), name, s.argSrcSQL(repr.Principal), s.argSrcSQL(repr.Scope))
+		if repr.ReachedBy {
+			reach, err := s.memberinReachFrag(repr.Level)
+			if err != nil {
+				return nil, err
+			}
+			frag = "(" + frag + " AND " + reach + ")"
+		}
+		return []string{frag}, nil
 	case ViaObject:
 
 		return []string{fmt.Sprintf("%s.%s_can_%s(%s)", s.definerSchema(), repr.Object, repr.Verb, repr.Col)}, nil

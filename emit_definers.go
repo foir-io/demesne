@@ -88,7 +88,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		return nil, err
 	}
 	s.defEmitPlatformRoles(&out, seen, rs, presetLevels)
-	s.defEmitScopedMemberin(&out, seen, rs)
+	s.defEmitScopedMemberin(&out, seen, rs, presetLevels)
 	if err := s.defEmitKernel(&out, seen); err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (s *Spec) defEmitPlatformRoles(out *[]GenFn, seen map[string]bool, rs *Role
 	}
 }
 
-func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *RoleStore) {
+func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *RoleStore, presetLevels map[string][]string) {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
 			mi, ok := r.Repr.(ViaMemberIn)
@@ -216,15 +216,41 @@ func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *Rol
 				continue
 			}
 			name := fmt.Sprintf("%s_memberin_%s", s.adminName(), mi.Level)
-			if seen[name] {
-				continue
+			if !seen[name] {
+				seen[name] = true
+				sCol := s.scopeColForLevel(rs, mi.Level)
+				body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_principal AND %s = p_%s AND %s = '%s' AND %s IS NULL)",
+					rs.Assignments, rs.SubjectCol, sCol, mi.Level, rs.KindCol, rs.KindVal, rs.RevokedCol)
+				*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("p_principal text, p_%s text", mi.Level), Body: body})
 			}
-			seen[name] = true
-			sCol := s.scopeColForLevel(rs, mi.Level)
-			body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_principal AND %s = p_%s AND %s = '%s' AND %s IS NULL)",
-				rs.Assignments, rs.SubjectCol, sCol, mi.Level, rs.KindCol, rs.KindVal, rs.RevokedCol)
-			*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("p_principal text, p_%s text", mi.Level), Body: body})
+			if mi.ReachedBy {
+				s.defEmitReachChain(out, seen, rs, presetLevels, mi.Level)
+			}
 		}
+	}
+}
+
+// defEmitReachChain emits the caller-reach definers a `memberin ... reachedby`
+// term calls — is_<level>_<admin> for every non-virtual level on the anchor path
+// up to (and including) level. Each level's definer recurses into its parent's,
+// so the whole chain must be present for the definer closure to hold. Deduped
+// against `seen`, which is shared with the role-walk emitter, so a spec that also
+// references the same reach via `->owner` emits each definer once.
+func (s *Spec) defEmitReachChain(out *[]GenFn, seen map[string]bool, rs *RoleStore, presetLevels map[string][]string, level string) {
+	path, err := s.Topology.AncestorPath(level)
+	if err != nil {
+		return
+	}
+	for _, lvl := range path {
+		if lvl.Virtual {
+			continue
+		}
+		fn := fmt.Sprintf("is_%s_%s", lvl.Name, s.adminName())
+		if seen[fn] {
+			continue
+		}
+		seen[fn] = true
+		*out = append(*out, s.roleDefiner(fn, rs, lvl.Name, presetLevels[lvl.Name], s.operatorReach(lvl.Name)))
 	}
 }
 
@@ -422,9 +448,12 @@ func structuralAccessorCoverage(obj *Object) (bool, string) {
 		if r == nil {
 			continue
 		}
-		switch r.Repr.(type) {
-		case ViaRole, ViaMemberIn:
-
+		switch repr := r.Repr.(type) {
+		case ViaRole:
+		case ViaMemberIn:
+			if repr.ReachedBy {
+				return false, fmt.Sprintf("relation %q is `memberin ... reachedby` — the caller-reach gate is not expressible in the structural enumerator, so reverse queries over it are unsupported (the RLS floor still enforces it)", t.Ident)
+			}
 		default:
 			return false, fmt.Sprintf("relation %q (%T) is not enumerable by the structural accessor path (only via-role / via-memberin)", t.Ident, r.Repr)
 		}
