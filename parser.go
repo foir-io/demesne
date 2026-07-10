@@ -1179,7 +1179,8 @@ func (p *parser) parseReprMemberIn() (Repr, error) {
 	if _, err := p.expect(tRParen); err != nil {
 		return nil, err
 	}
-	return ViaMemberIn{Level: level, Principal: principal, Scope: scope}, nil
+	reachedBy := p.acceptKw("reachedby")
+	return ViaMemberIn{Level: level, Principal: principal, Scope: scope, ReachedBy: reachedBy}, nil
 }
 
 func (p *parser) parseReprGrant() (Repr, error) {
