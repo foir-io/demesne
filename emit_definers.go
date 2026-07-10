@@ -230,12 +230,6 @@ func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *Rol
 	}
 }
 
-// defEmitReachChain emits the caller-reach definers a `memberin ... reachedby`
-// term calls — is_<level>_<admin> for every non-virtual level on the anchor path
-// up to (and including) level. Each level's definer recurses into its parent's,
-// so the whole chain must be present for the definer closure to hold. Deduped
-// against `seen`, which is shared with the role-walk emitter, so a spec that also
-// references the same reach via `->owner` emits each definer once.
 func (s *Spec) defEmitReachChain(out *[]GenFn, seen map[string]bool, rs *RoleStore, presetLevels map[string][]string, level string) {
 	path, err := s.Topology.AncestorPath(level)
 	if err != nil {

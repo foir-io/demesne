@@ -82,8 +82,6 @@ func TestMemberinReachedBy(t *testing.T) {
 		t.Fatalf("no admin_user_select policy (policies: %v)", policyNames(rls))
 	}
 
-	// The tenant directory term must AND the target-membership with the caller's
-	// tenant reach; the project term likewise at project scope.
 	for _, want := range []string{
 		"admin_memberin_tenant",
 		"is_tenant_admin",
