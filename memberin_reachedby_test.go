@@ -97,6 +97,71 @@ func TestMemberinReachedBy(t *testing.T) {
 	}
 }
 
+const memberinReachedByMemberSpec = `
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin {
+  permission content:read
+  preset project_admin @ project = content:read
+  preset tenant_owner  @ tenant  = content:read
+  rank tenant_owner > project_admin
+}
+vocabulary platform {
+  permission platform:manage
+  preset platform_admin @ platform = platform:manage
+}
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject staff { anchor platform; reach descendants; identifies sub; roles configurable platform }
+subject admin { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+object admin_users {
+  table  admin_users
+  scoped platform
+  relation staff:       staff via role
+  relation self:        admin via id
+  relation dir_project: admin via memberin project(id, @project_id) reachedby member
+  permission view = staff + self + dir_project @rls maps select
+}
+`
+
+func TestMemberinReachedByMember(t *testing.T) {
+	s, err := Parse(memberinReachedByMemberSpec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	rls, err := s.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit rls: %v", err)
+	}
+	var sel string
+	for _, p := range rls.Policies {
+		if p.Name == "admin_users_select" {
+			sel = p.Using
+		}
+	}
+	if sel == "" {
+		t.Fatalf("no admin_users_select policy (policies: %v)", policyNames(rls))
+	}
+	if n := strings.Count(sel, "admin_memberin_project"); n < 2 {
+		t.Errorf("member-mode reach must gate the target's memberin with the CALLER's memberin (want >=2 admin_memberin_project, got %d)\n  %s", n, sel)
+	}
+	if strings.Contains(sel, "is_project_admin") {
+		t.Errorf("reachedby member must NOT gate on admin-rank reach (is_project_admin):\n  %s", sel)
+	}
+}
+
 func reachDefKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

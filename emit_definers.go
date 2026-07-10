@@ -223,7 +223,7 @@ func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *Rol
 					rs.Assignments, rs.SubjectCol, sCol, mi.Level, rs.KindCol, rs.KindVal, rs.RevokedCol)
 				*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("p_principal text, p_%s text", mi.Level), Body: body})
 			}
-			if mi.ReachedBy {
+			if mi.ReachedBy && !mi.ReachMember {
 				s.defEmitReachChain(out, seen, rs, presetLevels, mi.Level)
 			}
 		}
