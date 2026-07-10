@@ -1180,7 +1180,11 @@ func (p *parser) parseReprMemberIn() (Repr, error) {
 		return nil, err
 	}
 	reachedBy := p.acceptKw("reachedby")
-	return ViaMemberIn{Level: level, Principal: principal, Scope: scope, ReachedBy: reachedBy}, nil
+	reachMember := false
+	if reachedBy {
+		reachMember = p.acceptKw("member")
+	}
+	return ViaMemberIn{Level: level, Principal: principal, Scope: scope, ReachedBy: reachedBy, ReachMember: reachMember}, nil
 }
 
 func (p *parser) parseReprGrant() (Repr, error) {

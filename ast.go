@@ -329,10 +329,11 @@ type ArgSrc struct {
 }
 
 type ViaMemberIn struct {
-	Level     string
-	Principal ArgSrc
-	Scope     ArgSrc
-	ReachedBy bool
+	Level       string
+	Principal   ArgSrc
+	Scope       ArgSrc
+	ReachedBy   bool
+	ReachMember bool
 }
 
 func (ViaMemberIn) isRepr()    {}
