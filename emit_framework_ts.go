@@ -224,6 +224,14 @@ func (g *fwTSGen) object(o AppObjectSurface, obj *Object) {
 			g.needCompose = true
 			emit(g.rowCanTS(method, o.EditCheckSQL))
 			g.checks = append(g.checks, fwTSCheck{o.Object, pm.Verb, name + "." + method})
+		case containsStr(pm.Layers, "check"):
+			sql := o.CheckVerbSQL(pm.Verb)
+			if sql == "" {
+				continue
+			}
+			g.needCompose = true
+			emit(g.rowCanTS(method, sql))
+			g.checks = append(g.checks, fwTSCheck{o.Object, pm.Verb, name + "." + method})
 		}
 	}
 

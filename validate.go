@@ -8,7 +8,7 @@ import (
 )
 
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
-var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true}
+var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true, "check": true}
 var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true, "within": true}
 
 func Validate(s *Spec) error {
@@ -710,14 +710,14 @@ func validatePerm(s *Spec, o *Object, pm *Perm, rels map[string]*Relation) error
 
 	add(valCheckPermPolarity(o, pm))
 
-	hasRLS, hasKernel, hasPDP, layerErr := valCheckPermLayers(o, pm)
+	hasRLS, hasKernel, hasPDP, hasCheck, layerErr := valCheckPermLayers(o, pm)
 	add(layerErr)
 
 	add(valCheckPermGuard(o, pm, hasRLS))
 
-	add(valCheckPermMaps(o, pm, hasRLS, hasKernel))
+	add(valCheckPermMaps(o, pm, hasRLS, hasKernel, hasCheck))
 
-	add(valCheckPermTerms(s, o, pm, rels, hasRLS, hasKernel, hasPDP))
+	add(valCheckPermTerms(s, o, pm, rels, hasRLS, hasKernel, hasPDP, hasCheck))
 
 	return errors.Join(errs...)
 }
@@ -729,7 +729,7 @@ func valCheckPermPolarity(o *Object, pm *Perm) error {
 	return nil
 }
 
-func valCheckPermLayers(o *Object, pm *Perm) (hasRLS, hasKernel, hasPDP bool, err error) {
+func valCheckPermLayers(o *Object, pm *Perm) (hasRLS, hasKernel, hasPDP, hasCheck bool, err error) {
 	var errs []error
 	for _, l := range pm.Layers {
 		if !knownLayers[l] {
@@ -742,12 +742,14 @@ func valCheckPermLayers(o *Object, pm *Perm) (hasRLS, hasKernel, hasPDP bool, er
 			hasKernel = true
 		case "pdp":
 			hasPDP = true
+		case "check":
+			hasCheck = true
 		}
 	}
 	if len(pm.Layers) == 0 {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s has no layer tag", pm.Pos.Line, o.Name, pm.Verb))
 	}
-	return hasRLS, hasKernel, hasPDP, errors.Join(errs...)
+	return hasRLS, hasKernel, hasPDP, hasCheck, errors.Join(errs...)
 }
 
 func valCheckPermGuard(o *Object, pm *Perm, hasRLS bool) error {
@@ -764,7 +766,7 @@ func valCheckPermGuard(o *Object, pm *Perm, hasRLS bool) error {
 	return errors.Join(errs...)
 }
 
-func valCheckPermMaps(o *Object, pm *Perm, hasRLS, hasKernel bool) error {
+func valCheckPermMaps(o *Object, pm *Perm, hasRLS, hasKernel, hasCheck bool) error {
 	var errs []error
 	mapsIsCapability := isPermKeyLit(pm.Maps)
 	mapsIsTableOp := tableOps[pm.Maps]
@@ -786,26 +788,35 @@ func valCheckPermMaps(o *Object, pm *Perm, hasRLS, hasKernel bool) error {
 				pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
 		}
 	}
+	// A @check permission emits a callable point-check, not a policy, so it must
+	// not map a table op.
+	if hasCheck && pm.Maps != "" {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s is @check but also `maps %s` — a @check permission emits a callable point-check, not a policy",
+			pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
+	}
 	return errors.Join(errs...)
 }
 
-func valCheckPermTerms(s *Spec, o *Object, pm *Perm, rels map[string]*Relation, hasRLS, hasKernel, hasPDP bool) error {
+func valCheckPermTerms(s *Spec, o *Object, pm *Perm, rels map[string]*Relation, hasRLS, hasKernel, hasPDP, hasCheck bool) error {
 	var errs []error
 	add := func(e error) {
 		if e != nil {
 			errs = append(errs, e)
 		}
 	}
+	// Row-predicate terms are valid in any layer that compiles a predicate: @rls
+	// (a policy) or @check (a callable point-check). Both emit via rlsPredicate.
+	hasPred := hasRLS || hasCheck
 	for _, t := range pm.Expr {
 		switch {
 		case t.GrantRef != "":
-			add(valCheckGrantRefTerm(s, o, pm, t, hasRLS))
+			add(valCheckGrantRefTerm(s, o, pm, t, hasPred))
 		case t.ModeCol != "":
-			add(valCheckModeTerm(s, o, pm, t, hasRLS))
+			add(valCheckModeTerm(s, o, pm, t, hasPred))
 		case t.Builtin != "":
-			add(valCheckBuiltinTerm(s, o, pm, t, rels, hasRLS))
+			add(valCheckBuiltinTerm(s, o, pm, t, rels, hasPred))
 		case isGrantSelectorTerm(t.Ident, rels):
-			add(valCheckGrantSelectorTerm(o, pm, t, rels, hasRLS))
+			add(valCheckGrantSelectorTerm(o, pm, t, rels, hasPred))
 		case isPermKeyLit(t.Ident):
 			if !hasPDP || hasRLS || hasKernel {
 				add(fmt.Errorf("line %d: permission %s.%s uses capability term %q outside a @pdp-only permission (V3/V4)",

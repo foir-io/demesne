@@ -112,6 +112,16 @@ func (s *Spec) editPointCheckSQL(o *Object) (string, error) {
 	if upd == nil {
 		return "", nil
 	}
+	return s.permPointCheckSQL(o, upd)
+}
+
+// permPointCheckSQL compiles a permission's predicate into a boolean point-check
+// evaluated under the caller's own claims:
+//
+//	SELECT EXISTS (SELECT 1 FROM <table> WHERE <pk> = $1 AND (<predicate>))
+//
+// It backs both CanEdit (the @rls UPDATE predicate) and @check accessors.
+func (s *Spec) permPointCheckSQL(o *Object, pm *Perm) (string, error) {
 	chain, err := s.Topology.Chain()
 	if err != nil {
 		return "", err
@@ -123,7 +133,7 @@ func (s *Spec) editPointCheckSQL(o *Object) (string, error) {
 		}
 	}
 	cust := s.ownerSubject(o.Scoped[len(o.Scoped)-1])
-	pred, err := s.rlsPredicate(o, upd, cust, virtual)
+	pred, err := s.rlsPredicate(o, pm, cust, virtual)
 	if err != nil {
 		return "", err
 	}
