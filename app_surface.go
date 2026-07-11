@@ -18,6 +18,16 @@ type AppObjectSurface struct {
 	AsyncCheckSQL string
 
 	EditCheckSQL string
+
+	// Checks holds one point-check per @check permission (verb + SQL): compiled
+	// predicates exposed as Can<Verb>, with no RLS policy.
+	Checks []AppCheck
+}
+
+// AppCheck is one @check permission's point-check: its verb and the boolean SELECT.
+type AppCheck struct {
+	Verb     string
+	CheckSQL string
 }
 
 func (s *Spec) EmitAppSurface() (*AppCheckSurface, error) {
@@ -34,6 +44,20 @@ func (s *Spec) EmitAppSurface() (*AppCheckSurface, error) {
 		if err != nil {
 			return nil, fmt.Errorf("EmitAppSurface: %s edit point-check: %w", o.Name, err)
 		}
+		var checks []AppCheck
+		for _, pm := range o.Perms {
+			if !contains(pm.Layers, "check") {
+				continue
+			}
+			sql, err := s.permPointCheckSQL(o, pm)
+			if err != nil {
+				return nil, fmt.Errorf("EmitAppSurface: %s.%s @check point-check: %w", o.Name, pm.Verb, err)
+			}
+			if sql == "" {
+				continue
+			}
+			checks = append(checks, AppCheck{Verb: pm.Verb, CheckSQL: sql})
+		}
 		out.Objects = append(out.Objects, AppObjectSurface{
 			Object:        o.Name,
 			Table:         o.Table,
@@ -41,6 +65,7 @@ func (s *Spec) EmitAppSurface() (*AppCheckSurface, error) {
 			FlatListFn:    s.flatListFn(o),
 			AsyncCheckSQL: s.asyncCheckSQL(o),
 			EditCheckSQL:  editSQL,
+			Checks:        checks,
 		})
 	}
 	return out, nil
@@ -116,6 +141,17 @@ func (o AppObjectSurface) CheckSQL() string {
 }
 
 func (o AppObjectSurface) CheckEditSQL() string { return o.EditCheckSQL }
+
+// CheckVerbSQL returns the point-check SQL for a @check verb, or "" if the object
+// has no @check permission of that name.
+func (o AppObjectSurface) CheckVerbSQL(verb string) string {
+	for _, c := range o.Checks {
+		if c.Verb == verb {
+			return c.CheckSQL
+		}
+	}
+	return ""
+}
 
 func (o AppObjectSurface) CheckManySQL() string {
 	return fmt.Sprintf("SELECT %s FROM %s WHERE %s = ANY($1)", o.PK, o.Table, o.PK)

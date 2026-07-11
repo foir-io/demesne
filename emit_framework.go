@@ -253,6 +253,13 @@ func (g *fwGen) object(o AppObjectSurface, obj *Object) {
 				continue
 			}
 			g.rowCan(recv, exp, o.Object, pm.Verb, "Can"+verb, o.EditCheckSQL)
+		case containsStr(pm.Layers, "check"):
+			// The compiled predicate as a callable point-check (no policy).
+			sql := o.CheckVerbSQL(pm.Verb)
+			if sql == "" {
+				continue
+			}
+			g.rowCan(recv, exp, o.Object, pm.Verb, "Can"+verb, sql)
 		}
 	}
 
