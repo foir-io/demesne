@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   goreleaser:
     name: CLI binaries + GitHub release
@@ -60,7 +64,14 @@ jobs:
         run: pnpm --filter @foir/demesne build
         working-directory: ts
       - name: publish
-        run: npm publish --provenance --access public
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if npm view "@foir/demesne@${version}" version >/dev/null 2>&1; then
+            echo "@foir/demesne@${version} is already published; skipping"
+            exit 0
+          fi
+          npm publish --provenance --access public
         working-directory: ts/packages/runtime
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -87,9 +98,19 @@ jobs:
       - name: publish platform packages then launcher
         run: |
           set -euo pipefail
-          for dir in npm/dist/cli-*; do
+          publish() {
+            dir="$1"
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} is already published; skipping"
+              return 0
+            fi
             npm publish "$dir" --provenance --access public
+          }
+          for dir in npm/dist/cli-*; do
+            publish "$dir"
           done
-          npm publish npm/dist/cli --provenance --access public
+          publish npm/dist/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

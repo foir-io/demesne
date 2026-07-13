@@ -60,3 +60,4 @@ release:
     owner: foir-io
     name: demesne
   prerelease: auto
+  replace_existing_artifacts: true
