@@ -35,8 +35,8 @@ object doc {
   table docs
   scoped tenant > project
   relation reader:  staffer via role
-  relation curator: staffer via role(rank >= steward)
-  permission view = reader  @rls maps select
+  relation curator: staffer via role
+  permission view = reader @rls maps select
   permission edit = curator @rls maps update
   permission publish = @holds(docs:manage) @rls maps delete
 }
@@ -131,68 +131,7 @@ func TestRoleStore_AssignmentsSQLSkipsOmittedColumns(t *testing.T) {
 	}
 }
 
-func TestViaRole_RankAtVirtualAnchorRejected(t *testing.T) {
-	src := `
-topology { level archive virtual }
 
-vocabulary staff {
-  permission items:read
-  permission items:manage
-  preset viewer  @ archive = items:read
-  preset steward @ archive = *
-  rank steward > viewer
-}
-
-rolestore staff {
-  assignments memberships
-  kind        member_kind = "contributor"
-  subject     contributor_id
-  rolejoin    group_id groups id slug
-  revoked     revoked_at
-}
-
-subject staff { anchor archive reach descendants identifies sub roles configurable staff binds admin }
-
-object item {
-  table items
-  level  archive
-  scoped archive
-  relation curator: staff via role(rank >= steward)
-  permission edit = curator @rls maps update
-}
-`
-	s, err := Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	err = Validate(s)
-	if err == nil {
-		t.Fatal("expected validate to reject a rank filter at a virtual anchor")
-	}
-	for _, want := range []string{"never consulted", "non-virtual level carrying a scope column"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("rejection must state the real cause and the fix, missing %q in: %v", want, err)
-		}
-	}
-	if strings.Contains(err.Error(), "cannot carry a rank filter") {
-		t.Errorf("the threshold does compile correctly; the message must not claim otherwise: %v", err)
-	}
-}
-
-func TestViaRole_RankWithoutRankOrderingRejected(t *testing.T) {
-	src := strings.Replace(hardeningSpec, "  rank admin > steward > editor > viewer\n", "", 1)
-	s, err := Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	err = Validate(s)
-	if err == nil {
-		t.Fatal("expected validate to reject `rank >=` with no rank ordering declared")
-	}
-	if !strings.Contains(err.Error(), "would admit every preset") {
-		t.Errorf("rejection must name the widening, got: %v", err)
-	}
-}
 
 func TestViaRole_EmptyPresetSetRejected(t *testing.T) {
 	src := strings.Replace(hardeningSpec, "@ project", "@ tenant", 4)
@@ -209,26 +148,4 @@ func TestViaRole_EmptyPresetSetRejected(t *testing.T) {
 	}
 }
 
-func TestAtOrAbove_UnknownThresholdFailsClosed(t *testing.T) {
-	got := atOrAbove([]string{"admin", "viewer"}, "steward", map[string]int{"admin": 0, "viewer": 1})
-	if len(got) != 0 {
-		t.Errorf("an unresolvable rank threshold must fail closed, got %v", got)
-	}
-}
 
-func TestViaRole_RankFilterStillNarrowsWhenValid(t *testing.T) {
-	defs := hardeningDefiners(t, hardeningSpec)
-	var ranked *GenFn
-	for i := range defs {
-		if defs[i].Name == "is_steward" {
-			ranked = &defs[i]
-		}
-	}
-	if ranked == nil {
-		t.Fatal("no is_steward definer emitted")
-	}
-	if !strings.Contains(ranked.Body, "IN ('admin', 'steward')") {
-		t.Errorf("rank >= steward must admit exactly admin and steward:\n%s", ranked.Body)
-	}
-	assertNoDegenerateSQL(t, defs)
-}

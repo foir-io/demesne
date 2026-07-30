@@ -38,8 +38,8 @@ func TestCanonical_RBAC(t *testing.T) {
 	if upd == nil {
 		t.Fatal("no resources_update policy")
 	}
-	if !strings.Contains(upd.Using, "auth.is_editor("+sub+", tenant_id, project_id)") {
-		t.Errorf("write verb not gated by the rank>=editor definer:\n%s", upd.Using)
+	if !strings.Contains(upd.Using, "auth.staff_has_perm("+sub+", tenant_id, project_id, 'resource:write')") {
+		t.Errorf("write verb not gated by the capability definer:\n%s", upd.Using)
 	}
 	if strings.Contains(upd.Using, "staff_has_resource_role") {
 		t.Errorf("write verb must not fall back to the any-role gate:\n%s", upd.Using)
@@ -77,12 +77,12 @@ func TestCanonical_RBAC(t *testing.T) {
 		}
 	}
 
-	editor := body["is_editor"]
-	if !strings.Contains(editor, "r.key IN ('editor')") {
-		t.Errorf("is_editor should select only the editor role key:\n%s", editor)
+	perm := body["staff_has_perm"]
+	if !strings.Contains(perm, "p_perm = ANY(r.permissions)") {
+		t.Errorf("staff_has_perm should test the permissions array:\n%s", perm)
 	}
-	if !strings.Contains(editor, "auth.is_tenant_staff(user_id, check_tenant_id)") {
-		t.Errorf("is_editor should inherit the tenant-level role:\n%s", editor)
+	if strings.Contains(perm, "r.key IN") {
+		t.Errorf("capability gating must not fall back to matching role keys:\n%s", perm)
 	}
 }
 

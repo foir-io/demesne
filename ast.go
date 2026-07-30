@@ -285,8 +285,6 @@ type ViaEdge struct {
 }
 
 type ViaRole struct {
-	HasRank bool
-	RankMin string
 }
 
 type ViaComposition struct {

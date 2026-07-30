@@ -811,9 +811,6 @@ func (s *Spec) rlsEmitRole(obj *Object, r *Relation, repr ViaRole) ([]string, er
 	}
 
 	fn := fmt.Sprintf("%s_has_%s_role", s.adminName(), obj.Name)
-	if repr.HasRank {
-		fn = "is_" + repr.RankMin
-	}
 	return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), fn, s.idClaim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
 }
 

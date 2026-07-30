@@ -1038,26 +1038,7 @@ func (p *parser) parseReprEdge() (Repr, error) {
 }
 
 func (p *parser) parseReprRole() (Repr, error) {
-	vr := ViaRole{}
-	if p.peekKind() == tLParen {
-		p.advance()
-		if err := p.expectKw("rank"); err != nil {
-			return nil, err
-		}
-		if _, err := p.expect(tGE); err != nil {
-			return nil, err
-		}
-		rm, err := p.ident()
-		if err != nil {
-			return nil, err
-		}
-		vr.HasRank = true
-		vr.RankMin = rm
-		if _, err := p.expect(tRParen); err != nil {
-			return nil, err
-		}
-	}
-	return vr, nil
+	return ViaRole{}, nil
 }
 
 func (p *parser) parseReprComposition() (Repr, error) {
