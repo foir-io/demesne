@@ -4,6 +4,8 @@
 /bin/
 /dist/
 coverage.*
+go.work.sum
+/cmd/demesne/demesne
 
 # npm release staging (generated from dist/ at release time)
 /npm/dist/

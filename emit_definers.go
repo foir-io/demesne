@@ -147,7 +147,7 @@ func (s *Spec) defEmitMembership(out *[]GenFn) error {
 			body += fmt.Sprintf(" AND %s = '%s'", m.ActiveCol, m.ActiveVal)
 		}
 		body += ")"
-		*out = append(*out, GenFn{Name: m.FlagCol, Sig: "user_id text", Body: body})
+		*out = append(*out, GenFn{Name: m.FlagCol, Sig: "user_id " + s.idType(), Body: body})
 	}
 	return nil
 }
@@ -171,7 +171,7 @@ func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 		if g.ExpiresCol != "" {
 			conj = append(conj, fmt.Sprintf("%s > now()", g.ExpiresCol))
 		}
-		*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("user_id text, check_%s_id text", g.Level), Body: grantEdgeExists(g.Table, conj...)})
+		*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("user_id %s, check_%s_id %s", s.idType(), g.Level, s.idType()), Body: grantEdgeExists(g.Table, conj...)})
 	}
 }
 
@@ -222,9 +222,15 @@ func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *Rol
 			if !seen[name] {
 				seen[name] = true
 				sCol := s.scopeColForLevel(rs, mi.Level)
-				body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_principal AND %s = p_%s AND %s = '%s' AND %s IS NULL)",
-					rs.Assignments, rs.SubjectCol, sCol, mi.Level, rs.KindCol, rs.KindVal, rs.RevokedCol)
-				*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("p_principal text, p_%s text", mi.Level), Body: body})
+				conds := []string{
+					fmt.Sprintf("%s = p_principal", rs.SubjectCol),
+					fmt.Sprintf("%s = p_%s", sCol, mi.Level),
+				}
+				conds = append(conds, rs.kindCond("")...)
+				conds = append(conds, rs.revokedCond("")...)
+				body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s)",
+					rs.Assignments, strings.Join(conds, " AND "))
+				*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("p_principal %s, p_%s %s", s.idType(), mi.Level, s.idType()), Body: body})
 			}
 			if mi.ReachedBy && !mi.ReachMember {
 				s.defEmitReachChain(out, seen, rs, presetLevels, mi.Level)
@@ -262,7 +268,7 @@ func (s *Spec) defEmitHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStor
 // every project), unlike roleDefiner, which pins off-path levels to IS NULL.
 func (s *Spec) holdsPermDefiner(name string, rs *RoleStore) GenFn {
 	chain, _ := s.Topology.Chain()
-	args := []string{"user_id text"}
+	args := []string{"user_id " + s.idType()}
 	var scope []string
 	i := 0
 	for _, l := range chain {
@@ -274,7 +280,7 @@ func (s *Spec) holdsPermDefiner(name string, rs *RoleStore) GenFn {
 		}
 		col := rs.ScopeCols[i]
 		arg := "check_" + l.Name + "_id"
-		args = append(args, arg+" text")
+		args = append(args, arg+" "+s.idType())
 		if i == 0 {
 			scope = append(scope, fmt.Sprintf("ra.%s = %s", col, arg))
 		} else {
@@ -283,11 +289,14 @@ func (s *Spec) holdsPermDefiner(name string, rs *RoleStore) GenFn {
 		i++
 	}
 	args = append(args, "p_perm text")
+	conds := rs.kindCond("ra.")
+	conds = append(conds, fmt.Sprintf("ra.%s = user_id", rs.SubjectCol))
+	conds = append(conds, scope...)
+	conds = append(conds, rs.revokedCond("ra.")...)
+	conds = append(conds, fmt.Sprintf("p_perm = ANY(r.%s)", rs.PermsCol))
 	body := fmt.Sprintf(
-		"EXISTS (SELECT 1 FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE ra.%s = '%s' AND ra.%s = user_id AND %s AND ra.%s IS NULL AND p_perm = ANY(r.%s))",
-		rs.Assignments, rs.RolesTable, rs.RolesID, rs.RoleCol,
-		rs.KindCol, rs.KindVal, rs.SubjectCol, strings.Join(scope, " AND "),
-		rs.RevokedCol, rs.PermsCol)
+		"EXISTS (SELECT 1 FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE %s)",
+		rs.Assignments, rs.RolesTable, rs.RolesID, rs.RoleCol, strings.Join(conds, " AND "))
 	return GenFn{Name: name, Sig: strings.Join(args, ", "), Body: body}
 }
 
@@ -784,7 +793,7 @@ func (s *Spec) defEmitStoreManage(out *[]GenFn, seen map[string]bool, virtual ma
 		seen[name] = true
 		*out = append(*out, GenFn{
 			Name: name,
-			Sig:  "p_type text, p_id text",
+			Sig:  "p_type text, p_id " + s.idType(),
 			Body: fmt.Sprintf("(CASE p_type %s ELSE false END)", strings.Join(whens, " ")),
 		})
 	}
@@ -803,7 +812,7 @@ func (s *Spec) defStoreManageWhens(out *[]GenFn, seen map[string]bool, virtual m
 			}
 			*out = append(*out, GenFn{
 				Name: canEdit,
-				Sig:  "p_id text",
+				Sig:  "p_id " + s.idType(),
 				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = p_id AND (%s))", o.Table, o.Table, o.pk(), pred),
 			})
 		}
@@ -875,7 +884,7 @@ func (s *Spec) roleDefiner(name string, rs *RoleStore, level string, keys []stri
 		}
 	}
 
-	args := []string{"user_id text"}
+	args := []string{"user_id " + s.idType()}
 	var scope []string
 	for i, lvl := range nonVirtual {
 		if i >= len(rs.ScopeCols) {
@@ -884,7 +893,7 @@ func (s *Spec) roleDefiner(name string, rs *RoleStore, level string, keys []stri
 		col := rs.ScopeCols[i]
 		if onPath[lvl] {
 			arg := "check_" + lvl + "_id"
-			args = append(args, arg+" text")
+			args = append(args, arg+" "+s.idType())
 			scope = append(scope, fmt.Sprintf("ra.%s = %s", col, arg))
 		} else {
 			scope = append(scope, fmt.Sprintf("ra.%s IS NULL", col))
@@ -895,11 +904,14 @@ func (s *Spec) roleDefiner(name string, rs *RoleStore, level string, keys []stri
 	for i, k := range keys {
 		quoted[i] = "'" + k + "'"
 	}
+	conds := rs.kindCond("ra.")
+	conds = append(conds, fmt.Sprintf("ra.%s = user_id", rs.SubjectCol))
+	conds = append(conds, scope...)
+	conds = append(conds, rs.revokedCond("ra.")...)
+	conds = append(conds, fmt.Sprintf("r.%s IN (%s)", rs.KeyCol, strings.Join(quoted, ", ")))
 	exists := fmt.Sprintf(
-		"EXISTS (SELECT 1 FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE ra.%s = '%s' AND ra.%s = user_id AND %s AND ra.%s IS NULL AND r.%s IN (%s))",
-		rs.Assignments, rs.RolesTable, rs.RolesID, rs.RoleCol,
-		rs.KindCol, rs.KindVal, rs.SubjectCol, strings.Join(scope, " AND "),
-		rs.RevokedCol, rs.KeyCol, strings.Join(quoted, ", "))
+		"EXISTS (SELECT 1 FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE %s)",
+		rs.Assignments, rs.RolesTable, rs.RolesID, rs.RoleCol, strings.Join(conds, " AND "))
 	body := exists
 	if recurse != "" {
 		body = s.definerSchema() + "." + recurse + " OR " + exists
@@ -979,7 +991,7 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 
 	if sel != nil && accessorTreeOp(sel.Tree) != "" {
 		if composed, err := s.accessorTreeSQL(obj, sel.Tree, rels); err == nil {
-			return []GenFn{accessorGenFn(obj.Table, []string{composed})}
+			return []GenFn{accessorGenFn(obj.Table, s.idType(), []string{composed})}
 		}
 	}
 
@@ -1008,10 +1020,10 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 
 	comp := s.defCompositionAccessorBranches(obj, sel, rels)
 	if len(comp) == 0 {
-		return []GenFn{accessorGenFn(obj.Table, branches)}
+		return []GenFn{accessorGenFn(obj.Table, s.idType(), branches)}
 	}
-	direct := accessorGenFnNamed(obj.Table+"_direct_accessors", branches)
-	full := accessorGenFn(obj.Table, append(
+	direct := accessorGenFnNamed(obj.Table+"_direct_accessors", s.idType(), branches)
+	full := accessorGenFn(obj.Table, s.idType(), append(
 		[]string{fmt.Sprintf("SELECT d.source, d.principal_kind, d.principal_id, d.access FROM %s.%s_direct_accessors(p_id) d", s.definerSchema(), obj.Table)},
 		comp...))
 	return []GenFn{direct, full}
@@ -1380,22 +1392,25 @@ func (s *Spec) roleAccessorBranch(obj *Object, adminExcl string) (string, bool) 
 	if adminExcl != "" {
 		where = append(where, adminExcl)
 	}
+	on := rs.kindCond("ra.")
+	on = append(on, rs.revokedCond("ra.")...)
+	on = append(on, scopeConds...)
 	return fmt.Sprintf(
-		"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s r\n    JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND %s\n    WHERE %s",
+		"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s r\n    JOIN %s ra ON %s\n    WHERE %s",
 		rs.KindVal, rs.SubjectCol, obj.Table, rs.Assignments,
-		rs.KindCol, rs.KindVal, rs.RevokedCol, strings.Join(scopeConds, " AND "),
+		strings.Join(on, " AND "),
 		strings.Join(where, " AND ")), true
 }
 
-func accessorGenFn(table string, branches []string) GenFn {
-	return accessorGenFnNamed(table+"_accessors", branches)
+func accessorGenFn(table, idT string, branches []string) GenFn {
+	return accessorGenFnNamed(table+"_accessors", idT, branches)
 }
 
-func accessorGenFnNamed(name string, branches []string) GenFn {
+func accessorGenFnNamed(name, idT string, branches []string) GenFn {
 	return GenFn{
 		Name:    name,
-		Sig:     "p_id text",
-		Returns: "TABLE(source text, principal_kind text, principal_id text, access text)",
+		Sig:     "p_id " + idT,
+		Returns: "TABLE(source text, principal_kind text, principal_id " + idT + ", access text)",
 		RawBody: true,
 		Body:    "  " + strings.Join(branches, "\n  UNION ALL\n  "),
 	}
@@ -1442,8 +1457,8 @@ func (s *Spec) structuralAccessorDefiner(obj *Object) (GenFn, bool, error) {
 	}
 	return GenFn{
 		Name:    obj.Table + "_accessors",
-		Sig:     "p_id text",
-		Returns: "TABLE(source text, principal_kind text, principal_id text, access text)",
+		Sig:     "p_id " + s.idType(),
+		Returns: "TABLE(source text, principal_kind text, principal_id " + s.idType() + ", access text)",
 		RawBody: true,
 		Body:    "  " + strings.Join(branches, "\n  UNION\n  "),
 	}, true, nil
@@ -1525,17 +1540,23 @@ func (s *Spec) roleEnumSQL(obj *Object, rs *RoleStore, level string, presets []s
 		join = fmt.Sprintf(" JOIN %s rr ON rr.%s = ra.%s AND rr.%s IN (%s)",
 			rs.RolesTable, rs.RolesID, rs.RoleCol, rs.KeyCol, strings.Join(q, ", "))
 	}
+	on := rs.kindCond("ra.")
+	on = append(on, rs.revokedCond("ra.")...)
+	on = append(on, conds...)
 	return fmt.Sprintf(
-		"SELECT '%s'::text AS source, '%s'::text AS principal_kind, ra.%s AS principal_id, '%s'::text AS access\n    FROM %s e JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND %s%s\n    WHERE e.%s = p_id",
+		"SELECT '%s'::text AS source, '%s'::text AS principal_kind, ra.%s AS principal_id, '%s'::text AS access\n    FROM %s e JOIN %s ra ON %s%s\n    WHERE e.%s = p_id",
 		source, rs.KindVal, rs.SubjectCol, access, obj.Table, rs.Assignments,
-		rs.KindCol, rs.KindVal, rs.RevokedCol, strings.Join(conds, " AND "), join, obj.pk())
+		strings.Join(on, " AND "), join, obj.pk())
 }
 
 func (s *Spec) memberinEnumSQL(obj *Object, rs *RoleStore, level string) string {
+	on := rs.kindCond("ra.")
+	on = append(on, rs.revokedCond("ra.")...)
+	on = append(on, fmt.Sprintf("ra.%s = e.%s", s.scopeColForLevel(rs, level), s.scopeCol(obj, level)))
 	return fmt.Sprintf(
-		"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s e JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND ra.%s = e.%s\n    WHERE e.%s = p_id",
-		rs.KindVal, rs.SubjectCol, obj.Table, rs.Assignments, rs.KindCol, rs.KindVal,
-		rs.RevokedCol, s.scopeColForLevel(rs, level), s.scopeCol(obj, level), obj.pk())
+		"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s e JOIN %s ra ON %s\n    WHERE e.%s = p_id",
+		rs.KindVal, rs.SubjectCol, obj.Table, rs.Assignments,
+		strings.Join(on, " AND "), obj.pk())
 }
 
 func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
@@ -1617,6 +1638,20 @@ func roleStoreByName(s *Spec) *RoleStore {
 	return nil
 }
 
+func (rs *RoleStore) kindCond(alias string) []string {
+	if rs.KindCol == "" {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s%s = '%s'", alias, rs.KindCol, rs.KindVal)}
+}
+
+func (rs *RoleStore) revokedCond(alias string) []string {
+	if rs.RevokedCol == "" {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s%s IS NULL", alias, rs.RevokedCol)}
+}
+
 func rankIndex(s *Spec) map[string]int {
 	for _, v := range s.Vocabs {
 		if len(v.Rank) > 0 {
@@ -1645,7 +1680,7 @@ func presetLevelMap(s *Spec) map[string][]string {
 func atOrAbove(keys []string, threshold string, rankIdx map[string]int) []string {
 	tIdx, ok := rankIdx[threshold]
 	if !ok {
-		return keys
+		return nil
 	}
 	var out []string
 	for _, k := range keys {

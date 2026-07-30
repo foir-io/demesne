@@ -3,7 +3,7 @@ module github.com/foir-io/demesne/pgx
 go 1.26.1
 
 require (
-	github.com/foir-io/demesne v0.59.0
+	github.com/foir-io/demesne v0.72.0
 	github.com/jackc/pgx/v5 v5.9.1
 )
 
@@ -12,5 +12,3 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )
-
-replace github.com/foir-io/demesne => ..

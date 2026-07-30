@@ -29,7 +29,7 @@ subject auder { anchor tenant reach descendants identifies audid roles configura
 
 object thing {
   table things
-  scoped tenant > project
+  scoped tenant
   relation admin: recer via role
   relation owner: auder via owner_id
   permission view = admin + owner @rls maps select

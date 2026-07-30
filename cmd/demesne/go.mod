@@ -3,8 +3,8 @@ module github.com/foir-io/demesne/cmd/demesne
 go 1.26.1
 
 require (
-	github.com/foir-io/demesne v0.59.0
-	github.com/foir-io/demesne/pgx v0.0.0
+	github.com/foir-io/demesne v0.72.0
+	github.com/foir-io/demesne/pgx v0.59.1
 	github.com/jackc/pgx/v5 v5.9.1
 )
 
@@ -15,7 +15,3 @@ require (
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )
-
-replace github.com/foir-io/demesne => ../..
-
-replace github.com/foir-io/demesne/pgx => ../../pgx

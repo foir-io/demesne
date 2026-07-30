@@ -18,6 +18,22 @@ type Spec struct {
 	DefinerSchema string
 
 	TableSchema string
+
+	Identifiers string
+}
+
+func (s *Spec) idType() string {
+	if s.Identifiers != "" {
+		return s.Identifiers
+	}
+	return "text"
+}
+
+func (s *Spec) idCast() string {
+	if t := s.idType(); t != "text" {
+		return "::" + t
+	}
+	return ""
 }
 
 func (s *Spec) definerSchema() string {

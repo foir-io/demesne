@@ -102,7 +102,7 @@ subject opser   { anchor tenant reach descendants identifies opsid roles configu
 
 object doc {
   table docs
-  scoped tenant > project
+  scoped tenant
   relation admin: staffer via role
   relation owner: opser   via owner_id
   permission view = admin + owner @rls maps select
@@ -151,7 +151,7 @@ subject opser   { anchor tenant reach descendants identifies opsid roles configu
 
 object doc {
   table docs
-  scoped tenant > project
+  scoped tenant
   relation admin: staffer via role
   relation owner: opser   via owner_id
   permission view    = admin + owner @rls maps select

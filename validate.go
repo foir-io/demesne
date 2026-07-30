@@ -518,6 +518,10 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 			errs = append(errs, valCheckViaMemberIn(s, o, r, mi)...)
 		}
 
+		if vr, ok := r.Repr.(ViaRole); ok {
+			errs = append(errs, valCheckViaRole(s, o, r, vr)...)
+		}
+
 		if g, ok := r.Repr.(ViaGroup); ok && g.Materialized && len(r.Types) > 1 {
 			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via group ... materialized` with multiple kinds %v — a materialized via-group must be single-kind (the flat tags only one principal_kind and the floor matches the id alone)", r.Pos.Line, o.Name, r.Name, r.Types))
 		}
@@ -527,6 +531,43 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 		}
 	}
 	return relByName, errors.Join(errs...)
+}
+
+func valCheckViaRole(s *Spec, o *Object, r *Relation, vr ViaRole) []error {
+	var errs []error
+	rs := roleStoreByName(s)
+	if rs == nil {
+		return errs
+	}
+
+	var st *Subject
+	if len(r.Types) > 0 {
+		st = s.subjectByName(r.Types[0])
+	}
+	platform := st != nil && s.isPlatformRoleSubject(st)
+
+	if vr.HasRank && platform {
+		errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via role(rank >= %s)` against subject %q, whose anchor level %q is virtual — a virtual-anchored role check matches every preset at that anchor and cannot carry a rank filter, so the threshold would be silently discarded", r.Pos.Line, o.Name, r.Name, vr.RankMin, st.Name, st.Anchor))
+	}
+
+	if platform {
+		return errs
+	}
+
+	if vr.HasRank {
+		if _, ok := rankIndex(s)[vr.RankMin]; !ok {
+			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via role(rank >= %s)` but no vocabulary declares a rank ordering containing %q — the threshold cannot be resolved and the check would admit every preset", r.Pos.Line, o.Name, r.Name, vr.RankMin, vr.RankMin))
+		}
+	}
+
+	if len(o.Scoped) > 0 {
+		lvl := o.Scoped[len(o.Scoped)-1]
+		if len(presetLevelMap(s)[lvl]) == 0 {
+			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via role` at level %q, but no vocabulary declares a preset at that level — the check would compile to an empty key set that can never match", r.Pos.Line, o.Name, r.Name, lvl))
+		}
+	}
+
+	return errs
 }
 
 func valCheckViaMemberIn(s *Spec, o *Object, r *Relation, mi ViaMemberIn) []error {

@@ -124,7 +124,7 @@ func (s *Spec) asyncCheckSQL(o *Object) string {
 		kind = rel.Types[0]
 	}
 	return fmt.Sprintf("SELECT allowed, as_of::text FROM %s_affordance($1, '%s', %s)",
-		s.asyncIndexBase(o.Table, rel.Name), kind, s.claim(cust.Identifies))
+		s.asyncIndexBase(o.Table, rel.Name), kind, s.idClaim(cust.Identifies))
 }
 
 func (a *AppCheckSurface) Object(name string) (AppObjectSurface, bool) {

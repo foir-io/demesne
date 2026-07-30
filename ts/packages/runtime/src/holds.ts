@@ -8,9 +8,13 @@ export function assignmentsSQL(r: HoldsResolver): string {
   const cols = r.scopeCols.map((c) => `ra.${c}`);
   cols.push(`r.${r.keyCol}`);
   if (r.permsCol !== "") cols.push(`r.${r.permsCol}`);
+  const conds: string[] = [];
+  if (r.kindCol !== "") conds.push(`ra.${r.kindCol} = '${r.kindVal}'`);
+  conds.push(`ra.${r.subjectCol} = $1`);
+  if (r.revokedCol !== "") conds.push(`ra.${r.revokedCol} IS NULL`);
   return (
     `SELECT ${cols.join(", ")} FROM ${r.assignments} ra JOIN ${r.rolesTable} r ON r.${r.rolesId} = ra.${r.roleCol} ` +
-    `WHERE ra.${r.kindCol} = '${r.kindVal}' AND ra.${r.subjectCol} = $1 AND ra.${r.revokedCol} IS NULL`
+    `WHERE ${conds.join(" AND ")}`
   );
 }
 
