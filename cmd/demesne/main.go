@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -32,7 +33,17 @@ USAGE:
   postgres://user:pass@host:5432/db
 `
 
-var version = "dev"
+var version = ""
+
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return "dev"
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -56,7 +67,7 @@ func main() {
 	case "coverage":
 		err = cmdCoverage(os.Args[2:])
 	case "version", "--version", "-v":
-		fmt.Println(version)
+		fmt.Println(buildVersion())
 		return
 	case "help", "-h", "--help":
 		fmt.Print(usage)

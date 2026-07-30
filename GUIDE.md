@@ -219,6 +219,24 @@ where your governed tables live. The table schema qualifies the emitted
 ENABLE/FORCE, policy, and trigger DDL. Both default to `auth`/`public`, so a spec
 that omits them emits byte-identically.
 
+A word on `virtual`, because it is the one keyword whose name undersells what it
+does. A virtual level is the operator plane *above* tenancy: the place platform
+staff live. It carries no scope column, so a subject anchored there is not
+scoped to anything and reaches every row of every object beneath it. That reach
+is disjoined into each policy, which is what makes platform staff platform
+staff.
+
+The consequence is that a virtual level cannot host graded access. A
+`via role(rank >= X)` gate or an `@holds` gate on a global object compiles
+correctly and is then never consulted, because the plane-wide reach beside it is
+already true for anyone holding any preset. Both are rejected at validate rather
+than compiled into a policy that looks graded and is not.
+
+So `virtual` does not mean "I have no tenancy." A single-tenant deployment still
+wants a real level with a scope column, even if exactly one row ever occupies
+it; that column is what both rank and `@holds` key on. Reach for `virtual` only
+when you genuinely want a plane whose members outrank the whole tree.
+
 Identifiers are `text` by default, because they arrive as JWT claims. If your
 keys are another SQL type, declare it once — `identifiers uuid` — and the emitter
 types every generated definer parameter with it and casts identifier claims to it
