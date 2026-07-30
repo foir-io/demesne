@@ -547,7 +547,7 @@ func valCheckViaRole(s *Spec, o *Object, r *Relation, vr ViaRole) []error {
 	platform := st != nil && s.isPlatformRoleSubject(st)
 
 	if vr.HasRank && platform {
-		errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via role(rank >= %s)` against subject %q, whose anchor level %q is virtual — a virtual-anchored role check matches every preset at that anchor and cannot carry a rank filter, so the threshold would be silently discarded", r.Pos.Line, o.Name, r.Name, vr.RankMin, st.Name, st.Anchor))
+		errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via role(rank >= %s)`, but subject %q is anchored at virtual level %q and so reaches every row of this global object whatever role it holds — the threshold compiles correctly and is then never consulted, because the plane-wide reach is disjoined with it; give %q a non-virtual level carrying a scope column if you need graded access", r.Pos.Line, o.Name, r.Name, vr.RankMin, st.Name, st.Anchor, st.Anchor))
 	}
 
 	if platform {
@@ -965,7 +965,7 @@ func (s *Spec) valCheckHoldsTerm(o *Object, pm *Perm, t *Term, hasPred, hasPDP b
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds but is not @rls or @check", pm.Pos.Line, o.Name, pm.Verb))
 	}
 	if len(o.Scoped) > 0 && s.levelIsVirtual(o.Scoped[len(o.Scoped)-1]) {
-		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds on a global object — @holds keys the check on the row's scope columns, which a global object does not carry", pm.Pos.Line, o.Name, pm.Verb))
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds on a global object — the check keys on the row's scope columns, which a global object does not carry, and a subject anchored at that virtual level already reaches every row whatever permissions it holds", pm.Pos.Line, o.Name, pm.Verb))
 	}
 	rs := roleStoreByName(s)
 	if rs == nil {
