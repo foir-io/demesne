@@ -293,8 +293,11 @@ func (g *fwGen) rowCan(recv, exp, object, verb, method, sql string) {
 func (g *fwGen) pdpCan(recv string, pm *Perm) {
 	var perms []string
 	for _, t := range pm.Expr {
-		if t.Ident != "" {
+		switch {
+		case t.Ident != "":
 			perms = append(perms, t.Ident)
+		case t.Builtin == "holds" && t.HoldsPerm != "":
+			perms = append(perms, t.HoldsPerm)
 		}
 	}
 	method := "Can" + goExport(pm.Verb)

@@ -15,6 +15,15 @@ func (s *Spec) vocabByName(name string) *Vocabulary {
 	return nil
 }
 
+func (v *Vocabulary) HasPermission(perm string) bool {
+	for _, p := range v.Permissions {
+		if p == perm {
+			return true
+		}
+	}
+	return false
+}
+
 func (v *Vocabulary) presetByName(name string) *Preset {
 	for _, p := range v.Presets {
 		if p.Name == name {
