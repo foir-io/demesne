@@ -87,6 +87,19 @@ func roleBypassesRLS(dsn, role string) (exists, bypass bool, err error) {
 	}
 }
 
+func countGlobalAssignments(dsn, query string) (int, error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM (` + query + `) q`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func livePolicySurface(dsn string, governed []string) (map[string]bool, error) {
 	tset := map[string]bool{}
 	for _, t := range governed {

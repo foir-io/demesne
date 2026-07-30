@@ -1,7 +1,7 @@
 
 
 import { goSort } from "./goCompat.js";
-import { presetPermissions } from "./vocabulary.js";
+import { expandImplications, presetPermissions } from "./vocabulary.js";
 import type { HoldsResolver, RoleAssignment } from "./types.js";
 
 export function assignmentsSQL(r: HoldsResolver): string {
@@ -36,11 +36,6 @@ function makeEffectivePerms(perms: Set<string>): EffectivePerms {
 export function scopeContains(assignment: readonly string[], query: readonly string[]): boolean {
   for (let i = 0; i < assignment.length; i++) {
     const a = assignment[i]!;
-    if (i === 0) {
-
-      if (i >= query.length || query[i] !== a) return false;
-      continue;
-    }
     if (a === "") continue;
     if (i >= query.length || query[i] !== a) return false;
   }
@@ -66,7 +61,7 @@ export function resolve(
         throw new Error(`resolve: assignment role "${a.roleKey}": ${(e as Error).message}`);
       }
     }
-    for (const p of contributed) perms.add(p);
+    for (const p of expandImplications(resolver.vocab, contributed)) perms.add(p);
   }
   return makeEffectivePerms(perms);
 }

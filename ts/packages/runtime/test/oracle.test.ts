@@ -12,6 +12,8 @@ import {
   checkEditSQL,
   listResourcesFastSQL,
   assignmentsSQL,
+  scopeContains,
+  resolve,
   roleAssignments,
   levelGrants,
   resourceAccess,
@@ -61,6 +63,10 @@ function runCase(proj: any, c: OracleCase): unknown {
 
     case "holds.assignmentsSQL":
       return assignmentsSQL(proj.holdsResolver);
+    case "holds.scopeContains":
+      return scopeContains(i.assignment, i.query);
+    case "holds.resolve":
+      return resolve(proj.holdsResolver, i.assignments, i.scope).permissions();
 
     case "roleAssignment.revokeSQL":
       return roleAssignments.revokeSQL(proj.roleAssignment);
@@ -113,6 +119,6 @@ describe("cross-language oracle — TS runtime over emitted projections == Go bu
     });
   }
   it("covered a non-trivial number of cases across specs", () => {
-    expect(total).toBeGreaterThan(80);
+    expect(total).toBeGreaterThan(300);
   });
 });

@@ -147,11 +147,19 @@ func (l *Level) claimKey() string {
 }
 
 type Vocabulary struct {
-	Name        string
-	Permissions []string
-	Presets     []*Preset
-	Rank        []string
-	Pos         Pos
+	Name         string
+	Permissions  []string
+	Implications []*Implication
+	Presets      []*Preset
+	Rank         []string
+	Pos          Pos
+}
+
+type Implication struct {
+	Perm string
+	Set  []string
+	Star bool
+	Pos  Pos
 }
 
 type Preset struct {

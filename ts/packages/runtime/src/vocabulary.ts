@@ -1,10 +1,68 @@
 
 
 import { goSort } from "./goCompat.js";
-import type { Vocabulary, Preset } from "./types.js";
+import type { Vocabulary, Preset, Implication } from "./types.js";
 
 function presetByName(vocab: Vocabulary, name: string): Preset | undefined {
   return vocab.presets.find((p) => p.name === name);
+}
+
+function implicationOf(vocab: Vocabulary, perm: string): Implication | undefined {
+  return (vocab.implications ?? []).find((im) => im.perm === perm);
+}
+
+function matchWildcard(vocab: Vocabulary, item: string): string[] {
+  if (!item.endsWith(":*")) return [];
+  const prefix = item.slice(0, -1);
+  return vocab.permissions.filter((p) => p.startsWith(prefix));
+}
+
+export function impliedPermissions(vocab: Vocabulary, perm: string): string[] {
+  const into = new Set<string>();
+  expandImplication(vocab, perm, into, new Set<string>());
+  return goSort([...into]);
+}
+
+function expandImplication(vocab: Vocabulary, perm: string, into: Set<string>, onStack: Set<string>): void {
+  if (onStack.has(perm)) {
+    throw new Error(
+      `vocabulary "${vocab.name}": permission "${perm}" is cyclic (a permission cannot imply itself, directly or transitively)`,
+    );
+  }
+  into.add(perm);
+  const im = implicationOf(vocab, perm);
+  if (im === undefined) return;
+  if (im.star) {
+    for (const p of vocab.permissions) into.add(p);
+    return;
+  }
+  onStack.add(perm);
+  try {
+    for (const item of im.set) {
+      let matched = matchWildcard(vocab, item);
+      if (matched.length === 0) {
+        if (!vocab.permissions.includes(item)) {
+          throw new Error(
+            `vocabulary "${vocab.name}": permission "${perm}" implies "${item}", which is neither a permission of this vocabulary nor a \`<domain>:*\` wildcard matching one`,
+          );
+        }
+        matched = [item];
+      }
+      for (const m of matched) expandImplication(vocab, m, into, onStack);
+    }
+  } finally {
+    onStack.delete(perm);
+  }
+}
+
+export function expandImplications(vocab: Vocabulary, perms: readonly string[]): string[] {
+  if ((vocab.implications ?? []).length === 0) return [...perms];
+  const out = [...perms];
+  for (const p of perms) {
+    if (implicationOf(vocab, p) === undefined) continue;
+    out.push(...impliedPermissions(vocab, p));
+  }
+  return out;
 }
 
 export function presetPermissions(vocab: Vocabulary, name: string): string[] {

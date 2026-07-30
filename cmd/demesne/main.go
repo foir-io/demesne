@@ -505,7 +505,32 @@ func cmdCheck(args []string) error {
 	default:
 		fmt.Printf("ok: the RLS connection role %q is not BYPASSRLS\n", role)
 	}
+	reportGlobalAssignments(s, dsn)
 	return nil
+}
+
+func reportGlobalAssignments(s *demesne.Spec, dsn string) {
+	if len(s.RoleStores) == 0 {
+		return
+	}
+	hr, err := s.HoldsResolver("")
+	if err != nil {
+		return
+	}
+	query := hr.GlobalAssignmentsSQL()
+	if query == "" {
+		return
+	}
+	n, err := countGlobalAssignments(dsn, query)
+	switch {
+	case err != nil:
+		fmt.Printf("warning: could not audit globally scoped role assignments: %v\n", err)
+	case n > 0:
+		fmt.Printf("DANGER: %d active role assignment(s) leave %s.%s NULL, which is the GLOBAL scope — they confer their permissions across every value of %s. List them with:\n  %s\n",
+			n, hr.Assignments, hr.ScopeCols[0], hr.ScopeCols[0], query)
+	default:
+		fmt.Printf("ok: no active role assignment leaves %s NULL (the global scope)\n", hr.ScopeCols[0])
+	}
 }
 
 func cmdCoverage(args []string) error {

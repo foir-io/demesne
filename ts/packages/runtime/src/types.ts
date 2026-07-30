@@ -66,9 +66,16 @@ export interface Preset {
   set: string[];
 }
 
+export interface Implication {
+  perm: string;
+  star: boolean;
+  set: string[];
+}
+
 export interface Vocabulary {
   name: string;
   permissions: string[];
+  implications?: Implication[];
   presets: Preset[];
   rank: string[];
 }

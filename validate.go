@@ -283,6 +283,12 @@ func validateVocabulary(v *Vocabulary) error {
 		}
 	}
 
+	for _, im := range v.Implications {
+		if _, err := v.ImpliedPermissions(im.Perm); err != nil {
+			errs = append(errs, fmt.Errorf("line %d: %w", im.Pos.Line, err))
+		}
+	}
+
 	for _, r := range v.Rank {
 		if !presetNames[r] {
 			errs = append(errs, fmt.Errorf("line %d: rank ladder names %q which is not a preset of vocabulary %q",

@@ -180,14 +180,45 @@ A permission can also gate on what the caller *holds*: `@holds(docs:publish)`
 means "the caller's admin role confers `docs:publish` at this row's scope" and
 compiles to a generated `<admin>_has_perm` definer matching the verb against the
 rolestore's materialized `permissions` array (`p_perm = ANY(...)`). It scopes
-like the Go `HoldsResolver`: the root scope level must match exactly, and an
-assignment left NULL at a deeper level confers the permission everywhere below
-it (a tenant-wide assignment reaches every project). Because the check keys on
-the permission verb at query time, editing a role's permissions array changes
-the floor immediately, with no re-emit — unlike preset-key grants, whose key
-sets are baked into definer bodies. `@holds` needs a rolestore with a
-`permissions` column and a verb from its vocabulary, and rides the @rls and
-@check layers; in a @pdp permission, write the permission key as a bare term.
+like the Go `HoldsResolver`: an assignment left NULL at a scope level is a
+wildcard at that level, so a tenant-wide assignment reaches every project and an
+assignment left NULL at the *root* level is global — it reaches every tenant.
+That root NULL is how a platform-wide scope is expressed; there is no separate
+level for it. Because the check keys on the permission verb at query time,
+editing a role's permissions array changes the floor immediately, with no
+re-emit — unlike preset-key grants, whose key sets are baked into definer
+bodies. `@holds` needs a rolestore with a `permissions` column and a verb from
+its vocabulary, and rides the @rls and @check layers; in a @pdp permission,
+write the permission key as a bare term.
+
+A vocabulary permission can **imply** others, so one held verb confers a set:
+
+```
+vocabulary admin {
+  permission platform:manage implies *
+  permission tenant:manage   implies project:manage, billing:*, invitations:*
+  permission project:manage  implies records:*, content:*
+  permission records:read
+  permission records:write
+  …
+}
+```
+
+An implication item is a permission of the same vocabulary, a `<domain>:*`
+wildcard standing for every permission in that domain, or a bare `*` for the
+whole vocabulary. Implication is transitive (`tenant:manage` reaches
+`records:read` through `project:manage`) and cycles are a compile error. The two
+axes are independent and both bind: the **key** is the ceiling — what level of
+authority the role carries, fixed by the vocabulary, not by where it is
+assigned — and the **scope** is the subtree it carries that authority over. A
+`project:manage` role assigned at tenant scope therefore reaches every project
+in that tenant but still confers no `billing:*`.
+
+The closure is compiled into all three surfaces from the one declaration: the
+Go and TypeScript `Resolve` expand a held permission into its closure, and the
+SQL definer tests the role's array against a generated
+`<admin>_perm_implied_by(p_perm)` reverse closure with an array overlap. A NULL
+`permissions` column fails closed.
 
 The language adds five more constructs on top of that:
 

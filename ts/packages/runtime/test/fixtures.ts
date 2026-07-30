@@ -38,6 +38,45 @@ export const rolesResolver: HoldsResolver = {
 
 export const rolesResolverNoPerms: HoldsResolver = { ...rolesResolver, permsCol: "" };
 
+export const manageVocab: Vocabulary = {
+  name: "admin",
+  permissions: [
+    "platform:manage",
+    "tenant:manage",
+    "project:manage",
+    "billing:read",
+    "billing:write",
+    "invitations:read",
+    "invitations:write",
+    "records:read",
+    "records:write",
+    "content:read",
+    "content:publish",
+  ],
+  implications: [
+    { perm: "platform:manage", star: true, set: [] },
+    { perm: "tenant:manage", star: false, set: ["project:manage", "billing:*", "invitations:*"] },
+    { perm: "project:manage", star: false, set: ["records:*", "content:*"] },
+  ],
+  presets: [],
+  rank: [],
+};
+
+export const manageResolver: HoldsResolver = {
+  assignments: "role_assignments",
+  kindCol: "principal_kind",
+  kindVal: "user",
+  subjectCol: "user_id",
+  scopeCols: ["tenant_id", "project_id"],
+  revokedCol: "revoked_at",
+  roleCol: "role_id",
+  rolesTable: "roles",
+  rolesId: "id",
+  keyCol: "key",
+  permsCol: "permissions",
+  vocab: manageVocab,
+};
+
 export const capVocab: Vocabulary = {
   name: "admin",
   permissions: ["a:read", "a:write", "b:read", "b:write"],

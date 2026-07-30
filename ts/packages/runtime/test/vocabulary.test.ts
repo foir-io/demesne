@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { presetPermissions, rankOf, presetsAtOrAbove, type Vocabulary } from "../src/index.js";
-import { rolesVocab } from "./fixtures.js";
+import {
+  presetPermissions,
+  impliedPermissions,
+  expandImplications,
+  rankOf,
+  presetsAtOrAbove,
+  type Vocabulary,
+} from "../src/index.js";
+import { rolesVocab, manageVocab } from "./fixtures.js";
 
 describe("presetPermissions — preset → flat permission set (sorted, deduped)", () => {
   it("viewer", () => {
@@ -58,6 +65,66 @@ describe("presetPermissions — fail-closed errors", () => {
       rank: [],
     };
     expect(() => presetPermissions(transitive, "a")).toThrow(/cyclic/);
+  });
+});
+
+describe("impliedPermissions — transitive closure with wildcard and star items", () => {
+  it("platform:manage (star) is the whole vocabulary", () => {
+    expect(impliedPermissions(manageVocab, "platform:manage")).toEqual(
+      manageVocab.permissions.slice().sort(),
+    );
+  });
+  it("tenant:manage expands its list, its wildcards, and the next hop", () => {
+    expect(impliedPermissions(manageVocab, "tenant:manage")).toEqual([
+      "billing:read",
+      "billing:write",
+      "content:publish",
+      "content:read",
+      "invitations:read",
+      "invitations:write",
+      "project:manage",
+      "records:read",
+      "records:write",
+      "tenant:manage",
+    ]);
+  });
+  it("project:manage stops at its own ceiling", () => {
+    expect(impliedPermissions(manageVocab, "project:manage")).toEqual([
+      "content:publish",
+      "content:read",
+      "project:manage",
+      "records:read",
+      "records:write",
+    ]);
+  });
+  it("a leaf verb implies only itself", () => {
+    expect(impliedPermissions(manageVocab, "records:read")).toEqual(["records:read"]);
+  });
+  it("a cycle throws", () => {
+    const cyclic: Vocabulary = {
+      name: "v",
+      permissions: ["a:manage", "b:manage"],
+      implications: [
+        { perm: "a:manage", star: false, set: ["b:manage"] },
+        { perm: "b:manage", star: false, set: ["a:manage"] },
+      ],
+      presets: [],
+      rank: [],
+    };
+    expect(() => impliedPermissions(cyclic, "a:manage")).toThrow(/cyclic/);
+  });
+  it("an unknown implication target throws", () => {
+    const bad: Vocabulary = {
+      name: "v",
+      permissions: ["a:manage"],
+      implications: [{ perm: "a:manage", star: false, set: ["ghost:read"] }],
+      presets: [],
+      rank: [],
+    };
+    expect(() => impliedPermissions(bad, "a:manage")).toThrow(/neither a permission/);
+  });
+  it("expandImplications is a no-op for a vocabulary without implications", () => {
+    expect(expandImplications(rolesVocab, ["docs:read"])).toEqual(["docs:read"]);
   });
 });
 
