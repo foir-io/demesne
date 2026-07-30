@@ -32,11 +32,34 @@ cd "$root_dir"
 
 tag_exists() { git rev-parse -q --verify "refs/tags/$1" >/dev/null; }
 
+# Each stage rewrites a go.mod to require the module tagged by the previous
+# stage. Until the proxy has indexed that tag, `go build` in the nested module
+# fails checksum verification, so wait rather than hand the next maintainer a
+# broken tree.
+await_proxy() {
+	local mod="$1" i code
+	printf '    waiting for proxy: %s@%s' "$mod" "$ver"
+	for i in $(seq 1 60); do
+		code=$(curl -s -o /dev/null -w '%{http_code}' \
+			"https://proxy.golang.org/${mod}/@v/${ver}.info" || echo 000)
+		if [[ "$code" == "200" ]]; then
+			printf ' ok (%ss)\n' "$((i * 10))"
+			return 0
+		fi
+		printf '.'
+		sleep 10
+	done
+	printf '\n'
+	echo "warning: ${mod}@${ver} is not on the proxy yet; downstream builds will fail until it is" >&2
+	return 0
+}
+
 echo "==> 1/3  root $ver"
 if ! tag_exists "$ver"; then
 	git tag "$ver"
 fi
 git push origin "$ver"
+await_proxy "github.com/foir-io/demesne"
 
 echo "==> 2/3  pgx/$ver"
 go mod edit -require="github.com/foir-io/demesne@$ver" ./pgx/go.mod
@@ -44,6 +67,7 @@ git add pgx/go.mod
 git commit -m "chore(pgx): require demesne $ver"
 git tag "pgx/$ver"
 git push origin HEAD "pgx/$ver"
+await_proxy "github.com/foir-io/demesne/pgx"
 
 echo "==> 3/3  cmd/demesne/$ver"
 go mod edit \
