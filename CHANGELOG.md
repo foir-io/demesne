@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.76.0
 
 ### Breaking — the root scope level is now a wildcard when NULL
 
