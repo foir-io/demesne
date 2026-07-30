@@ -3,7 +3,7 @@ module github.com/foir-io/demesne/pgx
 go 1.26.1
 
 require (
-	github.com/foir-io/demesne v0.75.0
+	github.com/foir-io/demesne v0.76.0
 	github.com/jackc/pgx/v5 v5.9.1
 )
 
