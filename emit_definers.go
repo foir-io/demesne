@@ -245,16 +245,8 @@ func (s *Spec) defEmitHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStor
 				if t == nil || t.Builtin != "holds" {
 					continue
 				}
-				if rs == nil {
-					return fmt.Errorf("object %q permission %q uses @holds(%q) but the spec declares no rolestore", obj.Name, pm.Verb, t.HoldsPerm)
-				}
-				if rs.PermsCol == "" {
-					return fmt.Errorf("object %q permission %q uses @holds(%q) but rolestore %q declares no `permissions` column", obj.Name, pm.Verb, t.HoldsPerm, rs.Name)
-				}
-				name := s.adminName() + "_has_perm"
-				if !seen[name] {
-					seen[name] = true
-					*out = append(*out, s.holdsPermDefiner(name, rs))
+				if err := s.defAddHoldsPerm(out, seen, rs, obj, pm, t); err != nil {
+					return err
 				}
 			}
 		}
@@ -262,10 +254,32 @@ func (s *Spec) defEmitHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStor
 	return nil
 }
 
-// holdsPermDefiner scopes like the Go HoldsResolver (root level exact, deeper
-// levels wildcard-on-NULL: a tenant-wide assignment confers the permission in
-// every project), unlike roleDefiner, which pins off-path levels to IS NULL.
-func (s *Spec) holdsPermDefiner(name string, rs *RoleStore) GenFn {
+func (s *Spec) defAddHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStore, obj *Object, pm *Perm, t *Term) error {
+	if rs == nil {
+		return fmt.Errorf("object %q permission %q uses @holds(%q) but the spec declares no rolestore", obj.Name, pm.Verb, t.HoldsPerm)
+	}
+	if rs.PermsCol == "" {
+		return fmt.Errorf("object %q permission %q uses @holds(%q) but rolestore %q declares no `permissions` column", obj.Name, pm.Verb, t.HoldsPerm, rs.Name)
+	}
+	name := s.adminName() + "_has_perm"
+	if seen[name] {
+		return nil
+	}
+	seen[name] = true
+	impliedBy := ""
+	if vocab, err := s.rolestoreVocab(rs); err == nil && len(vocab.Implications) > 0 {
+		fn, ferr := s.permImpliedByDefiner(vocab)
+		if ferr != nil {
+			return ferr
+		}
+		impliedBy = fn.schema() + "." + fn.Name
+		*out = append(*out, fn)
+	}
+	*out = append(*out, s.holdsPermDefiner(name, rs, impliedBy))
+	return nil
+}
+
+func (s *Spec) holdsPermDefiner(name string, rs *RoleStore, impliedByFn string) GenFn {
 	chain, _ := s.Topology.Chain()
 	args := []string{"user_id " + s.idType()}
 	var scope []string
@@ -280,11 +294,7 @@ func (s *Spec) holdsPermDefiner(name string, rs *RoleStore) GenFn {
 		col := rs.ScopeCols[i]
 		arg := "check_" + l.Name + "_id"
 		args = append(args, arg+" "+s.idType())
-		if i == 0 {
-			scope = append(scope, fmt.Sprintf("ra.%s = %s", col, arg))
-		} else {
-			scope = append(scope, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = %s)", col, col, arg))
-		}
+		scope = append(scope, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = %s)", col, col, arg))
 		i++
 	}
 	args = append(args, "p_perm text")
@@ -292,11 +302,50 @@ func (s *Spec) holdsPermDefiner(name string, rs *RoleStore) GenFn {
 	conds = append(conds, fmt.Sprintf("ra.%s = user_id", rs.SubjectCol))
 	conds = append(conds, scope...)
 	conds = append(conds, rs.revokedCond("ra.")...)
-	conds = append(conds, fmt.Sprintf("p_perm = ANY(r.%s)", rs.PermsCol))
+	conds = append(conds, holdsPermCond(rs.PermsCol, impliedByFn))
 	body := fmt.Sprintf(
 		"EXISTS (SELECT 1 FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE %s)",
 		rs.Assignments, rs.RolesTable, rs.RolesID, rs.RoleCol, strings.Join(conds, " AND "))
 	return GenFn{Name: name, Sig: strings.Join(args, ", "), Body: body}
+}
+
+func holdsPermCond(permsCol, impliedByFn string) string {
+	if impliedByFn == "" {
+		return fmt.Sprintf("p_perm = ANY(r.%s)", permsCol)
+	}
+	return fmt.Sprintf("r.%s::text[] && %s(p_perm)", permsCol, impliedByFn)
+}
+
+func (s *Spec) permImpliedByDefiner(vocab *Vocabulary) (GenFn, error) {
+	impliers := map[string][]string{}
+	for _, p := range vocab.Permissions {
+		implied, err := vocab.ImpliedPermissions(p)
+		if err != nil {
+			return GenFn{}, err
+		}
+		for _, target := range implied {
+			impliers[target] = append(impliers[target], p)
+		}
+	}
+	rows := make([]string, 0, len(vocab.Permissions))
+	for _, p := range vocab.Permissions {
+		set := impliers[p]
+		sort.Strings(set)
+		lits := make([]string, 0, len(set))
+		for _, q := range set {
+			lits = append(lits, "'"+q+"'")
+		}
+		rows = append(rows, fmt.Sprintf("('%s', ARRAY[%s]::text[])", p, strings.Join(lits, ", ")))
+	}
+	body := fmt.Sprintf(
+		"COALESCE((SELECT m.impliers FROM (VALUES %s) AS m(perm, impliers) WHERE m.perm = p_perm), ARRAY[p_perm]::text[])",
+		strings.Join(rows, ", "))
+	return GenFn{
+		Name:    s.adminName() + "_perm_implied_by",
+		Sig:     "p_perm text",
+		Returns: "text[]",
+		Body:    body,
+	}, nil
 }
 
 func (s *Spec) defEmitReachChain(out *[]GenFn, seen map[string]bool, rs *RoleStore, presetLevels map[string][]string, level string) {

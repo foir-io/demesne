@@ -24,6 +24,94 @@ func (v *Vocabulary) HasPermission(perm string) bool {
 	return false
 }
 
+func (v *Vocabulary) implicationOf(perm string) *Implication {
+	for _, im := range v.Implications {
+		if im.Perm == perm {
+			return im
+		}
+	}
+	return nil
+}
+
+func (v *Vocabulary) matchWildcard(item string) []string {
+	prefix, ok := strings.CutSuffix(item, "*")
+	if !ok || !strings.HasSuffix(prefix, ":") {
+		return nil
+	}
+	var out []string
+	for _, p := range v.Permissions {
+		if strings.HasPrefix(p, prefix) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (v *Vocabulary) ImpliedPermissions(perm string) ([]string, error) {
+	into := map[string]bool{}
+	if err := v.expandImplication(perm, into, map[string]bool{}); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(into))
+	for p := range into {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (v *Vocabulary) expandImplication(perm string, into, onStack map[string]bool) error {
+	if onStack[perm] {
+		return fmt.Errorf("vocabulary %q: permission %q is cyclic (a permission cannot imply itself, directly or transitively)", v.Name, perm)
+	}
+	into[perm] = true
+	im := v.implicationOf(perm)
+	if im == nil {
+		return nil
+	}
+	if im.Star {
+		for _, p := range v.Permissions {
+			into[p] = true
+		}
+		return nil
+	}
+	onStack[perm] = true
+	defer delete(onStack, perm)
+	for _, item := range im.Set {
+		matched := v.matchWildcard(item)
+		if len(matched) == 0 {
+			if !v.HasPermission(item) {
+				return fmt.Errorf("vocabulary %q: permission %q implies %q, which is neither a permission of this vocabulary nor a `<domain>:*` wildcard matching one", v.Name, perm, item)
+			}
+			matched = []string{item}
+		}
+		for _, m := range matched {
+			if err := v.expandImplication(m, into, onStack); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (v *Vocabulary) ExpandImplications(perms []string) ([]string, error) {
+	if v == nil || len(v.Implications) == 0 {
+		return perms, nil
+	}
+	out := append([]string(nil), perms...)
+	for _, p := range perms {
+		if v.implicationOf(p) == nil {
+			continue
+		}
+		implied, err := v.ImpliedPermissions(p)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, implied...)
+	}
+	return out, nil
+}
+
 func (v *Vocabulary) presetByName(name string) *Preset {
 	for _, p := range v.Presets {
 		if p.Name == name {
@@ -200,6 +288,29 @@ func (r *HoldsResolver) AssignmentsSQL() string {
 		strings.Join(conds, " AND "))
 }
 
+func (r *HoldsResolver) GlobalAssignmentsSQL() string {
+	if len(r.ScopeCols) == 0 {
+		return ""
+	}
+	cols := []string{"ra." + r.SubjectCol, "r." + r.KeyCol}
+	for _, c := range r.ScopeCols {
+		cols = append(cols, "ra."+c)
+	}
+	var conds []string
+	if r.KindCol != "" {
+		conds = append(conds, fmt.Sprintf("ra.%s = '%s'", r.KindCol, r.KindVal))
+	}
+	if r.RevokedCol != "" {
+		conds = append(conds, fmt.Sprintf("ra.%s IS NULL", r.RevokedCol))
+	}
+	conds = append(conds, fmt.Sprintf("ra.%s IS NULL", r.ScopeCols[0]))
+	return fmt.Sprintf(
+		"SELECT %s FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE %s ORDER BY 1, 2",
+		strings.Join(cols, ", "),
+		r.Assignments, r.RolesTable, r.RolesID, r.RoleCol,
+		strings.Join(conds, " AND "))
+}
+
 type RoleAssignment struct {
 	Scope       []string
 	RoleKey     string
@@ -238,7 +349,11 @@ func (r *HoldsResolver) Resolve(assignments []RoleAssignment, scope []string) (E
 			}
 			perms = expanded
 		}
-		for _, p := range perms {
+		conferred, err := r.Vocab.ExpandImplications(perms)
+		if err != nil {
+			return EffectivePerms{}, fmt.Errorf("Resolve: %w", err)
+		}
+		for _, p := range conferred {
 			eff.perms[p] = true
 		}
 	}
@@ -247,13 +362,6 @@ func (r *HoldsResolver) Resolve(assignments []RoleAssignment, scope []string) (E
 
 func scopeContains(assignment, query []string) bool {
 	for i, a := range assignment {
-		if i == 0 {
-
-			if i >= len(query) || query[i] != a {
-				return false
-			}
-			continue
-		}
 		if a == "" {
 			continue
 		}

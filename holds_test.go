@@ -260,7 +260,7 @@ func TestHoldsResolverVocabFallback(t *testing.T) {
 	}
 }
 
-func TestResolveRootStrict(t *testing.T) {
+func TestResolveGlobalRoot(t *testing.T) {
 	r, err := mustParseHolds(t, holdsSpec).HoldsResolver("")
 	if err != nil {
 		t.Fatalf("HoldsResolver: %v", err)
@@ -268,11 +268,21 @@ func TestResolveRootStrict(t *testing.T) {
 	asg := []RoleAssignment{
 		{Scope: []string{"", ""}, RoleKey: "x", Permissions: []string{"docs:read"}},
 	}
-	if h, _ := r.Resolve(asg, []string{"T1", "TM1"}); len(h.Permissions()) != 0 {
-		t.Errorf("empty-root assignment leaked into a real tenant: %v", h.Permissions())
+	if h, _ := r.Resolve(asg, []string{"T1", "TM1"}); !equalSet(h.Permissions(), []string{"docs:read"}) {
+		t.Errorf("an empty-root assignment is global and must reach every tenant, got %v", h.Permissions())
 	}
 	if h, _ := r.Resolve(asg, []string{"", ""}); !equalSet(h.Permissions(), []string{"docs:read"}) {
 		t.Errorf("empty-root assignment should match an empty-root query, got %v", h.Permissions())
+	}
+
+	pinned := []RoleAssignment{
+		{Scope: []string{"T1", ""}, RoleKey: "x", Permissions: []string{"docs:read"}},
+	}
+	if h, _ := r.Resolve(pinned, []string{"T2", "TM1"}); len(h.Permissions()) != 0 {
+		t.Errorf("a tenant-pinned assignment must NOT gain cross-tenant reach: %v", h.Permissions())
+	}
+	if h, _ := r.Resolve(pinned, []string{"", ""}); len(h.Permissions()) != 0 {
+		t.Errorf("a tenant-pinned assignment must not answer a global query: %v", h.Permissions())
 	}
 }
 
@@ -289,7 +299,11 @@ func TestScopeContainsMultiLevel(t *testing.T) {
 		{"root differs", []string{"O1", "", ""}, []string{"O2", "T1", "P1"}, false},
 		{"deeper grant rejects shallower query", []string{"O1", "T1", "P1"}, []string{"O1", "T1", ""}, false},
 		{"mid-level differs", []string{"O1", "T1", "P1"}, []string{"O1", "T2", "P1"}, false},
-		{"empty root never matches real", []string{"", "T1", "P1"}, []string{"O1", "T1", "P1"}, false},
+		{"empty root wildcards, deeper levels still pinned", []string{"", "T1", "P1"}, []string{"O1", "T1", "P1"}, true},
+		{"empty root wildcards but a pinned deeper level still differs", []string{"", "T1", "P1"}, []string{"O1", "T2", "P1"}, false},
+		{"fully empty scope is global", []string{"", "", ""}, []string{"O9", "T9", "P9"}, true},
+		{"a pinned root still never crosses", []string{"O1", "T1", ""}, []string{"O2", "T1", "P1"}, false},
+		{"a pinned root never answers a global query", []string{"O1", "", ""}, []string{"", "", ""}, false},
 		{"mid-level gap wildcards", []string{"O1", "", "P1"}, []string{"O1", "T1", "P1"}, true},
 		{"shorter query, unpinned tail ok", []string{"O1", "", ""}, []string{"O1"}, true},
 	}

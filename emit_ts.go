@@ -56,11 +56,18 @@ type tsPreset struct {
 	Set  []string `json:"set"`
 }
 
+type tsImplication struct {
+	Perm string   `json:"perm"`
+	Star bool     `json:"star"`
+	Set  []string `json:"set"`
+}
+
 type tsVocabularyProj struct {
-	Name        string     `json:"name"`
-	Permissions []string   `json:"permissions"`
-	Presets     []tsPreset `json:"presets"`
-	Rank        []string   `json:"rank"`
+	Name         string          `json:"name"`
+	Permissions  []string        `json:"permissions"`
+	Implications []tsImplication `json:"implications,omitempty"`
+	Presets      []tsPreset      `json:"presets"`
+	Rank         []string        `json:"rank"`
 }
 
 type tsHoldsResolverProj struct {
@@ -198,7 +205,11 @@ func tsVocab(v *Vocabulary) tsVocabularyProj {
 	for i, p := range v.Presets {
 		presets[i] = tsPreset{Name: p.Name, Star: p.Star, Set: strs(p.Set)}
 	}
-	return tsVocabularyProj{Name: v.Name, Permissions: strs(v.Permissions), Presets: presets, Rank: strs(v.Rank)}
+	proj := tsVocabularyProj{Name: v.Name, Permissions: strs(v.Permissions), Presets: presets, Rank: strs(v.Rank)}
+	for _, im := range v.Implications {
+		proj.Implications = append(proj.Implications, tsImplication{Perm: im.Perm, Star: im.Star, Set: strs(im.Set)})
+	}
+	return proj
 }
 
 func tsHolds(r *HoldsResolver) tsHoldsResolverProj {

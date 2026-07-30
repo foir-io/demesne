@@ -370,6 +370,9 @@ func (p *parser) parseVocabulary() (*Vocabulary, error) {
 				return nil, err
 			}
 			v.Permissions = append(v.Permissions, pk.lit)
+			if err := p.parseImplies(v, pk.lit); err != nil {
+				return nil, err
+			}
 		case p.isKw("preset"):
 			pr, err := p.parsePreset()
 			if err != nil {
@@ -390,6 +393,45 @@ func (p *parser) parseVocabulary() (*Vocabulary, error) {
 		return nil, err
 	}
 	return v, nil
+}
+
+func (p *parser) parseImplies(v *Vocabulary, perm string) error {
+	if !p.isKw("implies") {
+		return nil
+	}
+	im := &Implication{Perm: perm, Pos: Pos{p.cur().line}}
+	p.advance()
+	if p.peekKind() == tStar {
+		p.advance()
+		im.Star = true
+		v.Implications = append(v.Implications, im)
+		return nil
+	}
+	first, err := p.impliesItem(perm)
+	if err != nil {
+		return err
+	}
+	im.Set = append(im.Set, first)
+	for p.peekKind() == tComma {
+		p.advance()
+		it, err := p.impliesItem(perm)
+		if err != nil {
+			return err
+		}
+		im.Set = append(im.Set, it)
+	}
+	v.Implications = append(v.Implications, im)
+	return nil
+}
+
+func (p *parser) impliesItem(perm string) (string, error) {
+	switch p.peekKind() {
+	case tPermKey, tString:
+		return p.advance().lit, nil
+	default:
+		return "", p.errf("permission %q: `implies` takes `*` or a comma-separated list of permission keys (`<domain>:<verb>` or `<domain>:*`), got %s %q",
+			perm, p.peekKind(), p.cur().lit)
+	}
 }
 
 func (p *parser) parsePreset() (*Preset, error) {

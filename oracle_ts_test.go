@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,82 @@ func canonicalExtra(cols []string) map[string]any {
 		out[c] = "x_" + c
 	}
 	return out
+}
+
+func matrixScopes(n int) (assign, query [][]string) {
+	ids := []string{"T1", "P1", "S1"}
+	alt := []string{"T2", "P2", "S2"}
+	for k := 0; k <= n; k++ {
+		a := make([]string, n)
+		copy(a, ids[:k])
+		assign = append(assign, a)
+	}
+	query = append(query, make([]string, n))
+	for k := 1; k <= n; k++ {
+		q := make([]string, n)
+		copy(q, ids[:k])
+		query = append(query, q)
+	}
+	for k := 1; k <= n; k++ {
+		q := make([]string, n)
+		copy(q, ids[:n])
+		q[k-1] = alt[k-1]
+		query = append(query, q)
+	}
+	return assign, query
+}
+
+func matrixPermSets(v *Vocabulary) [][]string {
+	var out [][]string
+	seen := map[string]bool{}
+	add := func(set []string) {
+		key := strings.Join(set, "|")
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, set)
+	}
+	for _, im := range v.Implications {
+		add([]string{im.Perm})
+	}
+	if len(v.Permissions) > 0 {
+		add([]string{v.Permissions[0]})
+		add([]string{v.Permissions[0], v.Permissions[len(v.Permissions)-1]})
+	}
+	add([]string{"totally:madeup"})
+	return out
+}
+
+func holdsMatrixCases(hr *HoldsResolver) ([]any, error) {
+	if hr.PermsCol == "" {
+		return nil, nil
+	}
+	assignScopes, queryScopes := matrixScopes(len(hr.ScopeCols))
+	var out []any
+	for _, a := range assignScopes {
+		for _, q := range queryScopes {
+			out = append(out, oracleCase("holds.scopeContains",
+				map[string]any{"assignment": a, "query": q},
+				scopeContains(a, q)))
+		}
+	}
+	for _, perms := range matrixPermSets(hr.Vocabulary()) {
+		for _, a := range assignScopes {
+			for _, q := range queryScopes {
+				asg := []RoleAssignment{{Scope: a, RoleKey: "", Permissions: perms}}
+				eff, err := hr.Resolve(asg, q)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, oracleCase("holds.resolve", map[string]any{
+					"assignments": []any{map[string]any{"scope": a, "roleKey": "", "permissions": perms}},
+					"scope":       q,
+				}, eff.Permissions()))
+			}
+		}
+	}
+	return out, nil
 }
 
 func buildOracleEntry(s *Spec) (map[string]any, error) {
@@ -99,6 +176,11 @@ func buildOracleEntry(s *Spec) (map[string]any, error) {
 		}
 		projections["holdsResolver"] = tsHolds(hr)
 		cases = append(cases, oracleCase("holds.assignmentsSQL", nil, hr.AssignmentsSQL()))
+		matrix, err := holdsMatrixCases(hr)
+		if err != nil {
+			return nil, err
+		}
+		cases = append(cases, matrix...)
 
 		ra, err := s.RoleAssignmentSurface("")
 		if err != nil {
@@ -197,6 +279,7 @@ func TestOracle_Manifest(t *testing.T) {
 		{"adminOwner", adminOwnerSpec},
 		{"fullRoleStore", fullRoleStoreSpec},
 		{"rpScoped", rpScopedRoleStoreSpec},
+		{"manage", manageSpecSrc(t)},
 	}
 	manifest := map[string]any{}
 	for _, sp := range specs {

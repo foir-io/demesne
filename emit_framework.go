@@ -606,6 +606,13 @@ func (g *fwGen) vocabLit(v *Vocabulary) string {
 	b.WriteString("&demesne.Vocabulary{\n")
 	fmt.Fprintf(&b, "\t\tName:        %q,\n", v.Name)
 	fmt.Fprintf(&b, "\t\tPermissions: %s,\n", goStrSlice(v.Permissions))
+	if len(v.Implications) > 0 {
+		b.WriteString("\t\tImplications: []*demesne.Implication{\n")
+		for _, im := range v.Implications {
+			fmt.Fprintf(&b, "\t\t\t{Perm: %q, Star: %t, Set: %s},\n", im.Perm, im.Star, goStrSlice(im.Set))
+		}
+		b.WriteString("\t\t},\n")
+	}
 	if len(v.Presets) > 0 {
 		b.WriteString("\t\tPresets: []*demesne.Preset{\n")
 		for _, p := range v.Presets {

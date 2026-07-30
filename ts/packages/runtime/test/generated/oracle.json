@@ -729,6 +729,1275 @@
         "kind": "holds.assignmentsSQL"
       },
       {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "a:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "a:read",
+                "a:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
         "expect": "UPDATE role_assignments SET revoked_at = now(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL",
         "kind": "roleAssignment.revokeSQL"
       },
@@ -975,6 +2244,1284 @@
         "kind": "holds.assignmentsSQL"
       },
       {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": [
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "admin:write",
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "admin:write",
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "admin:write",
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "admin:write",
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "admin:write",
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "admin:write",
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "admin:write",
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "admin:write",
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "admin:write",
+          "docs:read"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "docs:read",
+                "admin:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
         "expect": "UPDATE role_assignments SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
         "kind": "roleAssignment.revokeSQL"
       },
@@ -1165,6 +3712,2578 @@
         "rolesId": "id",
         "keyCol": "key",
         "permsCol": "perms"
+      }
+    }
+  },
+  "manage": {
+    "cases": [
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, true)",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET LOCAL ROLE authenticated",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET LOCAL ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, true)"
+        ],
+        "input": {
+          "local": true
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, false)",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET ROLE authenticated",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, false)"
+        ],
+        "input": {
+          "local": false
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "{\"project_id\":\"v_project_id\",\"role\":\"authenticated\",\"sub\":\"v_sub\",\"tenant_id\":\"v_tenant_id\"}",
+        "input": {
+          "extra": {
+            "role": "authenticated"
+          },
+          "values": {
+            "project_id": "v_project_id",
+            "sub": "v_sub",
+            "tenant_id": "v_tenant_id"
+          }
+        },
+        "kind": "claims.mintWithExtra"
+      },
+      {
+        "expect": "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1)",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.checkSQL"
+      },
+      {
+        "expect": "SELECT id FROM records WHERE id = ANY($1)",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.checkManySQL"
+      },
+      {
+        "expect": "SELECT id FROM records WHERE ($1::text IS NULL OR id::text \u003e $1::text) ORDER BY id::text LIMIT $2",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.listResourcesSQL"
+      },
+      {
+        "expect": "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1 AND ((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.member_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'records:write')))))",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.checkEditSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "record"
+        },
+        "kind": "appSurface.listResourcesFastSQL"
+      },
+      {
+        "expect": "SELECT ra.tenant_id, ra.project_id, r.key, r.permissions FROM role_assignments ra JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'user' AND ra.user_id = $1 AND ra.revoked_at IS NULL",
+        "kind": "holds.assignmentsSQL"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "tenant:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "content:publish",
+          "content:read",
+          "project:manage",
+          "records:read",
+          "records:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "content:publish",
+          "content:read",
+          "project:manage",
+          "records:read",
+          "records:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "content:publish",
+          "content:read",
+          "project:manage",
+          "records:read",
+          "records:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "content:publish",
+          "content:read",
+          "project:manage",
+          "records:read",
+          "records:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "content:publish",
+          "content:read",
+          "project:manage",
+          "records:read",
+          "records:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "content:publish",
+          "content:read",
+          "project:manage",
+          "records:read",
+          "records:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "content:publish",
+          "content:read",
+          "project:manage",
+          "records:read",
+          "records:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "content:publish",
+          "content:read",
+          "project:manage",
+          "records:read",
+          "records:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "content:publish",
+          "content:read",
+          "project:manage",
+          "records:read",
+          "records:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "project:manage"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "billing:read",
+          "billing:write",
+          "content:publish",
+          "content:read",
+          "invitations:read",
+          "invitations:write",
+          "platform:manage",
+          "project:manage",
+          "records:read",
+          "records:write",
+          "tenant:manage"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "platform:manage",
+                "content:publish"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": "UPDATE role_assignments SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+        "kind": "roleAssignment.revokeSQL"
+      },
+      {
+        "expect": "SELECT id, principal_kind, user_id, role_id, tenant_id, project_id, revoked_at FROM role_assignments WHERE role_id = $1",
+        "kind": "roleAssignment.listForRoleSQL"
+      },
+      {
+        "expect": "SELECT a.id, a.user_id, a.role_id, r.key, r.permissions FROM role_assignments a JOIN roles r ON r.id = a.role_id WHERE a.principal_kind = 'user' AND a.user_id = $1 AND a.revoked_at IS NULL",
+        "kind": "roleAssignment.listForPrincipalSQL"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "user",
+            "u1",
+            "r1",
+            "s1",
+            "s2"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, user_id, role_id, tenant_id, project_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, principal_kind, user_id, role_id, tenant_id, project_id, revoked_at"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignInsert"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "user",
+            "u1",
+            "r1",
+            "s1",
+            "s2"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, user_id, role_id, tenant_id, project_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (principal_kind, user_id, role_id, COALESCE(tenant_id, ''), COALESCE(project_id, '')) DO UPDATE SET revoked_at = NULL RETURNING id, principal_kind, user_id, role_id, tenant_id, project_id, revoked_at"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignTouchInsert"
+      }
+    ],
+    "projections": {
+      "appSurface": [
+        {
+          "object": "record",
+          "table": "records",
+          "pk": "id",
+          "flatListFn": "",
+          "asyncCheckSQL": "",
+          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1 AND ((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.member_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'records:write')))))"
+        }
+      ],
+      "claims": {
+        "setting": "request.jwt.claims",
+        "cast": "json",
+        "role": "authenticated",
+        "contract": [
+          "project_id",
+          "sub",
+          "tenant_id"
+        ],
+        "entries": [
+          {
+            "key": "project_id",
+            "level": "project",
+            "subjects": []
+          },
+          {
+            "key": "sub",
+            "level": "",
+            "subjects": [
+              "member"
+            ]
+          },
+          {
+            "key": "tenant_id",
+            "level": "tenant",
+            "subjects": []
+          }
+        ],
+        "subjects": [
+          {
+            "name": "member",
+            "identifies": "sub"
+          }
+        ],
+        "levels": [
+          {
+            "name": "platform",
+            "claimKey": "platform_id",
+            "virtual": true
+          },
+          {
+            "name": "tenant",
+            "claimKey": "tenant_id",
+            "virtual": false
+          },
+          {
+            "name": "project",
+            "claimKey": "project_id",
+            "virtual": false
+          }
+        ]
+      },
+      "holdsResolver": {
+        "assignments": "role_assignments",
+        "kindCol": "principal_kind",
+        "kindVal": "user",
+        "subjectCol": "user_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "roleCol": "role_id",
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "permissions",
+        "vocab": {
+          "name": "admin",
+          "permissions": [
+            "platform:manage",
+            "tenant:manage",
+            "project:manage",
+            "billing:read",
+            "billing:write",
+            "invitations:read",
+            "invitations:write",
+            "records:read",
+            "records:write",
+            "content:read",
+            "content:publish"
+          ],
+          "implications": [
+            {
+              "perm": "platform:manage",
+              "star": true,
+              "set": []
+            },
+            {
+              "perm": "tenant:manage",
+              "star": false,
+              "set": [
+                "project:manage",
+                "billing:*",
+                "invitations:*"
+              ]
+            },
+            {
+              "perm": "project:manage",
+              "star": false,
+              "set": [
+                "records:*",
+                "content:*"
+              ]
+            }
+          ],
+          "presets": [],
+          "rank": []
+        }
+      },
+      "roleAssignment": {
+        "assignments": "role_assignments",
+        "pk": "id",
+        "kindCol": "principal_kind",
+        "kindVal": "user",
+        "subjectCol": "user_id",
+        "roleCol": "role_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "grantedAtCol": "",
+        "grantedByCol": "",
+        "revokedByCol": "",
+        "extraCols": [],
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "permissions"
       }
     }
   },
