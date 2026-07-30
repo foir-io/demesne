@@ -309,3 +309,57 @@ func TestPlane_CollidingHoldsDefinersRejected(t *testing.T) {
 		t.Fatalf("two rolestores sharing a definer name must be rejected, got %v", err)
 	}
 }
+
+const unbackedVocabSpec = `
+topology { level tenant  level project parent tenant }
+vocabulary a {
+  permission shared:verb
+  preset ap @ tenant = shared:verb
+}
+vocabulary b {
+  permission other:verb
+  preset bp @ tenant = other:verb
+}
+vocabulary c {
+  permission shared:verb
+  preset cp @ tenant = shared:verb
+}
+rolestore a { assignments ra kind k = "a" subject pid scope tenant_id project_id rolejoin role_id roles id key revoked rv permissions perms }
+rolestore b { assignments rb kind k = "b" subject pid scope tenant_id project_id rolejoin role_id roles id key revoked rv permissions perms }
+subject sa { anchor tenant reach descendants identifies sub  roles configurable a binds admin }
+subject sb { anchor tenant reach descendants identifies bsub roles configurable b binds owner }
+object doc {
+  table docs
+  scoped tenant > project
+  permission view = @holds(shared:verb) @rls maps select
+}
+`
+
+func TestPlane_VocabularyBackingNoRolestoreCannotMakeAPermissionAmbiguous(t *testing.T) {
+	s, err := Parse(unbackedVocabSpec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("a vocabulary that backs no rolestore names no candidate and must not make @holds ambiguous: %v", err)
+	}
+	rs, err := s.holdsRoleStore("shared:verb")
+	if err != nil {
+		t.Fatalf("resolve shared:verb: %v", err)
+	}
+	if rs.Name != "a" {
+		t.Errorf("shared:verb resolved to rolestore %q, want the only rolestore-backed vocabulary that declares it (a)", rs.Name)
+	}
+}
+
+func TestPlane_TwoBackedVocabulariesAreStillAmbiguous(t *testing.T) {
+	src := strings.Replace(unbackedVocabSpec, "  permission other:verb\n  preset bp @ tenant = other:verb", "  permission shared:verb\n  preset bp @ tenant = shared:verb", 1)
+	s, err := Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = Validate(s)
+	if err == nil || !strings.Contains(err.Error(), "declared by more than one vocabulary") {
+		t.Fatalf("two ROLESTORE-BACKED vocabularies declaring one permission must still be rejected, got %v", err)
+	}
+}

@@ -250,28 +250,36 @@ func (s *Spec) holdsRoleStore(perm string) (*RoleStore, error) {
 	case 1:
 		return s.RoleStores[0], nil
 	}
-	owners := s.vocabsDeclaring(perm)
-	switch len(owners) {
-	case 0:
+	declaring := s.vocabsDeclaring(perm)
+	if len(declaring) == 0 {
 		return nil, fmt.Errorf("permission %q is declared by no vocabulary, so it names no rolestore", perm)
-	case 1:
-	default:
-		return nil, fmt.Errorf("permission %q is declared by more than one vocabulary (%s), so it names no single rolestore — a permission belongs to exactly one vocabulary", perm, vocabNames(owners))
 	}
-	var matched []*RoleStore
-	for _, rs := range s.RoleStores {
-		if v, err := s.rolestoreVocab(rs); err == nil && v == owners[0] {
-			matched = append(matched, rs)
+	backing := map[*Vocabulary][]*RoleStore{}
+	var owners []*Vocabulary
+	for _, v := range declaring {
+		var matched []*RoleStore
+		for _, rs := range s.RoleStores {
+			if rv, err := s.rolestoreVocab(rs); err == nil && rv == v {
+				matched = append(matched, rs)
+			}
+		}
+		if len(matched) > 0 {
+			owners = append(owners, v)
+			backing[v] = matched
 		}
 	}
-	switch len(matched) {
+	switch len(owners) {
 	case 0:
-		return nil, fmt.Errorf("permission %q belongs to vocabulary %q, which backs no rolestore", perm, owners[0].Name)
+		return nil, fmt.Errorf("permission %q belongs to vocabulary %q, which backs no rolestore", perm, declaring[0].Name)
 	case 1:
-		return matched[0], nil
 	default:
+		return nil, fmt.Errorf("permission %q is declared by more than one vocabulary that backs a rolestore (%s), so it names no single rolestore — a permission belongs to exactly one rolestore-backed vocabulary", perm, vocabNames(owners))
+	}
+	matched := backing[owners[0]]
+	if len(matched) > 1 {
 		return nil, fmt.Errorf("permission %q belongs to vocabulary %q, which backs more than one rolestore (%s)", perm, owners[0].Name, rolestoreNames(matched))
 	}
+	return matched[0], nil
 }
 
 func (s *Spec) isDefaultRoleStore(rs *RoleStore) bool {
