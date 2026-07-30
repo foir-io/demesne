@@ -43,7 +43,7 @@
     },
     "keywords": {
       "comment": "block/clause keywords + reach/binding/boolean words",
-      "match": "\\b(level|virtual|parent|parents|col|claim|permission|preset|rank|assignments|kind|scope|rolejoin|revoked|permissions|pk|granted|by|created|column|at|active|expires|anchor|reach|identifies|roles|configurable|none|binds|membership|table|scoped|relation|use|omit|guard|maps|where|mode|schema|self|descendants|owner|admin|public|and|or|not)\\b",
+      "match": "\\b(level|virtual|parent|parents|col|claim|permission|preset|rank|assignments|kind|scope|plane|rolejoin|revoked|permissions|pk|granted|by|created|column|at|active|expires|anchor|reach|identifies|roles|configurable|none|binds|membership|table|scoped|relation|use|omit|guard|maps|where|mode|schema|self|descendants|owner|admin|public|and|or|not)\\b",
       "name": "keyword.control.demesne"
     },
     "permkeys": {

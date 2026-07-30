@@ -282,3 +282,27 @@ export const recordAccess: ResourceAccessSurface = {
   discrimVal: "record",
   accessorFn: "auth.records_accessors",
 };
+
+export const platformVocab: Vocabulary = {
+  name: "platform",
+  permissions: ["platform:manage"],
+  presets: [{ name: "platform_admin", star: false, set: ["platform:manage"] }],
+  rank: [],
+};
+
+export const platformPlaneResolver: HoldsResolver = {
+  assignments: "role_assignments",
+  kindCol: "principal_kind",
+  kindVal: "admin",
+  subjectCol: "principal_id",
+  scopeCols: ["tenant_id", "project_id"],
+  revokedCol: "revoked_at",
+  plane: "platform",
+  planeDepth: 0,
+  roleCol: "role_id",
+  rolesTable: "roles",
+  rolesId: "id",
+  keyCol: "key",
+  permsCol: "permissions",
+  vocab: platformVocab,
+};

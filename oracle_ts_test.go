@@ -85,17 +85,19 @@ func matrixPermSets(v *Vocabulary) [][]string {
 	return out
 }
 
-func holdsMatrixCases(hr *HoldsResolver) ([]any, error) {
+func holdsMatrixCases(hr *HoldsResolver, resolver string) ([]any, error) {
 	if hr.PermsCol == "" {
 		return nil, nil
 	}
 	assignScopes, queryScopes := matrixScopes(len(hr.ScopeCols))
 	var out []any
-	for _, a := range assignScopes {
-		for _, q := range queryScopes {
-			out = append(out, oracleCase("holds.scopeContains",
-				map[string]any{"assignment": a, "query": q},
-				scopeContains(a, q)))
+	if resolver == "" {
+		for _, a := range assignScopes {
+			for _, q := range queryScopes {
+				out = append(out, oracleCase("holds.scopeContains",
+					map[string]any{"assignment": a, "query": q},
+					scopeContains(a, q)))
+			}
 		}
 	}
 	for _, perms := range matrixPermSets(hr.Vocabulary()) {
@@ -106,13 +108,44 @@ func holdsMatrixCases(hr *HoldsResolver) ([]any, error) {
 				if err != nil {
 					return nil, err
 				}
-				out = append(out, oracleCase("holds.resolve", map[string]any{
+				in := map[string]any{
 					"assignments": []any{map[string]any{"scope": a, "roleKey": "", "permissions": perms}},
 					"scope":       q,
-				}, eff.Permissions()))
+				}
+				if resolver != "" {
+					in["resolver"] = resolver
+				}
+				out = append(out, oracleCase("holds.resolve", in, eff.Permissions()))
 			}
 		}
 	}
+	return out, nil
+}
+
+func holdsPlaneCases(s *Spec, projections map[string]any) ([]any, error) {
+	if len(s.RoleStores) < 2 {
+		return nil, nil
+	}
+	byName := map[string]any{}
+	var out []any
+	for i, rs := range s.RoleStores {
+		r, err := s.HoldsResolver(rs.Name)
+		if err != nil {
+			return nil, err
+		}
+		byName[rs.Name] = tsHolds(r)
+		if i == 0 {
+			continue
+		}
+		in := map[string]any{"resolver": rs.Name}
+		out = append(out, oracleCase("holds.assignmentsSQL", in, r.AssignmentsSQL()))
+		matrix, err := holdsMatrixCases(r, rs.Name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, matrix...)
+	}
+	projections["holdsResolvers"] = byName
 	return out, nil
 }
 
@@ -176,11 +209,16 @@ func buildOracleEntry(s *Spec) (map[string]any, error) {
 		}
 		projections["holdsResolver"] = tsHolds(hr)
 		cases = append(cases, oracleCase("holds.assignmentsSQL", nil, hr.AssignmentsSQL()))
-		matrix, err := holdsMatrixCases(hr)
+		matrix, err := holdsMatrixCases(hr, "")
 		if err != nil {
 			return nil, err
 		}
 		cases = append(cases, matrix...)
+		planes, err := holdsPlaneCases(s, projections)
+		if err != nil {
+			return nil, err
+		}
+		cases = append(cases, planes...)
 
 		ra, err := s.RoleAssignmentSurface("")
 		if err != nil {
@@ -280,6 +318,7 @@ func TestOracle_Manifest(t *testing.T) {
 		{"fullRoleStore", fullRoleStoreSpec},
 		{"rpScoped", rpScopedRoleStoreSpec},
 		{"manage", manageSpecSrc(t)},
+		{"planes", planesSpecSrc(t)},
 	}
 	manifest := map[string]any{}
 	for _, sp := range specs {

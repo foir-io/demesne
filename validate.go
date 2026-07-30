@@ -42,6 +42,8 @@ func Validate(s *Spec) error {
 
 	add(valCheckPlaneBindings(s))
 
+	add(valCheckRoleStorePlanes(s, chain))
+
 	if _, err := s.ClaimsContract(); err != nil {
 		add(err)
 	}
@@ -172,6 +174,38 @@ func valCheckPlaneBindings(s *Spec) error {
 				errs = append(errs, fmt.Errorf("subjects %q and %q both `binds admin` — the admin plane must be unambiguous", adminSub, sub.Name))
 			}
 			adminSub = sub.Name
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func valCheckRoleStorePlanes(s *Spec, chain []*Level) error {
+	var errs []error
+	nonVirtual := 0
+	known := map[string]bool{}
+	for _, l := range chain {
+		known[l.Name] = true
+		if !l.Virtual {
+			nonVirtual++
+		}
+	}
+	byFn := map[string]string{}
+	for _, rs := range s.RoleStores {
+		if fn := s.holdsPermFn(rs); byFn[fn] != "" {
+			errs = append(errs, fmt.Errorf("rolestores %q and %q both compile their @holds check to %s() — rename one so each rolestore has its own definer", byFn[fn], rs.Name, fn))
+		} else {
+			byFn[fn] = rs.Name
+		}
+		if rs.Plane == "" {
+			continue
+		}
+		if !known[rs.Plane] {
+			errs = append(errs, fmt.Errorf("line %d: rolestore %q declares `plane %s`, which is not a topology level", rs.Pos.Line, rs.Name, rs.Plane))
+			continue
+		}
+		if s.rolestorePlaneDepth(rs) < nonVirtual && len(rs.ScopeCols) < nonVirtual {
+			errs = append(errs, fmt.Errorf("line %d: rolestore %q declares `plane %s` but names only %d of the %d non-virtual levels in `scope` — every level below the plane must be named so the floor can pin it NULL, or an assignment scoped there would satisfy the plane's check",
+				rs.Pos.Line, rs.Name, rs.Plane, len(rs.ScopeCols), nonVirtual))
 		}
 	}
 	return errors.Join(errs...)
@@ -959,13 +993,13 @@ func (s *Spec) valCheckHoldsTerm(o *Object, pm *Perm, t *Term, hasPred, hasPDP b
 	} else if !hasPred {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds but is not @rls or @check", pm.Pos.Line, o.Name, pm.Verb))
 	}
-	if len(o.Scoped) > 0 && s.levelIsVirtual(o.Scoped[len(o.Scoped)-1]) {
-		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds on a global object — the check keys on the row's scope columns, which a global object does not carry, and a subject anchored at that virtual level already reaches every row whatever permissions it holds", pm.Pos.Line, o.Name, pm.Verb))
-	}
-	rs := roleStoreByName(s)
-	if rs == nil {
-		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds but the spec declares no rolestore", pm.Pos.Line, o.Name, pm.Verb))
+	rs, rserr := s.holdsRoleStore(t.HoldsPerm)
+	if rserr != nil {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds(%q): %v", pm.Pos.Line, o.Name, pm.Verb, t.HoldsPerm, rserr))
 		return errs
+	}
+	if len(o.Scoped) > 0 && s.levelIsVirtual(o.Scoped[len(o.Scoped)-1]) && s.rolestorePlaneDepth(rs) > 0 {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds on a global object against rolestore %q, whose assignments are scoped — the check keys on the row's scope columns, which a global object does not carry; give the rolestore a `plane` at or above the object's level", pm.Pos.Line, o.Name, pm.Verb, rs.Name))
 	}
 	if rs.PermsCol == "" {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds but rolestore %q declares no `permissions` column — the floor matches `p_perm = ANY(<perms>)` and cannot expand preset keys at runtime", pm.Pos.Line, o.Name, pm.Verb, rs.Name))

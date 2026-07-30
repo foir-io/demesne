@@ -522,15 +522,32 @@ func reportGlobalAssignments(s *demesne.Spec, dsn string) {
 		return
 	}
 	n, err := countGlobalAssignments(dsn, query)
+	plane := globalPlaneOver(s, hr)
 	switch {
 	case err != nil:
 		fmt.Printf("warning: could not audit globally scoped role assignments: %v\n", err)
+	case n > 0 && plane != "":
+		fmt.Printf("note: %d active role assignment(s) leave %s.%s NULL. Rolestore %q declares a global plane over the same table, so those rows may be its assignments; anything else there is a cross-%s grant. List them with:\n  %s\n",
+			n, hr.Assignments, hr.ScopeCols[0], plane, hr.ScopeCols[0], query)
 	case n > 0:
 		fmt.Printf("DANGER: %d active role assignment(s) leave %s.%s NULL, which is the GLOBAL scope — they confer their permissions across every value of %s. List them with:\n  %s\n",
 			n, hr.Assignments, hr.ScopeCols[0], hr.ScopeCols[0], query)
 	default:
 		fmt.Printf("ok: no active role assignment leaves %s NULL (the global scope)\n", hr.ScopeCols[0])
 	}
+}
+
+func globalPlaneOver(s *demesne.Spec, hr *demesne.HoldsResolver) string {
+	for _, rs := range s.RoleStores {
+		r, err := s.HoldsResolver(rs.Name)
+		if err != nil || r.Plane == "" || r.PlaneDepth != 0 {
+			continue
+		}
+		if r.Assignments == hr.Assignments && r.KindVal == hr.KindVal {
+			return rs.Name
+		}
+	}
+	return ""
 }
 
 func cmdCoverage(args []string) error {

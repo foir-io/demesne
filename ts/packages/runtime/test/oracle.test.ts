@@ -38,6 +38,11 @@ function appObj(proj: any, name: unknown): any {
   return proj.appSurface.find((o: any) => o.object === name);
 }
 
+function holdsProj(proj: any, resolver: unknown): any {
+
+  return resolver === undefined ? proj.holdsResolver : proj.holdsResolvers[resolver as string];
+}
+
 function runCase(proj: any, c: OracleCase): unknown {
   const i: any = c.input ?? {};
   switch (c.kind) {
@@ -62,11 +67,11 @@ function runCase(proj: any, c: OracleCase): unknown {
       return listResourcesFastSQL(appObj(proj, i.object));
 
     case "holds.assignmentsSQL":
-      return assignmentsSQL(proj.holdsResolver);
+      return assignmentsSQL(holdsProj(proj, i.resolver));
     case "holds.scopeContains":
       return scopeContains(i.assignment, i.query);
     case "holds.resolve":
-      return resolve(proj.holdsResolver, i.assignments, i.scope).permissions();
+      return resolve(holdsProj(proj, i.resolver), i.assignments, i.scope).permissions();
 
     case "roleAssignment.revokeSQL":
       return roleAssignments.revokeSQL(proj.roleAssignment);

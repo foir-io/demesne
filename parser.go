@@ -1678,7 +1678,7 @@ func (p *parser) parseUngoverned() (*Ungoverned, error) {
 
 func roleStoreKeyword(s string) bool {
 	switch s {
-	case "assignments", "kind", "subject", "scope", "rolejoin", "revoked", "permissions", "pk", "granted", "column":
+	case "assignments", "kind", "subject", "scope", "plane", "rolejoin", "revoked", "permissions", "pk", "granted", "column":
 		return true
 	}
 	return false
@@ -1707,6 +1707,8 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 			for p.peekKind() == tIdent && !roleStoreKeyword(p.cur().lit) {
 				rs.ScopeCols = append(rs.ScopeCols, p.advance().lit)
 			}
+		case p.acceptKw("plane"):
+			rs.Plane, err = p.ident()
 		case p.acceptKw("rolejoin"):
 			err = p.parseRoleStoreJoin(rs)
 		case p.acceptKw("revoked"):

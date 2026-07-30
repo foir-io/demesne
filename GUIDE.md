@@ -220,6 +220,56 @@ SQL definer tests the role's array against a generated
 `<admin>_perm_implied_by(p_perm)` reverse closure with an array overlap. A NULL
 `permissions` column fails closed.
 
+A spec can declare more than one rolestore, and `@holds` resolves to **the
+rolestore whose vocabulary declares the permission** — not to whichever
+rolestore was declared first. With exactly one rolestore nothing changes. With
+several, a permission declared in two vocabularies, or a vocabulary backing two
+rolestores, is a compile error rather than a silent pick; there is no `via`
+selector, because a selector could disagree with the vocabulary and the
+vocabulary is what the delegation guard already enforces. The default (first)
+rolestore keeps the `<admin>_has_perm` / `<admin>_perm_implied_by` definer
+names; every other rolestore gets `<rolestore>_has_perm` /
+`<rolestore>_perm_implied_by`.
+
+That is what lets a **plane** exist alongside the tenant hierarchy. A rolestore
+whose assignments live at a level *above* the ones its scope columns name
+declares `plane <level>`:
+
+```
+rolestore platform {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  plane       platform
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+  permissions permissions
+}
+```
+
+`plane` names the deepest level an assignment in this rolestore may carry.
+Levels at or above it keep the wildcard-on-NULL matching described above; every
+scope column *below* it is **pinned `IS NULL`**, in the emitted definer, in the
+assignment fetch, and in the Go and TypeScript `Resolve`. Pinning is not the
+same as omitting the columns: with `plane platform` (the virtual root) the
+generated check takes no scope argument at all and reads
+
+```
+EXISTS (SELECT 1 FROM role_assignments ra JOIN roles r ON r.id = ra.role_id
+  WHERE ra.principal_kind = 'admin' AND ra.principal_id = user_id
+    AND ra.tenant_id IS NULL AND ra.project_id IS NULL
+    AND ra.revoked_at IS NULL AND p_perm = ANY(r.permissions))
+```
+
+so a `platform:manage` row written at a tenant scope satisfies nothing. Because
+the plane is a rolestore and not a vocabulary entry, `preset tenant_owner @
+tenant = *` still star-expands only its own vocabulary and can never reach a
+permission that lives on another plane. A `plane` that leaves a level below it
+unnamed in `scope` is rejected: an unnamed level cannot be pinned, and the check
+would accept an assignment scoped there. `examples/planes.demesne` is the
+worked two-plane spec.
+
 The language adds five more constructs on top of that:
 
 - **Permission templates.** A named, reusable permission set. Declare it with
