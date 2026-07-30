@@ -649,9 +649,9 @@ func (s *Spec) rlsEmitBuiltin(obj *Object, pm *Perm, t *Term, rels map[string]*R
 }
 
 func (s *Spec) rlsEmitHolds(obj *Object, t *Term) ([]string, error) {
-	rs := roleStoreByName(s)
-	if rs == nil {
-		return nil, fmt.Errorf("@holds(%q) on %q: the spec declares no rolestore", t.HoldsPerm, obj.Name)
+	rs, err := s.holdsRoleStore(t.HoldsPerm)
+	if err != nil {
+		return nil, fmt.Errorf("@holds(%q) on %q: %w", t.HoldsPerm, obj.Name, err)
 	}
 	if rs.PermsCol == "" {
 		return nil, fmt.Errorf("@holds(%q) on %q: rolestore %q declares no `permissions` column", t.HoldsPerm, obj.Name, rs.Name)
@@ -660,13 +660,14 @@ func (s *Spec) rlsEmitHolds(obj *Object, t *Term) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	planeDepth := s.rolestorePlaneDepth(rs)
 	args := []string{s.idClaim(s.adminIdentify())}
 	i := 0
 	for _, l := range chain {
 		if l.Virtual {
 			continue
 		}
-		if i >= len(rs.ScopeCols) {
+		if i >= len(rs.ScopeCols) || i >= planeDepth {
 			break
 		}
 		if contains(obj.Scoped, l.Name) {
@@ -677,7 +678,7 @@ func (s *Spec) rlsEmitHolds(obj *Object, t *Term) ([]string, error) {
 		i++
 	}
 	args = append(args, "'"+t.HoldsPerm+"'")
-	return []string{fmt.Sprintf("%s.%s_has_perm(%s)", s.definerSchema(), s.adminName(), strings.Join(args, ", "))}, nil
+	return []string{fmt.Sprintf("%s.%s(%s)", s.definerSchema(), s.holdsPermFn(rs), strings.Join(args, ", "))}, nil
 }
 
 func (s *Spec) rlsEmitAppScope(obj *Object, t *Term, rels map[string]*Relation, custClaim string) ([]string, error) {

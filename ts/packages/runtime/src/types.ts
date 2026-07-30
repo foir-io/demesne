@@ -90,6 +90,9 @@ export interface HoldsResolver {
   scopeCols: string[];
   revokedCol: string;
 
+  plane?: string;
+  planeDepth?: number;
+
   roleCol: string;
   rolesTable: string;
   rolesId: string;

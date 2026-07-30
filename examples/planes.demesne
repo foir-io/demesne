@@ -1,0 +1,66 @@
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+
+vocabulary admin {
+  permission tenant:manage implies content:*, billing:*
+
+  permission content:read
+  permission content:write
+  permission billing:read
+
+  preset project_admin @ project = content:read + content:write
+  preset tenant_owner  @ tenant  = *
+  rank tenant_owner > project_admin
+}
+
+vocabulary platform {
+  permission platform:manage
+  preset platform_admin @ platform = platform:manage
+}
+
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+  permissions permissions
+}
+
+rolestore platform {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  plane       platform
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+  permissions permissions
+}
+
+subject operator {
+  anchor     project
+  reach      descendants
+  identifies sub
+  roles      configurable admin
+  binds      admin
+}
+
+object document {
+  table  documents
+  scoped tenant > project
+  permission view = @holds(content:read)  @rls maps select
+  permission edit = @holds(content:write) @rls maps update
+}
+
+object tenant {
+  table  tenants
+  scoped platform
+  permission view   = @holds(platform:manage) @rls maps select
+  permission edit   = @holds(platform:manage) @rls maps update
+  permission delete = @holds(platform:manage) @rls maps delete
+}

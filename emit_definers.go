@@ -88,7 +88,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	}
 	s.defEmitPlatformRoles(&out, seen, rs, presetLevels)
 	s.defEmitScopedMemberin(&out, seen, rs, presetLevels)
-	if err := s.defEmitHoldsPerm(&out, seen, rs); err != nil {
+	if err := s.defEmitHoldsPerm(&out, seen); err != nil {
 		return nil, err
 	}
 	if err := s.defEmitKernel(&out, seen); err != nil {
@@ -238,14 +238,14 @@ func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *Rol
 	}
 }
 
-func (s *Spec) defEmitHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStore) error {
+func (s *Spec) defEmitHoldsPerm(out *[]GenFn, seen map[string]bool) error {
 	for _, obj := range s.Objects {
 		for _, pm := range obj.Perms {
 			for _, t := range pm.Expr {
 				if t == nil || t.Builtin != "holds" {
 					continue
 				}
-				if err := s.defAddHoldsPerm(out, seen, rs, obj, pm, t); err != nil {
+				if err := s.defAddHoldsPerm(out, seen, obj, pm, t); err != nil {
 					return err
 				}
 			}
@@ -254,21 +254,22 @@ func (s *Spec) defEmitHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStor
 	return nil
 }
 
-func (s *Spec) defAddHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStore, obj *Object, pm *Perm, t *Term) error {
-	if rs == nil {
-		return fmt.Errorf("object %q permission %q uses @holds(%q) but the spec declares no rolestore", obj.Name, pm.Verb, t.HoldsPerm)
+func (s *Spec) defAddHoldsPerm(out *[]GenFn, seen map[string]bool, obj *Object, pm *Perm, t *Term) error {
+	rs, err := s.holdsRoleStore(t.HoldsPerm)
+	if err != nil {
+		return fmt.Errorf("object %q permission %q uses @holds(%q): %w", obj.Name, pm.Verb, t.HoldsPerm, err)
 	}
 	if rs.PermsCol == "" {
 		return fmt.Errorf("object %q permission %q uses @holds(%q) but rolestore %q declares no `permissions` column", obj.Name, pm.Verb, t.HoldsPerm, rs.Name)
 	}
-	name := s.adminName() + "_has_perm"
+	name := s.holdsPermFn(rs)
 	if seen[name] {
 		return nil
 	}
 	seen[name] = true
 	impliedBy := ""
-	if vocab, err := s.rolestoreVocab(rs); err == nil && len(vocab.Implications) > 0 {
-		fn, ferr := s.permImpliedByDefiner(vocab)
+	if vocab, verr := s.rolestoreVocab(rs); verr == nil && len(vocab.Implications) > 0 {
+		fn, ferr := s.permImpliedByDefiner(rs, vocab)
 		if ferr != nil {
 			return ferr
 		}
@@ -281,6 +282,7 @@ func (s *Spec) defAddHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStore
 
 func (s *Spec) holdsPermDefiner(name string, rs *RoleStore, impliedByFn string) GenFn {
 	chain, _ := s.Topology.Chain()
+	planeDepth := s.rolestorePlaneDepth(rs)
 	args := []string{"user_id " + s.idType()}
 	var scope []string
 	i := 0
@@ -292,9 +294,13 @@ func (s *Spec) holdsPermDefiner(name string, rs *RoleStore, impliedByFn string) 
 			break
 		}
 		col := rs.ScopeCols[i]
-		arg := "check_" + l.Name + "_id"
-		args = append(args, arg+" "+s.idType())
-		scope = append(scope, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = %s)", col, col, arg))
+		if i < planeDepth {
+			arg := "check_" + l.Name + "_id"
+			args = append(args, arg+" "+s.idType())
+			scope = append(scope, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = %s)", col, col, arg))
+		} else {
+			scope = append(scope, fmt.Sprintf("ra.%s IS NULL", col))
+		}
 		i++
 	}
 	args = append(args, "p_perm text")
@@ -316,7 +322,7 @@ func holdsPermCond(permsCol, impliedByFn string) string {
 	return fmt.Sprintf("r.%s::text[] && %s(p_perm)", permsCol, impliedByFn)
 }
 
-func (s *Spec) permImpliedByDefiner(vocab *Vocabulary) (GenFn, error) {
+func (s *Spec) permImpliedByDefiner(rs *RoleStore, vocab *Vocabulary) (GenFn, error) {
 	impliers := map[string][]string{}
 	for _, p := range vocab.Permissions {
 		implied, err := vocab.ImpliedPermissions(p)
@@ -341,7 +347,7 @@ func (s *Spec) permImpliedByDefiner(vocab *Vocabulary) (GenFn, error) {
 		"COALESCE((SELECT m.impliers FROM (VALUES %s) AS m(perm, impliers) WHERE m.perm = p_perm), ARRAY[p_perm]::text[])",
 		strings.Join(rows, ", "))
 	return GenFn{
-		Name:    s.adminName() + "_perm_implied_by",
+		Name:    s.permImpliedByFn(rs),
 		Sig:     "p_perm text",
 		Returns: "text[]",
 		Body:    body,

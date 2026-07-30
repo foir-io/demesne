@@ -324,9 +324,9 @@ func (g *fwGen) holds(rs *RoleStore, suffix string) error {
 	g.b.WriteString("\tif err != nil {\n\t\treturn demesne.EffectivePerms{}, err\n\t}\n\tdefer rows.Close()\n")
 	g.b.WriteString("\tvar assignments []demesne.RoleAssignment\n")
 	g.b.WriteString("\tfor rows.Next() {\n")
-	fmt.Fprintf(&g.b, "\t\ta := demesne.RoleAssignment{Scope: make([]string, %d)}\n", len(r.ScopeCols))
+	fmt.Fprintf(&g.b, "\t\ta := demesne.RoleAssignment{Scope: make([]string, %d)}\n", len(r.SelectedScopeCols()))
 	dest := make([]string, 0, len(r.ScopeCols)+2)
-	for i := range r.ScopeCols {
+	for i := range r.SelectedScopeCols() {
 		dest = append(dest, fmt.Sprintf("&a.Scope[%d]", i))
 	}
 	dest = append(dest, "&a.RoleKey")
@@ -529,9 +529,9 @@ func (g *fwGen) holdsRoles(rs *RoleStore, suffix string) error {
 	g.b.WriteString("\tif err != nil {\n\t\treturn demesne.EffectiveRoles{}, err\n\t}\n\tdefer rows.Close()\n")
 	g.b.WriteString("\tvar assignments []demesne.RoleAssignment\n")
 	g.b.WriteString("\tfor rows.Next() {\n")
-	fmt.Fprintf(&g.b, "\t\ta := demesne.RoleAssignment{Scope: make([]string, %d)}\n", len(r.ScopeCols))
+	fmt.Fprintf(&g.b, "\t\ta := demesne.RoleAssignment{Scope: make([]string, %d)}\n", len(r.SelectedScopeCols()))
 	dest := make([]string, 0, len(r.ScopeCols)+2)
-	for i := range r.ScopeCols {
+	for i := range r.SelectedScopeCols() {
 		dest = append(dest, fmt.Sprintf("&a.Scope[%d]", i))
 	}
 	dest = append(dest, "&a.RoleKey")
@@ -588,6 +588,10 @@ func (g *fwGen) resolverLit(r *HoldsResolver) string {
 	fmt.Fprintf(&b, "\tSubjectCol:  %q,\n", r.SubjectCol)
 	fmt.Fprintf(&b, "\tScopeCols:   %s,\n", goStrSlice(r.ScopeCols))
 	fmt.Fprintf(&b, "\tRevokedCol:  %q,\n", r.RevokedCol)
+	if r.Plane != "" {
+		fmt.Fprintf(&b, "\tPlane:       %q,\n", r.Plane)
+		fmt.Fprintf(&b, "\tPlaneDepth:  %d,\n", r.PlaneDepth)
+	}
 	fmt.Fprintf(&b, "\tRoleCol:     %q,\n", r.RoleCol)
 	fmt.Fprintf(&b, "\tRolesTable:  %q,\n", r.RolesTable)
 	fmt.Fprintf(&b, "\tRolesID:     %q,\n", r.RolesID)

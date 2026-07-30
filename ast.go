@@ -90,6 +90,7 @@ type RoleStore struct {
 	KindVal     string
 	SubjectCol  string
 	ScopeCols   []string
+	Plane       string
 	RoleCol     string
 	RolesTable  string
 	RolesID     string

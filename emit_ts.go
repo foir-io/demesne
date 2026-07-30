@@ -77,6 +77,8 @@ type tsHoldsResolverProj struct {
 	SubjectCol  string           `json:"subjectCol"`
 	ScopeCols   []string         `json:"scopeCols"`
 	RevokedCol  string           `json:"revokedCol"`
+	Plane       string           `json:"plane,omitempty"`
+	PlaneDepth  *int             `json:"planeDepth,omitempty"`
 	RoleCol     string           `json:"roleCol"`
 	RolesTable  string           `json:"rolesTable"`
 	RolesID     string           `json:"rolesId"`
@@ -213,12 +215,17 @@ func tsVocab(v *Vocabulary) tsVocabularyProj {
 }
 
 func tsHolds(r *HoldsResolver) tsHoldsResolverProj {
-	return tsHoldsResolverProj{
+	p := tsHoldsResolverProj{
 		Assignments: r.Assignments, KindCol: r.KindCol, KindVal: r.KindVal, SubjectCol: r.SubjectCol,
 		ScopeCols: strs(r.ScopeCols), RevokedCol: r.RevokedCol, RoleCol: r.RoleCol,
 		RolesTable: r.RolesTable, RolesID: r.RolesID, KeyCol: r.KeyCol, PermsCol: r.PermsCol,
 		Vocab: tsVocab(r.Vocabulary()),
 	}
+	if r.Plane != "" {
+		depth := r.PlaneDepth
+		p.Plane, p.PlaneDepth = r.Plane, &depth
+	}
+	return p
 }
 
 func tsRoleAssign(r *RoleAssignmentSurface) tsRoleAssignProj {

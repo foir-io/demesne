@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { assignmentsSQL, scopeContains, resolve, type RoleAssignment } from "../src/index.js";
-import { rolesResolver, rolesResolverNoPerms, manageResolver } from "./fixtures.js";
+import { assignmentsSQL, planeDepth, scopeContains, resolve, type RoleAssignment } from "../src/index.js";
+import { rolesResolver, rolesResolverNoPerms, manageResolver, platformPlaneResolver } from "./fixtures.js";
 
 describe("assignmentsSQL — the active-assignment read", () => {
   it("projects the scope cols, role key, and the materialized perms column when declared", () => {
@@ -150,5 +150,38 @@ describe("resolve — the scope-relative manage keys (key = ceiling, scope = sub
   it("a leaf verb confers only itself", () => {
     const eff = resolve(manageResolver, asg(["T1", "P1"], "records:read"), ["T1", "P1"]);
     expect(eff.permissions()).toEqual(["records:read"]);
+  });
+});
+
+describe("a global plane — platform authority is unreachable from a scoped assignment", () => {
+  const asg = (scope: string[]): RoleAssignment[] => [
+    { scope, roleKey: "platform_admin", permissions: ["platform:manage"] },
+  ];
+  const queries: string[][] = [[], ["", ""], ["T1", ""], ["T1", "P1"], ["T2", "P2"]];
+
+  it("selects no scope column and pins every one of them NULL", () => {
+    expect(assignmentsSQL(platformPlaneResolver)).toBe(
+      "SELECT r.key, r.permissions FROM role_assignments ra " +
+        "JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'admin' " +
+        "AND ra.principal_id = $1 AND ra.revoked_at IS NULL " +
+        "AND ra.tenant_id IS NULL AND ra.project_id IS NULL",
+    );
+  });
+
+  it.each(queries)("a globally scoped assignment confers at query scope %j", (...q) => {
+    expect(resolve(platformPlaneResolver, asg(["", ""]), q).holds("platform:manage")).toBe(true);
+  });
+
+  it.each(queries)("a tenant-scoped assignment confers nothing at query scope %j", (...q) => {
+    expect(resolve(platformPlaneResolver, asg(["T1", ""]), q).holds("platform:manage")).toBe(false);
+  });
+
+  it.each(queries)("a project-scoped assignment confers nothing at query scope %j", (...q) => {
+    expect(resolve(platformPlaneResolver, asg(["T1", "P1"]), q).holds("platform:manage")).toBe(false);
+  });
+
+  it("planeDepth defaults to the whole scope when no plane is declared", () => {
+    expect(planeDepth(manageResolver)).toBe(2);
+    expect(planeDepth(platformPlaneResolver)).toBe(0);
   });
 });

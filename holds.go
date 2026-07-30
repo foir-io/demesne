@@ -192,6 +192,106 @@ func (v *Vocabulary) PresetsAtOrAbove(threshold string) []string {
 	return out
 }
 
+func (s *Spec) rolestorePlaneDepth(rs *RoleStore) int {
+	if rs.Plane == "" {
+		return len(rs.ScopeCols)
+	}
+	chain, err := s.Topology.Chain()
+	if err != nil {
+		return 0
+	}
+	depth := 0
+	for _, l := range chain {
+		if !l.Virtual {
+			depth++
+		}
+		if l.Name == rs.Plane {
+			if depth > len(rs.ScopeCols) {
+				return len(rs.ScopeCols)
+			}
+			return depth
+		}
+	}
+	return 0
+}
+
+func (s *Spec) vocabsDeclaring(perm string) []*Vocabulary {
+	var out []*Vocabulary
+	for _, v := range s.Vocabs {
+		if v.HasPermission(perm) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func vocabNames(vs []*Vocabulary) string {
+	names := make([]string, len(vs))
+	for i, v := range vs {
+		names[i] = v.Name
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func rolestoreNames(rss []*RoleStore) string {
+	names := make([]string, len(rss))
+	for i, rs := range rss {
+		names[i] = rs.Name
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func (s *Spec) holdsRoleStore(perm string) (*RoleStore, error) {
+	switch len(s.RoleStores) {
+	case 0:
+		return nil, fmt.Errorf("the spec declares no rolestore")
+	case 1:
+		return s.RoleStores[0], nil
+	}
+	owners := s.vocabsDeclaring(perm)
+	switch len(owners) {
+	case 0:
+		return nil, fmt.Errorf("permission %q is declared by no vocabulary, so it names no rolestore", perm)
+	case 1:
+	default:
+		return nil, fmt.Errorf("permission %q is declared by more than one vocabulary (%s), so it names no single rolestore — a permission belongs to exactly one vocabulary", perm, vocabNames(owners))
+	}
+	var matched []*RoleStore
+	for _, rs := range s.RoleStores {
+		if v, err := s.rolestoreVocab(rs); err == nil && v == owners[0] {
+			matched = append(matched, rs)
+		}
+	}
+	switch len(matched) {
+	case 0:
+		return nil, fmt.Errorf("permission %q belongs to vocabulary %q, which backs no rolestore", perm, owners[0].Name)
+	case 1:
+		return matched[0], nil
+	default:
+		return nil, fmt.Errorf("permission %q belongs to vocabulary %q, which backs more than one rolestore (%s)", perm, owners[0].Name, rolestoreNames(matched))
+	}
+}
+
+func (s *Spec) isDefaultRoleStore(rs *RoleStore) bool {
+	return len(s.RoleStores) > 0 && s.RoleStores[0] == rs
+}
+
+func (s *Spec) holdsPermFn(rs *RoleStore) string {
+	if s.isDefaultRoleStore(rs) {
+		return s.adminName() + "_has_perm"
+	}
+	return rs.Name + "_has_perm"
+}
+
+func (s *Spec) permImpliedByFn(rs *RoleStore) string {
+	if s.isDefaultRoleStore(rs) {
+		return s.adminName() + "_perm_implied_by"
+	}
+	return rs.Name + "_perm_implied_by"
+}
+
 type HoldsResolver struct {
 	Assignments string
 	KindCol     string
@@ -199,6 +299,9 @@ type HoldsResolver struct {
 	SubjectCol  string
 	ScopeCols   []string
 	RevokedCol  string
+
+	Plane      string
+	PlaneDepth int
 
 	RoleCol    string
 	RolesTable string
@@ -239,6 +342,8 @@ func (s *Spec) HoldsResolver(rolestore string) (*HoldsResolver, error) {
 		SubjectCol:  rs.SubjectCol,
 		ScopeCols:   append([]string(nil), rs.ScopeCols...),
 		RevokedCol:  rs.RevokedCol,
+		Plane:       rs.Plane,
+		PlaneDepth:  s.rolestorePlaneDepth(rs),
 		RoleCol:     rs.RoleCol,
 		RolesTable:  rs.RolesTable,
 		RolesID:     rs.RolesID,
@@ -264,9 +369,11 @@ func (s *Spec) rolestoreVocab(rs *RoleStore) (*Vocabulary, error) {
 
 func (r *HoldsResolver) Vocabulary() *Vocabulary { return r.Vocab }
 
+func (r *HoldsResolver) SelectedScopeCols() []string { return r.ScopeCols[:r.planeDepth()] }
+
 func (r *HoldsResolver) AssignmentsSQL() string {
 	cols := make([]string, 0, len(r.ScopeCols)+2)
-	for _, c := range r.ScopeCols {
+	for _, c := range r.SelectedScopeCols() {
 		cols = append(cols, "ra."+c)
 	}
 	cols = append(cols, "r."+r.KeyCol)
@@ -280,6 +387,9 @@ func (r *HoldsResolver) AssignmentsSQL() string {
 	conds = append(conds, fmt.Sprintf("ra.%s = $1", r.SubjectCol))
 	if r.RevokedCol != "" {
 		conds = append(conds, fmt.Sprintf("ra.%s IS NULL", r.RevokedCol))
+	}
+	for _, c := range r.ScopeCols[r.planeDepth():] {
+		conds = append(conds, fmt.Sprintf("ra.%s IS NULL", c))
 	}
 	return fmt.Sprintf(
 		"SELECT %s FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE %s",
@@ -332,10 +442,43 @@ func (e EffectivePerms) Permissions() []string {
 	return out
 }
 
+func (r *HoldsResolver) planeDepth() int {
+	if r.Plane == "" {
+		return len(r.ScopeCols)
+	}
+	if r.PlaneDepth < 0 {
+		return 0
+	}
+	if r.PlaneDepth > len(r.ScopeCols) {
+		return len(r.ScopeCols)
+	}
+	return r.PlaneDepth
+}
+
+func withinPlane(scope []string, depth int) bool {
+	for i := depth; i < len(scope); i++ {
+		if scope[i] != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func clampScope(scope []string, depth int) []string {
+	if depth < len(scope) {
+		return scope[:depth]
+	}
+	return scope
+}
+
 func (r *HoldsResolver) Resolve(assignments []RoleAssignment, scope []string) (EffectivePerms, error) {
+	depth := r.planeDepth()
 	eff := EffectivePerms{perms: map[string]bool{}}
 	for _, a := range assignments {
-		if !scopeContains(a.Scope, scope) {
+		if !withinPlane(a.Scope, depth) {
+			continue
+		}
+		if !scopeContains(clampScope(a.Scope, depth), scope) {
 			continue
 		}
 		var perms []string

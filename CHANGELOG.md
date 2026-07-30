@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+### Added — rolestore planes, and `@holds` resolving to the owning rolestore
+
+`@holds(<perm>)` used to compile against `RoleStores[0]` whatever the permission
+was. It now resolves to the rolestore whose vocabulary declares the permission.
+With exactly one rolestore nothing changes and every existing spec emits
+byte-identical SQL, Go, and TypeScript. With several, a permission declared in
+two vocabularies — or a vocabulary backing two rolestores — is a compile error
+instead of a silent pick. There is deliberately no `@holds(x via y)` selector:
+the vocabulary already decides, and a second source of truth could disagree with
+it. The first rolestore keeps the `<admin>_has_perm` and
+`<admin>_perm_implied_by` definer names; the rest get `<rolestore>_has_perm` and
+`<rolestore>_perm_implied_by`, and a name collision between two rolestores is a
+compile error.
+
+A rolestore may now declare `plane <level>` — the deepest topology level an
+assignment in that rolestore may carry. Levels at or above the plane keep the
+wildcard-on-NULL matching; every scope column **below** it is pinned `IS NULL`
+in all three surfaces: the emitted definer, the assignment fetch, and the
+Go/TypeScript `Resolve`. This is what lets a platform plane share one
+`role_assignments` table with the tenant hierarchy:
+
+```
+rolestore platform {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  plane       platform
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+  permissions permissions
+}
+```
+
+emits a check that takes no scope argument and requires
+`ra.tenant_id IS NULL AND ra.project_id IS NULL`, so platform authority is
+unreachable from a tenant- or project-scoped row. A `plane` that leaves a level
+below it unnamed in `scope` is rejected — an unnamed level cannot be pinned.
+`@holds` on a global object, previously always rejected, is now allowed exactly
+when the resolved rolestore's plane is at or above the object's level.
+
+`HoldsResolver` gains `Plane` and `PlaneDepth` (`plane`/`planeDepth` in the
+TypeScript projection), both omitted when no plane is declared; `PlaneDepth` is
+read only when `Plane` is set, so a zero value keeps the previous behaviour and
+a partially constructed resolver fails closed. `examples/planes.demesne` is the
+worked two-plane spec.
+
 ## v0.76.0
 
 ### Breaking — the root scope level is now a wildcard when NULL

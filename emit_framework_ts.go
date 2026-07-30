@@ -51,7 +51,9 @@ func (s *Spec) EmitFrameworkTS() (string, error) {
 				return "", err
 			}
 		}
-		g.holdsRolesTS(suffix)
+		if err := g.holdsRolesTS(rs, suffix); err != nil {
+			return "", err
+		}
 		if v != nil && !emittedRoles[v.Name] {
 			emittedRoles[v.Name] = true
 			if err := g.roleTiersFuncTS(v, suffix); err != nil {
@@ -308,7 +310,7 @@ func (g *fwTSGen) holds(rs *RoleStore, suffix string) error {
 	fmt.Fprintf(&g.b, "export async function holds%s(q: Querier, principalId: string, scope: string[]): Promise<EffectivePerms> {\n", suffix)
 	fmt.Fprintf(&g.b, "  const { rows } = await q.query(assignmentsSQL%s, [principalId]);\n", suffix)
 	g.b.WriteString("  const assignments: RoleAssignment[] = rows.map((row) => ({\n")
-	fmt.Fprintf(&g.b, "    scope: holdsResolver%s.scopeCols.map((c) => String(row[c])),\n", suffix)
+	fmt.Fprintf(&g.b, "    scope: %s,\n", tsScopeExpr(suffix, r))
 	fmt.Fprintf(&g.b, "    roleKey: String(row[holdsResolver%s.keyCol]),\n", suffix)
 	fmt.Fprintf(&g.b, "    permissions: holdsResolver%s.permsCol !== \"\" ? (row[holdsResolver%s.permsCol] as string[]) : [],\n", suffix, suffix)
 	g.b.WriteString("  }));\n")
@@ -363,7 +365,11 @@ func (g *fwTSGen) vocabCapsFuncTS(v *Vocabulary, suffix string) error {
 	return nil
 }
 
-func (g *fwTSGen) holdsRolesTS(suffix string) {
+func (g *fwTSGen) holdsRolesTS(rs *RoleStore, suffix string) error {
+	r, err := g.spec.HoldsResolver(rs.Name)
+	if err != nil {
+		return err
+	}
 	g.needResolveRoles = true
 	g.needEffRoles = true
 	g.needRA = true
@@ -375,12 +381,21 @@ func (g *fwTSGen) holdsRolesTS(suffix string) {
 	fmt.Fprintf(&g.b, "export async function holdsRoles%s(q: Querier, principalId: string, scope: string[]): Promise<EffectiveRoles> {\n", suffix)
 	fmt.Fprintf(&g.b, "  const { rows } = await q.query(assignmentsSQL%s, [principalId]);\n", suffix)
 	g.b.WriteString("  const assignments: RoleAssignment[] = rows.map((row) => ({\n")
-	fmt.Fprintf(&g.b, "    scope: holdsResolver%s.scopeCols.map((c) => String(row[c])),\n", suffix)
+	fmt.Fprintf(&g.b, "    scope: %s,\n", tsScopeExpr(suffix, r))
 	fmt.Fprintf(&g.b, "    roleKey: String(row[holdsResolver%s.keyCol]),\n", suffix)
 	fmt.Fprintf(&g.b, "    permissions: holdsResolver%s.permsCol !== \"\" ? (row[holdsResolver%s.permsCol] as string[]) : [],\n", suffix, suffix)
 	g.b.WriteString("  }));\n")
 	fmt.Fprintf(&g.b, "  return resolveHeldRoles%s(assignments, scope);\n", suffix)
 	g.b.WriteString("}\n\n")
+	return nil
+}
+
+func tsScopeExpr(suffix string, r *HoldsResolver) string {
+	sel := len(r.SelectedScopeCols())
+	if sel == len(r.ScopeCols) {
+		return fmt.Sprintf("holdsResolver%s.scopeCols.map((c) => String(row[c]))", suffix)
+	}
+	return fmt.Sprintf("holdsResolver%s.scopeCols.slice(0, %d).map((c) => String(row[c]))", suffix, sel)
 }
 
 func (g *fwTSGen) roleTiersFuncTS(v *Vocabulary, suffix string) error {
