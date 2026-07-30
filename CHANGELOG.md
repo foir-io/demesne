@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.77.1
 
 ### Fixed — a vocabulary that backs no rolestore no longer makes `@holds` ambiguous
 
