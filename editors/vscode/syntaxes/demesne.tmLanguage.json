@@ -24,7 +24,7 @@
       "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.demesne" }]
     },
     "builtins": {
-      "comment": "@-prefixed special terms: @rls @pdp @kernel @scoped @open @public @session @app_scope @store_manage @kind @sub @tenant_id …",
+      "comment": "@-prefixed special terms: @rls @pdp @kernel @scoped @open @public @session @app_scope @store_manage @kind @self @within @holds @sub @tenant_id …",
       "match": "@[A-Za-z_]+",
       "name": "support.function.builtin.demesne"
     },

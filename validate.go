@@ -9,7 +9,7 @@ import (
 
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true, "check": true}
-var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true, "within": true}
+var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true, "within": true, "holds": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -814,7 +814,7 @@ func valCheckPermTerms(s *Spec, o *Object, pm *Perm, rels map[string]*Relation, 
 		case t.ModeCol != "":
 			add(valCheckModeTerm(s, o, pm, t, hasPred))
 		case t.Builtin != "":
-			add(valCheckBuiltinTerm(s, o, pm, t, rels, hasPred))
+			add(valCheckBuiltinTerm(s, o, pm, t, rels, hasPred, hasPDP))
 		case isGrantSelectorTerm(t.Ident, rels):
 			add(valCheckGrantSelectorTerm(o, pm, t, rels, hasPred))
 		case isPermKeyLit(t.Ident):
@@ -858,10 +858,10 @@ func valCheckModeTerm(s *Spec, o *Object, pm *Perm, t *Term, hasRLS bool) error 
 	return errors.Join(errs...)
 }
 
-func valCheckBuiltinTerm(s *Spec, o *Object, pm *Perm, t *Term, rels map[string]*Relation, hasRLS bool) error {
+func valCheckBuiltinTerm(s *Spec, o *Object, pm *Perm, t *Term, rels map[string]*Relation, hasRLS, hasPDP bool) error {
 	var errs []error
 	if !knownBuiltins[t.Builtin] {
-		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|scoped|session|open|store_manage|public|kind|self)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|scoped|session|open|store_manage|public|kind|self|within|holds)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
 	}
 
 	if t.ExcludeRel != "" {
@@ -906,7 +906,43 @@ func valCheckBuiltinTerm(s *Spec, o *Object, pm *Perm, t *Term, rels map[string]
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @within but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
 		}
 	}
+
+	if t.Builtin == "holds" {
+		errs = append(errs, s.valCheckHoldsTerm(o, pm, t, hasRLS, hasPDP)...)
+	}
 	return errors.Join(errs...)
+}
+
+func (s *Spec) valCheckHoldsTerm(o *Object, pm *Perm, t *Term, hasPred, hasPDP bool) []error {
+	var errs []error
+	if t.HoldsPerm == "" {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds with an empty verb — `@holds(<domain>:<verb>)`", pm.Pos.Line, o.Name, pm.Verb))
+	}
+	if hasPDP {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds inside a @pdp permission — a @pdp permission already checks held capabilities; write the permission key %q as a bare term", pm.Pos.Line, o.Name, pm.Verb, t.HoldsPerm))
+	} else if !hasPred {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds but is not @rls or @check", pm.Pos.Line, o.Name, pm.Verb))
+	}
+	if len(o.Scoped) > 0 && s.levelIsVirtual(o.Scoped[len(o.Scoped)-1]) {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds on a global object — @holds keys the check on the row's scope columns, which a global object does not carry", pm.Pos.Line, o.Name, pm.Verb))
+	}
+	rs := roleStoreByName(s)
+	if rs == nil {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds but the spec declares no rolestore", pm.Pos.Line, o.Name, pm.Verb))
+		return errs
+	}
+	if rs.PermsCol == "" {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds but rolestore %q declares no `permissions` column — the floor matches `p_perm = ANY(<perms>)` and cannot expand preset keys at runtime", pm.Pos.Line, o.Name, pm.Verb, rs.Name))
+	}
+	v, err := s.rolestoreVocab(rs)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds: %v", pm.Pos.Line, o.Name, pm.Verb, err))
+		return errs
+	}
+	if t.HoldsPerm != "" && !v.HasPermission(t.HoldsPerm) {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @holds(%q), which is not a permission of vocabulary %q", pm.Pos.Line, o.Name, pm.Verb, t.HoldsPerm, v.Name))
+	}
+	return errs
 }
 
 func valCheckGrantSelectorTerm(o *Object, pm *Perm, t *Term, rels map[string]*Relation, hasRLS bool) error {

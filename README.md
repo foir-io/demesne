@@ -59,7 +59,7 @@ Adopting Demesne on an existing database is a short loop: introspect the schema,
 | `object` | a governed table — its relations, permissions, and optional per-record sharing |
 | `grant` | a scoped, revocable, expiring grant of reach into part of the hierarchy |
 
-Permissions are a small boolean algebra over those terms — union, intersection, and fail-closed negation — so `viewer and not banned` or `(owner or shared) and not banned` compile straight to an RLS predicate.
+Permissions are a small boolean algebra over those terms — union, intersection, and fail-closed negation — so `viewer and not banned` or `(owner or shared) and not banned` compile straight to an RLS predicate. `@holds(<perm>)` gates a branch on the caller holding an admin permission, matched against the rolestore's materialized permission arrays at query time, so role edits change the floor without a re-emit.
 
 ## Spec introspection
 

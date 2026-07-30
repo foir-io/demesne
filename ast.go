@@ -405,6 +405,8 @@ type Term struct {
 	WithinLevel    string
 	WithinNullable bool
 
+	HoldsPerm string
+
 	Pos Pos
 }
 

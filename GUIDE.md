@@ -166,6 +166,19 @@ parentheses, with precedence union < intersection < `not`. So `viewer and member
 Negation is fail-closed: an exclusion whose condition can't be determined (a NULL
 claim) denies. A union-only expression is unchanged.
 
+A permission can also gate on what the caller *holds*: `@holds(docs:publish)`
+means "the caller's admin role confers `docs:publish` at this row's scope" and
+compiles to a generated `<admin>_has_perm` definer matching the verb against the
+rolestore's materialized `permissions` array (`p_perm = ANY(...)`). It scopes
+like the Go `HoldsResolver`: the root scope level must match exactly, and an
+assignment left NULL at a deeper level confers the permission everywhere below
+it (a tenant-wide assignment reaches every project). Because the check keys on
+the permission verb at query time, editing a role's permissions array changes
+the floor immediately, with no re-emit — unlike preset-key grants, whose key
+sets are baked into definer bodies. `@holds` needs a rolestore with a
+`permissions` column and a verb from its vocabulary, and rides the @rls and
+@check layers; in a @pdp permission, write the permission key as a bare term.
+
 The language adds five more constructs on top of that:
 
 - **Permission templates.** A named, reusable permission set. Declare it with

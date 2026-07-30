@@ -89,6 +89,9 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	}
 	s.defEmitPlatformRoles(&out, seen, rs, presetLevels)
 	s.defEmitScopedMemberin(&out, seen, rs, presetLevels)
+	if err := s.defEmitHoldsPerm(&out, seen, rs); err != nil {
+		return nil, err
+	}
 	if err := s.defEmitKernel(&out, seen); err != nil {
 		return nil, err
 	}
@@ -228,6 +231,64 @@ func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *Rol
 			}
 		}
 	}
+}
+
+func (s *Spec) defEmitHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStore) error {
+	for _, obj := range s.Objects {
+		for _, pm := range obj.Perms {
+			for _, t := range pm.Expr {
+				if t == nil || t.Builtin != "holds" {
+					continue
+				}
+				if rs == nil {
+					return fmt.Errorf("object %q permission %q uses @holds(%q) but the spec declares no rolestore", obj.Name, pm.Verb, t.HoldsPerm)
+				}
+				if rs.PermsCol == "" {
+					return fmt.Errorf("object %q permission %q uses @holds(%q) but rolestore %q declares no `permissions` column", obj.Name, pm.Verb, t.HoldsPerm, rs.Name)
+				}
+				name := s.adminName() + "_has_perm"
+				if !seen[name] {
+					seen[name] = true
+					*out = append(*out, s.holdsPermDefiner(name, rs))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// holdsPermDefiner scopes like the Go HoldsResolver (root level exact, deeper
+// levels wildcard-on-NULL: a tenant-wide assignment confers the permission in
+// every project), unlike roleDefiner, which pins off-path levels to IS NULL.
+func (s *Spec) holdsPermDefiner(name string, rs *RoleStore) GenFn {
+	chain, _ := s.Topology.Chain()
+	args := []string{"user_id text"}
+	var scope []string
+	i := 0
+	for _, l := range chain {
+		if l.Virtual {
+			continue
+		}
+		if i >= len(rs.ScopeCols) {
+			break
+		}
+		col := rs.ScopeCols[i]
+		arg := "check_" + l.Name + "_id"
+		args = append(args, arg+" text")
+		if i == 0 {
+			scope = append(scope, fmt.Sprintf("ra.%s = %s", col, arg))
+		} else {
+			scope = append(scope, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = %s)", col, col, arg))
+		}
+		i++
+	}
+	args = append(args, "p_perm text")
+	body := fmt.Sprintf(
+		"EXISTS (SELECT 1 FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE ra.%s = '%s' AND ra.%s = user_id AND %s AND ra.%s IS NULL AND p_perm = ANY(r.%s))",
+		rs.Assignments, rs.RolesTable, rs.RolesID, rs.RoleCol,
+		rs.KindCol, rs.KindVal, rs.SubjectCol, strings.Join(scope, " AND "),
+		rs.RevokedCol, rs.PermsCol)
+	return GenFn{Name: name, Sig: strings.Join(args, ", "), Body: body}
 }
 
 func (s *Spec) defEmitReachChain(out *[]GenFn, seen map[string]bool, rs *RoleStore, presetLevels map[string][]string, level string) {

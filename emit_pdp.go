@@ -13,15 +13,6 @@ type PDP struct {
 }
 
 func (s *Spec) EmitPDP() (map[string]*PDP, error) {
-	vocabPerms := map[string]map[string]bool{}
-	for _, v := range s.Vocabs {
-		set := map[string]bool{}
-		for _, p := range v.Permissions {
-			set[p] = true
-		}
-		vocabPerms[v.Name] = set
-	}
-
 	out := map[string]*PDP{}
 	site := func(name string) *PDP {
 		if out[name] == nil {
@@ -32,13 +23,14 @@ func (s *Spec) EmitPDP() (map[string]*PDP, error) {
 
 	var errs []string
 	for _, pr := range s.Procedures {
-		if _, ok := vocabPerms[pr.EmitSite]; !ok {
+		v := s.vocabByName(pr.EmitSite)
+		if v == nil {
 			errs = append(errs, fmt.Sprintf("line %d: procedures block targets unknown vocabulary %q (V10)", pr.Pos.Line, pr.EmitSite))
 			continue
 		}
 		p := site(pr.EmitSite)
 		for _, e := range pr.Entries {
-			if !vocabPerms[pr.EmitSite][e.Perm] {
+			if !v.HasPermission(e.Perm) {
 				errs = append(errs, fmt.Sprintf("line %d: %s -> %s: permission not in vocabulary %q", e.Pos.Line, e.Proc, e.Perm, pr.EmitSite))
 			}
 			if prev, dup := p.Policy[e.Proc]; dup && prev != e.Perm {
@@ -48,7 +40,7 @@ func (s *Spec) EmitPDP() (map[string]*PDP, error) {
 		}
 	}
 	for _, u := range s.Ungoverned {
-		if _, ok := vocabPerms[u.EmitSite]; !ok {
+		if s.vocabByName(u.EmitSite) == nil {
 			errs = append(errs, fmt.Sprintf("line %d: ungoverned block targets unknown vocabulary %q (V10)", u.Pos.Line, u.EmitSite))
 			continue
 		}
