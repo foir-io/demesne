@@ -169,8 +169,13 @@ object item {
 	if err == nil {
 		t.Fatal("expected validate to reject a rank filter at a virtual anchor")
 	}
-	if !strings.Contains(err.Error(), "silently discarded") {
-		t.Errorf("rejection must explain the discarded threshold, got: %v", err)
+	for _, want := range []string{"never consulted", "non-virtual level carrying a scope column"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("rejection must state the real cause and the fix, missing %q in: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "cannot carry a rank filter") {
+		t.Errorf("the threshold does compile correctly; the message must not claim otherwise: %v", err)
 	}
 }
 
