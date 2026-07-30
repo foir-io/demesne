@@ -84,7 +84,7 @@ func (workspaceAccess) CanView(ctx context.Context, q demesne.Querier, id string
 
 func (workspaceAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1 AND (auth.is_root((current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.is_tenant_staff((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id) OR id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND auth.is_ws_editor((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, id)))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1 AND (auth.is_root((current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.is_tenant_staff((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id) OR id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND auth.staff_has_workspace_role((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, id)))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return demesne.ComposeCan(true, ok, demesne.NotGoverned), nil

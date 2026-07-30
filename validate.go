@@ -518,8 +518,8 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 			errs = append(errs, valCheckViaMemberIn(s, o, r, mi)...)
 		}
 
-		if vr, ok := r.Repr.(ViaRole); ok {
-			errs = append(errs, valCheckViaRole(s, o, r, vr)...)
+		if _, ok := r.Repr.(ViaRole); ok {
+			errs = append(errs, valCheckViaRole(s, o, r)...)
 		}
 
 		if g, ok := r.Repr.(ViaGroup); ok && g.Materialized && len(r.Types) > 1 {
@@ -533,38 +533,27 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 	return relByName, errors.Join(errs...)
 }
 
-func valCheckViaRole(s *Spec, o *Object, r *Relation, vr ViaRole) []error {
+func valCheckViaRole(s *Spec, o *Object, r *Relation) []error {
 	var errs []error
-	rs := roleStoreByName(s)
-	if rs == nil {
+	if roleStoreByName(s) == nil {
 		return errs
 	}
 
-	var st *Subject
+	lvl := ""
 	if len(r.Types) > 0 {
-		st = s.subjectByName(r.Types[0])
+		if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
+			lvl = st.Anchor
+		}
 	}
-	platform := st != nil && s.isPlatformRoleSubject(st)
-
-	if vr.HasRank && platform {
-		errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via role(rank >= %s)`, but subject %q is anchored at virtual level %q and so reaches every row of this global object whatever role it holds — the threshold compiles correctly and is then never consulted, because the plane-wide reach is disjoined with it; give %q a non-virtual level carrying a scope column if you need graded access", r.Pos.Line, o.Name, r.Name, vr.RankMin, st.Name, st.Anchor, st.Anchor))
+	if lvl == "" && len(o.Scoped) > 0 {
+		lvl = o.Scoped[len(o.Scoped)-1]
 	}
-
-	if platform {
+	if lvl == "" {
 		return errs
 	}
 
-	if vr.HasRank {
-		if _, ok := rankIndex(s)[vr.RankMin]; !ok {
-			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via role(rank >= %s)` but no vocabulary declares a rank ordering containing %q — the threshold cannot be resolved and the check would admit every preset", r.Pos.Line, o.Name, r.Name, vr.RankMin, vr.RankMin))
-		}
-	}
-
-	if len(o.Scoped) > 0 {
-		lvl := o.Scoped[len(o.Scoped)-1]
-		if len(presetLevelMap(s)[lvl]) == 0 {
-			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via role` at level %q, but no vocabulary declares a preset at that level — the check would compile to an empty key set that can never match", r.Pos.Line, o.Name, r.Name, lvl))
-		}
+	if len(presetLevelMap(s)[lvl]) == 0 {
+		errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via role` at level %q, but no vocabulary declares a preset at that level — the check would compile to an empty key set that can never match", r.Pos.Line, o.Name, r.Name, lvl))
 	}
 
 	return errs

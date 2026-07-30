@@ -83,7 +83,7 @@ func TestExample_ParseAndShape(t *testing.T) {
 	ws := findObject(s, "workspace")
 	if r := findRelation(ws, "admin"); r == nil {
 		t.Fatal("workspace.admin relation missing")
-	} else if vr, ok := r.Repr.(ViaRole); !ok || !vr.HasRank || vr.RankMin != "ws_editor" {
+	} else if _, ok := r.Repr.(ViaRole); !ok {
 		t.Errorf("workspace.admin: want role(rank>=ws_editor), got %#v", r.Repr)
 	}
 	if p := findPerm(doc, "publish"); p == nil || !eqStrs(p.Layers, []string{"pdp"}) {
@@ -150,7 +150,7 @@ func TestExample_EmitDefiners(t *testing.T) {
 	for _, want := range []string{
 		"is_root", "is_tenant_staff", "staff_has_workspace_role",
 
-		"is_ws_editor", "member_can_access_doc", "doc_acl_grants",
+		"member_can_access_doc", "doc_acl_grants",
 	} {
 		if !got[want] {
 			t.Errorf("missing generated definer %q; got %v", want, keys(got))

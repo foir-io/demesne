@@ -48,7 +48,7 @@ object workspace {
   scoped tenant > workspace
   relation tenant: tenant via tenant_id
   relation member: staff  via role
-  relation admin:  staff  via role(rank >= ws_editor)
+  relation admin:  staff  via role
   permission view = tenant->owner + member + @session   @rls maps select
   permission edit = tenant->owner + @session(admin)     @rls maps update
 }

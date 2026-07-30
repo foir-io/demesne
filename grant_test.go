@@ -42,7 +42,7 @@ object project {
   level  project
   scoped tenant > project
   relation tenant: tenant via tenant_id
-  relation admin:  admin  via role(rank >= project_admin)
+  relation admin:  admin  via role
   permission view = tenant->owner + @session            @rls maps select
   permission edit = tenant->owner + @session(admin)     @rls maps update
 }

@@ -31,7 +31,7 @@ subject staffer { anchor tenant reach descendants identifies sub roles configura
 object doc {
   table docs
   scoped tenant > project
-  relation curator: staffer via role(rank >= steward)
+  relation curator: staffer via role
   permission view = curator @rls maps select
   permission edit = @kind("staff") @rls maps update
 }
@@ -84,12 +84,12 @@ func TestIdentifiers_TypeIsAPureParameter(t *testing.T) {
 
 			var ranked *GenFn
 			for i := range defs {
-				if defs[i].Name == "is_steward" {
+				if defs[i].Name == "staffer_has_doc_role" {
 					ranked = &defs[i]
 				}
 			}
 			if ranked == nil {
-				t.Fatal("no is_steward definer emitted")
+				t.Fatal("no role definer emitted")
 			}
 			want := fmt.Sprintf("user_id %s, check_tenant_id %s, check_project_id %s", idT, idT, idT)
 			if ranked.Sig != want {

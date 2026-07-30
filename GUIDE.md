@@ -226,16 +226,24 @@ scoped to anything and reaches every row of every object beneath it. That reach
 is disjoined into each policy, which is what makes platform staff platform
 staff.
 
-The consequence is that a virtual level cannot host graded access. A
-`via role(rank >= X)` gate or an `@holds` gate on a global object compiles
-correctly and is then never consulted, because the plane-wide reach beside it is
-already true for anyone holding any preset. Both are rejected at validate rather
-than compiled into a policy that looks graded and is not.
+The consequence is that a virtual level cannot host graded access. An `@holds`
+gate on a global object compiles correctly and is then never consulted, because
+the plane-wide reach beside it is already true for anyone holding any preset. It
+is rejected at validate rather than compiled into a policy that looks graded and
+is not.
 
 So `virtual` does not mean "I have no tenancy." A single-tenant deployment still
 wants a real level with a scope column, even if exactly one row ever occupies
-it; that column is what both rank and `@holds` key on. Reach for `virtual` only
-when you genuinely want a plane whose members outrank the whole tree.
+it; that column is what `@holds` keys on. Reach for `virtual` only when you
+genuinely want a plane whose members outrank the whole tree.
+
+Row-layer gating is by capability, not by role identity. `via role` asks "does
+this principal hold any role here", and `@holds(<domain>:<verb>)` asks "does the
+role it holds grant this verb". There is deliberately no way to gate a policy on
+which preset someone holds: matching role keys as string literals cannot see
+what a role actually grants, so two roles with identical permissions would get
+different row access. `rank` still orders presets for delegation and for the
+generated surfaces, never for enforcement.
 
 Identifiers are `text` by default, because they arrive as JWT claims. If your
 keys are another SQL type, declare it once — `identifiers uuid` — and the emitter

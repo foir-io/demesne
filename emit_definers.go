@@ -80,11 +80,10 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	s.defEmitGrantReach(&out)
 
 	rs := roleStoreByName(s)
-	rankIdx := rankIndex(s)
 	presetLevels := presetLevelMap(s)
 	seen := map[string]bool{}
 
-	if err := s.defEmitRoleDefiners(&out, seen, rs, rankIdx, presetLevels); err != nil {
+	if err := s.defEmitRoleDefiners(&out, seen, rs, presetLevels); err != nil {
 		return nil, err
 	}
 	s.defEmitPlatformRoles(&out, seen, rs, presetLevels)
@@ -175,7 +174,7 @@ func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 	}
 }
 
-func (s *Spec) defEmitRoleDefiners(out *[]GenFn, seen map[string]bool, rs *RoleStore, rankIdx map[string]int, presetLevels map[string][]string) error {
+func (s *Spec) defEmitRoleDefiners(out *[]GenFn, seen map[string]bool, rs *RoleStore, presetLevels map[string][]string) error {
 	for _, obj := range s.Objects {
 		rels := map[string]*Relation{}
 		for _, r := range obj.Relations {
@@ -183,7 +182,7 @@ func (s *Spec) defEmitRoleDefiners(out *[]GenFn, seen map[string]bool, rs *RoleS
 		}
 		for _, pm := range obj.Perms {
 			for _, t := range pm.Expr {
-				d, ok, err := s.roleDefinerForTerm(obj, pm, t, rels, rs, rankIdx, presetLevels)
+				d, ok, err := s.roleDefinerForTerm(obj, pm, t, rels, rs, presetLevels)
 				if err != nil {
 					return err
 				}
@@ -821,7 +820,7 @@ func (s *Spec) defStoreManageWhens(out *[]GenFn, seen map[string]bool, virtual m
 	return whens, nil
 }
 
-func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, rs *RoleStore, rankIdx map[string]int, presetLevels map[string][]string) (GenFn, bool, error) {
+func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, rs *RoleStore, presetLevels map[string][]string) (GenFn, bool, error) {
 	if rs == nil {
 		return GenFn{}, false, nil
 	}
@@ -845,8 +844,7 @@ func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[strin
 	if r == nil {
 		return GenFn{}, false, nil
 	}
-	vr, ok := r.Repr.(ViaRole)
-	if !ok {
+	if _, ok := r.Repr.(ViaRole); !ok {
 		return GenFn{}, false, nil
 	}
 
@@ -857,13 +855,6 @@ func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[strin
 	}
 	objLevel := obj.Scoped[len(obj.Scoped)-1]
 	keys := presetLevels[objLevel]
-	if vr.HasRank {
-
-		keys = atOrAbove(keys, vr.RankMin, rankIdx)
-		recurse := s.parentLevelRecurse(obj)
-		return s.roleDefiner("is_"+vr.RankMin, rs, objLevel, keys, recurse), true, nil
-	}
-
 	return s.roleDefiner(fmt.Sprintf("%s_has_%s_role", s.adminName(), obj.Name), rs, objLevel, keys, ""), true, nil
 }
 
@@ -1436,11 +1427,9 @@ func (s *Spec) structuralAccessorDefiner(obj *Object) (GenFn, bool, error) {
 		rels[r.Name] = r
 	}
 	presetLevels := presetLevelMap(s)
-	rankIdx := rankIndex(s)
-
 	var branches []string
 	for _, t := range sel.Expr {
-		b, err := s.structuralTermEnum(obj, t, rels, rs, presetLevels, rankIdx)
+		b, err := s.structuralTermEnum(obj, t, rels, rs, presetLevels)
 		if err != nil {
 			return GenFn{}, false, err
 		}
@@ -1464,7 +1453,7 @@ func (s *Spec) structuralAccessorDefiner(obj *Object) (GenFn, bool, error) {
 	}, true, nil
 }
 
-func (s *Spec) structuralTermEnum(obj *Object, t *Term, rels map[string]*Relation, rs *RoleStore, presetLevels map[string][]string, rankIdx map[string]int) ([]string, error) {
+func (s *Spec) structuralTermEnum(obj *Object, t *Term, rels map[string]*Relation, rs *RoleStore, presetLevels map[string][]string) ([]string, error) {
 	if t.WalkVerb != "" {
 
 		parent := rels[t.Ident]
@@ -1491,11 +1480,7 @@ func (s *Spec) structuralTermEnum(obj *Object, t *Term, rels map[string]*Relatio
 			}
 		}
 		objLevel := obj.Scoped[len(obj.Scoped)-1]
-		keys := presetLevels[objLevel]
-		if repr.HasRank {
-			keys = atOrAbove(keys, repr.RankMin, rankIdx)
-		}
-		return []string{s.roleEnumSQL(obj, rs, objLevel, keys, "role", "read")}, nil
+		return []string{s.roleEnumSQL(obj, rs, objLevel, presetLevels[objLevel], "role", "read")}, nil
 	case ViaMemberIn:
 
 		return []string{s.memberinEnumSQL(obj, rs, repr.Level)}, nil
@@ -1652,19 +1637,6 @@ func (rs *RoleStore) revokedCond(alias string) []string {
 	return []string{fmt.Sprintf("%s%s IS NULL", alias, rs.RevokedCol)}
 }
 
-func rankIndex(s *Spec) map[string]int {
-	for _, v := range s.Vocabs {
-		if len(v.Rank) > 0 {
-			m := map[string]int{}
-			for i, r := range v.Rank {
-				m[r] = i
-			}
-			return m
-		}
-	}
-	return map[string]int{}
-}
-
 func presetLevelMap(s *Spec) map[string][]string {
 	out := map[string][]string{}
 	for _, v := range s.Vocabs {
@@ -1677,16 +1649,3 @@ func presetLevelMap(s *Spec) map[string][]string {
 	return out
 }
 
-func atOrAbove(keys []string, threshold string, rankIdx map[string]int) []string {
-	tIdx, ok := rankIdx[threshold]
-	if !ok {
-		return nil
-	}
-	var out []string
-	for _, k := range keys {
-		if ki, ok := rankIdx[k]; ok && ki <= tIdx {
-			out = append(out, k)
-		}
-	}
-	return out
-}

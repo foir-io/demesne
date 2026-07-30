@@ -50,7 +50,7 @@ export const workspace = {
   },
 
   async canEdit(q: Querier, id: string): Promise<Decision> {
-    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1 AND (auth.is_root((current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.is_tenant_staff((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id) OR id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND auth.is_ws_editor((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, id)))))", [id]);
+    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1 AND (auth.is_root((current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.is_tenant_staff((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id) OR id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND auth.staff_has_workspace_role((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, id)))))", [id]);
     return composeCan(true, Boolean(rows[0]?.exists), Decision.NotGoverned);
   },
 

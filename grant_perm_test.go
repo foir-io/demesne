@@ -183,7 +183,7 @@ object customers {
   table  customers
   scoped tenant > project
   relation self:   customer via id
-  relation member: admin via role(rank >= project_viewer)
+  relation member: admin via role
   permission view = self + member + @kind("service")  @rls maps select
 }
 `
@@ -204,7 +204,7 @@ object customers {
 	for _, want := range []string{
 		"(current_setting('request.jwt.claims', true)::json ->> 'kind') = 'service'",
 		"id = (current_setting('request.jwt.claims', true)::json ->> 'customer_id')",
-		"auth.is_project_viewer(",
+		"auth.admin_has_customers_role(",
 		"auth.impersonation_grants_reach(",
 	} {
 		if !strings.Contains(sel, want) {

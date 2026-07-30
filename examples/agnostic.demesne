@@ -36,7 +36,7 @@ object space {
   scoped tenant > space
   relation tenant: tenant via tenant_ref
   relation crew:   crew via role
-  relation boss:   crew via role(rank >= editor)
+  relation boss:   crew via role
   permission view = tenant->owner + crew + @session   @rls maps select
   permission edit = tenant->owner + @session(boss)    @rls maps update
 }
