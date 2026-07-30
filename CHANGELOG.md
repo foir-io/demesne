@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## v0.77.0
+
+### Known limitation — the generated `Holds` helper cannot read a NULL scope column
+
+Pre-existing, and made significant by v0.76.0. The generated `Holds`/`HoldsRoles`
+scan every scope column into a `string`, so a SQL NULL fails the scan outright in
+Go (`database/sql` cannot convert NULL to string) and becomes the literal
+`"null"` in TypeScript. v0.76.0 made a NULL root scope *meaningful* — it is how a
+global assignment is expressed — so these helpers cannot read the very rows the
+new semantics are about.
+
+Plane rolestores are unaffected: their pinned columns are neither selected nor
+scanned. `HoldsResolver.Resolve` is also unaffected — a consumer that reads its
+own rows (for example through pgx/pgtype) and calls `Resolve` directly gets the
+correct semantics. Only the generated fetch helpers are affected. Fixing it
+rewrites every committed golden and so lands separately.
 
 ### Added — rolestore planes, and `@holds` resolving to the owning rolestore
 
