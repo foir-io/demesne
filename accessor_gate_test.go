@@ -217,10 +217,10 @@ func TestAccessorTree_AndNot_Composes(t *testing.T) {
 	if ok, reason := cover(obj); !ok {
 		t.Fatalf("grantee:read AND NOT blocked should compose (covered), got: %s", reason)
 	}
-	sql, ok := (&Spec{Objects: []*Object{obj}}).accessorTreeSQL(obj, obj.Perms[0].Tree,
+	sql, err := (&Spec{Objects: []*Object{obj}}).accessorTreeSQL(obj, obj.Perms[0].Tree,
 		map[string]*Relation{"grantee": obj.Relations[0], "blocked": obj.Relations[1]})
-	if !ok {
-		t.Fatal("composer should succeed for composable content leaves")
+	if err != nil {
+		t.Fatalf("composer should succeed for composable content leaves: %v", err)
 	}
 	for _, want := range []string{
 		"SELECT a.* FROM (",
@@ -229,6 +229,84 @@ func TestAccessorTree_AndNot_Composes(t *testing.T) {
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("composed and/not SQL missing %q:\n%s", want, sql)
+		}
+	}
+}
+
+func TestAccessorAnd_ClaimConjunct_DroppedInReverse(t *testing.T) {
+	g := ViaGrant{Table: "resource_acl", RecordCol: "resource_id", KindCol: "principal_kind", PrincipalCol: "principal_id", AccessCol: "access"}
+	obj := &Object{
+		Name: "doc", Table: "docs",
+		Relations: []*Relation{{Name: "grantee", Types: []string{"customer"}, Repr: g}},
+		Perms: []*Perm{selectPerm(
+			[]*Term{{Builtin: "kind", KindVal: "admin"}, {Ident: "grantee:read"}},
+			&PermNode{Op: "and", Kids: []*PermNode{
+				{Op: "leaf", Term: &Term{Builtin: "kind", KindVal: "admin"}},
+				{Op: "leaf", Term: &Term{Ident: "grantee:read"}},
+			}},
+		)},
+	}
+	if ok, reason := cover(obj); !ok {
+		t.Fatalf("@kind and grantee:read must be covered (claim conjunct is neutral in reverse), got: %s", reason)
+	}
+	sql, err := (&Spec{Objects: []*Object{obj}}).accessorTreeSQL(obj, obj.Perms[0].Tree,
+		map[string]*Relation{"grantee": obj.Relations[0]})
+	if err != nil {
+		t.Fatalf("composer must succeed after dropping the claim conjunct: %v", err)
+	}
+	if !strings.Contains(sql, "resource_acl") {
+		t.Errorf("composed SQL lost the grant branch:\n%s", sql)
+	}
+	if strings.Contains(sql, "IN (SELECT") {
+		t.Errorf("the claim conjunct must be dropped, not intersected:\n%s", sql)
+	}
+}
+
+func TestAccessorAnd_OnlyClaimTerms_FailsClosed(t *testing.T) {
+	obj := &Object{
+		Name: "doc", Table: "docs",
+		Perms: []*Perm{selectPerm(
+			[]*Term{{Builtin: "kind", KindVal: "admin"}, {Builtin: "session"}},
+			&PermNode{Op: "and", Kids: []*PermNode{
+				{Op: "leaf", Term: &Term{Builtin: "kind", KindVal: "admin"}},
+				{Op: "leaf", Term: &Term{Builtin: "session"}},
+			}},
+		)},
+	}
+	ok, reason := cover(obj)
+	if ok {
+		t.Fatal("a conjunction of only claim-side builtins must fail closed")
+	}
+	for _, want := range []string{"@kind", "@session", "claim-side"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("reason should contain %q, got: %s", want, reason)
+		}
+	}
+}
+
+func TestAccessorAnd_NonNeutralBuiltins_StillFailClosed(t *testing.T) {
+	g := ViaGrant{Table: "resource_acl", RecordCol: "resource_id", KindCol: "principal_kind", PrincipalCol: "principal_id", AccessCol: "access"}
+	for _, tc := range []struct {
+		name string
+		term *Term
+	}{
+		{"public would mean everyone", &Term{Builtin: "public"}},
+		{"open would mean everyone", &Term{Builtin: "open"}},
+		{"self is a row/claim hybrid the enumerator cannot reverse", &Term{Builtin: "self", SelfCol: "user_id"}},
+	} {
+		obj := &Object{
+			Name: "doc", Table: "docs",
+			Relations: []*Relation{{Name: "grantee", Types: []string{"customer"}, Repr: g}},
+			Perms: []*Perm{selectPerm(
+				[]*Term{tc.term, {Ident: "grantee"}},
+				&PermNode{Op: "and", Kids: []*PermNode{
+					{Op: "leaf", Term: tc.term},
+					{Op: "leaf", Term: &Term{Ident: "grantee"}},
+				}},
+			)},
+		}
+		if ok, _ := cover(obj); ok {
+			t.Errorf("%s: @%s in a conjunction must fail closed", tc.name, tc.term.Builtin)
 		}
 	}
 }

@@ -89,6 +89,9 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 	}
 	s.defEmitPlatformRoles(&out, seen, rs, presetLevels)
 	s.defEmitScopedMemberin(&out, seen, rs, presetLevels)
+	if err := s.defEmitHoldsPerm(&out, seen, rs); err != nil {
+		return nil, err
+	}
 	if err := s.defEmitKernel(&out, seen); err != nil {
 		return nil, err
 	}
@@ -230,6 +233,64 @@ func (s *Spec) defEmitScopedMemberin(out *[]GenFn, seen map[string]bool, rs *Rol
 	}
 }
 
+func (s *Spec) defEmitHoldsPerm(out *[]GenFn, seen map[string]bool, rs *RoleStore) error {
+	for _, obj := range s.Objects {
+		for _, pm := range obj.Perms {
+			for _, t := range pm.Expr {
+				if t == nil || t.Builtin != "holds" {
+					continue
+				}
+				if rs == nil {
+					return fmt.Errorf("object %q permission %q uses @holds(%q) but the spec declares no rolestore", obj.Name, pm.Verb, t.HoldsPerm)
+				}
+				if rs.PermsCol == "" {
+					return fmt.Errorf("object %q permission %q uses @holds(%q) but rolestore %q declares no `permissions` column", obj.Name, pm.Verb, t.HoldsPerm, rs.Name)
+				}
+				name := s.adminName() + "_has_perm"
+				if !seen[name] {
+					seen[name] = true
+					*out = append(*out, s.holdsPermDefiner(name, rs))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// holdsPermDefiner scopes like the Go HoldsResolver (root level exact, deeper
+// levels wildcard-on-NULL: a tenant-wide assignment confers the permission in
+// every project), unlike roleDefiner, which pins off-path levels to IS NULL.
+func (s *Spec) holdsPermDefiner(name string, rs *RoleStore) GenFn {
+	chain, _ := s.Topology.Chain()
+	args := []string{"user_id text"}
+	var scope []string
+	i := 0
+	for _, l := range chain {
+		if l.Virtual {
+			continue
+		}
+		if i >= len(rs.ScopeCols) {
+			break
+		}
+		col := rs.ScopeCols[i]
+		arg := "check_" + l.Name + "_id"
+		args = append(args, arg+" text")
+		if i == 0 {
+			scope = append(scope, fmt.Sprintf("ra.%s = %s", col, arg))
+		} else {
+			scope = append(scope, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = %s)", col, col, arg))
+		}
+		i++
+	}
+	args = append(args, "p_perm text")
+	body := fmt.Sprintf(
+		"EXISTS (SELECT 1 FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE ra.%s = '%s' AND ra.%s = user_id AND %s AND ra.%s IS NULL AND p_perm = ANY(r.%s))",
+		rs.Assignments, rs.RolesTable, rs.RolesID, rs.RoleCol,
+		rs.KindCol, rs.KindVal, rs.SubjectCol, strings.Join(scope, " AND "),
+		rs.RevokedCol, rs.PermsCol)
+	return GenFn{Name: name, Sig: strings.Join(args, ", "), Body: body}
+}
+
 func (s *Spec) defEmitReachChain(out *[]GenFn, seen map[string]bool, rs *RoleStore, presetLevels map[string][]string, level string) {
 	path, err := s.Topology.AncestorPath(level)
 	if err != nil {
@@ -368,8 +429,8 @@ func (s *Spec) accessorCoverageSeen(obj *Object, seen map[string]bool) (bool, st
 	}
 	if accessorTreeOp(sel.Tree) != "" {
 
-		if _, ok := s.accessorTreeSQL(obj, sel.Tree, rels); !ok {
-			return false, "its SELECT permission intersects/excludes over a term the accessor enumerator cannot compose (only owner/grant/group/closure/object leaves)"
+		if _, err := s.accessorTreeSQL(obj, sel.Tree, rels); err != nil {
+			return false, err.Error()
 		}
 		return true, ""
 	}
@@ -917,7 +978,7 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 	}
 
 	if sel != nil && accessorTreeOp(sel.Tree) != "" {
-		if composed, ok := s.accessorTreeSQL(obj, sel.Tree, rels); ok {
+		if composed, err := s.accessorTreeSQL(obj, sel.Tree, rels); err == nil {
 			return []GenFn{accessorGenFn(obj.Table, []string{composed})}
 		}
 	}
@@ -1096,9 +1157,12 @@ func objectAccessorBranch(table, pk string, vo ViaObject, otherTable, schema str
 		table, schema, otherTable, vo.Col, pk)
 }
 
-func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Relation) (string, bool) {
-	if t == nil || t.Ident == "" {
-		return "", false
+func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Relation) (string, error) {
+	if t == nil {
+		return "", fmt.Errorf("empty term in the SELECT permission tree")
+	}
+	if t.Ident == "" {
+		return "", fmt.Errorf("term %q has no accessor branch (only owner/grant/group/closure/object relation leaves enumerate)", t.String())
 	}
 
 	name := t.Ident
@@ -1107,7 +1171,7 @@ func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Rela
 	}
 	r := rels[name]
 	if r == nil {
-		return "", false
+		return "", fmt.Errorf("term %q names no relation the accessor enumerator can reverse", t.Ident)
 	}
 	kind := ""
 	if len(r.Types) > 0 {
@@ -1115,29 +1179,29 @@ func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Rela
 	}
 	switch repr := r.Repr.(type) {
 	case ViaColumn:
-		return ownerAccessorBranch(obj.Table, obj.pk(), kind, repr, false), true
+		return ownerAccessorBranch(obj.Table, obj.pk(), kind, repr, false), nil
 	case ViaGrant:
-		return grantAccessorBranch(&repr), true
+		return grantAccessorBranch(&repr), nil
 	case ViaGroup:
-		return groupAccessorBranch(obj.Table, obj.pk(), kind, repr, s.groupFlatName(obj, r, repr)), true
+		return groupAccessorBranch(obj.Table, obj.pk(), kind, repr, s.groupFlatName(obj, r, repr)), nil
 	case ViaClosure:
-		return closureAccessorBranch(obj.Table, obj.pk(), kind, repr), true
+		return closureAccessorBranch(obj.Table, obj.pk(), kind, repr), nil
 	case ViaObject:
-		if ok, _ := s.viaObjectCovered(repr, map[string]bool{}); !ok {
-			return "", false
+		if ok, reason := s.viaObjectCovered(repr, map[string]bool{}); !ok {
+			return "", fmt.Errorf("relation %q borrows %s->%s, not soundly enumerable (%s)", name, repr.Object, repr.Verb, reason)
 		}
 		other := s.objectByName(repr.Object)
 		if other == nil {
-			return "", false
+			return "", fmt.Errorf("relation %q borrows unknown object %q", name, repr.Object)
 		}
-		return objectAccessorBranch(obj.Table, obj.pk(), repr, other.Table, s.definerSchema()), true
+		return objectAccessorBranch(obj.Table, obj.pk(), repr, other.Table, s.definerSchema()), nil
 	}
-	return "", false
+	return "", fmt.Errorf("relation %q (%T) has no accessor branch (only owner/grant/group/closure/object leaves compose)", name, r.Repr)
 }
 
-func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, bool) {
+func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, error) {
 	if n == nil {
-		return "", false
+		return "", fmt.Errorf("empty permission tree")
 	}
 	switch n.Op {
 	case "leaf":
@@ -1145,40 +1209,61 @@ func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relati
 	case "or":
 		var parts []string
 		for _, k := range n.Kids {
-			sql, ok := s.accessorTreeSQL(obj, k, rels)
-			if !ok {
-				return "", false
+			sql, err := s.accessorTreeSQL(obj, k, rels)
+			if err != nil {
+				return "", err
 			}
 			parts = append(parts, "("+sql+")")
 		}
 		if len(parts) == 0 {
-			return "", false
+			return "", fmt.Errorf("empty union in the SELECT permission tree")
 		}
-		return strings.Join(parts, "\n  UNION ALL\n  "), true
+		return strings.Join(parts, "\n  UNION ALL\n  "), nil
 	case "and":
 		return s.accessorAndSQL(obj, n, rels)
 	}
-	return "", false
+	return "", fmt.Errorf("permission node %q is not enumerable", n.Op)
 }
 
-func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, bool) {
+// A claim-side builtin conjunct is enforced by the forward RLS predicate;
+// dropping it from the reverse enumeration can only over-report, never
+// under-report, so the accessor stays sound.
+func claimNeutralAccessorLeaf(n *PermNode) bool {
+	if n == nil || n.Op != "leaf" || n.Term == nil {
+		return false
+	}
+	switch n.Term.Builtin {
+	case "kind", "app_scope", "session", "within", "scoped", "holds":
+		return true
+	}
+	return false
+}
+
+func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, error) {
 	var positives, negatives []*PermNode
+	var dropped []string
 	for _, k := range n.Kids {
-		if k.Op == "not" {
+		switch {
+		case k.Op == "not":
 			if len(k.Kids) != 1 {
-				return "", false
+				return "", fmt.Errorf("malformed negation in the SELECT permission tree")
 			}
 			negatives = append(negatives, k.Kids[0])
-		} else {
+		case claimNeutralAccessorLeaf(k):
+			dropped = append(dropped, k.Term.String())
+		default:
 			positives = append(positives, k)
 		}
 	}
 	if len(positives) == 0 {
-		return "", false
+		if len(dropped) > 0 {
+			return "", fmt.Errorf("a conjunction of only claim-side builtins (%s) leaves no relational term to enumerate", strings.Join(dropped, ", "))
+		}
+		return "", fmt.Errorf("a conjunction needs a positive relational term to enumerate")
 	}
-	base, ok := s.accessorTreeSQL(obj, positives[0], rels)
-	if !ok {
-		return "", false
+	base, err := s.accessorTreeSQL(obj, positives[0], rels)
+	if err != nil {
+		return "", err
 	}
 	idIn := func(sub string) string {
 		return fmt.Sprintf("(a.principal_kind, a.principal_id) IN (SELECT b.principal_kind, b.principal_id FROM (%s) b(source, principal_kind, principal_id, access))", sub)
@@ -1188,23 +1273,23 @@ func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relatio
 	}
 	var filters []string
 	for _, p := range positives[1:] {
-		sub, ok := s.accessorTreeSQL(obj, p, rels)
-		if !ok {
-			return "", false
+		sub, err := s.accessorTreeSQL(obj, p, rels)
+		if err != nil {
+			return "", err
 		}
 		filters = append(filters, idIn(sub))
 	}
 	for _, ng := range negatives {
-		sub, ok := s.accessorTreeSQL(obj, ng, rels)
-		if !ok {
-			return "", false
+		sub, err := s.accessorTreeSQL(obj, ng, rels)
+		if err != nil {
+			return "", err
 		}
 		filters = append(filters, idNotIn(sub))
 	}
 	if len(filters) == 0 {
-		return base, true
+		return base, nil
 	}
-	return fmt.Sprintf("SELECT a.* FROM (%s) a(source, principal_kind, principal_id, access)\n    WHERE %s", base, strings.Join(filters, "\n      AND ")), true
+	return fmt.Sprintf("SELECT a.* FROM (%s) a(source, principal_kind, principal_id, access)\n    WHERE %s", base, strings.Join(filters, "\n      AND ")), nil
 }
 
 func defOwnerAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {

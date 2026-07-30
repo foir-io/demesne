@@ -166,6 +166,29 @@ parentheses, with precedence union < intersection < `not`. So `viewer and member
 Negation is fail-closed: an exclusion whose condition can't be determined (a NULL
 claim) denies. A union-only expression is unchanged.
 
+Claim-side builtins (`@kind`, `@session`, `@app_scope`, `@within`, `@scoped`,
+`@holds`) compose inside intersections: `(@kind("admin") and grantee:read)`
+enforces both in the emitted policy. The reverse accessor enumeration treats a
+claim-side conjunct as neutral — it drops the conjunct and may over-report,
+never under-report, because the forward RLS still enforces it — and refuses,
+fail-closed, when a conjunction leaves no relational term to enumerate. A
+`@public`, `@open`, or `@self` conjunct still refuses: the first two would mean
+"everyone", and `@self` binds a row column to the caller's claim, which the
+enumerator cannot reverse.
+
+A permission can also gate on what the caller *holds*: `@holds(docs:publish)`
+means "the caller's admin role confers `docs:publish` at this row's scope" and
+compiles to a generated `<admin>_has_perm` definer matching the verb against the
+rolestore's materialized `permissions` array (`p_perm = ANY(...)`). It scopes
+like the Go `HoldsResolver`: the root scope level must match exactly, and an
+assignment left NULL at a deeper level confers the permission everywhere below
+it (a tenant-wide assignment reaches every project). Because the check keys on
+the permission verb at query time, editing a role's permissions array changes
+the floor immediately, with no re-emit — unlike preset-key grants, whose key
+sets are baked into definer bodies. `@holds` needs a rolestore with a
+`permissions` column and a verb from its vocabulary, and rides the @rls and
+@check layers; in a @pdp permission, write the permission key as a bare term.
+
 The language adds five more constructs on top of that:
 
 - **Permission templates.** A named, reusable permission set. Declare it with

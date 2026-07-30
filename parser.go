@@ -1510,6 +1510,21 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 	if b == "within" {
 		return p.parseWithin(t)
 	}
+
+	if b == "holds" {
+		if _, err := p.expect(tLParen); err != nil {
+			return err
+		}
+		switch p.peekKind() {
+		case tPermKey, tString:
+			t.HoldsPerm = p.advance().lit
+		default:
+			return p.errf("@holds needs a permission verb (`@holds(<domain>:<verb>)`), got %s %q", p.peekKind(), p.cur().lit)
+		}
+		if _, err := p.expect(tRParen); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1887,6 +1902,8 @@ func (t *Term) String() string {
 			return "@within(" + t.WithinLevel + " nullable)"
 		}
 		return "@within(" + t.WithinLevel + ")"
+	case t.Builtin == "holds":
+		return "@holds(" + t.HoldsPerm + ")"
 	case t.Builtin != "":
 		return "@" + t.Builtin
 	case t.WalkVerb != "":

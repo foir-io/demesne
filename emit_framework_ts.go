@@ -258,8 +258,11 @@ func (g *fwTSGen) pdpCanTS(method string, pm *Perm) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %s(held: EffectivePerms): Decision {\n", method)
 	for _, t := range pm.Expr {
-		if t.Ident != "" {
+		switch {
+		case t.Ident != "":
 			fmt.Fprintf(&b, "    if (!held.holds(%s)) return Decision.Deny;\n", tsStr(t.Ident))
+		case t.Builtin == "holds" && t.HoldsPerm != "":
+			fmt.Fprintf(&b, "    if (!held.holds(%s)) return Decision.Deny;\n", tsStr(t.HoldsPerm))
 		}
 	}
 	b.WriteString("    return Decision.Allow;\n")

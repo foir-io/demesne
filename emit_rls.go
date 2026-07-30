@@ -633,12 +633,47 @@ func (s *Spec) rlsEmitBuiltin(obj *Object, pm *Perm, t *Term, rels map[string]*R
 			return []string{fmt.Sprintf("(%s IS NULL OR %s = %s)", col, col, claim)}, true, nil
 		}
 		return []string{fmt.Sprintf("%s = %s", col, claim)}, true, nil
+	case t.Builtin == "holds":
+		frags, err := s.rlsEmitHolds(obj, t)
+		return frags, true, err
 	case t.Builtin != "":
 		return nil, true, fmt.Errorf("builtin @%s is not emittable in RLS", t.Builtin)
 	case isPermKeyLit(t.Ident):
 		return nil, true, fmt.Errorf("capability term %q belongs to the PDP, not RLS", t.Ident)
 	}
 	return nil, false, nil
+}
+
+func (s *Spec) rlsEmitHolds(obj *Object, t *Term) ([]string, error) {
+	rs := roleStoreByName(s)
+	if rs == nil {
+		return nil, fmt.Errorf("@holds(%q) on %q: the spec declares no rolestore", t.HoldsPerm, obj.Name)
+	}
+	if rs.PermsCol == "" {
+		return nil, fmt.Errorf("@holds(%q) on %q: rolestore %q declares no `permissions` column", t.HoldsPerm, obj.Name, rs.Name)
+	}
+	chain, err := s.Topology.Chain()
+	if err != nil {
+		return nil, err
+	}
+	args := []string{s.claim(s.adminIdentify())}
+	i := 0
+	for _, l := range chain {
+		if l.Virtual {
+			continue
+		}
+		if i >= len(rs.ScopeCols) {
+			break
+		}
+		if contains(obj.Scoped, l.Name) {
+			args = append(args, s.scopeCol(obj, l.Name))
+		} else {
+			args = append(args, "NULL")
+		}
+		i++
+	}
+	args = append(args, "'"+t.HoldsPerm+"'")
+	return []string{fmt.Sprintf("%s.%s_has_perm(%s)", s.definerSchema(), s.adminName(), strings.Join(args, ", "))}, nil
 }
 
 func (s *Spec) rlsEmitAppScope(obj *Object, t *Term, rels map[string]*Relation, custClaim string) ([]string, error) {

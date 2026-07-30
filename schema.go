@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 type Schema struct {
@@ -52,12 +53,17 @@ func (s *Schema) Tables() []string {
 }
 
 func (s *Schema) hasColumn(table, col string) bool {
+	_, ok := s.column(table, col)
+	return ok
+}
+
+func (s *Schema) column(table, col string) (Column, bool) {
 	cols, ok := s.tables[table]
 	if !ok {
-		return false
+		return Column{}, false
 	}
-	_, ok = cols[col]
-	return ok
+	c, ok := cols[col]
+	return c, ok
 }
 
 func (s *Spec) emissionReferencesPK(o *Object) bool {
@@ -92,7 +98,7 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 		s.schCheckObjectRefs(b, o)
 	}
 	for _, rs := range s.RoleStores {
-		schCheckRoleStoreRefs(b, rs)
+		s.schCheckRoleStoreRefs(b, rs)
 	}
 	for _, g := range s.Grants {
 		schCheckGrantRefs(b, g)
@@ -238,7 +244,7 @@ func schCheckRelationRefs(b *schBinder, o *Object, r *Relation) {
 	}
 }
 
-func schCheckRoleStoreRefs(b *schBinder, rs *RoleStore) {
+func (s *Spec) schCheckRoleStoreRefs(b *schBinder, rs *RoleStore) {
 	rc := "rolestore " + rs.Name
 	if b.reqTable(rs.Assignments, rc) {
 		for _, c := range append([]string{rs.KindCol, rs.SubjectCol, rs.RoleCol, rs.RevokedCol}, rs.ScopeCols...) {
@@ -251,8 +257,31 @@ func schCheckRoleStoreRefs(b *schBinder, rs *RoleStore) {
 
 		if rs.PermsCol != "" {
 			b.reqCol(rs.RolesTable, rs.PermsCol, rc+" roles")
+			if s.usesHolds() {
+				if col, ok := b.sc.column(rs.RolesTable, rs.PermsCol); ok && !isArrayDataType(col.DataType) {
+					b.errs = append(b.errs, fmt.Errorf("%s roles: column %q has type %q, not an array — @holds compiles to `p_perm = ANY(%s)`, which needs a text[] (or other array) column", rc, rs.PermsCol, col.DataType, rs.PermsCol))
+				}
+			}
 		}
 	}
+}
+
+func (s *Spec) usesHolds() bool {
+	for _, o := range s.Objects {
+		for _, pm := range o.Perms {
+			for _, t := range pm.Expr {
+				if t != nil && t.Builtin == "holds" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func isArrayDataType(dt string) bool {
+	up := strings.ToUpper(dt)
+	return strings.Contains(up, "ARRAY") || strings.HasSuffix(up, "[]") || strings.HasPrefix(dt, "_")
 }
 
 func schCheckGrantRefs(b *schBinder, g *Grant) {
