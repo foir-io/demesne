@@ -113,6 +113,8 @@ func (p *parser) parseDecl(s *Spec) error {
 		return p.ppDeclDefiners(s)
 	case "tables":
 		return p.ppDeclTables(s)
+	case "identifiers":
+		return p.ppDeclIdentifiers(s)
 	default:
 		return p.errf("unknown declaration %q", p.cur().lit)
 	}
@@ -236,6 +238,19 @@ func (p *parser) ppDeclDefiners(s *Spec) error {
 		return p.errf("duplicate definers block")
 	}
 	s.DefinerSchema = sch.lit
+	return nil
+}
+
+func (p *parser) ppDeclIdentifiers(s *Spec) error {
+	p.advance()
+	t, err := p.ident()
+	if err != nil {
+		return err
+	}
+	if s.Identifiers != "" {
+		return p.errf("duplicate identifiers declaration")
+	}
+	s.Identifiers = t
 	return nil
 }
 

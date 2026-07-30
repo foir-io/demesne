@@ -247,7 +247,14 @@ func schCheckRelationRefs(b *schBinder, o *Object, r *Relation) {
 func (s *Spec) schCheckRoleStoreRefs(b *schBinder, rs *RoleStore) {
 	rc := "rolestore " + rs.Name
 	if b.reqTable(rs.Assignments, rc) {
-		for _, c := range append([]string{rs.KindCol, rs.SubjectCol, rs.RoleCol, rs.RevokedCol}, rs.ScopeCols...) {
+		cols := []string{rs.SubjectCol, rs.RoleCol}
+		if rs.KindCol != "" {
+			cols = append(cols, rs.KindCol)
+		}
+		if rs.RevokedCol != "" {
+			cols = append(cols, rs.RevokedCol)
+		}
+		for _, c := range append(cols, rs.ScopeCols...) {
 			b.reqCol(rs.Assignments, c, rc)
 		}
 	}

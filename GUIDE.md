@@ -219,6 +219,15 @@ where your governed tables live. The table schema qualifies the emitted
 ENABLE/FORCE, policy, and trigger DDL. Both default to `auth`/`public`, so a spec
 that omits them emits byte-identically.
 
+Identifiers are `text` by default, because they arrive as JWT claims. If your
+keys are another SQL type, declare it once — `identifiers uuid` — and the emitter
+types every generated definer parameter with it and casts identifier claims to it
+(`(claims ->> 'sub')::uuid`). Columns are still passed natively, so indexes stay
+usable. Any SQL type works (`uuid`, `bigint`, `citext`, a domain); nothing in the
+emitter special-cases a particular one. Value claims like `@kind` stay `text` —
+they are compared against string literals, not keys. A spec that omits the
+declaration emits byte-identically to one written before it existed.
+
 A level grant and a descriptor's ACL edge are the same reachability-grant concept
 at different granularities — a level subtree versus a single row. They're unified
 in the spec but kept as separate physical stores, never one generic tuple table.

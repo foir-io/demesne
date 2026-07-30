@@ -228,6 +228,14 @@ type MaterializedFlat struct {
 	Kind        string
 
 	ClaimExpr string
+	IDType    string
+}
+
+func (m MaterializedFlat) idType() string {
+	if m.IDType != "" {
+		return m.IDType
+	}
+	return "text"
 }
 
 func (m MaterializedFlat) schema() string {
@@ -248,10 +256,10 @@ func (m MaterializedFlat) reconcileFn() string { return m.schema() + "." + m.Fla
 
 func (m MaterializedFlat) TableSQL() string {
 	return fmt.Sprintf(
-		"CREATE TABLE IF NOT EXISTS %[1]s (resource_id text NOT NULL, principal_kind text NOT NULL, principal_id text NOT NULL);\n"+
+		"CREATE TABLE IF NOT EXISTS %[1]s (resource_id %[3]s NOT NULL, principal_kind text NOT NULL, principal_id %[3]s NOT NULL);\n"+
 			"CREATE INDEX IF NOT EXISTS %[2]s_res_idx ON %[1]s (resource_id);\n"+
 			"CREATE INDEX IF NOT EXISTS %[2]s_prin_idx ON %[1]s (principal_id);\n",
-		m.qFlat(), m.Flat)
+		m.qFlat(), m.Flat, m.idType())
 }
 
 func (m MaterializedFlat) FunctionSQL() string {
@@ -316,7 +324,7 @@ func (m MaterializedFlat) MemberDefiner() GenFn {
 		Schema:      m.schema(),
 		TableSchema: m.tableSchema(),
 		Name:        m.Flat + "_member",
-		Sig:         "p_resource text, p_principal text",
+		Sig:         "p_resource " + m.idType() + ", p_principal " + m.idType(),
 		Body:        fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE resource_id = p_resource AND principal_id = p_principal)", m.qFlat()),
 	}
 }
@@ -361,7 +369,7 @@ func (s *Spec) EmitMaterializedFlats() []MaterializedFlat {
 		claimExpr := ""
 		if len(obj.Scoped) > 0 {
 			if cust := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1]); cust != nil {
-				claimExpr = s.claim(cust.Identifies)
+				claimExpr = s.idClaim(cust.Identifies)
 			}
 		}
 		for _, r := range obj.Relations {
@@ -378,7 +386,7 @@ func (s *Spec) EmitMaterializedFlats() []MaterializedFlat {
 				Flat:     obj.Table + "_" + r.Name + "_flat",
 				ObjTable: obj.Table, ObjPK: obj.pk(), Col: g.Col,
 				Closure: g.Closure, GroupCol: g.GroupCol, MemberCol: g.MemberCol,
-				Kind: kind, ClaimExpr: claimExpr,
+				Kind: kind, ClaimExpr: claimExpr, IDType: s.idType(),
 			})
 		}
 	}

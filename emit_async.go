@@ -52,6 +52,14 @@ type AsyncIndex struct {
 	PrincipalCol string
 	DiscrimCol   string
 	DiscrimVal   string
+	IDType       string
+}
+
+func (a AsyncIndex) idType() string {
+	if a.IDType != "" {
+		return a.IDType
+	}
+	return "text"
 }
 
 func (a AsyncIndex) applyFn() string      { return a.Base + "_apply" }
@@ -79,13 +87,13 @@ func (a AsyncIndex) TableSQL() string {
 	idx := strings.ReplaceAll(a.indexKey(), ".", "_")
 	return fmt.Sprintf(
 		"CREATE TABLE IF NOT EXISTS %[1]s (\n"+
-			"  resource_id text NOT NULL,\n"+
+			"  resource_id %[3]s NOT NULL,\n"+
 			"  principal_kind text NOT NULL,\n"+
-			"  principal_id text NOT NULL,\n"+
+			"  principal_id %[3]s NOT NULL,\n"+
 			"  PRIMARY KEY (resource_id, principal_kind, principal_id)\n"+
 			");\n"+
 			"CREATE INDEX IF NOT EXISTS %[2]s_prin_idx ON %[1]s (principal_kind, principal_id);\n",
-		a.Base, idx)
+		a.Base, idx, a.idType())
 }
 
 func (a AsyncIndex) ApplyFnSQL() string {
@@ -148,13 +156,13 @@ $$;`, a.rebuildFn(), a.Cursor, a.indexKey(), a.Base,
 }
 
 func (a AsyncIndex) AffordanceFnSQL() string {
-	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s(p_resource text, p_kind text, p_principal text)
+	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s(p_resource %[5]s, p_kind text, p_principal %[5]s)
 RETURNS TABLE(allowed boolean, as_of xid8)
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public
 AS $$
   SELECT EXISTS(SELECT 1 FROM %[2]s WHERE resource_id = p_resource AND principal_kind = p_kind AND principal_id = p_principal),
          COALESCE((SELECT applied_horizon FROM %[3]s WHERE index_name = '%[4]s'), '0'::xid8);
-$$;`, a.affordanceFn(), a.Base, a.Cursor, a.indexKey())
+$$;`, a.affordanceFn(), a.Base, a.Cursor, a.indexKey(), a.idType())
 }
 
 func (a AsyncIndex) WatermarkFnSQL() string {
@@ -189,6 +197,7 @@ func (s *Spec) EmitAsyncIndexes() []AsyncIndex {
 				Base:       s.asyncIndexBase(obj.Table, r.Name),
 				GrantTable: g.Table, RecordCol: g.RecordCol, KindCol: g.KindCol,
 				PrincipalCol: g.PrincipalCol, DiscrimCol: g.DiscrimCol, DiscrimVal: g.DiscrimVal,
+				IDType: s.idType(),
 			})
 		}
 	}

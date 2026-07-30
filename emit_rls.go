@@ -37,6 +37,10 @@ func (s *Spec) claim(key string) string {
 	return fmt.Sprintf("(current_setting('%s', true)::%s ->> '%s')", setting, cast, key)
 }
 
+func (s *Spec) idClaim(key string) string {
+	return s.claim(key) + s.idCast()
+}
+
 func accessFor(op string) string {
 	switch op {
 	case "select":
@@ -254,7 +258,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 	}
 	pred := strings.Join(branches, " OR ")
 	if pm.SelfCheck != "" {
-		guard := fmt.Sprintf("(%s IS NULL OR %s = %s)", pm.SelfCheck, pm.SelfCheck, s.claim(s.adminIdentify()))
+		guard := fmt.Sprintf("(%s IS NULL OR %s = %s)", pm.SelfCheck, pm.SelfCheck, s.idClaim(s.adminIdentify()))
 		pred = fmt.Sprintf("%s AND (%s)", guard, pred)
 	}
 	return pred, nil
@@ -267,7 +271,7 @@ func (s *Spec) rlsSubjectBranches(obj *Object, virtual map[string]bool, objLeaf 
 		switch {
 		case sub.Membership != nil && virtual[sub.Anchor]:
 
-			fn := fmt.Sprintf("%s.%s(%s)", s.definerSchema(), membershipFn(sub.Membership), s.claim(sub.Identifies))
+			fn := fmt.Sprintf("%s.%s(%s)", s.definerSchema(), membershipFn(sub.Membership), s.idClaim(sub.Identifies))
 			if obj.IsLevelEntity() || objIsGlobal {
 				top = append(top, fn)
 			} else {
@@ -275,7 +279,7 @@ func (s *Spec) rlsSubjectBranches(obj *Object, virtual map[string]bool, objLeaf 
 			}
 		case s.isPlatformRoleSubject(sub) && (objHasStaffTerm || (objIsGlobal && sub.Anchor == objLeaf)):
 
-			top = append(top, fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(sub.Anchor), s.claim(sub.Identifies)))
+			top = append(top, fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(sub.Anchor), s.idClaim(sub.Identifies)))
 		case sub.Reach == "grant":
 
 			top, grantInject = s.rlsApplyGrantReach(obj, sub, objLeaf, objIsGlobal, top, grantInject)
@@ -292,7 +296,7 @@ func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, obj
 	if g.Table == obj.Table {
 		return top, grantInject
 	}
-	reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), s.scopeCol(obj, g.Level))
+	reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.idClaim(sub.Identifies), s.scopeCol(obj, g.Level))
 	if g.Level != objLeaf && !obj.IsLevelEntity() && !objIsGlobal {
 
 		grantInject[g.Level] = append(grantInject[g.Level], reach)
@@ -332,7 +336,7 @@ func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string) ([]string
 		if t.Builtin != "self" {
 			continue
 		}
-		frag := fmt.Sprintf("%s = %s", t.SelfCol, s.claim(s.adminIdentify()))
+		frag := fmt.Sprintf("%s = %s", t.SelfCol, s.idClaim(s.adminIdentify()))
 		if !contains(top, frag) {
 			top = append(top, frag)
 		}
@@ -352,7 +356,7 @@ func (s *Spec) rlsContainmentBlock(obj *Object, objLeaf string, grantInject map[
 			if lvl.Virtual || (obj.IsLevelEntity() && lvl.Name == obj.Level) {
 				continue
 			}
-			colPred := fmt.Sprintf("%s = %s", s.scopeCol(obj, lvl.Name), s.claim(lvl.claimKey()))
+			colPred := fmt.Sprintf("%s = %s", s.scopeCol(obj, lvl.Name), s.idClaim(lvl.claimKey()))
 			if reaches := grantInject[lvl.Name]; len(reaches) > 0 {
 
 				colPred = "(" + colPred + " OR " + strings.Join(reaches, " OR ") + ")"
@@ -388,7 +392,7 @@ func (s *Spec) grantRefReach(obj *Object, grantName string) (string, error) {
 	if claim == "" {
 		return "", fmt.Errorf("object %q: grant %q has no reaching subject (a `subject … reach via grant %s`) to supply a claim", obj.Name, grantName, grantName)
 	}
-	return fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(claim), s.scopeCol(obj, g.Level)), nil
+	return fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.idClaim(claim), s.scopeCol(obj, g.Level)), nil
 }
 
 func (s *Spec) objectVerbPredicate(obj *Object, verb string, virtual map[string]bool) (string, error) {
@@ -403,7 +407,7 @@ func (s *Spec) objectVerbPredicate(obj *Object, verb string, virtual map[string]
 
 func (s *Spec) argSrcSQL(a ArgSrc) string {
 	if a.Claim != "" {
-		return s.claim(a.Claim)
+		return s.idClaim(a.Claim)
 	}
 	return a.Col
 }
@@ -579,7 +583,7 @@ func (s *Spec) rlsEmitWalk(obj *Object, t *Term, rels map[string]*Relation) ([]s
 		}
 		nonVirtual = append(nonVirtual, lvl)
 	}
-	args := []string{s.claim(s.adminIdentify())}
+	args := []string{s.idClaim(s.adminIdentify())}
 	for i, lvl := range nonVirtual {
 		if i == len(nonVirtual)-1 {
 			args = append(args, col.Column)
@@ -593,18 +597,18 @@ func (s *Spec) rlsEmitWalk(obj *Object, t *Term, rels map[string]*Relation) ([]s
 func (s *Spec) memberinReachFrag(level string, member bool) (string, error) {
 	if member {
 		name := fmt.Sprintf("%s_memberin_%s", s.adminName(), level)
-		return fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), name, s.claim(s.adminIdentify()), s.claim(s.claimKeyForLevel(level))), nil
+		return fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), name, s.idClaim(s.adminIdentify()), s.idClaim(s.claimKeyForLevel(level))), nil
 	}
 	path, err := s.Topology.AncestorPath(level)
 	if err != nil {
 		return "", fmt.Errorf("memberin %s reachedby: %w", level, err)
 	}
-	args := []string{s.claim(s.adminIdentify())}
+	args := []string{s.idClaim(s.adminIdentify())}
 	for _, lvl := range path {
 		if lvl.Virtual {
 			continue
 		}
-		args = append(args, s.claim(s.claimKeyForLevel(lvl.Name)))
+		args = append(args, s.idClaim(s.claimKeyForLevel(lvl.Name)))
 	}
 	return fmt.Sprintf("%s.is_%s_%s(%s)", s.definerSchema(), level, s.adminName(), strings.Join(args, ", ")), nil
 }
@@ -628,7 +632,7 @@ func (s *Spec) rlsEmitBuiltin(obj *Object, pm *Perm, t *Term, rels map[string]*R
 		return []string{fmt.Sprintf("%s = '%s'", s.claim("kind"), t.KindVal)}, true, nil
 	case t.Builtin == "within":
 		col := s.scopeCol(obj, t.WithinLevel)
-		claim := s.claim(s.claimKeyForLevel(t.WithinLevel))
+		claim := s.idClaim(s.claimKeyForLevel(t.WithinLevel))
 		if t.WithinNullable {
 			return []string{fmt.Sprintf("(%s IS NULL OR %s = %s)", col, col, claim)}, true, nil
 		}
@@ -656,7 +660,7 @@ func (s *Spec) rlsEmitHolds(obj *Object, t *Term) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := []string{s.claim(s.adminIdentify())}
+	args := []string{s.idClaim(s.adminIdentify())}
 	i := 0
 	for _, l := range chain {
 		if l.Virtual {
@@ -714,7 +718,7 @@ func (s *Spec) rlsEmitStoreManage(obj *Object, t *Term) ([]string, error) {
 
 func (s *Spec) rlsEmitSession(obj *Object, pm *Perm, t *Term, rels map[string]*Relation, custClaim string) ([]string, error) {
 	leaf := obj.Scoped[len(obj.Scoped)-1]
-	self := fmt.Sprintf("%s = %s", s.scopeCol(obj, leaf), s.claim(s.claimKeyForLevel(leaf)))
+	self := fmt.Sprintf("%s = %s", s.scopeCol(obj, leaf), s.idClaim(s.claimKeyForLevel(leaf)))
 	if t.SessionRel == "" {
 		return []string{self}, nil
 	}
@@ -739,7 +743,7 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		if err := reqClaim(claimKey, obj, "owner relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		base := fmt.Sprintf("%s = %s", repr.Column, s.claim(claimKey))
+		base := fmt.Sprintf("%s = %s", repr.Column, s.idClaim(claimKey))
 
 		if repr.DiscrimCol != "" {
 			base = fmt.Sprintf("(%s AND %s = '%s')", base, repr.DiscrimCol, repr.DiscrimVal)
@@ -750,7 +754,7 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		if err := reqClaim(custClaim, obj, "edge relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), repr.Table, s.claim(custClaim), pk, access)}, nil
+		return []string{fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), repr.Table, s.idClaim(custClaim), pk, access)}, nil
 	case ViaComposition:
 
 		return []string{fmt.Sprintf("%s.%s_composition_%s(%s, '%s')", s.definerSchema(), obj.Name, r.Name, pk, access)}, nil
@@ -759,7 +763,7 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		if err := reqClaim(custClaim, obj, "closure relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("%s.%s_reachable(%s, %s)", s.definerSchema(), repr.Closure, s.claim(custClaim), repr.Col)}, nil
+		return []string{fmt.Sprintf("%s.%s_reachable(%s, %s)", s.definerSchema(), repr.Closure, s.idClaim(custClaim), repr.Col)}, nil
 	case ViaGroup:
 
 		if err := reqClaim(custClaim, obj, "group relation "+t.Ident); err != nil {
@@ -767,9 +771,9 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		}
 		if repr.Materialized {
 
-			return []string{fmt.Sprintf("%s_member(%s, %s)", s.groupFlatName(obj, r, repr), pk, s.claim(custClaim))}, nil
+			return []string{fmt.Sprintf("%s_member(%s, %s)", s.groupFlatName(obj, r, repr), pk, s.idClaim(custClaim))}, nil
 		}
-		return []string{fmt.Sprintf("%s.%s_member(%s, %s)", s.definerSchema(), repr.Closure, repr.Col, s.claim(custClaim))}, nil
+		return []string{fmt.Sprintf("%s.%s_member(%s, %s)", s.definerSchema(), repr.Closure, repr.Col, s.idClaim(custClaim))}, nil
 	case ViaMemberIn:
 
 		name := fmt.Sprintf("%s_memberin_%s", s.adminName(), repr.Level)
@@ -798,7 +802,7 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 func (s *Spec) rlsEmitRole(obj *Object, r *Relation, repr ViaRole) ([]string, error) {
 
 	if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
-		return []string{fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(st.Anchor), s.claim(st.Identifies))}, nil
+		return []string{fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(st.Anchor), s.idClaim(st.Identifies))}, nil
 	}
 
 	var cols []string
@@ -810,7 +814,7 @@ func (s *Spec) rlsEmitRole(obj *Object, r *Relation, repr ViaRole) ([]string, er
 	if repr.HasRank {
 		fn = "is_" + repr.RankMin
 	}
-	return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), fn, s.claim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
+	return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), fn, s.idClaim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
 }
 
 func (s *Spec) emitGrantFrags(obj *Object, r *Relation, vg *ViaGrant, access string) ([]string, error) {
@@ -820,7 +824,7 @@ func (s *Spec) emitGrantFrags(obj *Object, r *Relation, vg *ViaGrant, access str
 		if claim == "" {
 			return nil, fmt.Errorf("grant relation %q kind %q: no subject resolves a claim", r.Name, r.Types[i])
 		}
-		frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), name, s.claim(claim), obj.Table+"."+obj.pk(), access))
+		frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), name, s.idClaim(claim), obj.Table+"."+obj.pk(), access))
 	}
 	return frags, nil
 }

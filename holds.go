@@ -185,11 +185,19 @@ func (r *HoldsResolver) AssignmentsSQL() string {
 	if r.PermsCol != "" {
 		cols = append(cols, "r."+r.PermsCol)
 	}
+	var conds []string
+	if r.KindCol != "" {
+		conds = append(conds, fmt.Sprintf("ra.%s = '%s'", r.KindCol, r.KindVal))
+	}
+	conds = append(conds, fmt.Sprintf("ra.%s = $1", r.SubjectCol))
+	if r.RevokedCol != "" {
+		conds = append(conds, fmt.Sprintf("ra.%s IS NULL", r.RevokedCol))
+	}
 	return fmt.Sprintf(
-		"SELECT %s FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE ra.%s = '%s' AND ra.%s = $1 AND ra.%s IS NULL",
+		"SELECT %s FROM %s ra JOIN %s r ON r.%s = ra.%s WHERE %s",
 		strings.Join(cols, ", "),
 		r.Assignments, r.RolesTable, r.RolesID, r.RoleCol,
-		r.KindCol, r.KindVal, r.SubjectCol, r.RevokedCol)
+		strings.Join(conds, " AND "))
 }
 
 type RoleAssignment struct {
