@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.78.0
 
 ### Added — `require`, a clause that compiles to `AS RESTRICTIVE`
 
