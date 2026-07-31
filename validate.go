@@ -62,6 +62,8 @@ func Validate(s *Spec) error {
 
 	add(valCheckEmitSites(s, vocabNames))
 
+	add(valCheckExternals(s))
+
 	add(validateDefinerClosure(s))
 
 	add(validateAsyncFloorAsymmetry(s))
@@ -268,6 +270,9 @@ func validateDefinerClosure(s *Spec) error {
 	for _, g := range gen {
 		generated[g.schema()+"."+g.Name] = true
 	}
+	for _, e := range s.Externals {
+		generated[s.definerSchema()+"."+e.Name] = true
+	}
 	referenced := map[string]bool{}
 	for _, p := range res.Policies {
 		for _, body := range []string{p.Using, p.Check} {
@@ -402,7 +407,101 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 		add(validatePerm(s, o, pm, relByName))
 	}
 
+	add(valCheckRequires(s, o, relByName))
+
 	add(valCheckFieldAccess(o))
+	return errors.Join(errs...)
+}
+
+func valCheckRequires(s *Spec, o *Object, rels map[string]*Relation) error {
+	var errs []error
+	seen := map[string]bool{}
+	for _, rq := range o.Requires {
+		if seen[rq.Verb] {
+			errs = append(errs, fmt.Errorf("line %d: object %q declares `require %s` more than once — a permission carries at most one restrictive clause", rq.Pos.Line, o.Name, rq.Verb))
+			continue
+		}
+		seen[rq.Verb] = true
+
+		var pm *Perm
+		for _, p := range o.Perms {
+			if p.Verb == rq.Verb {
+				pm = p
+				break
+			}
+		}
+		if pm == nil {
+			errs = append(errs, fmt.Errorf("line %d: object %q requires %q but declares no permission %q — a RESTRICTIVE policy with no permissive policy beside it denies every caller (V13)",
+				rq.Pos.Line, o.Name, rq.Verb, rq.Verb))
+			continue
+		}
+		if !contains(pm.Layers, "rls") && !contains(pm.Layers, "check") {
+			errs = append(errs, fmt.Errorf("line %d: object %q requires %q, but permission %q compiles no row predicate (layers %v) — a `require` narrows a predicate and has nothing to narrow here (V13)",
+				rq.Pos.Line, o.Name, rq.Verb, rq.Verb, pm.Layers))
+		}
+		if contains(pm.Layers, "rls") && pm.Maps == "" && !pm.PredicateOnly {
+			errs = append(errs, fmt.Errorf("line %d: object %q requires %q, but permission %q is @rls with no `maps` table-op — there is no policy to restrict (V13)",
+				rq.Pos.Line, o.Name, rq.Verb, rq.Verb))
+		}
+		errs = append(errs, valCheckRequireTerms(s, o, rq, rels)...)
+	}
+	return errors.Join(errs...)
+}
+
+func valCheckRequireTerms(s *Spec, o *Object, rq *Require, rels map[string]*Relation) []error {
+	var errs []error
+	if rq.Tree != nil && !permPositive(rq.Tree) {
+		errs = append(errs, fmt.Errorf("line %d: require %s.%s is not positively gated — a `not` must be combined with `and` with a positive term", rq.Pos.Line, o.Name, rq.Verb))
+	}
+	for _, t := range rq.Expr {
+		switch {
+		case t.Builtin == "external":
+			if s.externalByName(t.ExternalFn) == nil {
+				errs = append(errs, fmt.Errorf("line %d: require %s.%s calls @external(%s) with no `external predicate %s(...)` declaration (V14)",
+					rq.Pos.Line, o.Name, rq.Verb, t.ExternalFn, t.ExternalFn))
+				continue
+			}
+			if n := len(s.externalByName(t.ExternalFn).ArgTypes); n != len(t.ExternalArgs) {
+				errs = append(errs, fmt.Errorf("line %d: require %s.%s calls @external(%s) with %d argument(s); it is declared with %d (V14)",
+					rq.Pos.Line, o.Name, rq.Verb, t.ExternalFn, len(t.ExternalArgs), n))
+			}
+		case t.GrantRef != "", t.Builtin == "scoped", t.Builtin == "public", t.Builtin == "open":
+			errs = append(errs, fmt.Errorf("line %d: require %s.%s uses widening term %s — a `require` compiles to a RESTRICTIVE policy, which can only narrow (V13)",
+				rq.Pos.Line, o.Name, rq.Verb, t.String()))
+		case t.Builtin != "" && !knownBuiltins[t.Builtin]:
+			errs = append(errs, fmt.Errorf("line %d: require %s.%s has unknown builtin @%s", rq.Pos.Line, o.Name, rq.Verb, t.Builtin))
+		case t.Builtin == "" && t.ModeCol == "":
+			r := rels[t.Ident]
+			if r == nil {
+				errs = append(errs, fmt.Errorf("line %d: require %s.%s references unknown relation %q", rq.Pos.Line, o.Name, rq.Verb, t.Ident))
+				continue
+			}
+			if _, isComp := r.Repr.(ViaComposition); isComp {
+				errs = append(errs, fmt.Errorf("line %d: require %s.%s names composition relation %q — a composition definer cascades this object's own predicate, so requiring it is circular (V13)",
+					rq.Pos.Line, o.Name, rq.Verb, t.Ident))
+			}
+		}
+	}
+	return errs
+}
+
+func valCheckExternals(s *Spec) error {
+	used := map[string]bool{}
+	for _, o := range s.Objects {
+		for _, rq := range o.Requires {
+			for _, t := range rq.Expr {
+				if t.Builtin == "external" {
+					used[t.ExternalFn] = true
+				}
+			}
+		}
+	}
+	var errs []error
+	for _, e := range s.Externals {
+		if !used[e.Name] {
+			errs = append(errs, fmt.Errorf("line %d: external predicate %q is declared but never required — an unused escape hatch is an unaudited one (V14)", e.Pos.Line, e.Name))
+		}
+	}
 	return errors.Join(errs...)
 }
 
@@ -930,7 +1029,11 @@ func valCheckModeTerm(s *Spec, o *Object, pm *Perm, t *Term, hasRLS bool) error 
 
 func valCheckBuiltinTerm(s *Spec, o *Object, pm *Perm, t *Term, rels map[string]*Relation, hasRLS, hasPDP bool) error {
 	var errs []error
-	if !knownBuiltins[t.Builtin] {
+	switch {
+	case t.Builtin == "external":
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @external(%s) — an adopter-supplied predicate may appear only in a `require` clause, so it can subtract authority and never add it (V14)",
+			pm.Pos.Line, o.Name, pm.Verb, t.ExternalFn))
+	case !knownBuiltins[t.Builtin]:
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|scoped|session|open|store_manage|public|kind|self|within|holds)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
 	}
 

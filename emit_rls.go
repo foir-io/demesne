@@ -13,6 +13,8 @@ type Policy struct {
 	Cmd    string
 	Using  string
 	Check  string
+
+	Restrictive bool
 }
 
 type RLSResult struct {
@@ -89,20 +91,33 @@ func (s *Spec) EmitRLS() (*RLSResult, error) {
 				res.Unsupported = append(res.Unsupported, fmt.Sprintf("%s.%s: @rls permission has no table-op maps", obj.Name, pm.Verb))
 				continue
 			}
-			pol := Policy{Object: obj.Name, Table: obj.Table, Name: obj.Table + "_" + op, Cmd: opToCmd[op]}
-			switch op {
-			case "select", "delete":
-				pol.Using = pred
-			case "insert":
-				pol.Check = pred
-			case "update":
-				pol.Using = pred
-				pol.Check = pred
+			res.Policies = append(res.Policies, opPolicy(obj, op, obj.Table+"_"+op, pred, false))
+
+			req, err := s.permRequireSQL(obj, pm, custSubj)
+			if err != nil {
+				res.Unsupported = append(res.Unsupported, fmt.Sprintf("%s.%s: %v", obj.Name, pm.Verb, err))
+				continue
 			}
-			res.Policies = append(res.Policies, pol)
+			if req != "" {
+				res.Policies = append(res.Policies, opPolicy(obj, op, obj.Table+"_"+op+"_require", req, true))
+			}
 		}
 	}
 	return res, nil
+}
+
+func opPolicy(obj *Object, op, name, pred string, restrictive bool) Policy {
+	pol := Policy{Object: obj.Name, Table: obj.Table, Name: name, Cmd: opToCmd[op], Restrictive: restrictive}
+	switch op {
+	case "select", "delete":
+		pol.Using = pred
+	case "insert":
+		pol.Check = pred
+	case "update":
+		pol.Using = pred
+		pol.Check = pred
+	}
+	return pol
 }
 
 func (s *Spec) editPointCheckSQL(o *Object) (string, error) {
@@ -137,7 +152,7 @@ func (s *Spec) permPointCheckSQL(o *Object, pm *Perm) (string, error) {
 		}
 	}
 	cust := s.ownerSubject(o.Scoped[len(o.Scoped)-1])
-	pred, err := s.rlsPredicate(o, pm, cust, virtual)
+	pred, err := s.permPredicate(o, pm, cust, virtual)
 	if err != nil {
 		return "", err
 	}
@@ -399,7 +414,7 @@ func (s *Spec) objectVerbPredicate(obj *Object, verb string, virtual map[string]
 	for _, pm := range obj.Perms {
 		if pm.Verb == verb && contains(pm.Layers, "rls") {
 			cust := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1])
-			return s.rlsPredicate(obj, pm, cust, virtual)
+			return s.permPredicate(obj, pm, cust, virtual)
 		}
 	}
 	return "", fmt.Errorf("object %q has no @rls permission %q for a cross-object reference", obj.Name, verb)
@@ -489,16 +504,23 @@ func (s *Spec) rlsLeafFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]
 }
 
 func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Relation, custClaim string) ([]string, error) {
+	return s.nodeFragsMode(obj, pm, n, rels, custClaim, false)
+}
+
+func (s *Spec) nodeFragsMode(obj *Object, pm *Perm, n *PermNode, rels map[string]*Relation, custClaim string, require bool) ([]string, error) {
 	if n == nil {
 		return nil, nil
 	}
 	switch n.Op {
 	case "leaf":
+		if require {
+			return s.requireLeafFrags(obj, pm, n, rels, custClaim)
+		}
 		return s.rlsLeafFrags(obj, pm, n, rels, custClaim)
 	case "or":
 		var out []string
 		for _, k := range n.Kids {
-			kf, err := s.nodeFrags(obj, pm, k, rels, custClaim)
+			kf, err := s.nodeFragsMode(obj, pm, k, rels, custClaim, require)
 			if err != nil {
 				return nil, err
 			}
@@ -508,7 +530,7 @@ func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Re
 	case "and":
 		var parts []string
 		for _, k := range n.Kids {
-			kf, err := s.nodeFrags(obj, pm, k, rels, custClaim)
+			kf, err := s.nodeFragsMode(obj, pm, k, rels, custClaim, require)
 			if err != nil {
 				return nil, err
 			}
@@ -522,7 +544,7 @@ func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Re
 		}
 		return []string{strings.Join(parts, " AND ")}, nil
 	case "not":
-		kf, err := s.nodeFrags(obj, pm, n.Kids[0], rels, custClaim)
+		kf, err := s.nodeFragsMode(obj, pm, n.Kids[0], rels, custClaim, require)
 		if err != nil {
 			return nil, err
 		}
@@ -869,8 +891,12 @@ func (r *RLSResult) PolicySQL(role string) string {
 	var b strings.Builder
 	sch := r.tableSchema()
 	for _, p := range pols {
+		kind := ""
+		if p.Restrictive {
+			kind = " AS RESTRICTIVE"
+		}
 		fmt.Fprintf(&b, "DROP POLICY IF EXISTS %s ON %s.%s;\n", p.Name, sch, p.Table)
-		fmt.Fprintf(&b, "CREATE POLICY %s ON %s.%s FOR %s TO %s", p.Name, sch, p.Table, p.Cmd, role)
+		fmt.Fprintf(&b, "CREATE POLICY %s ON %s.%s%s FOR %s TO %s", p.Name, sch, p.Table, kind, p.Cmd, role)
 		if p.Using != "" {
 			fmt.Fprintf(&b, "\n    USING (%s)", p.Using)
 		}

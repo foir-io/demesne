@@ -13,6 +13,7 @@ type Spec struct {
 	RoleStores  []*RoleStore
 	Grants      []*Grant
 	Templates   []*Template
+	Externals   []*External
 	Claims      *ClaimsAccessor
 
 	DefinerSchema string
@@ -226,6 +227,7 @@ type Object struct {
 	Scoped    []string
 	Relations []*Relation
 	Perms     []*Perm
+	Requires  []*Require
 	Gates     []*Gate
 
 	FieldPrincipals []string
@@ -401,6 +403,43 @@ func (n *PermNode) Leaves() []*Term {
 	return out
 }
 
+type External struct {
+	Name     string
+	ArgTypes []string
+	Pos      Pos
+}
+
+func (s *Spec) externalByName(name string) *External {
+	for _, e := range s.Externals {
+		if e.Name == name {
+			return e
+		}
+	}
+	return nil
+}
+
+type ExternalArg struct {
+	Col   string
+	Claim string
+	Lit   string
+}
+
+type Require struct {
+	Verb string
+	Expr []*Term
+	Tree *PermNode
+	Pos  Pos
+}
+
+func (o *Object) requireFor(verb string) *Require {
+	for _, rq := range o.Requires {
+		if rq.Verb == verb {
+			return rq
+		}
+	}
+	return nil
+}
+
 type Guard struct {
 	Col string
 	Op  string
@@ -429,6 +468,9 @@ type Term struct {
 	WithinNullable bool
 
 	HoldsPerm string
+
+	ExternalFn   string
+	ExternalArgs []ExternalArg
 
 	Pos Pos
 }

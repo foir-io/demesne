@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased
+
+### Added — `require`, a clause that compiles to `AS RESTRICTIVE`
+
+Until now every emitted policy was `PERMISSIVE`. Postgres ORs those together, so
+every term in a `permission` line was a disjunct and the compiler could only ever
+widen: once a generated policy admitted a principal, no further demesne construct
+could take that back. An authorization compiler that can only add permission
+cannot express a constraint.
+
+`require <verb> = <expr>` closes that. It emits a second policy on the same table
+and command, `AS RESTRICTIVE`, named `<table>_<op>_require`. Postgres ANDs the
+restrictive set with the permissive one, which is exactly the missing primitive:
+
+```demesne
+permission create = @holds(invitations:write)          @rls maps insert
+require    create = @external(invitation_projects_in_tenant, tenant_id, project_ids)
+```
+
+The tenant-wide `invitations:write` holder is still admitted by the permissive
+`invitations_insert`, which never reads `project_ids`; the restrictive policy is
+what refuses a row naming a project outside the tenant.
+
+It is per-verb, so a containment rule on INSERT does not also filter SELECT and
+hide the rows an administrator most needs to revoke. It only narrows: the
+widening terms (`@scoped`, `@public`, `@open`, `via grant`) are rejected inside a
+`require`. And the narrowing is ANDed into the same compiled predicate the app
+surface runs, so `CanEdit`/`canEdit`, `@check` point-checks, and a verb borrowed
+through `via object` all carry it — there is no second evaluator.
+
+A `require` naming a verb the object does not declare as a `permission` is a
+compile error (V13). A restrictive policy with no permissive policy beside it
+denies every caller, so the compiler refuses rather than emitting a silent
+lockout.
+
+### Added — `external predicate`, a declared, narrowing-only escape hatch
+
+Every term in the language relates one row to one principal. "Every element of
+this array column satisfies P" is not of that shape. Rather than invent quantifier
+syntax, a `require` may call a predicate the adopter supplies:
+
+```demesne
+external predicate invitation_projects_in_tenant(text, text[])
+```
+
+The compiler checks arity, emits the call against the definer schema, and counts
+the declared name as satisfying the definer-closure check (V11); the body is
+yours to write and ship. `@external` is legal **only** inside a `require`, so an
+adopter-supplied predicate can subtract authority and never add it. A declared
+external that nothing requires is a compile error (V14), because an unused escape
+hatch is an unaudited one.
+
+`require` does not replace a trigger. `BYPASSRLS` skips policies but not
+triggers, and any rule about OLD versus NEW is outside what `WITH CHECK` can see.
+`GUIDE.md` states the split: `require` for the RLS floor, a trigger for the
+bypass lanes.
+
+Additive. Every existing spec emits byte-identically — the `Policy` struct gains
+a `Restrictive` field that is false everywhere a spec declares no `require`, and
+`PolicySQL` writes `AS RESTRICTIVE` only when it is set.
+
 ## v0.77.1
 
 ### Fixed — a vocabulary that backs no rolestore no longer makes `@holds` ambiguous

@@ -115,6 +115,8 @@ func (p *parser) parseDecl(s *Spec) error {
 		return p.ppDeclTables(s)
 	case "identifiers":
 		return p.ppDeclIdentifiers(s)
+	case "external":
+		return p.ppDeclExternal(s)
 	default:
 		return p.errf("unknown declaration %q", p.cur().lit)
 	}
@@ -251,6 +253,42 @@ func (p *parser) ppDeclIdentifiers(s *Spec) error {
 		return p.errf("duplicate identifiers declaration")
 	}
 	s.Identifiers = t
+	return nil
+}
+
+func (p *parser) ppDeclExternal(s *Spec) error {
+	e := &External{Pos: Pos{p.cur().line}}
+	p.advance()
+	if err := p.expectKw("predicate"); err != nil {
+		return err
+	}
+	name, err := p.ident()
+	if err != nil {
+		return err
+	}
+	e.Name = name
+	if _, err := p.expect(tLParen); err != nil {
+		return err
+	}
+	for p.peekKind() != tRParen {
+		typ, terr := p.ident()
+		if terr != nil {
+			return terr
+		}
+		e.ArgTypes = append(e.ArgTypes, typ)
+		if p.peekKind() == tComma {
+			p.advance()
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return err
+	}
+	if s.externalByName(e.Name) != nil {
+		return p.errf("duplicate external predicate %q", e.Name)
+	}
+	s.Externals = append(s.Externals, e)
 	return nil
 }
 
@@ -672,21 +710,54 @@ func (p *parser) parseObject() (*Object, error) {
 	return o, nil
 }
 
+func (p *parser) parseObjectClause(o *Object) (handled bool, err error) {
+	switch {
+	case p.isKw("relation"):
+		r, rerr := p.parseRelation()
+		if rerr != nil {
+			return true, rerr
+		}
+		o.Relations = append(o.Relations, r)
+	case p.isKw("permission"):
+		pm, perr := p.parseObjectPerm()
+		if perr != nil {
+			return true, perr
+		}
+		o.Perms = append(o.Perms, pm)
+	case p.isKw("require"):
+		rq, qerr := p.parseObjectRequire()
+		if qerr != nil {
+			return true, qerr
+		}
+		o.Requires = append(o.Requires, rq)
+	case p.isKw("gate"):
+		g, gerr := p.parseGate()
+		if gerr != nil {
+			return true, gerr
+		}
+		o.Gates = append(o.Gates, g)
+	case p.isKw("field"):
+		f, ferr := p.parseFieldRule(o)
+		if ferr != nil {
+			return true, ferr
+		}
+		o.Fields = append(o.Fields, f)
+	default:
+		return false, nil
+	}
+	return true, nil
+}
+
 func (p *parser) parseObjectBody(o *Object) error {
 	for p.peekKind() != tRBrace && p.peekKind() != tEOF {
+		handled, err := p.parseObjectClause(o)
+		if err != nil {
+			return err
+		}
+		if handled {
+			continue
+		}
 		switch {
-		case p.isKw("relation"):
-			r, err := p.parseRelation()
-			if err != nil {
-				return err
-			}
-			o.Relations = append(o.Relations, r)
-		case p.isKw("permission"):
-			pm, err := p.parseObjectPerm()
-			if err != nil {
-				return err
-			}
-			o.Perms = append(o.Perms, pm)
 		case p.isKw("use"):
 			if err := p.parseUse(o); err != nil {
 				return err
@@ -702,22 +773,10 @@ func (p *parser) parseObjectBody(o *Object) error {
 			if err := p.parseTrack(o); err != nil {
 				return err
 			}
-		case p.isKw("gate"):
-			g, err := p.parseGate()
-			if err != nil {
-				return err
-			}
-			o.Gates = append(o.Gates, g)
 		case p.isKw("fields"):
 			if err := p.parseFieldsDecl(o); err != nil {
 				return err
 			}
-		case p.isKw("field"):
-			f, err := p.parseFieldRule(o)
-			if err != nil {
-				return err
-			}
-			o.Fields = append(o.Fields, f)
 		default:
 			return p.errf("unexpected %s %q in object %q", p.peekKind(), p.cur().lit, o.Name)
 		}
@@ -1374,6 +1433,26 @@ func (p *parser) parseObjectPerm() (*Perm, error) {
 	return pm, nil
 }
 
+func (p *parser) parseObjectRequire() (*Require, error) {
+	rq := &Require{Pos: Pos{p.cur().line}}
+	p.advance()
+	verb, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	rq.Verb = verb
+	if _, err := p.expect(tEq); err != nil {
+		return nil, err
+	}
+	tree, err := p.parsePermUnion()
+	if err != nil {
+		return nil, err
+	}
+	rq.Tree = tree
+	rq.Expr = tree.Leaves()
+	return rq, nil
+}
+
 func (p *parser) parsePermUnion() (*PermNode, error) {
 	left, err := p.parsePermAnd()
 	if err != nil {
@@ -1524,17 +1603,7 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 	}
 
 	if b == "kind" {
-		if _, err := p.expect(tLParen); err != nil {
-			return err
-		}
-		val, err := p.expect(tString)
-		if err != nil {
-			return err
-		}
-		t.KindVal = val.lit
-		if _, err := p.expect(tRParen); err != nil {
-			return err
-		}
+		return p.parseTermKind(t)
 	}
 
 	if b == "self" {
@@ -1547,6 +1616,10 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 
 	if b == "within" {
 		return p.parseWithin(t)
+	}
+
+	if b == "external" {
+		return p.parseTermExternal(t)
 	}
 
 	if b == "holds" {
@@ -1564,6 +1637,59 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 		}
 	}
 	return nil
+}
+
+func (p *parser) parseTermKind(t *Term) error {
+	if _, err := p.expect(tLParen); err != nil {
+		return err
+	}
+	val, err := p.expect(tString)
+	if err != nil {
+		return err
+	}
+	t.KindVal = val.lit
+	_, err = p.expect(tRParen)
+	return err
+}
+
+func (p *parser) parseTermExternal(t *Term) error {
+	if _, err := p.expect(tLParen); err != nil {
+		return err
+	}
+	fn, err := p.ident()
+	if err != nil {
+		return err
+	}
+	t.ExternalFn = fn
+	for p.peekKind() == tComma {
+		p.advance()
+		arg, aerr := p.parseExternalArg()
+		if aerr != nil {
+			return aerr
+		}
+		t.ExternalArgs = append(t.ExternalArgs, arg)
+	}
+	_, err = p.expect(tRParen)
+	return err
+}
+
+func (p *parser) parseExternalArg() (ExternalArg, error) {
+	switch p.peekKind() {
+	case tAt:
+		p.advance()
+		k, err := p.ident()
+		if err != nil {
+			return ExternalArg{}, err
+		}
+		return ExternalArg{Claim: k}, nil
+	case tString:
+		return ExternalArg{Lit: p.advance().lit}, nil
+	}
+	c, err := p.ident()
+	if err != nil {
+		return ExternalArg{}, err
+	}
+	return ExternalArg{Col: c}, nil
 }
 
 func (p *parser) parenIdent() (string, error) {
@@ -1944,6 +2070,8 @@ func (t *Term) String() string {
 		return "@within(" + t.WithinLevel + ")"
 	case t.Builtin == "holds":
 		return "@holds(" + t.HoldsPerm + ")"
+	case t.Builtin == "external":
+		return "@external(" + t.ExternalFn + ")"
 	case t.Builtin != "":
 		return "@" + t.Builtin
 	case t.WalkVerb != "":

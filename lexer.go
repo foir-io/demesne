@@ -272,6 +272,10 @@ func (l *lexer) lexRun() token {
 		}
 		break
 	}
+	if l.peekAt(0) == '[' && l.peekAt(1) == ']' {
+		b.WriteString("[]")
+		l.pos += 2
+	}
 	s := b.String()
 	kind := tIdent
 	switch {

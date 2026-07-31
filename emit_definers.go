@@ -745,7 +745,7 @@ func (s *Spec) opPredicate(obj *Object, op string, virtual map[string]bool) (str
 	for _, pm := range obj.Perms {
 		if contains(pm.Layers, "rls") && pm.Maps == op {
 			cust := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1])
-			return s.rlsPredicate(obj, pm, cust, virtual)
+			return s.permPredicate(obj, pm, cust, virtual)
 		}
 	}
 	return "", nil
