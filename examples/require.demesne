@@ -1,0 +1,45 @@
+
+topology {
+  level tenant
+  level project parent tenant
+}
+
+vocabulary admin {
+  permission invitations:write
+  preset manager @ project = invitations:write
+  preset owner   @ tenant  = *
+  rank owner > manager
+}
+
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+  permissions permissions
+}
+
+subject admin {
+  anchor     tenant
+  reach      descendants
+  identifies sub
+  roles      configurable admin
+  binds      admin
+}
+
+external predicate invitation_projects_in_tenant(text, text[])
+
+object invitation {
+  table  invitations
+  scoped tenant
+  relation sender: admin via invited_by
+
+  permission view   = @holds(invitations:write) + sender  @rls maps select
+  permission create = @holds(invitations:write)           @rls maps insert
+  permission edit   = @holds(invitations:write) + sender  @rls maps update
+
+  require create = @external(invitation_projects_in_tenant, tenant_id, project_ids)
+  require edit   = @self(invited_by)
+}

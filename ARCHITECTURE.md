@@ -153,6 +153,7 @@ This section follows the spec through two phases. At build time the CLI introspe
   emit produces:
      auth.<fn>(…)  SECURITY DEFINER         the trusted EXISTS kernel (compiler owns 100%)
      CREATE POLICY … USING(<predicate>)     one per (table, operation)
+     CREATE POLICY … AS RESTRICTIVE         one more per `require` clause (the floor)
      ALTER TABLE … ENABLE / FORCE RLS       (a policy is inert until enabled+forced)
      Policy{ proc → permission }            the app-layer PDP map (verb gate)
      ClaimsContract{ keys… }                the claims the policies read

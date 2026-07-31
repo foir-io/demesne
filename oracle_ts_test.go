@@ -319,6 +319,7 @@ func TestOracle_Manifest(t *testing.T) {
 		{"rpScoped", rpScopedRoleStoreSpec},
 		{"manage", manageSpecSrc(t)},
 		{"planes", planesSpecSrc(t)},
+		{"require", requireSpecSrc(t)},
 	}
 	manifest := map[string]any{}
 	for _, sp := range specs {

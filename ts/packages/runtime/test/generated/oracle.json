@@ -9136,6 +9136,1562 @@
       }
     }
   },
+  "require": {
+    "cases": [
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, true)",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET LOCAL ROLE authenticated",
+        "input": {
+          "local": true
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET LOCAL ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, true)"
+        ],
+        "input": {
+          "local": true
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "SELECT set_config('request.jwt.claims', $1, false)",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.claimsSetSQL"
+      },
+      {
+        "expect": "SET ROLE authenticated",
+        "input": {
+          "local": false
+        },
+        "kind": "claims.setRoleSQL"
+      },
+      {
+        "expect": [
+          "SET ROLE authenticated",
+          "SELECT set_config('request.jwt.claims', $1, false)"
+        ],
+        "input": {
+          "local": false
+        },
+        "kind": "claims.sessionSetupSQL"
+      },
+      {
+        "expect": "{\"project_id\":\"v_project_id\",\"role\":\"authenticated\",\"sub\":\"v_sub\",\"tenant_id\":\"v_tenant_id\"}",
+        "input": {
+          "extra": {
+            "role": "authenticated"
+          },
+          "values": {
+            "project_id": "v_project_id",
+            "sub": "v_sub",
+            "tenant_id": "v_tenant_id"
+          }
+        },
+        "kind": "claims.mintWithExtra"
+      },
+      {
+        "expect": "SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1)",
+        "input": {
+          "object": "invitation"
+        },
+        "kind": "appSurface.checkSQL"
+      },
+      {
+        "expect": "SELECT id FROM invitations WHERE id = ANY($1)",
+        "input": {
+          "object": "invitation"
+        },
+        "kind": "appSurface.checkManySQL"
+      },
+      {
+        "expect": "SELECT id FROM invitations WHERE ($1::text IS NULL OR id::text \u003e $1::text) ORDER BY id::text LIMIT $2",
+        "input": {
+          "object": "invitation"
+        },
+        "kind": "appSurface.listResourcesSQL"
+      },
+      {
+        "expect": "SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1 AND (((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND (auth.admin_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub')))) AND (invited_by = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'))))",
+        "input": {
+          "object": "invitation"
+        },
+        "kind": "appSurface.checkEditSQL"
+      },
+      {
+        "expect": "",
+        "input": {
+          "object": "invitation"
+        },
+        "kind": "appSurface.listResourcesFastSQL"
+      },
+      {
+        "expect": "SELECT ra.tenant_id, ra.project_id, r.key, r.permissions FROM role_assignments ra JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'admin' AND ra.principal_id = $1 AND ra.revoked_at IS NULL",
+        "kind": "holds.assignmentsSQL"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            ""
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": true,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": false,
+        "input": {
+          "assignment": [
+            "T1",
+            "P1"
+          ],
+          "query": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.scopeContains"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "invitations:write"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "invitations:write",
+                "invitations:write"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                ""
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            ""
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [
+          "totally:madeup"
+        ],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T2",
+            "P1"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": [],
+        "input": {
+          "assignments": [
+            {
+              "permissions": [
+                "totally:madeup"
+              ],
+              "roleKey": "",
+              "scope": [
+                "T1",
+                "P1"
+              ]
+            }
+          ],
+          "scope": [
+            "T1",
+            "P2"
+          ]
+        },
+        "kind": "holds.resolve"
+      },
+      {
+        "expect": "UPDATE role_assignments SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+        "kind": "roleAssignment.revokeSQL"
+      },
+      {
+        "expect": "SELECT id, principal_kind, principal_id, role_id, tenant_id, project_id, revoked_at FROM role_assignments WHERE role_id = $1",
+        "kind": "roleAssignment.listForRoleSQL"
+      },
+      {
+        "expect": "SELECT a.id, a.principal_id, a.role_id, r.key, r.permissions FROM role_assignments a JOIN roles r ON r.id = a.role_id WHERE a.principal_kind = 'admin' AND a.principal_id = $1 AND a.revoked_at IS NULL",
+        "kind": "roleAssignment.listForPrincipalSQL"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "admin",
+            "u1",
+            "r1",
+            "s1",
+            "s2"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, project_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, principal_kind, principal_id, role_id, tenant_id, project_id, revoked_at"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignInsert"
+      },
+      {
+        "expect": {
+          "args": [
+            "a1",
+            "admin",
+            "u1",
+            "r1",
+            "s1",
+            "s2"
+          ],
+          "sql": "INSERT INTO role_assignments (id, principal_kind, principal_id, role_id, tenant_id, project_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (principal_kind, principal_id, role_id, COALESCE(tenant_id, ''), COALESCE(project_id, '')) DO UPDATE SET revoked_at = NULL RETURNING id, principal_kind, principal_id, role_id, tenant_id, project_id, revoked_at"
+        },
+        "input": {
+          "assignmentID": "a1",
+          "extra": {},
+          "grantedBy": "g1",
+          "roleID": "r1",
+          "scope": [
+            "s1",
+            "s2"
+          ],
+          "subjectID": "u1"
+        },
+        "kind": "roleAssignment.assignTouchInsert"
+      }
+    ],
+    "projections": {
+      "appSurface": [
+        {
+          "object": "invitation",
+          "table": "invitations",
+          "pk": "id",
+          "flatListFn": "",
+          "asyncCheckSQL": "",
+          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1 AND (((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND (auth.admin_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub')))) AND (invited_by = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'))))"
+        }
+      ],
+      "claims": {
+        "setting": "request.jwt.claims",
+        "cast": "json",
+        "role": "authenticated",
+        "contract": [
+          "project_id",
+          "sub",
+          "tenant_id"
+        ],
+        "entries": [
+          {
+            "key": "project_id",
+            "level": "project",
+            "subjects": []
+          },
+          {
+            "key": "sub",
+            "level": "",
+            "subjects": [
+              "admin"
+            ]
+          },
+          {
+            "key": "tenant_id",
+            "level": "tenant",
+            "subjects": []
+          }
+        ],
+        "subjects": [
+          {
+            "name": "admin",
+            "identifies": "sub"
+          }
+        ],
+        "levels": [
+          {
+            "name": "tenant",
+            "claimKey": "tenant_id",
+            "virtual": false
+          },
+          {
+            "name": "project",
+            "claimKey": "project_id",
+            "virtual": false
+          }
+        ]
+      },
+      "holdsResolver": {
+        "assignments": "role_assignments",
+        "kindCol": "principal_kind",
+        "kindVal": "admin",
+        "subjectCol": "principal_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "roleCol": "role_id",
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "permissions",
+        "vocab": {
+          "name": "admin",
+          "permissions": [
+            "invitations:write"
+          ],
+          "presets": [
+            {
+              "name": "manager",
+              "star": false,
+              "set": [
+                "invitations:write"
+              ]
+            },
+            {
+              "name": "owner",
+              "star": true,
+              "set": []
+            }
+          ],
+          "rank": [
+            "owner",
+            "manager"
+          ]
+        }
+      },
+      "roleAssignment": {
+        "assignments": "role_assignments",
+        "pk": "id",
+        "kindCol": "principal_kind",
+        "kindVal": "admin",
+        "subjectCol": "principal_id",
+        "roleCol": "role_id",
+        "scopeCols": [
+          "tenant_id",
+          "project_id"
+        ],
+        "revokedCol": "revoked_at",
+        "grantedAtCol": "",
+        "grantedByCol": "",
+        "revokedByCol": "",
+        "extraCols": [],
+        "rolesTable": "roles",
+        "rolesId": "id",
+        "keyCol": "key",
+        "permsCol": "permissions"
+      }
+    }
+  },
   "rpScoped": {
     "cases": [
       {

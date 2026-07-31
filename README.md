@@ -61,6 +61,8 @@ Adopting Demesne on an existing database is a short loop: introspect the schema,
 
 Permissions are a small boolean algebra over those terms — union, intersection, and fail-closed negation — so `viewer and not banned` or `(owner or shared) and not banned` compile straight to an RLS predicate. `@holds(<perm>)` gates a branch on the caller holding an admin permission, matched against the rolestore's materialized permission arrays at query time, so role edits change the floor without a re-emit.
 
+A `permission` grants; a `require` constrains. Because Postgres ORs permissive policies together, every term in a `permission` line can only ever widen. `require <verb> = <expr>` emits the same predicate `AS RESTRICTIVE`, which Postgres ANDs with the permissive set — a floor under the permission rather than another branch beside it, per verb, and carried into the generated app surface as well as the policy. See [`require.demesne`](examples/require.demesne).
+
 ## Spec introspection
 
 The compiled spec is the single source of your vocabulary, so you can build a role-management or permission-admin UI from it without re-declaring the permission list. `spec.Vocabularies()` returns each declared vocabulary and its permissions, and marks each parameterized one: a permission that carries the open `*` model segment, like `docs:read:*` rather than a concrete `docs:read`. `spec.ExpandedPresets(rolestore)` maps each preset of that rolestore's vocabulary to its fully resolved permission set, and expands both `+` references and the `= *` wildcard. Demesne returns generic data. How you bucket, label, and lay it out is your UI's job.
@@ -84,6 +86,7 @@ The patterns that are easy to get subtly wrong by hand are each a few lines of s
 | Groups within groups (transitive membership) | [`groups.demesne`](examples/canonical/groups.demesne) |
 | Role-based access control | [`rbac.demesne`](examples/canonical/rbac.demesne) |
 | `viewer ∩ member − banned` | [`boolean.demesne`](examples/canonical/boolean.demesne) |
+| Narrowing a permission you cannot take back (`AS RESTRICTIVE`) | [`require.demesne`](examples/require.demesne) |
 
 Run them with `go test . -run TestCanonical`.
 

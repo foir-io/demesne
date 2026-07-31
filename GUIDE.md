@@ -74,7 +74,8 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 
    `diff` reports two kinds of drift: a generated policy that's missing from the
    live database, and an orphan policy that's live on a governed table but not
-   generated. RLS policies are permissive, so an orphan is an open path.
+   generated. A permissive orphan is an open path; a missing `_require` policy is
+   a floor that has quietly stopped being enforced.
 
 ---
 
@@ -165,6 +166,100 @@ parentheses, with precedence union < intersection < `not`. So `viewer and member
 `viewer and not banned`, and `(owner + shared) and not banned` all compile to RLS.
 Negation is fail-closed: an exclusion whose condition can't be determined (a NULL
 claim) denies. A union-only expression is unchanged.
+
+### `require` — the clause that narrows
+
+Every term in a `permission` line is a **disjunct**, and Postgres ORs permissive
+policies together, so a `permission` can only ever say "you may *also*…". A
+`require` clause says "…but only if":
+
+```demesne
+object invitation {
+  table  invitations
+  scoped tenant
+  relation sender: admin via invited_by
+
+  permission create = @holds(invitations:write)          @rls maps insert
+  permission edit   = @holds(invitations:write) + sender @rls maps update
+
+  require create = @external(invitation_projects_in_tenant, tenant_id, project_ids)
+  require edit   = @self(invited_by)
+}
+```
+
+`require <verb> = <expr>` compiles to a second policy on the same table and the
+same command, emitted `AS RESTRICTIVE` and named `<table>_<op>_require`. Postgres
+**ANDs** the restrictive set with the permissive one, so the require is a floor
+under the permission rather than another branch beside it. Above, a tenant-wide
+`invitations:write` holder is still admitted by `invitations_insert` — which
+never reads `project_ids` — and is still refused by `invitations_insert_require`
+if the row names a project outside its tenant.
+
+Four properties are worth knowing before you reach for it:
+
+- **It is per-verb.** `require create` restricts INSERT and nothing else. That
+  matters: a containment rule applied to SELECT would *hide* rows that violate
+  it, and a row you cannot see is a row you cannot revoke.
+- **It only narrows.** The widening terms — `@scoped`, `@public`, `@open`, and
+  `via grant` — are rejected in a `require`. The rest of the term vocabulary
+  (relations, `@holds`, `@within`, `@kind`, `@self`, `@session`, `mode`, and the
+  boolean algebra above) composes as usual.
+- **It reaches every surface.** The narrowing is ANDed into the same compiled
+  predicate the app surface runs, so `CanEdit` / `canEdit`, `@check`
+  point-checks, and a verb borrowed through `via object <Other>-><verb>` all
+  carry it. There is no second evaluator to keep in step.
+- **A `require` with no matching `permission` is a compile error.** A restrictive
+  policy with no permissive policy beside it denies everyone, so the compiler
+  refuses rather than emitting a silent lockout.
+
+#### `external predicate` — the one thing the compiler does not own
+
+Every demesne term relates one row to one principal. Some constraints are not of
+that shape — "every element of this array column satisfies P" is the common one —
+and rather than invent a quantifier syntax, a `require` may call a predicate you
+supply:
+
+```demesne
+external predicate invitation_projects_in_tenant(text, text[])
+```
+
+The declaration is the whole surface: name and argument types, returning
+`boolean`, living in the definer schema. `@external(<name>, <arg>, …)` calls it
+with row columns, `@claim` keys, or `"string"` literals, and the compiler checks
+arity, emits the call, and counts the name as satisfying the definer-closure
+check (V11). You write the function body — as `SECURITY DEFINER` with a pinned
+`search_path`, like every generated definer — and ship it in your own migration.
+
+An `@external` term is legal **only inside a `require`**. That is the point of
+the restriction: an adopter-supplied predicate can subtract authority and can
+never add it, so the worst a wrong one can do is lock people out. A declared
+external that no `require` calls is a compile error too — an unused escape hatch
+is an unaudited one.
+
+`examples/require.demesne` is the worked spec, with its live-Postgres proof in
+`ts/packages/example-app/test/require.test.ts`.
+
+#### `require` does not replace a trigger
+
+**`BYPASSRLS` skips policies. It does not skip triggers.** If any lane in your
+system writes on a pooled connection whose role carries `BYPASSRLS` — an
+operator console, an MCP or agent lane, a migration job, a psql session — then
+no policy demesne emits is consulted on that lane at all, permissive or
+restrictive. "The moat holds even when application code is wrong" is only true
+of lanes that go through policies.
+
+So the durable arrangement for an invariant you actually depend on is both:
+
+- **`require`** for the RLS floor — declared in the spec, compiled into every
+  surface, drift-checked by `demesne diff`.
+- **a trigger** for the bypass lanes — the same invariant, enforced where
+  policies are not.
+
+A trigger also reaches two things a policy cannot. RLS `WITH CHECK` sees only the
+NEW row, so any rule about **OLD versus NEW** — "this column is immutable after
+insert" — has to be a trigger. And a trigger can be conditioned on `TG_OP`, so an
+invariant can be enforced on INSERT without also being enforced on the UPDATE
+path that cleans up rows which predate it.
 
 Claim-side builtins (`@kind`, `@session`, `@app_scope`, `@within`, `@scoped`,
 `@holds`) compose inside intersections: `(@kind("admin") and grantee:read)`
