@@ -371,7 +371,11 @@ func (s *Spec) rlsContainmentBlock(obj *Object, objLeaf string, grantInject map[
 			if lvl.Virtual || (obj.IsLevelEntity() && lvl.Name == obj.Level) {
 				continue
 			}
-			colPred := fmt.Sprintf("%s = %s", s.scopeCol(obj, lvl.Name), s.idClaim(lvl.claimKey()))
+			col := s.scopeCol(obj, lvl.Name)
+			colPred := fmt.Sprintf("%s = %s", col, s.idClaim(lvl.claimKey()))
+			if obj.scopeIsWildcard(lvl.Name) {
+				colPred = fmt.Sprintf("(%s IS NULL OR %s)", col, colPred)
+			}
 			if reaches := grantInject[lvl.Name]; len(reaches) > 0 {
 
 				colPred = "(" + colPred + " OR " + strings.Join(reaches, " OR ") + ")"

@@ -698,7 +698,7 @@ func (p *parser) parseObject() (*Object, error) {
 	if err := p.expectKw("scoped"); err != nil {
 		return nil, err
 	}
-	if o.Scoped, err = p.parseLevelChain(); err != nil {
+	if o.Scoped, o.ScopeWildcards, err = p.parseLevelChain(); err != nil {
 		return nil, err
 	}
 	if err := p.parseObjectBody(o); err != nil {
@@ -997,21 +997,21 @@ func (s *Spec) expandTemplates() error {
 	return nil
 }
 
-func (p *parser) parseLevelChain() ([]string, error) {
-	first, err := p.ident()
-	if err != nil {
-		return nil, err
-	}
-	chain := []string{first}
-	for p.peekKind() == tGT {
-		p.advance()
-		nm, err := p.ident()
-		if err != nil {
-			return nil, err
+func (p *parser) parseLevelChain() (chain, wildcards []string, err error) {
+	for {
+		nm, ierr := p.ident()
+		if ierr != nil {
+			return nil, nil, ierr
 		}
 		chain = append(chain, nm)
+		if p.acceptKw("wildcard") {
+			wildcards = append(wildcards, nm)
+		}
+		if p.peekKind() != tGT {
+			return chain, wildcards, nil
+		}
+		p.advance()
 	}
-	return chain, nil
 }
 
 func (p *parser) parseRelation() (*Relation, error) {

@@ -591,7 +591,7 @@ func valCheckScopePath(s *Spec, o *Object, chain []*Level) error {
 			return fmt.Errorf("line %d: object %q is scoped at virtual level %q (a global object) but declares a multi-level path %v — a global object carries no containment columns (V6)",
 				o.Pos.Line, o.Name, leafLevel, o.Scoped)
 		}
-		return nil
+		return valCheckScopeWildcards(s, o)
 	}
 	paths, perr := s.Topology.AncestorPaths(leafLevel)
 	if perr != nil {
@@ -617,7 +617,22 @@ func valCheckScopePath(s *Spec, o *Object, chain []*Level) error {
 		return fmt.Errorf("line %d: object %q scoped %v is not the non-virtual ancestry of %q in topological order (expected %v) (V6)",
 			o.Pos.Line, o.Name, o.Scoped, o.Scoped[len(o.Scoped)-1], want)
 	}
-	return nil
+	return valCheckScopeWildcards(s, o)
+}
+
+func valCheckScopeWildcards(s *Spec, o *Object) error {
+	var errs []error
+	for _, lvl := range o.ScopeWildcards {
+		switch {
+		case s.levelIsVirtual(lvl):
+			errs = append(errs, fmt.Errorf("line %d: object %q declares `%s wildcard`, but %q is a virtual level — containment emits no conjunct for a virtual level, so the marker could never narrow or widen anything (V6)",
+				o.Pos.Line, o.Name, lvl, lvl))
+		case o.IsLevelEntity() && lvl == o.Level:
+			errs = append(errs, fmt.Errorf("line %d: object %q declares `%s wildcard`, but %q is its own level, whose scope column is the primary key %q — a primary key is never NULL, so the marker could never match a row (V6)",
+				o.Pos.Line, o.Name, lvl, lvl, o.pk()))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func valCheckLevelEntity(o *Object, chain []*Level) error {

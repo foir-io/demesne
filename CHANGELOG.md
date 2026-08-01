@@ -1,5 +1,73 @@
 # Changelog
 
+## Unreleased
+
+### Added — `wildcard`, a scope level whose NULL means "every value"
+
+Demesne already reads a NULL scope column as a wildcard on the assignment side:
+`<admin>_has_perm` emits `(ra.project_id IS NULL OR ra.project_id = <check>)`, so
+a role assignment left NULL at a level reaches every value at that level, and one
+left NULL at the root is global. The Go and TypeScript `HoldsResolver` agree.
+
+A *row* could not say the same thing. `scoped tenant > project` emits
+
+```sql
+tenant_id = <tenant claim> AND project_id = <project claim>
+```
+
+and `NULL = anything` is NULL, so a row storing `project_id = NULL` to mean "this
+belongs to the whole tenant" was visible to nobody — not even to the session that
+owns it, which names no project and so cannot match it either. The only way to
+ship such a table was an empty-string sentinel, which is not a project id and so
+cannot take a foreign key to one.
+
+Marking the level opts that column into the assignment-side reading:
+
+```demesne
+object role {
+  table  roles
+  scoped tenant > project wildcard
+  permission view = @holds(members:read) @rls maps select
+}
+```
+
+```sql
+tenant_id = <tenant claim> AND (project_id IS NULL OR project_id = <project claim>)
+```
+
+The change lands **in the containment conjunct**, which is the only place it can
+be correct. `@within(<level> nullable)` looks like it does this and does not: it
+appends a disjunct *inside the permission disjunction*, where containment has
+already pinned the column, so the added term is unconditionally true and
+dissolves the authority check beside it. That construct is unchanged and still
+means what it meant; this is a different thing in a different position.
+
+**It only ever adds `<col> IS NULL`, and only on the level you mark.** Every row
+that was visible before is visible on the same terms; the rows whose visibility
+changes are exactly the NULL ones, which no session could reach. Unmarked levels
+keep the bare equality, so a project-scoped row stays invisible to another
+project's session, and a wildcard project cannot escape its tenant.
+
+It is containment, not permission: the authority conjunct is untouched, and
+`@holds` passes the *row's* scope columns to the definer, so a NULL project is
+checked at tenant scope and an assignment pinned to one project does not satisfy
+it. On a containment-only object (`@scoped` alone) there is no such check and any
+session in the tenant can write a wildcard row — which is what the declaration
+asks for, and worth being sure of before writing it.
+
+The marker is a compile error where it could not bind: on a virtual level, which
+emits no containment conjunct, and on a level entity's own level, whose scope
+column is the primary key and is never NULL (V6). A silent no-op in an
+authorization spec is worse than a rejection.
+
+One declaration, every surface: the compiled predicate is what the RLS policy,
+the `Can<Verb>` point-check, `@check` accessors and a verb borrowed through `via
+object` all run, so there is no second place to keep in step.
+
+Additive. Every existing spec emits byte-identically — `wildcard` appears in no
+spec until it is written, and the committed golden artifacts (`examples/authz`,
+`examples/supabaseauthz`, the TypeScript projection) are unchanged.
+
 ## v0.78.0
 
 ### Added — `require`, a clause that compiles to `AS RESTRICTIVE`

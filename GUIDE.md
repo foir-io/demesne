@@ -279,7 +279,64 @@ like the Go `HoldsResolver`: an assignment left NULL at a scope level is a
 wildcard at that level, so a tenant-wide assignment reaches every project and an
 assignment left NULL at the *root* level is global — it reaches every tenant.
 That root NULL is how a platform-wide scope is expressed; there is no separate
-level for it. Because the check keys on the permission verb at query time,
+level for it.
+
+### `wildcard` — a NULL scope column on the *row* side
+
+The rule above is about a role assignment: NULL at a scope level means "every
+value at that level". A row can want to say the same thing. A role definition
+that belongs to the whole workspace rather than to one project stores
+`project_id = NULL` and means *all* projects, not *no* project.
+
+Containment does not read it that way by default, and it must not: `scoped
+tenant > project` emits
+
+```sql
+tenant_id = <tenant claim> AND project_id = <project claim>
+```
+
+and `NULL = anything` is NULL, so a workspace-wide row is invisible to every
+session — including the one that owns it. Mark the level to opt that column into
+the assignment-side reading:
+
+```demesne
+object role {
+  table  roles
+  scoped tenant > project wildcard
+  permission view = @holds(members:read) @rls maps select
+}
+```
+
+The marked level's conjunct becomes
+
+```sql
+tenant_id = <tenant claim> AND (project_id IS NULL OR project_id = <project claim>)
+```
+
+Three things to know before using it:
+
+- **It is additive on the marked level and nothing else.** The emitted predicate
+  gains exactly one disjunct, `<col> IS NULL`. Every row that was visible before
+  is still visible, on the same terms; the only rows whose visibility changes are
+  the NULL ones, which no session could reach at all. Unmarked levels — including
+  the parent, and including the same level on a different object — keep the bare
+  equality, so a project-scoped row stays invisible to another project's session.
+- **It says "everywhere below the parent", not "nowhere".** A row with a NULL
+  project is reachable from any session in its tenant, which is what a
+  tenant-wide row means. If you want a partition instead — workspace sessions see
+  only workspace rows — do not mark the level; store a real value.
+- **It is containment, not permission.** The authority conjunct is untouched, and
+  it is what decides who may write such a row. `@holds` passes the *row's* scope
+  columns to the definer, so a NULL project is checked at tenant scope: an
+  assignment pinned to one project does not satisfy it. On a containment-only
+  object (`@scoped` alone) there is no such check, and any session in the tenant
+  can write a wildcard row — mark the level there only if that is what you mean.
+
+The marker is rejected where it could not bind: on a virtual level, which emits
+no containment conjunct at all, and on a level entity's own level, whose scope
+column is the primary key. Both would be silent no-ops otherwise.
+
+Because the check keys on the permission verb at query time,
 editing a role's permissions array changes the floor immediately, with no
 re-emit — unlike preset-key grants, whose key sets are baked into definer
 bodies. `@holds` needs a rolestore with a `permissions` column and a verb from

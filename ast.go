@@ -224,7 +224,9 @@ type Object struct {
 	PKCols []string
 	Level  string
 
-	Scoped    []string
+	Scoped         []string
+	ScopeWildcards []string
+
 	Relations []*Relation
 	Perms     []*Perm
 	Requires  []*Require
@@ -262,6 +264,8 @@ func (o *Object) modeChangelogCol() (col string, ok bool) {
 }
 
 func (o *Object) IsLevelEntity() bool { return o.Level != "" }
+
+func (o *Object) scopeIsWildcard(level string) bool { return contains(o.ScopeWildcards, level) }
 
 func (o *Object) pk() string {
 	if o.PK != "" {
