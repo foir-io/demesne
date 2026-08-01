@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.79.0
 
 ### Added — `wildcard`, a scope level whose NULL means "every value"
 
