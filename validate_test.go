@@ -79,6 +79,14 @@ func TestValidateRejects(t *testing.T) {
 			want: "definer closure (V11)",
 		},
 		{
+			name: "V15 duplicate maps",
+			src: `topology { level a }
+			      object o { table t scoped a relation owner: c via cid
+			                 permission view = owner @rls maps select
+			                 permission peek = owner @rls maps select }`,
+			want: "(V15)",
+		},
+		{
 
 			name: "owner claim unresolved",
 			src: `topology { level a }

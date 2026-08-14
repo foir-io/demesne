@@ -52,6 +52,8 @@ func Validate(s *Spec) error {
 		add(validateObject(s, o, chain))
 	}
 
+	add(valCheckDuplicateMaps(s))
+
 	add(validateCrossObjectAcyclic(s))
 
 	add(validatePredicateOnlyReferenced(s))
@@ -483,6 +485,24 @@ func valCheckRequireTerms(s *Spec, o *Object, rq *Require, rels map[string]*Rela
 		}
 	}
 	return errs
+}
+
+func valCheckDuplicateMaps(s *Spec) error {
+	var errs []error
+	for _, o := range s.Objects {
+		firstVerb := map[string]string{}
+		for _, pm := range o.Perms {
+			if !contains(pm.Layers, "rls") || pm.PredicateOnly || opToCmd[pm.Maps] == "" {
+				continue
+			}
+			if prev, dup := firstVerb[pm.Maps]; dup {
+				errs = append(errs, fmt.Errorf("line %d: object %q maps %q from both %q and %q — each emits a policy named %s_%s and the second silently replaces the first (V15)", pm.Pos.Line, o.Name, pm.Maps, prev, pm.Verb, o.Table, pm.Maps))
+				continue
+			}
+			firstVerb[pm.Maps] = pm.Verb
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func valCheckExternals(s *Spec) error {

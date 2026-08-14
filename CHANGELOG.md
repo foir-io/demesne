@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — duplicate `maps` on one object is now a compile error (V15)
+
+Two permission lines on one object could both map the same table op (`@rls maps select`
+twice). Both emitted a policy named `<table>_select`, and because emission writes
+`DROP POLICY IF EXISTS` before `CREATE POLICY`, the second silently replaced the
+first — a silent authority rewrite, and for a `require` twin a silently dropped
+restriction. Validation now refuses the spec and names both verbs.
+
 ## v0.79.0
 
 ### Added — `wildcard`, a scope level whose NULL means "every value"
