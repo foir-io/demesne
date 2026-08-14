@@ -412,10 +412,18 @@ func (s *Spec) defEmitGrantRelations(out *[]GenFn, seen map[string]bool) {
 				fmt.Sprintf("%s = p_%s_id", vg.PrincipalCol, param),
 				fmt.Sprintf("%s = p_access", vg.AccessCol),
 			)
+			body := grantEdgeExists(vg.Table, conjuncts...)
+			// The membership hop: a grant row naming a GROUP admits everyone
+			// the closure lists as its member. ORed into every kind's definer
+			// rather than gated per kind, because membership itself is the
+			// restriction — the closure's member column decides who is in.
+			if vg.GroupClosure != "" {
+				body += " OR " + grantGroupExists(vg, obj, param)
+			}
 			*out = append(*out, GenFn{
 				Name: name,
 				Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", param, obj.Name),
-				Body: grantEdgeExists(vg.Table, conjuncts...),
+				Body: body,
 			})
 		}
 	}
@@ -1703,4 +1711,3 @@ func presetLevelMap(s *Spec) map[string][]string {
 	}
 	return out
 }
-

@@ -49,6 +49,27 @@ func grantEdgeExists(edge string, conjuncts ...string) string {
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s)", edge, strings.Join(conjuncts, " AND "))
 }
 
+// grantGroupExists is the membership hop's predicate: a grant row whose kind
+// column carries the group kind value, joined to the closure so the row's
+// principal (a group) admits the principal the definer was asked about (a
+// member). Aliased, because the join needs two tables in scope.
+func grantGroupExists(vg *ViaGrant, obj *Object, param string) string {
+	conds := []string{
+		fmt.Sprintf("g.%s = p_%s_id", vg.RecordCol, obj.Name),
+	}
+	if vg.DiscrimCol != "" {
+		conds = append(conds, fmt.Sprintf("g.%s = '%s'", vg.DiscrimCol, vg.DiscrimVal))
+	}
+	conds = append(conds,
+		fmt.Sprintf("g.%s = '%s'", vg.KindCol, vg.GroupKindVal),
+		fmt.Sprintf("gc.%s = p_%s_id", vg.GroupMemberCol, param),
+		fmt.Sprintf("g.%s = p_access", vg.AccessCol),
+	)
+	return fmt.Sprintf(
+		"EXISTS (SELECT 1 FROM %s g JOIN %s gc ON gc.%s = g.%s WHERE %s)",
+		vg.Table, vg.GroupClosure, vg.GroupGroupCol, vg.PrincipalCol, strings.Join(conds, " AND "))
+}
+
 func touchOnConflict(bareKey, nullableKey, sets []string) string {
 	key := append([]string(nil), bareKey...)
 	for _, c := range nullableKey {
