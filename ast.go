@@ -347,6 +347,19 @@ type ViaGrant struct {
 	DiscrimCol   string
 	DiscrimVal   string
 
+	// The optional membership hop: a grant row whose KindCol equals
+	// GroupKindVal names a GROUP in PrincipalCol, and admits every principal
+	// the closure lists as that group's member. The closure/edge pair is the
+	// same machinery `via group` uses (transitive, trigger-maintained), so a
+	// spec may share one closure between an audience column and group grants.
+	GroupKindVal    string
+	GroupClosure    string
+	GroupGroupCol   string
+	GroupMemberCol  string
+	GroupEdge       string
+	GroupEdgeMember string
+	GroupEdgeGroup  string
+
 	Tracked bool
 
 	Async bool

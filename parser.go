@@ -1308,6 +1308,41 @@ func (p *parser) parseReprGrant() (Repr, error) {
 		vg.DiscrimCol, vg.DiscrimVal = col, val.lit
 	}
 
+	// The optional membership hop:
+	//   group "<kind value>" closure <closure>(group, member) edge <edge>(member, group)
+	// A grant row carrying the kind value names a group; the closure decides
+	// membership, and the edge is what the generated triggers maintain the
+	// closure from.
+	if p.acceptKw("group") {
+		val, err := p.expect(tString)
+		if err != nil {
+			return nil, err
+		}
+		vg.GroupKindVal = val.lit
+		if err := p.expectKw("closure"); err != nil {
+			return nil, err
+		}
+		clo, cloCols, err := p.parseTableCols()
+		if err != nil {
+			return nil, err
+		}
+		if len(cloCols) != 2 {
+			return nil, p.errf("grant group closure needs 2 columns (group, member), got %d", len(cloCols))
+		}
+		if err := p.expectKw("edge"); err != nil {
+			return nil, err
+		}
+		edge, edgeCols, err := p.parseTableCols()
+		if err != nil {
+			return nil, err
+		}
+		if len(edgeCols) != 2 {
+			return nil, p.errf("grant group edge needs 2 columns (member, group), got %d", len(edgeCols))
+		}
+		vg.GroupClosure, vg.GroupGroupCol, vg.GroupMemberCol = clo, cloCols[0], cloCols[1]
+		vg.GroupEdge, vg.GroupEdgeMember, vg.GroupEdgeGroup = edge, edgeCols[0], edgeCols[1]
+	}
+
 	vg.Tracked = p.acceptKw("tracked")
 
 	vg.Async = p.acceptKw("async")

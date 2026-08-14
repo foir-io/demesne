@@ -199,16 +199,31 @@ func (s *Spec) EmitGroupTriggers() []GroupTrigger {
 	var out []GroupTrigger
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
-			g, ok := r.Repr.(ViaGroup)
-			if !ok || seen[g.Closure] {
-				continue
+			switch g := r.Repr.(type) {
+			case ViaGroup:
+				if seen[g.Closure] {
+					continue
+				}
+				seen[g.Closure] = true
+				out = append(out, GroupTrigger{
+					Schema: s.definerSchema(), TableSchema: s.tableSchema(), Closure: g.Closure,
+					GroupCol: g.GroupCol, MemberCol: g.MemberCol,
+					Edge: g.Edge, EdgeMember: g.EdgeMember, EdgeGroup: g.EdgeGroup,
+				})
+			case ViaGrant:
+				// A grant's membership hop needs the same closure maintenance
+				// a `via group` audience column does; sharing one closure
+				// between the two shapes dedupes here.
+				if g.GroupClosure == "" || seen[g.GroupClosure] {
+					continue
+				}
+				seen[g.GroupClosure] = true
+				out = append(out, GroupTrigger{
+					Schema: s.definerSchema(), TableSchema: s.tableSchema(), Closure: g.GroupClosure,
+					GroupCol: g.GroupGroupCol, MemberCol: g.GroupMemberCol,
+					Edge: g.GroupEdge, EdgeMember: g.GroupEdgeMember, EdgeGroup: g.GroupEdgeGroup,
+				})
 			}
-			seen[g.Closure] = true
-			out = append(out, GroupTrigger{
-				Schema: s.definerSchema(), TableSchema: s.tableSchema(), Closure: g.Closure,
-				GroupCol: g.GroupCol, MemberCol: g.MemberCol,
-				Edge: g.Edge, EdgeMember: g.EdgeMember, EdgeGroup: g.EdgeGroup,
-			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Closure < out[j].Closure })
