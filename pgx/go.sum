@@ -1,8 +1,8 @@
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/foir-io/demesne v0.79.0 h1:MFNpPVSA5cK52K8V3bBwda5kCN8bNDoepEtn6RR+BPE=
-github.com/foir-io/demesne v0.79.0/go.mod h1:0MuGdMNpRISyamQSBtAqXyc24G7EwRvyVr6ToAYzulM=
+github.com/foir-io/demesne v0.80.0 h1:4QxUzErZJveQXqRZdfCZMKB1SrdfU5CKQDAkb8s+U4A=
+github.com/foir-io/demesne v0.80.0/go.mod h1:0MuGdMNpRISyamQSBtAqXyc24G7EwRvyVr6ToAYzulM=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
