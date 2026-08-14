@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased
+## v0.80.0
+
+### Added — a grant row may name a group, admitting its members through the closure
+
+`via grant` gains an optional tail:
+
+```
+relation grantee: operator via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "note" group "group" closure group_closure(grp, mem) edge group_members(admin_user_id, group_id)
+```
+
+A grant row whose kind column carries the group kind value names a GROUP in the
+principal column, and admits every principal the closure lists as that group's
+member. The hop lives INSIDE the emitted definer (an OR branch joining the grant
+table to the closure), so the policy surface is untouched and every existing spec
+emits byte-identical SQL. The closure/edge pair is the same machinery `via group`
+uses: trigger emission now collects hops from grants too (deduped by closure), so
+a grant-side hop alone gets the transitive rebuild, and a spec may share one
+closure between an audience column and group grants. Membership itself is the
+restriction — a principal population absent from the edge table gains nothing.
+The accessor enumerators are deliberately unchanged: they report the group grant
+row verbatim; expanding to members is a consumer choice, not an enumeration duty.
 
 ### Fixed — duplicate `maps` on one object is now a compile error (V15)
 
