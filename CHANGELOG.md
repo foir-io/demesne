@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.80.1
+
+### Fixed — the closure rebuild no longer deadlocks concurrent edge cascades
+
+The emitted `<closure>_rebuild` statement trigger fired even for zero-row
+statements, and its `LOCK TABLE ... SHARE ROW EXCLUSIVE` was an upgrade of the
+lock a cascading delete already held on the closure table, so two concurrent
+deletes of member-able principals deadlocked each other with completely empty
+group tables. Reproduced live: 1-3 deadlocks per 400 concurrent single-row
+delete pairs. The function now exits before any locking when both the edge and
+the closure are empty, and serializes real rebuilds with
+`pg_advisory_xact_lock` instead of a table lock: the second rebuild still waits
+for the first commit, so the lost-revocation guarantee is unchanged, and no
+lock upgrade exists to deadlock. A narrow deadlock remains reachable with
+populated tables (a concurrent member cascade against a running rebuild); it is
+retryable, and deferred closure maintenance is the eventual shape.
+
 ## v0.80.0
 
 ### Added — a grant row may name a group, admitting its members through the closure
