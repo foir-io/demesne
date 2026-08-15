@@ -166,13 +166,25 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
+  -- Fast path: nothing to close over and nothing stale to clear. Load-bearing
+  -- beyond speed: a statement trigger fires even when the statement touched
+  -- zero rows, so WITHOUT this exit every unrelated cascade into the edge
+  -- table (deleting a member-able principal that has no memberships) reached
+  -- for the rebuild lock while already holding the cascade's own lock on the
+  -- closure, and two such sessions deadlocked on the upgrade.
+  IF NOT EXISTS (SELECT 1 FROM %[7]s) AND NOT EXISTS (SELECT 1 FROM %[2]s) THEN
+    RETURN NULL;
+  END IF;
   -- Serialize concurrent rebuilds (CONCURRENCY): a full DELETE+INSERT under READ
   -- COMMITTED can otherwise lose a revocation — a second writer's DELETE cannot see the
   -- first writer's freshly-inserted (uncommitted) rows, so a revoked membership survives.
   -- This closure backs the via-group RLS floor (directly via <Closure>_member, and via any
-  -- materialized flat built from it), so a stale survivor is a leak. SHARE ROW EXCLUSIVE
-  -- self-conflicts so writers serialize, while ACCESS SHARE readers are NOT blocked.
-  LOCK TABLE %[2]s IN SHARE ROW EXCLUSIVE MODE;
+  -- materialized flat built from it), so a stale survivor is a leak. An advisory
+  -- transaction lock self-conflicts, so the second rebuild waits for the first COMMIT
+  -- and its DELETE sees the first's rows (same guarantee a table lock gave), but unlike
+  -- LOCK TABLE it is never an upgrade of the cascade's implicit lock on the closure,
+  -- which is what deadlocked concurrent edge-cascading deletes. Readers are unaffected.
+  PERFORM pg_advisory_xact_lock(hashtext('%[2]s_rebuild'));
   DELETE FROM %[2]s;
   INSERT INTO %[2]s (%[3]s, %[4]s)
   WITH RECURSIVE tc AS (

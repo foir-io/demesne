@@ -75,6 +75,8 @@ func TestGroup_NestedMembership(t *testing.T) {
 		"CREATE OR REPLACE FUNCTION auth.group_closure_rebuild()",
 		"SECURITY DEFINER",
 
+		"IF NOT EXISTS (SELECT 1 FROM group_members) AND NOT EXISTS (SELECT 1 FROM group_closure) THEN",
+		"PERFORM pg_advisory_xact_lock(hashtext('group_closure_rebuild'));",
 		"DELETE FROM group_closure;",
 		"WITH RECURSIVE tc AS (",
 		"SELECT group_id AS grp, member_id AS mem FROM group_members",
