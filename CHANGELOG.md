@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.80.2
 
 ### Fixed — the generated `Holds` helper can read a NULL scope column
 
@@ -233,7 +233,7 @@ unaffected, as are all v0.77.0 outputs.
 
 ### Known limitation — the generated `Holds` helper cannot read a NULL scope column
 
-Resolved in Unreleased; the text below describes v0.77.0 as it shipped.
+Resolved in v0.80.2; the text below describes v0.77.0 as it shipped.
 
 Pre-existing, and made significant by v0.76.0. The generated `Holds`/`HoldsRoles`
 scan every scope column into a `string`, so a SQL NULL fails the scan outright in
