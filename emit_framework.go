@@ -324,21 +324,34 @@ func (g *fwGen) holds(rs *RoleStore, suffix string) error {
 	g.b.WriteString("\tif err != nil {\n\t\treturn demesne.EffectivePerms{}, err\n\t}\n\tdefer rows.Close()\n")
 	g.b.WriteString("\tvar assignments []demesne.RoleAssignment\n")
 	g.b.WriteString("\tfor rows.Next() {\n")
-	fmt.Fprintf(&g.b, "\t\ta := demesne.RoleAssignment{Scope: make([]string, %d)}\n", len(r.SelectedScopeCols()))
-	dest := make([]string, 0, len(r.ScopeCols)+2)
-	for i := range r.SelectedScopeCols() {
-		dest = append(dest, fmt.Sprintf("&a.Scope[%d]", i))
+	g.scanAssignment(r, "demesne.EffectivePerms{}")
+	g.b.WriteString("\tif err := rows.Err(); err != nil {\n\t\treturn demesne.EffectivePerms{}, err\n\t}\n")
+	fmt.Fprintf(&g.b, "\treturn ResolveHeld%s(assignments, scope)\n}\n\n", suffix)
+	return nil
+}
+
+func (g *fwGen) scanAssignment(r *HoldsResolver, zero string) {
+	sel := r.SelectedScopeCols()
+	fmt.Fprintf(&g.b, "\t\ta := demesne.RoleAssignment{Scope: make([]string, %d)}\n", len(sel))
+	dest := make([]string, 0, len(sel)+2)
+	if len(sel) > 0 {
+		names := make([]string, len(sel))
+		for i := range sel {
+			names[i] = fmt.Sprintf("s%d", i)
+			dest = append(dest, fmt.Sprintf("&s%d", i))
+		}
+		fmt.Fprintf(&g.b, "\t\tvar %s *string\n", strings.Join(names, ", "))
 	}
 	dest = append(dest, "&a.RoleKey")
 	if r.PermsCol != "" {
 		dest = append(dest, "&a.Permissions")
 	}
 	fmt.Fprintf(&g.b, "\t\tif err := rows.Scan(%s); err != nil {\n", strings.Join(dest, ", "))
-	g.b.WriteString("\t\t\treturn demesne.EffectivePerms{}, err\n\t\t}\n")
+	fmt.Fprintf(&g.b, "\t\t\treturn %s, err\n\t\t}\n", zero)
+	for i := range sel {
+		fmt.Fprintf(&g.b, "\t\tif s%d != nil {\n\t\t\ta.Scope[%d] = *s%d\n\t\t}\n", i, i, i)
+	}
 	g.b.WriteString("\t\tassignments = append(assignments, a)\n\t}\n")
-	g.b.WriteString("\tif err := rows.Err(); err != nil {\n\t\treturn demesne.EffectivePerms{}, err\n\t}\n")
-	fmt.Fprintf(&g.b, "\treturn ResolveHeld%s(assignments, scope)\n}\n\n", suffix)
-	return nil
 }
 
 func (g *fwGen) checkFunc() {
@@ -529,18 +542,7 @@ func (g *fwGen) holdsRoles(rs *RoleStore, suffix string) error {
 	g.b.WriteString("\tif err != nil {\n\t\treturn demesne.EffectiveRoles{}, err\n\t}\n\tdefer rows.Close()\n")
 	g.b.WriteString("\tvar assignments []demesne.RoleAssignment\n")
 	g.b.WriteString("\tfor rows.Next() {\n")
-	fmt.Fprintf(&g.b, "\t\ta := demesne.RoleAssignment{Scope: make([]string, %d)}\n", len(r.SelectedScopeCols()))
-	dest := make([]string, 0, len(r.ScopeCols)+2)
-	for i := range r.SelectedScopeCols() {
-		dest = append(dest, fmt.Sprintf("&a.Scope[%d]", i))
-	}
-	dest = append(dest, "&a.RoleKey")
-	if r.PermsCol != "" {
-		dest = append(dest, "&a.Permissions")
-	}
-	fmt.Fprintf(&g.b, "\t\tif err := rows.Scan(%s); err != nil {\n", strings.Join(dest, ", "))
-	g.b.WriteString("\t\t\treturn demesne.EffectiveRoles{}, err\n\t\t}\n")
-	g.b.WriteString("\t\tassignments = append(assignments, a)\n\t}\n")
+	g.scanAssignment(r, "demesne.EffectiveRoles{}")
 	g.b.WriteString("\tif err := rows.Err(); err != nil {\n\t\treturn demesne.EffectiveRoles{}, err\n\t}\n")
 	fmt.Fprintf(&g.b, "\treturn ResolveHeldRoles%s(assignments, scope), nil\n}\n\n", suffix)
 	return nil

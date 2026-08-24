@@ -155,7 +155,7 @@ export function resolveHeld(assignments: RoleAssignment[], scope: string[]): Eff
 export async function holds(q: Querier, principalId: string, scope: string[]): Promise<EffectivePerms> {
   const { rows } = await q.query(assignmentsSQL, [principalId]);
   const assignments: RoleAssignment[] = rows.map((row) => ({
-    scope: holdsResolver.scopeCols.map((c) => String(row[c])),
+    scope: holdsResolver.scopeCols.map((c) => (row[c] == null ? "" : String(row[c]))),
     roleKey: String(row[holdsResolver.keyCol]),
     permissions: holdsResolver.permsCol !== "" ? (row[holdsResolver.permsCol] as string[]) : [],
   }));
@@ -183,7 +183,7 @@ export function resolveHeldRoles(assignments: RoleAssignment[], scope: string[])
 export async function holdsRoles(q: Querier, principalId: string, scope: string[]): Promise<EffectiveRoles> {
   const { rows } = await q.query(assignmentsSQL, [principalId]);
   const assignments: RoleAssignment[] = rows.map((row) => ({
-    scope: holdsResolver.scopeCols.map((c) => String(row[c])),
+    scope: holdsResolver.scopeCols.map((c) => (row[c] == null ? "" : String(row[c]))),
     roleKey: String(row[holdsResolver.keyCol]),
     permissions: holdsResolver.permsCol !== "" ? (row[holdsResolver.permsCol] as string[]) : [],
   }));
