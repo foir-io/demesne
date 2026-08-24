@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/foir-io/demesne v0.80.0
 	github.com/foir-io/demesne/pgx v0.80.0
-	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jackc/pgx/v5 v5.9.2
 )
 
 require (
