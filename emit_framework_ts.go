@@ -391,11 +391,12 @@ func (g *fwTSGen) holdsRolesTS(rs *RoleStore, suffix string) error {
 }
 
 func tsScopeExpr(suffix string, r *HoldsResolver) string {
+	const cell = "(c) => (row[c] == null ? \"\" : String(row[c]))"
 	sel := len(r.SelectedScopeCols())
 	if sel == len(r.ScopeCols) {
-		return fmt.Sprintf("holdsResolver%s.scopeCols.map((c) => String(row[c]))", suffix)
+		return fmt.Sprintf("holdsResolver%s.scopeCols.map(%s)", suffix, cell)
 	}
-	return fmt.Sprintf("holdsResolver%s.scopeCols.slice(0, %d).map((c) => String(row[c]))", suffix, sel)
+	return fmt.Sprintf("holdsResolver%s.scopeCols.slice(0, %d).map(%s)", suffix, sel, cell)
 }
 
 func (g *fwTSGen) roleTiersFuncTS(v *Vocabulary, suffix string) error {

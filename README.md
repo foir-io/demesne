@@ -30,7 +30,7 @@ A spec describes four things:
 - the **objects** they act on — your tables;
 - the **relations and permissions** that connect them — ownership, roles, sharing, group membership.
 
-From those, Demesne emits the RLS policies, the `SECURITY DEFINER` kernel, the verb-gate map, and the claims contract. Every trusted function is generated, so there's no opaque hand-written SQL to audit — and the test suite applies the generated SQL to a real Postgres and checks the live policies match what it emitted, byte for byte.
+From those, Demesne emits the RLS policies, the `SECURITY DEFINER` kernel, the verb-gate map, and the claims contract. Every trusted function is generated, so there's no opaque hand-written SQL to audit. CI byte-compares each generated artifact against a committed golden file, and asserts that every `Can<Verb>` point-check inlines the matching policy's `USING` clause verbatim — so the application surface cannot drift from the floor without failing the build. Set `$DEMESNE_PG_URL` and the suite additionally installs the emitted kernel in a real Postgres and checks the SQL agrees with the Go and TypeScript resolvers case for case. For a database you have already deployed to, `demesne diff <spec> <dsn> --exit-code` reports drift between the spec and the live policies.
 
 ```go
 import "github.com/foir-io/demesne"

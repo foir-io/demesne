@@ -224,8 +224,15 @@ func Holds(ctx context.Context, q demesne.Querier, principalID string, scope []s
 	var assignments []demesne.RoleAssignment
 	for rows.Next() {
 		a := demesne.RoleAssignment{Scope: make([]string, 2)}
-		if err := rows.Scan(&a.Scope[0], &a.Scope[1], &a.RoleKey); err != nil {
+		var s0, s1 *string
+		if err := rows.Scan(&s0, &s1, &a.RoleKey); err != nil {
 			return demesne.EffectivePerms{}, err
+		}
+		if s0 != nil {
+			a.Scope[0] = *s0
+		}
+		if s1 != nil {
+			a.Scope[1] = *s1
 		}
 		assignments = append(assignments, a)
 	}
@@ -272,8 +279,15 @@ func HoldsRoles(ctx context.Context, q demesne.Querier, principalID string, scop
 	var assignments []demesne.RoleAssignment
 	for rows.Next() {
 		a := demesne.RoleAssignment{Scope: make([]string, 2)}
-		if err := rows.Scan(&a.Scope[0], &a.Scope[1], &a.RoleKey); err != nil {
+		var s0, s1 *string
+		if err := rows.Scan(&s0, &s1, &a.RoleKey); err != nil {
 			return demesne.EffectiveRoles{}, err
+		}
+		if s0 != nil {
+			a.Scope[0] = *s0
+		}
+		if s1 != nil {
+			a.Scope[1] = *s1
 		}
 		assignments = append(assignments, a)
 	}
