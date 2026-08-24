@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — the generated `Holds` helper can read a NULL scope column
+
+v0.76.0 made a NULL scope column meaningful: it is how an assignment says "every
+value at this level", and at the root it is how a global assignment is expressed.
+The generated `Holds`/`HoldsRoles` fetch helpers could not read one. They scanned
+every scope column straight into a `string`, so a SQL NULL failed the scan
+outright in Go — `database/sql` cannot convert NULL to string, and the whole call
+returned an error instead of a permission set — and became the literal `"null"`
+in TypeScript, a scope value matching no level, so the assignment silently
+reached nothing. The helpers could not read the very rows the v0.76.0 semantics
+are about.
+
+The Go fetch now scans each scope column through a `*string` and copies it only
+when non-NULL, leaving the zero value `""` — which is what `Resolve` already
+reads as the wildcard. The TypeScript fetch coerces `null` to `""` rather than
+stringifying it. Both surfaces now agree with `HoldsResolver.Resolve`, which was
+correct throughout, and with the emitted `<admin>_has_perm` definer.
+
+Only the generated fetch changes. `Resolve` is untouched, so a consumer that
+reads its own rows — through pgx/pgtype, say — and calls it directly is
+unaffected and always was. A plane rolestore's below-plane columns are still
+neither selected nor scanned; the levels it does select get the same NULL-safe
+read as any other. No policy SQL changes: the committed golden artifacts differ
+only in the fetch helpers (`examples/authz`, the TypeScript projection).
+
+`pgx/nullscan_test.go` pins the driver half of the contract — that a NULL text
+column scans into a `*string` as nil rather than erroring — because the emitted
+code now depends on it.
+
 ## v0.80.1
 
 ### Fixed — the closure rebuild no longer deadlocks concurrent edge cascades
@@ -201,6 +232,8 @@ unaffected, as are all v0.77.0 outputs.
 ## v0.77.0
 
 ### Known limitation — the generated `Holds` helper cannot read a NULL scope column
+
+Resolved in Unreleased; the text below describes v0.77.0 as it shipped.
 
 Pre-existing, and made significant by v0.76.0. The generated `Holds`/`HoldsRoles`
 scan every scope column into a `string`, so a SQL NULL fails the scan outright in
