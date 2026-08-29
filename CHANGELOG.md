@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.80.3
 
 ### Documented — a rolestore's role relation may be a view, and the Go admission seam covers one plane of two
 
