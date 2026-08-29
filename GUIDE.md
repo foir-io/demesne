@@ -372,6 +372,38 @@ SQL definer tests the role's array against a generated
 `<admin>_perm_implied_by(p_perm)` reverse closure with an array overlap. A NULL
 `permissions` column fails closed.
 
+### A rolestore's role relation may be a view
+
+`rolejoin <fk> <relation> <id> <key>` names a **relation**, not specifically a
+table. It is interpolated verbatim as a bare relation into every read that joins
+it — the emitted definers, `AssignmentsSQL`, `ListForPrincipalSQL` — so a view
+serves exactly as a table does, and `ValidateAgainst` binds it from whatever
+`information_schema` reports, which does not distinguish the two.
+
+That is the supported way to apply an admission rule the **database** must also
+honour. The `AssignmentsSQL` + `ResolveHeld` seam is a Go read path; the emitted
+definers run inside Postgres, where no Go filter reaches. A rule applied only in
+Go therefore holds in the session and the PDP while every RLS branch ignores it —
+the two planes disagree, and nothing in the generated artefacts says so. Naming a
+filtered relation here applies the rule to both at once, and to any definer a
+later spec change adds:
+
+```
+rolejoin role_id roles_active id key
+```
+
+with `roles_active` a view over the role table carrying whatever the adopter's
+policy is — a `disabled_at IS NULL`, a tenant partition, an RP scope. The engine
+still bakes in none of it; it just stops being a Go-only choice where to put it.
+
+**If the underlying table has RLS, create the view `WITH (security_invoker =
+true)`.** A view otherwise runs with its *owner's* rights, and a migration role is
+usually a superuser or carries `BYPASSRLS` — so a default view reads the base
+table with RLS switched off, and anything granted `SELECT` on it reads across
+every tenant. Under `security_invoker` the view is exactly as reachable as the
+table it wraps, and a SECURITY DEFINER function still sees every row, because
+inside one the querying role is the function's owner.
+
 A spec can declare more than one rolestore, and `@holds` resolves to **the
 rolestore whose vocabulary declares the permission** — not to whichever
 rolestore was declared first. With exactly one rolestore nothing changes. With
@@ -531,6 +563,13 @@ pure helpers, and none of them re-evaluate policy in app code.
     a trusted read for another subject. The engine never runs it. Adopter-specific
     admission rules stay your policy: a disabled role, or a client- or RP-scoped
     grant. Compose them around this read; the engine bakes in none.
+
+    This seam governs the **Go** plane only. The same spec also emits SECURITY
+    DEFINER bodies that join the rolestore's role relation, and no Go filter
+    reaches inside those, so an admission rule applied only here holds in the PDP
+    and is ignored by every RLS branch. A rule that must hold on **both** planes
+    belongs in the relation the spec names — see *A rolestore's role relation may
+    be a view* below.
   - `HoldsResolver.Resolve(rows, scope) → EffectivePerms` folds those rows into the
     effective permission set at a query scope. It keeps each assignment whose scope
     contains the query and unions their permissions. The root column is a strict
@@ -663,7 +702,9 @@ that has already run `SessionSetupSQL` and the `Claims.Mint()` result.
 - *Admission filters.* `Holds` bakes in the generic active-assignment read. When
   you need adopter filters such as disabled roles or scoped grants, use the
   `AssignmentsSQL` + `ResolveHeld` seam instead: run your own filtered read, then
-  resolve.
+  resolve. That covers the Go plane. If the same rule must also hold under RLS,
+  put it in the relation `rolejoin` names rather than in the read — the emitted
+  definers join that relation and cannot see a Go filter.
 - *Extra claims.* `Claims.Extra` carries deployment claims the spec's contract
   doesn't model.
 - *Which verbs get a row check.* Only `select` (read) and `update` (edit) get one,

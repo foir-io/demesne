@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Documented — a rolestore's role relation may be a view, and the Go admission seam covers one plane of two
+
+No behaviour change. `rolejoin` has always named a relation rather than a table:
+it is interpolated verbatim as a bare name into the emitted definers,
+`AssignmentsSQL` and `ListForPrincipalSQL`, and `ValidateAgainst` binds it from
+`information_schema`, which reports a view's columns the same as a table's. So a
+view has always worked there. Nothing said so, and no test held it, which made it
+an accident an adopter could rely on and a refactor could remove.
+
+That matters because of a gap the GUIDE had. Its two "admission filters"
+passages point an adopter at the `AssignmentsSQL` + `ResolveHeld` seam for rules
+the engine deliberately does not bake in — a disabled role, a client- or
+RP-scoped grant. That seam is Go. The same spec also emits SECURITY DEFINER
+bodies that join the role relation inside Postgres, where no Go filter reaches,
+so a rule applied only through the seam holds in the session and the PDP while
+every RLS branch ignores it. The two planes disagree and nothing in the generated
+artefacts says so. An adopter hit exactly this: disabling a role removed it from
+the permission union and left its holders' row-level reach intact.
+
+Both passages now say which plane the seam governs, and a new GUIDE section —
+*A rolestore's role relation may be a view* — documents naming a filtered
+relation as the way to apply a rule on both planes at once, including any definer
+a later spec change adds. It carries the `security_invoker` caveat: a view over
+an RLS-protected table must be created `WITH (security_invoker = true)`, or it
+runs with its owner's rights — usually a superuser or `BYPASSRLS` role — and
+reads the base table with RLS switched off for every grantee.
+
+Three tests in `rolestore_hardening_test.go` pin the affordance: that the
+declared relation reaches the definer JOINs undecorated (neither quoted nor
+schema-qualified, either of which stops a view being substitutable), that it
+reaches `AssignmentsSQL` and `ListForPrincipalSQL`, and that `ValidateAgainst`
+binds a spec naming one without requiring it to be a table.
+
 ## v0.80.2
 
 ### Fixed — the generated `Holds` helper can read a NULL scope column

@@ -131,7 +131,96 @@ func TestRoleStore_AssignmentsSQLSkipsOmittedColumns(t *testing.T) {
 	}
 }
 
+func rolejoinRelation(t *testing.T, src, relation string) *Spec {
+	t.Helper()
+	s, err := Parse(strings.Replace(src, "rolejoin    role_id roles id key",
+		"rolejoin    role_id "+relation+" id key", 1))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	return s
+}
 
+func TestRoleStore_RolejoinRelationIsEmittedVerbatim(t *testing.T) {
+	const relation = "roles_active"
+	s := rolejoinRelation(t, hardeningSpec, relation)
+
+	defs, err := s.EmitDefiners()
+	if err != nil {
+		t.Fatalf("emit definers: %v", err)
+	}
+	joined := 0
+	for _, d := range defs {
+		if !strings.Contains(d.Body, " r ON r.id = ra.role_id") {
+			continue
+		}
+		joined++
+		if !strings.Contains(d.Body, "JOIN "+relation+" r ON r.id = ra.role_id") {
+			t.Errorf("definer %s does not join the declared relation %q as a bare name:\n%s", d.Name, relation, d.Body)
+		}
+		for _, decorated := range []string{`"` + relation + `"`, "public." + relation} {
+			if strings.Contains(d.Body, decorated) {
+				t.Errorf("definer %s decorates the relation as %s; a quoted or schema-qualified name stops a view being substitutable:\n%s", d.Name, decorated, d.Body)
+			}
+		}
+	}
+	if joined == 0 {
+		t.Fatal("no definer joins the rolestore, so this test asserts nothing about the relation")
+	}
+}
+
+func TestRoleStore_RolejoinRelationReachesEveryRead(t *testing.T) {
+	const relation = "roles_active"
+	s := rolejoinRelation(t, hardeningSpec, relation)
+
+	r, err := s.HoldsResolver("staff")
+	if err != nil {
+		t.Fatalf("HoldsResolver: %v", err)
+	}
+	surface, err := s.RoleAssignmentSurface("staff")
+	if err != nil {
+		t.Fatalf("RoleAssignmentSurface: %v", err)
+	}
+	for name, sql := range map[string]string{
+		"AssignmentsSQL":      r.AssignmentsSQL(),
+		"ListForPrincipalSQL": surface.ListForPrincipalSQL(),
+	} {
+		if !strings.Contains(sql, relation) {
+			t.Errorf("%s does not read the declared relation %q:\n%s", name, relation, sql)
+		}
+		if strings.Contains(sql, " roles ") {
+			t.Errorf("%s still reads `roles` though the spec names %q:\n%s", name, relation, sql)
+		}
+	}
+}
+
+func TestRoleStore_RolejoinRelationBindsWithoutBeingATable(t *testing.T) {
+	const relation = "roles_active"
+	s := rolejoinRelation(t, hardeningSpec, relation)
+
+	sc := NewSchema()
+	sc.AddColumn("docs", "id", "text", false)
+	sc.AddColumn("docs", "tenant_id", "text", false)
+	sc.AddColumn("docs", "project_id", "text", false)
+	sc.AddColumn("role_grants", "grantee_id", "text", false)
+	sc.AddColumn("role_grants", "grantee_kind", "text", false)
+	sc.AddColumn("role_grants", "role_id", "text", false)
+	sc.AddColumn("role_grants", "revoked_at", "timestamp with time zone", true)
+	sc.AddColumn("role_grants", "tenant_id", "text", true)
+	sc.AddColumn("role_grants", "project_id", "text", true)
+	sc.AddColumn(relation, "id", "text", false)
+	sc.AddColumn(relation, "key", "text", false)
+	sc.AddColumn(relation, "perms", "ARRAY", false)
+
+	if err := s.ValidateAgainst(sc); err != nil {
+		t.Fatalf("a spec whose rolejoin names a view does not bind: %v\n"+
+			"information_schema reports a view's columns the same as a table's, so the "+
+			"validator must not require one", err)
+	}
+}
 
 func TestViaRole_EmptyPresetSetRejected(t *testing.T) {
 	src := strings.Replace(hardeningSpec, "@ project", "@ tenant", 4)
@@ -147,5 +236,3 @@ func TestViaRole_EmptyPresetSetRejected(t *testing.T) {
 		t.Errorf("rejection must name the empty key set, got: %v", err)
 	}
 }
-
-
