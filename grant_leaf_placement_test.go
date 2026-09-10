@@ -7,7 +7,7 @@ import (
 
 // Where a grant's reach lands decides whether containment still binds, and the
 // two placements differ only on INSERT. A top-level branch stands alone, so
-// satisfying it satisfies the policy and the tenant and project conjuncts
+// satisfying it satisfies the policy and the enclosing scope conjuncts
 // contribute nothing. A term spliced into containment has to satisfy them too.
 //
 // The distinction is not "is the grant at the object's leaf". It is "is the
@@ -22,7 +22,7 @@ import (
 //   - member is anchored at org and reaches via an ORG grant. On an object whose
 //     leaf IS org, that reach names a peer rather than an authority over the
 //     tree, so it must be conjoined with the levels above it. Left at the top it
-//     would authorise an insert into another tenant's project outright.
+//     would authorise an insert into a sibling branch outright.
 const leafPlacementSpec = `
 topology {
   level platform virtual
@@ -61,6 +61,13 @@ object record {
   relation owner: member via customer_id
   permission view   = owner @rls maps select
   permission create = owner @rls maps insert
+}
+object shared {
+  table  shareds
+  scoped tenant > project > org
+  relation owner: member via customer_id
+  permission view   = owner + via grant orgreach @rls maps select
+  permission create = owner + via grant orgreach @rls maps insert
 }
 `
 
@@ -118,7 +125,7 @@ func emitLeafPlacement(t *testing.T) *RLSResult {
 // The headline. A grant at the object's own leaf, reached by a subject anchored
 // at that level, must not become a standalone branch: every top-level branch
 // that carries the reach must carry the levels above it too, or an insert can
-// name any tenant it likes.
+// name any enclosing scope it likes.
 func TestGrantReach_LeafLevelFromAnchoredSubjectStaysContained(t *testing.T) {
 	ins := leafPolicyByName(t, emitLeafPlacement(t), "records_insert")
 	if !strings.Contains(ins.Check, "auth.org_member_grants_reach(") {
@@ -138,8 +145,8 @@ func TestGrantReach_LeafLevelFromAnchoredSubjectStaysContained(t *testing.T) {
 
 // The other arm, and the reason the gate is not simply `g.Level != objLeaf`. A
 // subject anchored ABOVE the level it reaches into keeps its top-level branch.
-// Rerouting this one into containment rewrites live policies on tables that have
-// nothing to do with org depth.
+// Rerouting this one into containment rewrites every object whose leaf happens to
+// be the grant's own level, which is a silent narrowing of that authority.
 func TestGrantReach_LeafLevelFromSubjectAnchoredAboveStaysTopLevel(t *testing.T) {
 	ins := leafPolicyByName(t, emitLeafPlacement(t), "tenantthings_insert")
 	var standalone bool
@@ -160,6 +167,29 @@ func TestGrantReach_AboveLeafRemainsContained(t *testing.T) {
 	for _, br := range topLevelBranches(ins.Check) {
 		if strings.Contains(br, "auth.impersonation_grants_reach(") && !strings.Contains(br, "project_id") {
 			t.Errorf("the tenant grant reach escaped containment on an org-leafed object:\n%s", br)
+		}
+	}
+}
+
+// A grant can be named twice over: by a subject that reaches through it, and by
+// a `via grant` term in a permission expression. Both resolve to the same reach
+// call. The top-level list is deduped against itself only, so without a check
+// across the two the reach is emitted twice, and the second copy is a top-level
+// disjunct that stands alone and undoes the containment the first was placed
+// under. That is the escape the placement gate exists to close, reopened one
+// line later.
+func TestGrantReach_NamedByBothSubjectAndPermissionTermEmitsOnce(t *testing.T) {
+	ins := leafPolicyByName(t, emitLeafPlacement(t), "shareds_insert")
+	const reach = "auth.org_member_grants_reach("
+	if n := strings.Count(ins.Check, reach); n != 1 {
+		t.Errorf("the reach is emitted %d times, want 1:\n%s", n, ins.Check)
+	}
+	for _, br := range topLevelBranches(ins.Check) {
+		if !strings.Contains(br, reach) {
+			continue
+		}
+		if !strings.Contains(br, "tenant_id") || !strings.Contains(br, "project_id") {
+			t.Errorf("a top-level branch carries the reach alone, reopening the escape the placement gate closes:\n%s", br)
 		}
 	}
 }

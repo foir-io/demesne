@@ -237,7 +237,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 
 	top, grantInject := s.rlsSubjectBranches(obj, virtual, objLeaf, objIsGlobal, objHasStaffTerm)
 
-	top, scopedGrant, err := s.rlsExprTopBranches(obj, pm, top)
+	top, scopedGrant, err := s.rlsExprTopBranches(obj, pm, top, grantInject)
 	if err != nil {
 		return "", err
 	}
@@ -323,8 +323,8 @@ func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, obj
 // grantReachIsContained decides whether a grant's reach joins the CONTAINMENT
 // conjunct or the TOP-LEVEL branch list, and the difference is load-bearing on
 // INSERT. A top-level branch stands alone: satisfying it satisfies the policy,
-// with the tenant and project conjuncts contributing nothing. A term spliced
-// into containment has to satisfy those too.
+// and the enclosing scope conjuncts contribute nothing. A term spliced into
+// containment has to satisfy them too.
 //
 // A grant ABOVE the object's leaf is contained. It reaches down through levels
 // the object still carries, so those conjuncts stay meaningful underneath it.
@@ -334,19 +334,19 @@ func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, obj
 // than on the grant alone:
 //
 //   - A subject anchored OUTSIDE the level it reaches into is an authority
-//     arriving from above, and its reach is its whole warrant. The reach
-//     function carries the bound itself. Containment would be asking the row to
+//     arriving from above, and its reach is its whole warrant: the reach
+//     function carries the bound itself. Containing it would ask the row to
 //     justify a decision that was never about the row's position.
 //
-//   - A subject anchored AT the grant's own level is inside the topology, and
+//   - A subject anchored AT the grant's own level sits inside the topology, and
 //     its grant names a peer rather than conferring authority over the tree. Its
-//     reach must be conjoined with the levels above, or a grant at that level
-//     would authorise a row in a different branch entirely.
+//     reach has to be conjoined with the levels above it, or a grant at that
+//     level authorises a row in a sibling branch outright.
 //
 // The second arm is why this is not simply `g.Level != objLeaf`. Dropping that
-// test outright reroutes the first arm too, which rewrites live policies on
-// tables that have nothing to do with the change and narrows an authority that
-// is meant to arrive from above.
+// test reroutes the first arm too, converting a top-level branch into a
+// conjunct on every object whose leaf is the grant's level, which narrows an
+// authority meant to arrive from above.
 func (s *Spec) grantReachIsContained(obj *Object, sub *Subject, g *Grant, objLeaf string, objIsGlobal bool) bool {
 	if obj.IsLevelEntity() || objIsGlobal {
 		return false
@@ -357,7 +357,7 @@ func (s *Spec) grantReachIsContained(obj *Object, sub *Subject, g *Grant, objLea
 	return sub.Anchor == g.Level
 }
 
-func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string) ([]string, bool, error) {
+func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string, grantInject map[string][]string) ([]string, bool, error) {
 
 	scopedGrant := false
 	for _, t := range pm.Expr {
@@ -372,6 +372,16 @@ func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string) ([]string
 		reach, err := s.grantRefReach(obj, t.GrantRef)
 		if err != nil {
 			return nil, false, err
+		}
+		// A grant may be named twice over: once by a subject that reaches
+		// through it, and again by a `via grant` term in the permission
+		// expression. Both resolve to the same reach call, but the first may
+		// already have been spliced into containment, and this list is only
+		// deduped against itself. Adding it here anyway emits the reach twice
+		// and the second copy is a TOP-LEVEL disjunct, which stands alone and
+		// undoes the containment the first copy was placed under.
+		if grantReachIsInjected(grantInject, reach) {
+			continue
 		}
 		if !contains(top, reach) {
 			top = append(top, reach)
@@ -392,6 +402,18 @@ func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string) ([]string
 		}
 	}
 	return top, scopedGrant, nil
+}
+
+// grantReachIsInjected reports whether a reach has already been placed in the
+// containment conjunct at some level, so a second reference to the same grant
+// does not also emit it at the top level where it would stand alone.
+func grantReachIsInjected(grantInject map[string][]string, reach string) bool {
+	for _, reaches := range grantInject {
+		if contains(reaches, reach) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Spec) rlsContainmentBlock(obj *Object, objLeaf string, grantInject map[string][]string) (string, error) {
