@@ -37,6 +37,12 @@ subject admin    { anchor tenant; reach descendants; identifies sub; roles confi
 subject reader   { anchor org;    reach via grant readonly;  identifies customer_id; roles none }
 subject anyone   { anchor org;    reach via grant unbounded; identifies customer_id; roles none }
 
+object orgnode {
+  table  orgnodes
+  level  org
+  scoped tenant > project > org
+  permission view = @scoped @rls maps select
+}
 object doc {
   table  docs
   scoped tenant > project > org
@@ -133,5 +139,61 @@ func TestGrantVerbs_DuplicateVerbIsRefused(t *testing.T) {
 	}
 	if err := Validate(s); err == nil {
 		t.Fatal("a grant naming the same verb twice was accepted")
+	}
+}
+
+// accessorBranchFor returns the enumeration branch a named grant contributes to
+// an object's accessor definer. A branch spans two lines, the SELECT carrying
+// the access literal and the FROM joining the edge, so a per-line match finds
+// one half or the other and never both.
+func accessorBranchFor(t *testing.T, grant string) string {
+	t.Helper()
+	s, err := Parse(verbScopeSpec)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	defs, err := s.EmitDefiners()
+	if err != nil {
+		t.Fatalf("emit definers: %v", err)
+	}
+	want := "'" + grant + "'::text"
+	for _, d := range defs {
+		if !strings.HasSuffix(d.Name, "_accessors") {
+			continue
+		}
+		for _, br := range strings.Split(d.Body, "SELECT ") {
+			if strings.Contains(br, want) {
+				return br
+			}
+		}
+	}
+	t.Fatalf("no accessor branch enumerates grant %q", grant)
+	return ""
+}
+
+// The accessor enumeration answers "who can reach this row, and how". It read
+// 'write' for every grant regardless of what the grant conferred, so a reach
+// bounded to select listed its holders as writers. Anything rendering that
+// answer, an access panel or a resolve API, shows a capability the row layer
+// would refuse.
+func TestGrantVerbs_AccessorEnumerationFollowsTheConferredOps(t *testing.T) {
+	br := accessorBranchFor(t, "readonly")
+	if strings.Contains(br, "'write'::text") {
+		t.Errorf("a grant conferring only select is enumerated as a write accessor:\n%s", br)
+	}
+	if !strings.Contains(br, "'read'::text") {
+		t.Errorf("a grant conferring only select should enumerate as read:\n%s", br)
+	}
+}
+
+// The unbounded grant keeps 'write', so adding the clause did not quietly
+// downgrade every accessor already being enumerated.
+func TestGrantVerbs_UnboundedGrantStillEnumeratesAsWrite(t *testing.T) {
+	br := accessorBranchFor(t, "unbounded")
+	if !strings.Contains(br, "'write'::text") {
+		t.Errorf("a grant naming no verbs must still enumerate as write:\n%s", br)
 	}
 }

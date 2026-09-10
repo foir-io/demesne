@@ -1501,7 +1501,7 @@ func (s *Spec) structuralAccessorDefiner(obj *Object) (GenFn, bool, error) {
 
 	for _, g := range s.Grants {
 		if s.levelOnObjectPath(obj, g.Level) {
-			branches = append(branches, s.impersonationEnumSQL(obj, g))
+			branches = append(branches, s.grantEnumSQL(obj, g))
 		}
 	}
 	if len(branches) == 0 {
@@ -1607,7 +1607,9 @@ func (s *Spec) memberinEnumSQL(obj *Object, rs *RoleStore, level string) string 
 		strings.Join(on, " AND "), obj.pk())
 }
 
-func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
+// grantEnumSQL enumerates the holders of a grant as accessors of an object the
+// grant reaches.
+func (s *Spec) grantEnumSQL(obj *Object, g *Grant) string {
 	conds := []string{fmt.Sprintf("ig.%s = e.%s", g.LevelCol, s.scopeCol(obj, g.Level))}
 	if g.ActiveCol != "" {
 		conds = append(conds, fmt.Sprintf("ig.%s IS NULL", g.ActiveCol))
@@ -1621,8 +1623,28 @@ func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
 		kind = rs.KindVal
 	}
 	return fmt.Sprintf(
-		"SELECT '%s'::text, '%s'::text, ig.%s, 'write'::text\n    FROM %s e JOIN %s ig ON %s\n    WHERE e.%s = p_id",
-		g.Name, kind, g.GranteeCol, obj.Table, g.Table, strings.Join(conds, " AND "), obj.pk())
+		"SELECT '%s'::text, '%s'::text, ig.%s, '%s'::text\n    FROM %s e JOIN %s ig ON %s\n    WHERE e.%s = p_id",
+		g.Name, kind, g.GranteeCol, grantAccess(g), obj.Table, g.Table, strings.Join(conds, " AND "), obj.pk())
+}
+
+// grantAccess reports the access an enumeration should attribute to a grant's
+// holders. It follows the ops the grant confers, so a reach bounded to select
+// is enumerated as a reader rather than as a writer.
+//
+// A grant naming no ops confers all of them and so confers write, which is what
+// every grant reported before the clause existed. Where a grant names several,
+// the strongest wins: an enumeration answers "what can this principal do here",
+// and the weakest answer would understate it.
+func grantAccess(g *Grant) string {
+	if len(g.Verbs) == 0 {
+		return "write"
+	}
+	for _, op := range []string{"update", "insert", "delete", "select"} {
+		if contains(g.Verbs, op) {
+			return accessFor(op)
+		}
+	}
+	return "read"
 }
 
 func (s *Spec) levelOnObjectPath(obj *Object, level string) bool {
