@@ -312,14 +312,49 @@ func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, obj
 		return top, grantInject
 	}
 	reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.idClaim(sub.Identifies), s.scopeCol(obj, g.Level))
-	if g.Level != objLeaf && !obj.IsLevelEntity() && !objIsGlobal {
-
+	if s.grantReachIsContained(obj, sub, g, objLeaf, objIsGlobal) {
 		grantInject[g.Level] = append(grantInject[g.Level], reach)
 	} else {
-
 		top = append(top, reach)
 	}
 	return top, grantInject
+}
+
+// grantReachIsContained decides whether a grant's reach joins the CONTAINMENT
+// conjunct or the TOP-LEVEL branch list, and the difference is load-bearing on
+// INSERT. A top-level branch stands alone: satisfying it satisfies the policy,
+// with the tenant and project conjuncts contributing nothing. A term spliced
+// into containment has to satisfy those too.
+//
+// A grant ABOVE the object's leaf is contained. It reaches down through levels
+// the object still carries, so those conjuncts stay meaningful underneath it.
+//
+// A grant AT the object's leaf is the case that decides where a level's own
+// grant lands, and the answer turns on where the REACHING SUBJECT sits rather
+// than on the grant alone:
+//
+//   - A subject anchored OUTSIDE the level it reaches into is an authority
+//     arriving from above, and its reach is its whole warrant. The reach
+//     function carries the bound itself. Containment would be asking the row to
+//     justify a decision that was never about the row's position.
+//
+//   - A subject anchored AT the grant's own level is inside the topology, and
+//     its grant names a peer rather than conferring authority over the tree. Its
+//     reach must be conjoined with the levels above, or a grant at that level
+//     would authorise a row in a different branch entirely.
+//
+// The second arm is why this is not simply `g.Level != objLeaf`. Dropping that
+// test outright reroutes the first arm too, which rewrites live policies on
+// tables that have nothing to do with the change and narrows an authority that
+// is meant to arrive from above.
+func (s *Spec) grantReachIsContained(obj *Object, sub *Subject, g *Grant, objLeaf string, objIsGlobal bool) bool {
+	if obj.IsLevelEntity() || objIsGlobal {
+		return false
+	}
+	if g.Level != objLeaf {
+		return true
+	}
+	return sub.Anchor == g.Level
 }
 
 func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string) ([]string, bool, error) {
