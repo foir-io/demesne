@@ -698,7 +698,7 @@ func (p *parser) parseObject() (*Object, error) {
 	if err := p.expectKw("scoped"); err != nil {
 		return nil, err
 	}
-	if o.Scoped, o.ScopeWildcards, err = p.parseLevelChain(); err != nil {
+	if o.Scoped, o.ScopeWildcards, o.ScopeWildcardVerbs, err = p.parseLevelChain(); err != nil {
 		return nil, err
 	}
 	if err := p.parseObjectBody(o); err != nil {
@@ -997,18 +997,36 @@ func (s *Spec) expandTemplates() error {
 	return nil
 }
 
-func (p *parser) parseLevelChain() (chain, wildcards []string, err error) {
+func (p *parser) parseLevelChain() (chain, wildcards []string, wildcardVerbs map[string][]string, err error) {
 	for {
 		nm, ierr := p.ident()
 		if ierr != nil {
-			return nil, nil, ierr
+			return nil, nil, nil, ierr
 		}
 		chain = append(chain, nm)
 		if p.acceptKw("wildcard") {
 			wildcards = append(wildcards, nm)
+			if p.acceptKw("confers") {
+				var verbs []string
+				for {
+					v, verr := p.ident()
+					if verr != nil {
+						return nil, nil, nil, verr
+					}
+					verbs = append(verbs, v)
+					if p.peekKind() != tComma {
+						break
+					}
+					p.advance()
+				}
+				if wildcardVerbs == nil {
+					wildcardVerbs = map[string][]string{}
+				}
+				wildcardVerbs[nm] = verbs
+			}
 		}
 		if p.peekKind() != tGT {
-			return chain, wildcards, nil
+			return chain, wildcards, wildcardVerbs, nil
 		}
 		p.advance()
 	}

@@ -247,7 +247,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 		return "", err
 	}
 
-	block, err := s.rlsContainmentBlock(obj, objLeaf, grantInject)
+	block, err := s.rlsContainmentBlock(obj, objLeaf, grantInject, pm.Maps)
 	if err != nil {
 		return "", err
 	}
@@ -424,7 +424,7 @@ func grantReachIsInjected(grantInject map[string][]string, reach string) bool {
 	return false
 }
 
-func (s *Spec) rlsContainmentBlock(obj *Object, objLeaf string, grantInject map[string][]string) (string, error) {
+func (s *Spec) rlsContainmentBlock(obj *Object, objLeaf string, grantInject map[string][]string, op string) (string, error) {
 	paths, err := s.Topology.AncestorPaths(objLeaf)
 	if err != nil {
 		return "", err
@@ -438,8 +438,30 @@ func (s *Spec) rlsContainmentBlock(obj *Object, objLeaf string, grantInject map[
 			}
 			col := s.scopeCol(obj, lvl.Name)
 			colPred := fmt.Sprintf("%s = %s", col, s.idClaim(lvl.claimKey()))
-			if obj.scopeIsWildcard(lvl.Name) {
+			// A wildcard makes two admissions, and only one of them is bounded.
+			//
+			// A caller carrying NO claim at this level was never confined by it,
+			// so a row belonging to no instance stays in scope for them on every
+			// op. That admission is unconditional: withdrawing it would confine
+			// a caller by a level they do not stand in, hiding rows that are
+			// nobody's from everybody.
+			//
+			// A caller standing IN an instance is the bounded one. Letting them
+			// reach a row that belongs to no instance is the point of a shared
+			// tier on a read, and on a write it is a caller reaching outside the
+			// instance that confines them.
+			//
+			// So a bounded wildcard keeps the first admission and drops the
+			// second on the ops it does not name. IS NOT DISTINCT FROM is
+			// exactly that pair: true when both are absent, true when they
+			// match, false when the caller stands somewhere and the row does
+			// not. It is a strict narrowing of the unbounded form, differing
+			// only in the cell where a claim-carrying caller met a NULL row.
+			switch {
+			case obj.scopeIsWildcardFor(lvl.Name, op):
 				colPred = fmt.Sprintf("(%s IS NULL OR %s)", col, colPred)
+			case obj.scopeIsWildcard(lvl.Name):
+				colPred = fmt.Sprintf("%s IS NOT DISTINCT FROM %s", col, s.idClaim(lvl.claimKey()))
 			}
 			if reaches := grantInject[lvl.Name]; len(reaches) > 0 {
 

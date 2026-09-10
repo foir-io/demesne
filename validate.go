@@ -664,6 +664,25 @@ func valCheckScopeWildcards(s *Spec, o *Object) error {
 			errs = append(errs, fmt.Errorf("line %d: object %q declares `%s wildcard`, but %q is its own level, whose scope column is the primary key %q — a primary key is never NULL, so the marker could never match a row (V6)",
 				o.Pos.Line, o.Name, lvl, lvl, o.pk()))
 		}
+		// A misspelt op on a bounded wildcard widens rather than narrows: the
+		// level confines on the op that was meant to stay open, and the wildcard
+		// reads as declared while admitting nothing there.
+		seen := map[string]bool{}
+		for _, v := range o.ScopeWildcardVerbs[lvl] {
+			if opToCmd[v] == "" {
+				errs = append(errs, fmt.Errorf("line %d: object %q wildcard at %q confers unknown verb %q (expected select, insert, update or delete)",
+					o.Pos.Line, o.Name, lvl, v))
+			}
+			if seen[v] {
+				errs = append(errs, fmt.Errorf("line %d: object %q wildcard at %q names verb %q twice", o.Pos.Line, o.Name, lvl, v))
+			}
+			seen[v] = true
+		}
+	}
+	for lvl := range o.ScopeWildcardVerbs {
+		if !o.scopeIsWildcard(lvl) {
+			errs = append(errs, fmt.Errorf("line %d: object %q bounds a wildcard at level %q that it does not declare", o.Pos.Line, o.Name, lvl))
+		}
 	}
 	return errors.Join(errs...)
 }

@@ -247,6 +247,18 @@ type Object struct {
 	Scoped         []string
 	ScopeWildcards []string
 
+	// ScopeWildcardVerbs bounds a wildcard to named table ops, keyed by level.
+	// An absent or empty entry means every op, which is what a bare `wildcard`
+	// gets, so a spec written before the clause existed keeps its behaviour.
+	//
+	// The distinction matters because a wildcard says two things at once that
+	// are not equally safe. It says a row carrying NULL at this level belongs to
+	// no instance of it, and it says such a row is in scope for a caller who
+	// stands in one instance. Reading a row that belongs to everyone is the
+	// point of a shared tier; WRITING one from inside a single instance is a
+	// caller reaching outside the instance that confines it.
+	ScopeWildcardVerbs map[string][]string
+
 	Relations []*Relation
 	Perms     []*Perm
 	Requires  []*Require
@@ -286,6 +298,19 @@ func (o *Object) modeChangelogCol() (col string, ok bool) {
 func (o *Object) IsLevelEntity() bool { return o.Level != "" }
 
 func (o *Object) scopeIsWildcard(level string) bool { return contains(o.ScopeWildcards, level) }
+
+// scopeIsWildcardFor reports whether the wildcard at a level admits NULL for a
+// given table op. A wildcard naming no ops admits every one of them.
+func (o *Object) scopeIsWildcardFor(level, op string) bool {
+	if !o.scopeIsWildcard(level) {
+		return false
+	}
+	verbs, bounded := o.ScopeWildcardVerbs[level]
+	if !bounded || len(verbs) == 0 {
+		return true
+	}
+	return contains(verbs, op)
+}
 
 func (o *Object) pk() string {
 	if o.PK != "" {
