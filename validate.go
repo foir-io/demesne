@@ -144,6 +144,19 @@ func valCheckGrants(s *Spec, levels map[string]bool) error {
 		if g.Table == "" || g.GranteeCol == "" || g.LevelCol == "" {
 			errs = append(errs, fmt.Errorf("line %d: grant %q must name an edge table, grantee column and level column", g.Pos.Line, g.Name))
 		}
+		// A misspelt verb would otherwise narrow the grant to nothing in
+		// silence: the reach would be spliced into no policy at all and the
+		// grant would read as declared while conferring no reach.
+		seen := map[string]bool{}
+		for _, v := range g.Verbs {
+			if opToCmd[v] == "" {
+				errs = append(errs, fmt.Errorf("line %d: grant %q confers unknown verb %q (expected select, insert, update or delete)", g.Pos.Line, g.Name, v))
+			}
+			if seen[v] {
+				errs = append(errs, fmt.Errorf("line %d: grant %q names verb %q twice", g.Pos.Line, g.Name, v))
+			}
+			seen[v] = true
+		}
 	}
 	return errors.Join(errs...)
 }

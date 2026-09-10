@@ -2025,6 +2025,20 @@ func (p *parser) parseGrant() (*Grant, error) {
 
 func (p *parser) parseGrantOptions(g *Grant) error {
 	for {
+		if p.acceptKw("confers") {
+			for {
+				v, err := p.ident()
+				if err != nil {
+					return err
+				}
+				g.Verbs = append(g.Verbs, v)
+				if p.peekKind() != tComma {
+					break
+				}
+				p.advance()
+			}
+			continue
+		}
 		if p.acceptKw("column") {
 			col, err := p.ident()
 			if err != nil {

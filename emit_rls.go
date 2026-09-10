@@ -235,7 +235,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 	objIsGlobal := virtual[objLeaf]
 	objHasStaffTerm := s.objectReferencesStaff(obj)
 
-	top, grantInject := s.rlsSubjectBranches(obj, virtual, objLeaf, objIsGlobal, objHasStaffTerm)
+	top, grantInject := s.rlsSubjectBranches(obj, virtual, objLeaf, objIsGlobal, objHasStaffTerm, pm.Maps)
 
 	top, scopedGrant, err := s.rlsExprTopBranches(obj, pm, top, grantInject)
 	if err != nil {
@@ -279,7 +279,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 	return pred, nil
 }
 
-func (s *Spec) rlsSubjectBranches(obj *Object, virtual map[string]bool, objLeaf string, objIsGlobal, objHasStaffTerm bool) ([]string, map[string][]string) {
+func (s *Spec) rlsSubjectBranches(obj *Object, virtual map[string]bool, objLeaf string, objIsGlobal, objHasStaffTerm bool, op string) ([]string, map[string][]string) {
 	var top []string
 	grantInject := map[string][]string{}
 	for _, sub := range s.Subjects {
@@ -297,15 +297,20 @@ func (s *Spec) rlsSubjectBranches(obj *Object, virtual map[string]bool, objLeaf 
 			top = append(top, fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(sub.Anchor), s.idClaim(sub.Identifies)))
 		case sub.Reach == "grant":
 
-			top, grantInject = s.rlsApplyGrantReach(obj, sub, objLeaf, objIsGlobal, top, grantInject)
+			top, grantInject = s.rlsApplyGrantReach(obj, sub, objLeaf, objIsGlobal, top, grantInject, op)
 		}
 	}
 	return top, grantInject
 }
 
-func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, objIsGlobal bool, top []string, grantInject map[string][]string) ([]string, map[string][]string) {
+func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, objIsGlobal bool, top []string, grantInject map[string][]string, op string) ([]string, map[string][]string) {
 	g := s.grantByName(sub.ReachGrant)
 	if g == nil || !contains(obj.Scoped, g.Level) {
+		return top, grantInject
+	}
+	// A grant that does not confer this op contributes no branch to it, which is
+	// how a reach can carry read without carrying update or delete.
+	if !g.Confers(op) {
 		return top, grantInject
 	}
 	if g.Table == obj.Table {
@@ -367,6 +372,9 @@ func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string, grantInje
 	}
 	for _, t := range pm.Expr {
 		if t.GrantRef == "" {
+			continue
+		}
+		if g := s.grantByName(t.GrantRef); g != nil && !g.Confers(pm.Maps) {
 			continue
 		}
 		reach, err := s.grantRefReach(obj, t.GrantRef)

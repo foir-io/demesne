@@ -73,8 +73,28 @@ type Grant struct {
 	RevokedByCol string
 	CreatedAtCol string
 
+	// Verbs bounds which table ops the grant's reach is spliced into. Empty
+	// means every op, which is what a grant carrying no `confers` clause gets,
+	// so a spec written before the clause existed keeps its behaviour exactly.
+	//
+	// Without a bound the same reach predicate lands on select, insert, update
+	// and delete alike, so a grant meant to let a holder READ what it reaches
+	// also lets it rewrite and destroy it. That is rarely what a reach is for,
+	// and it cannot be narrowed after the fact by the permission expression,
+	// which never sees the reach.
+	Verbs []string
+
 	ExtraCols []string
 	Pos       Pos
+}
+
+// Confers reports whether the grant's reach applies to a table op. A grant that
+// names no verbs confers all of them.
+func (g *Grant) Confers(op string) bool {
+	if len(g.Verbs) == 0 {
+		return true
+	}
+	return contains(g.Verbs, op)
 }
 
 func (g *Grant) grantPK() string {
