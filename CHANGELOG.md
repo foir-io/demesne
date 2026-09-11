@@ -1,5 +1,62 @@
 # Changelog
 
+## v0.81.0
+
+Five engine changes, all additive. A spec that names none of the new markers
+emits byte-for-byte what it emitted at v0.80.3, which is the property to check
+first on adoption: bump, re-emit, diff, and expect nothing.
+
+### A grant's reach is placed by the reaching subject, not by the grant alone
+
+`defEmitGrantReach` routed a grant's reach to the top-level branch whenever the
+grant named the object's own leaf level. That is right when the subject reaching
+through the grant is anchored above the leaf, and wrong when it is anchored at
+it: the reach then escapes the containment conjunct entirely and admits rows the
+enclosing scopes exclude.
+
+Placement now asks where the reaching subject is anchored. A subject anchored at
+the grant's own level gets the reach spliced INSIDE containment, so the enclosing
+conjuncts still bind; one anchored above keeps the top-level branch it has always
+had. Objects that are level entities, and objects whose leaf is global, are
+unaffected.
+
+### A doubly-named grant emits its reach once
+
+An object naming the same grant in both a permission term and its level chain
+emitted the reach twice: once inside the containment conjunct and once as a
+top-level disjunct. The second copy reopened exactly the escape the first was
+placed to close. `rlsExprTopBranches` dedupes across both lists now rather than
+only within its own.
+
+### A grant may confer named verbs rather than all of them
+
+`grant ... confers select, insert` restricts what the reach admits. Previously a
+grant's reach was identical across every command, so a subject reaching through
+one gained write and delete wherever it gained read. The option is parsed,
+validated against the object's declared ops, and emitted per command; a grant
+that names no verbs behaves exactly as before.
+
+### A grant's accessor enumeration reports the access it confers
+
+The accessor enumerator hardcoded `write` for every grant-derived row. It now
+reports what the grant actually confers, so an enumeration cannot claim an
+authority the policy layer does not grant.
+
+### A wildcard may admit NULL on named ops rather than on all of them
+
+`scoped ... > level wildcard confers select` keeps the NULL-admitting form on the
+named commands and emits `IS NOT DISTINCT FROM` on the rest. The unnamed form is
+unchanged.
+
+The distinction matters wherever a NULL column means "belongs to the enclosing
+scope rather than to any leaf". Admitting NULL on a read lets a subject standing
+at a leaf SEE the enclosing scope's rows, which is usually wanted. Admitting it
+on a write lets the same subject MODIFY them, which usually is not. `IS NOT
+DISTINCT FROM` is the pair: true when both are absent, true when they match,
+false when the subject stands somewhere and the row does not. It is a strict
+narrowing of the unbounded form, differing only in the cell where a
+claim-carrying subject met a NULL row.
+
 ## v0.80.3
 
 ### Documented — a rolestore's role relation may be a view, and the Go admission seam covers one plane of two
