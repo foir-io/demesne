@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.82.0
+
+One engine change, additive in surface and a plan change in effect. A spec is
+unchanged: no new grammar, no marker to name, nothing to opt into. The emitted
+DEFINER set grows by one function per grant and the emitted POLICIES change
+shape, so the property to check on adoption is behaviour rather than bytes —
+re-emit, diff, and expect every grant reach to have moved from a call to a
+membership test.
+
+### A grant's reach is spliced into a policy as a set, not called per row
+
+`defEmitGrantReach` emitted one function per grant, a scalar boolean
+`<table>_reach(grantee, value)` wrapping an `EXISTS`, and the RLS emitter
+spliced that call directly into the predicate. A SECURITY DEFINER carrying a
+SET clause cannot be inlined — each blocks it independently — so spliced into a
+policy it is re-entered once per candidate row.
+
+That cost is linear in the TABLE, not in the grant, and a predicate is evaluated
+on every row a sort or an aggregate has to consider. `LIMIT` does not bound it:
+an ordered page has to filter everything before it can sort anything.
+
+A second function is now emitted beside the first — `<table>_reach_set(grantee)`
+returning `SETOF`, selecting the level column keyed by the grantee column under
+the same active and expiry bounds — and the policies splice
+`<col> IN (SELECT <schema>.<table>_reach_set(<claim>))`. The planner resolves
+that once, as a hashed subplan.
+
+The two forms are the same predicate:
+
+    EXISTS (SELECT 1 FROM T WHERE grantee = $1 AND level = row)
+      =  row IN (SELECT level FROM T WHERE grantee = $1)
+
+They differ only in three-valued logic, where `IN` yields NULL against EXISTS's
+false, and a policy admits on TRUE — so NULL and false are the same admission. A
+reach is only ever OR'd into a predicate and is never negated. If that ever
+changes, this equivalence is the thing to re-derive rather than assume.
+
+Measured on a 200k-row table behind a 425-node closure four levels deep, an
+ordered page of 50: 683ms under the per-row scalar, 58ms under the set form.
+The filter ran on 180k rows either way; only the number of definer entries
+changed.
+
+### The scalar is still emitted, and is still what a definer's body calls
+
+Not a replacement. Inside another definer the value under test is a parameter
+and the call happens once, so the scalar answers it in one comparison and a
+membership test against a set would be strictly more work for the same answer.
+Any caller holding a direct reference to `<table>_reach` is unaffected.
+
 ## v0.81.0
 
 Five engine changes, all additive. A spec that names none of the new markers

@@ -62,7 +62,7 @@ func TestDefinerSchema_IsSpecDeclared(t *testing.T) {
 	if recSelect == nil {
 		t.Fatal("no records_select policy emitted")
 	}
-	if !strings.Contains(recSelect.Using, "authz.impersonation_grants_reach(") {
+	if !strings.Contains(recSelect.Using, "authz.impersonation_grants_reach_set(") {
 		t.Errorf("records_select must call the grant reach in the declared schema:\n%s", recSelect.Using)
 	}
 }

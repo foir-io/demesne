@@ -128,11 +128,11 @@ func emitLeafPlacement(t *testing.T) *RLSResult {
 // name any enclosing scope it likes.
 func TestGrantReach_LeafLevelFromAnchoredSubjectStaysContained(t *testing.T) {
 	ins := leafPolicyByName(t, emitLeafPlacement(t), "records_insert")
-	if !strings.Contains(ins.Check, "auth.org_member_grants_reach(") {
+	if !strings.Contains(ins.Check, "auth.org_member_grants_reach_set(") {
 		t.Fatalf("records_insert does not carry the org grant reach at all:\n%s", ins.Check)
 	}
 	for _, br := range topLevelBranches(ins.Check) {
-		if !strings.Contains(br, "auth.org_member_grants_reach(") {
+		if !strings.Contains(br, "auth.org_member_grants_reach_set(") {
 			continue
 		}
 		for _, above := range []string{"tenant_id", "project_id"} {
@@ -151,7 +151,7 @@ func TestGrantReach_LeafLevelFromSubjectAnchoredAboveStaysTopLevel(t *testing.T)
 	ins := leafPolicyByName(t, emitLeafPlacement(t), "tenantthings_insert")
 	var standalone bool
 	for _, br := range topLevelBranches(ins.Check) {
-		if strings.Contains(br, "auth.impersonation_grants_reach(") && !strings.Contains(br, " AND ") {
+		if strings.Contains(br, "auth.impersonation_grants_reach_set(") && !strings.Contains(br, " AND ") {
 			standalone = true
 		}
 	}
@@ -165,7 +165,7 @@ func TestGrantReach_LeafLevelFromSubjectAnchoredAboveStaysTopLevel(t *testing.T)
 func TestGrantReach_AboveLeafRemainsContained(t *testing.T) {
 	ins := leafPolicyByName(t, emitLeafPlacement(t), "records_insert")
 	for _, br := range topLevelBranches(ins.Check) {
-		if strings.Contains(br, "auth.impersonation_grants_reach(") && !strings.Contains(br, "project_id") {
+		if strings.Contains(br, "auth.impersonation_grants_reach_set(") && !strings.Contains(br, "project_id") {
 			t.Errorf("the tenant grant reach escaped containment on an org-leafed object:\n%s", br)
 		}
 	}
@@ -180,7 +180,7 @@ func TestGrantReach_AboveLeafRemainsContained(t *testing.T) {
 // line later.
 func TestGrantReach_NamedByBothSubjectAndPermissionTermEmitsOnce(t *testing.T) {
 	ins := leafPolicyByName(t, emitLeafPlacement(t), "shareds_insert")
-	const reach = "auth.org_member_grants_reach("
+	const reach = "auth.org_member_grants_reach_set("
 	if n := strings.Count(ins.Check, reach); n != 1 {
 		t.Errorf("the reach is emitted %d times, want 1:\n%s", n, ins.Check)
 	}

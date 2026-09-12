@@ -99,7 +99,7 @@ func TestTemplate_UseExpandsOverrideOmit(t *testing.T) {
 		if pred == "" {
 			pred = p.Check
 		}
-		if !strings.Contains(pred, "auth.impersonation_grants_reach(") {
+		if !strings.Contains(pred, "auth.impersonation_grants_reach_set(") {
 			t.Errorf("configs_%s lost the operator grant (a @scoped containment policy):\n%s", op, pred)
 		}
 		if !strings.Contains(pred, "project_id = ") {
@@ -120,7 +120,7 @@ func TestTemplate_UseExpandsOverrideOmit(t *testing.T) {
 	}
 
 	di := pol["docs_insert"].Check
-	if !strings.Contains(di, "auth.impersonation_grants_reach(") || strings.Contains(di, "customer_id") {
+	if !strings.Contains(di, "auth.impersonation_grants_reach_set(") || strings.Contains(di, "customer_id") {
 		t.Errorf("docs_insert should be the inherited @scoped containment policy:\n%s", di)
 	}
 }

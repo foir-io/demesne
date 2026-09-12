@@ -89,7 +89,7 @@ func predicateFor(t *testing.T, rls *RLSResult, name string) string {
 // clause rather than some blanket presence or absence.
 func TestGrantVerbs_ReachAppliesOnlyToConferredOps(t *testing.T) {
 	rls := emitVerbScope(t)
-	const reach = "auth.readonly_edge_reach("
+	const reach = "auth.readonly_edge_reach_set("
 
 	if got := predicateFor(t, rls, "docs_select"); !strings.Contains(got, reach) {
 		t.Errorf("select is conferred but carries no reach:\n%s", got)
@@ -105,7 +105,7 @@ func TestGrantVerbs_ReachAppliesOnlyToConferredOps(t *testing.T) {
 // silently narrow every grant already written without one.
 func TestGrantVerbs_NoClauseConfersEveryOp(t *testing.T) {
 	rls := emitVerbScope(t)
-	const reach = "auth.unbounded_edge_reach("
+	const reach = "auth.unbounded_edge_reach_set("
 	for _, name := range []string{"docs_select", "docs_update", "docs_insert", "docs_delete"} {
 		if got := predicateFor(t, rls, name); !strings.Contains(got, reach) {
 			t.Errorf("%s lost the reach of a grant that names no verbs; the default must be every op:\n%s", name, got)

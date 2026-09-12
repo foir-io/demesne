@@ -113,14 +113,18 @@ func TestGrant_ScopedOperatorReplacesGodFlag(t *testing.T) {
 	if recSelect == nil {
 		t.Fatal("no records_select policy emitted")
 	}
-	if !strings.Contains(recSelect.Using, "auth.impersonation_grants_reach(") {
+	if !strings.Contains(recSelect.Using, "auth.impersonation_grants_reach_set(") {
 		t.Errorf("records_select must grant the operator via the grant reach, got:\n%s", recSelect.Using)
 	}
 
 	if strings.Contains(recSelect.Using, "IS NULL") {
 		t.Errorf("records_select still carries an ambient null-scope god view:\n%s", recSelect.Using)
 	}
-	if !strings.Contains(recSelect.Using, "tenant_id)") {
+	// The reach is compared against the ROW's tenant_id and not against anything
+	// ambient. The row column sits on the LEFT of the membership test now that
+	// the reach is spliced as a set rather than called as a scalar, so the shape
+	// changed while the property did not.
+	if !strings.Contains(recSelect.Using, "tenant_id IN (SELECT auth.impersonation_grants_reach_set(") {
 		t.Errorf("operator reach is not scoped to the row's tenant_id:\n%s", recSelect.Using)
 	}
 }
@@ -148,7 +152,7 @@ func TestGrant_OperatorIsProjectScopedOnSubRows(t *testing.T) {
 	}
 
 	rec := using("records_select")
-	if !strings.Contains(rec, "OR auth.impersonation_grants_reach(") {
+	if !strings.Contains(rec, "OR tenant_id IN (SELECT auth.impersonation_grants_reach_set(") {
 		t.Errorf("records: operator grant must be FOLDED into the tenant containment term (project-scoped), got:\n%s", rec)
 	}
 	if !strings.Contains(rec, "project_id = ") {
@@ -156,10 +160,10 @@ func TestGrant_OperatorIsProjectScopedOnSubRows(t *testing.T) {
 	}
 
 	proj := using("projects_select")
-	if !strings.Contains(proj, "auth.impersonation_grants_reach(") {
+	if !strings.Contains(proj, "auth.impersonation_grants_reach_set(") {
 		t.Errorf("projects: operator must still reach the project list, got:\n%s", proj)
 	}
-	if strings.Contains(proj, "OR auth.impersonation_grants_reach(") {
+	if strings.Contains(proj, "OR id IN (SELECT auth.impersonation_grants_reach_set(") {
 		t.Errorf("projects (level-entity selector) must keep TOP-LEVEL tenant-wide operator reach, not a folded project-scoped one, got:\n%s", proj)
 	}
 }

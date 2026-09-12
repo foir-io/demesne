@@ -54,7 +54,7 @@ func TestViaGrantPerm_OperatorOnlyWrite(t *testing.T) {
 		pol[p.Name] = p
 	}
 
-	reach := "auth.impersonation_grants_reach((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id)"
+	reach := "tenant_id IN (SELECT auth.impersonation_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))"
 
 	create, ok := pol["billing_subscriptions_insert"]
 	if !ok {
@@ -90,7 +90,7 @@ func TestViaGrantPerm_DedupesWithAutoReach(t *testing.T) {
 	rls, _ := s.EmitRLS()
 	for _, p := range rls.Policies {
 		if p.Name == "billing_subscriptions_select" {
-			if n := strings.Count(p.Using, "impersonation_grants_reach"); n != 1 {
+			if n := strings.Count(p.Using, "impersonation_grants_reach_set"); n != 1 {
 				t.Errorf("operator reach should appear exactly once (deduped), got %d:\n%s", n, p.Using)
 			}
 		}
@@ -205,7 +205,7 @@ object customers {
 		"(current_setting('request.jwt.claims', true)::json ->> 'kind') = 'service'",
 		"id = (current_setting('request.jwt.claims', true)::json ->> 'customer_id')",
 		"auth.admin_has_customers_role(",
-		"auth.impersonation_grants_reach(",
+		"auth.impersonation_grants_reach_set(",
 	} {
 		if !strings.Contains(sel, want) {
 			t.Errorf("customers_select missing %q:\n%s", want, sel)

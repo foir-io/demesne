@@ -151,7 +151,7 @@ func TestPlatformPlane_GlobalObjectGovernedByPlatformRole(t *testing.T) {
 	if strings.Contains(rec.Using, "has_platform_role") {
 		t.Errorf("tenant-scoped record leaked the platform-role branch (has_platform_role is not a god-flag):\n%s", rec.Using)
 	}
-	if !strings.Contains(rec.Using, "auth.impersonation_grants_reach(") {
+	if !strings.Contains(rec.Using, "auth.impersonation_grants_reach_set(") {
 		t.Errorf("tenant-scoped record lost the scoped grant operator:\n%s", rec.Using)
 	}
 }

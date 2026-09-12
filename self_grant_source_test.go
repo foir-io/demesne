@@ -45,7 +45,7 @@ func TestGrantReach_SuppressedOnOwnSourceTable(t *testing.T) {
 	if other == nil {
 		t.Fatalf("no other_things_select")
 	}
-	if !strings.Contains(other.Using, "auth.grants_edge_reach("+sub+", tenant_id)") {
+	if !strings.Contains(other.Using, "tenant_id IN (SELECT auth.grants_edge_reach_set("+sub+"))") {
 		t.Errorf("a normal tenant-scoped table should still get the operator reach:\n%s", other.Using)
 	}
 }

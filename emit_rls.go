@@ -316,7 +316,7 @@ func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, obj
 	if g.Table == obj.Table {
 		return top, grantInject
 	}
-	reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.idClaim(sub.Identifies), s.scopeCol(obj, g.Level))
+	reach := s.grantReachPredicate(obj, sub, g)
 	if s.grantReachIsContained(obj, sub, g, objLeaf, objIsGlobal) {
 		grantInject[g.Level] = append(grantInject[g.Level], reach)
 	} else {
@@ -498,7 +498,30 @@ func (s *Spec) grantRefReach(obj *Object, grantName string) (string, error) {
 	if claim == "" {
 		return "", fmt.Errorf("object %q: grant %q has no reaching subject (a `subject … reach via grant %s`) to supply a claim", obj.Name, grantName, grantName)
 	}
-	return fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.idClaim(claim), s.scopeCol(obj, g.Level)), nil
+	return fmt.Sprintf("%s IN (SELECT %s.%s_reach_set(%s))",
+		s.scopeCol(obj, g.Level), s.definerSchema(), g.Table, s.idClaim(claim)), nil
+}
+
+// grantReachPredicate is the reach as an RLS predicate.
+//
+// `<col> IN (SELECT … FROM <grant>_reach_set(<claim>))` rather than a scalar
+// `<grant>_reach(<claim>, <col>)`, and the difference is the plan and not the
+// meaning. The two are equivalent —
+//
+//	EXISTS (SELECT 1 FROM T WHERE grantee = $1 AND level = row)
+//	  ≡  row IN (SELECT level FROM T WHERE grantee = $1)
+//
+// — but a SECURITY DEFINER carrying a SET clause cannot be inlined, so the
+// scalar form is re-entered once per candidate row while the set form resolves
+// once as a hashed subplan. A predicate is evaluated on every row a sort or an
+// aggregate has to consider, and LIMIT cannot short-circuit that, so the scalar
+// cost is linear in the table rather than in the grant.
+//
+// The scalar definer is still emitted and is still what another definer's body
+// calls, where the value is a parameter and the call happens once.
+func (s *Spec) grantReachPredicate(obj *Object, sub *Subject, g *Grant) string {
+	return fmt.Sprintf("%s IN (SELECT %s.%s_reach_set(%s))",
+		s.scopeCol(obj, g.Level), s.definerSchema(), g.Table, s.idClaim(sub.Identifies))
 }
 
 func (s *Spec) objectVerbPredicate(obj *Object, verb string, virtual map[string]bool) (string, error) {
