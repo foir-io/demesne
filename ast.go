@@ -85,7 +85,13 @@ type Grant struct {
 	Verbs []string
 
 	ExtraCols []string
-	Pos       Pos
+
+	Named      string
+	Scopes     []GrantScope
+	ClaimKey   string
+	ClaimValue string
+
+	Pos Pos
 }
 
 // Confers reports whether the grant's reach applies to a table op. A grant that
@@ -259,6 +265,10 @@ type Object struct {
 	// caller reaching outside the instance that confines it.
 	ScopeWildcardVerbs map[string][]string
 
+	ReachUses []GrantUse
+	Admits    []*Admit
+	Exports   []PermissionExport
+
 	Relations []*Relation
 	Perms     []*Perm
 	Requires  []*Require
@@ -363,6 +373,9 @@ type ViaClosure struct {
 	BaseID        string
 	BaseParent    string
 	Col           string
+
+	Claim   string
+	Missing string
 }
 
 type ViaGroup struct {
@@ -381,6 +394,15 @@ type ViaObject struct {
 	Object string
 	Verb   string
 	Col    string
+	Op     string
+}
+
+func (v ViaObject) functionName() string {
+	name := v.Object + "_can_" + v.Verb
+	if v.Op != "" {
+		name += "_for_" + v.Op
+	}
+	return name
 }
 
 type ViaGrant struct {

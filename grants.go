@@ -35,7 +35,9 @@ func (g *Grant) Granularity() GrantGranularity { return LevelReach }
 func (s *Spec) ReachGrants() []ReachGrant {
 	var out []ReachGrant
 	for _, g := range s.Grants {
-		out = append(out, g)
+		if g.ClaimKey == "" {
+			out = append(out, g)
+		}
 	}
 	for _, o := range s.Objects {
 		if _, vg := grantRelation(o); vg != nil {

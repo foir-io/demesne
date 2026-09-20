@@ -301,6 +301,9 @@ func (s *Spec) EmitTS() (string, error) {
 	if len(s.Grants) > 0 {
 		m := map[string]tsGrantProj{}
 		for _, g := range s.Grants {
+			if g.ClaimKey != "" {
+				continue
+			}
 			gs, err := s.GrantSurface(g.Name)
 			if err != nil {
 				return "", fmt.Errorf("EmitTS grant %q: %w", g.Name, err)

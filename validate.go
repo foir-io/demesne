@@ -57,6 +57,8 @@ func Validate(s *Spec) error {
 	add(validateCrossObjectAcyclic(s))
 
 	add(validatePredicateOnlyReferenced(s))
+	add(s.validateGrantReach())
+	add(s.validatePermissionExports())
 
 	add(validateGrantStores(s))
 
@@ -141,7 +143,7 @@ func valCheckGrants(s *Spec, levels map[string]bool) error {
 		if !levels[g.Level] {
 			errs = append(errs, fmt.Errorf("line %d: grant %q confers reach at unknown level %q", g.Pos.Line, g.Name, g.Level))
 		}
-		if g.Table == "" || g.GranteeCol == "" || g.LevelCol == "" {
+		if g.ClaimKey == "" && (g.Table == "" || g.GranteeCol == "" || g.LevelCol == "") {
 			errs = append(errs, fmt.Errorf("line %d: grant %q must name an edge table, grantee column and level column", g.Pos.Line, g.Name))
 		}
 		// A misspelt verb would otherwise narrow the grant to nothing in
@@ -368,6 +370,8 @@ func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) erro
 			errs = append(errs, fmt.Errorf("line %d: subject %q has `reach via grant` but names no grant", sub.Pos.Line, sub.Name))
 		} else if g := s.grantByName(sub.ReachGrant); g == nil {
 			errs = append(errs, fmt.Errorf("line %d: subject %q reaches via unknown grant %q", sub.Pos.Line, sub.Name, sub.ReachGrant))
+		} else if g.ClaimKey != "" {
+			errs = append(errs, fmt.Errorf("line %d: claim grant %q does not take a reaching subject", sub.Pos.Line, g.Name))
 		}
 	}
 
@@ -423,6 +427,8 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 	}
 
 	add(valCheckRequires(s, o, relByName))
+
+	add(s.validateAdmits(o, relByName))
 
 	add(valCheckFieldAccess(o))
 	return errors.Join(errs...)
@@ -723,6 +729,12 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 		if mi, ok := r.Repr.(ViaMemberIn); ok {
 			errs = append(errs, valCheckViaMemberIn(s, o, r, mi)...)
 		}
+		if c, ok := r.Repr.(ViaClosure); ok {
+			errs = append(errs, valCheckViaClosure(o, r, c)...)
+		}
+		if vo, ok := r.Repr.(ViaObject); ok {
+			errs = append(errs, s.validateBorrowOperation(r, vo)...)
+		}
 
 		if _, ok := r.Repr.(ViaRole); ok {
 			errs = append(errs, valCheckViaRole(s, o, r)...)
@@ -763,6 +775,19 @@ func valCheckViaRole(s *Spec, o *Object, r *Relation) []error {
 	}
 
 	return errs
+}
+
+func valCheckViaClosure(o *Object, r *Relation, c ViaClosure) []error {
+	if c.Claim == "" {
+		if c.Base == "" {
+			return []error{fmt.Errorf("object %q relation %q: a closure keyed on the owner needs `base <table>(id, parent)`", o.Name, r.Name)}
+		}
+		return nil
+	}
+	if c.Missing != "allow" && c.Missing != "deny" {
+		return []error{fmt.Errorf("object %q relation %q: closure claim %q: missing must be allow or deny, got %q", o.Name, r.Name, c.Claim, c.Missing)}
+	}
+	return nil
 }
 
 func valCheckViaMemberIn(s *Spec, o *Object, r *Relation, mi ViaMemberIn) []error {
@@ -1076,6 +1101,8 @@ func valCheckGrantRefTerm(s *Spec, o *Object, pm *Perm, t *Term, hasRLS bool) er
 	var errs []error
 	if s.grantByName(t.GrantRef) == nil {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s references unknown grant %q (via grant)", pm.Pos.Line, o.Name, pm.Verb, t.GrantRef))
+	} else if g := s.grantByName(t.GrantRef); g.ClaimKey != "" {
+		errs = append(errs, fmt.Errorf("line %d: claim grant %q is containment reach and cannot be an authority term", pm.Pos.Line, g.Name))
 	}
 	if !hasRLS {
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses `via grant %s` but is not @rls", pm.Pos.Line, o.Name, pm.Verb, t.GrantRef))

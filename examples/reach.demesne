@@ -1,0 +1,89 @@
+topology { level control virtual level estate parent control level space parent estate level folder parent space }
+
+grant support at estate
+  via edge approvals(holder_id, estate_id)
+  active ended_at expires expires_at
+  scope space on space_id missing deny
+  scope folder on folder_id missing allow
+
+grant descendants at folder via edge paths(ancestor_id, descendant_id) confers select
+grant ancestors at folder via edge paths(descendant_id, ancestor_id) named paths_up confers select
+grant overview at folder via claim view_mode = "all" confers select
+
+subject helper { anchor control; reach via grant support; identifies sub; roles none }
+subject viewer { anchor folder; reach via grant descendants; identifies folder_id; roles none }
+subject robot  { anchor space; reach self; identifies sub; roles none }
+
+object asset {
+  table assets
+  scoped estate > space > folder wildcard confers select
+  permission view   = @scoped @rls maps select
+  permission create = @scoped @rls maps insert
+  permission edit   = @scoped @rls maps update
+}
+
+object blueprint {
+  table blueprints
+  scoped estate > space > folder wildcard confers select
+  reach descendants via ancestors for select
+  permission view = @scoped @rls maps select
+  permission edit = @scoped @rls maps update
+}
+
+object ledger {
+  table ledgers
+  scoped estate
+  reach support unscoped
+  permission view = @scoped @rls maps select
+}
+
+object allowance {
+  table allowances
+  scoped estate
+  reach support bound space for select
+  reach support unscoped for insert, update, delete
+  permission view   = @scoped @rls maps select
+  permission create = @scoped @rls maps insert
+  permission edit   = @scoped @rls maps update
+  permission delete = @scoped @rls maps delete
+}
+
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  reach support bound space for select
+  reach support unscoped for update
+  permission view = @scoped @rls maps select
+  permission edit = @scoped @rls maps update
+}
+
+object catalog {
+  table catalogs
+  scoped estate > space > folder wildcard confers select
+  reach descendants via ancestors for select
+  permission bound = @scoped and @kind("staff") @rls predicate
+}
+
+object entry {
+  table entries
+  scoped estate > space
+  relation reader: robot via object catalog->bound on catalog_id for select
+  relation writer: robot via object catalog->bound on catalog_id
+  permission view = @scoped and reader @rls maps select
+  permission edit = @scoped and writer @rls maps update
+}
+
+object folder {
+  table folders
+  scoped estate > space
+  relation confined:        robot via closure paths(ancestor_id, descendant_id) on id from claim folder_id missing allow
+  relation confined_parent: robot via closure paths(ancestor_id, descendant_id) on parent_id from claim folder_id missing allow
+  permission view   = @scoped and @kind("staff") @rls maps select
+  permission create = @scoped and @kind("staff") @rls maps insert
+  permission edit   = @scoped and @kind("staff") @rls maps update
+  permission delete = @scoped and @kind("staff") @rls maps delete
+  admit select, update, delete = @kind("robot") and @within(estate) and @within(space) and confined
+  admit insert = @kind("robot") and @within(estate) and @within(space) and confined_parent
+  export edit as folder_write_allowed(id text as check_folder_id, estate_id text as row_estate_id, space_id text as row_space_id)
+}

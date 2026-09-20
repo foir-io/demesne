@@ -90,7 +90,7 @@ func (s *Spec) EmitTriggers() []ClosureTrigger {
 	for _, obj := range s.Objects {
 		for _, r := range obj.Relations {
 			c, ok := r.Repr.(ViaClosure)
-			if !ok || seen[c.Closure] {
+			if !ok || c.Base == "" || seen[c.Closure] {
 				continue
 			}
 			seen[c.Closure] = true

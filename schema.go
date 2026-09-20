@@ -112,11 +112,15 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 }
 
 type schBinder struct {
-	sc   *Schema
-	errs []error
+	columns map[string]map[string]bool
+	sc      *Schema
+	errs    []error
 }
 
 func (b *schBinder) reqTable(table, ctx string) bool {
+	if b.columns != nil {
+		return true
+	}
 	if !b.sc.hasTable(table) {
 		b.errs = append(b.errs, fmt.Errorf("%s: table %q not found in the database", ctx, table))
 		return false
@@ -125,6 +129,13 @@ func (b *schBinder) reqTable(table, ctx string) bool {
 }
 
 func (b *schBinder) reqCol(table, col, ctx string) {
+	if b.columns != nil {
+		if b.columns[table] == nil {
+			b.columns[table] = map[string]bool{}
+		}
+		b.columns[table][col] = true
+		return
+	}
 	if !b.sc.hasTable(table) {
 		b.errs = append(b.errs, fmt.Errorf("%s: table %q (for column %q) not found in the database", ctx, table, col))
 		return
@@ -149,6 +160,11 @@ func (s *Spec) schCheckObjectRefs(b *schBinder, o *Object) {
 			continue
 		}
 		b.reqCol(o.Table, s.scopeCol(o, lvl), oc+" scope")
+	}
+	for _, u := range o.ReachUses {
+		if u.Bound != "" {
+			b.reqCol(o.Table, s.scopeCol(o, u.Bound), oc+" reach bound")
+		}
 	}
 	for _, r := range o.Relations {
 		schCheckRelationRefs(b, o, r)
@@ -205,7 +221,7 @@ func schCheckRelationRefs(b *schBinder, o *Object, r *Relation) {
 			b.reqCol(repr.Closure, repr.AncestorCol, rc)
 			b.reqCol(repr.Closure, repr.DescendantCol, rc)
 		}
-		if b.reqTable(repr.Base, rc) {
+		if repr.Base != "" && b.reqTable(repr.Base, rc) {
 			b.reqCol(repr.Base, repr.BaseID, rc)
 			b.reqCol(repr.Base, repr.BaseParent, rc)
 		}
@@ -292,10 +308,16 @@ func isArrayDataType(dt string) bool {
 }
 
 func schCheckGrantRefs(b *schBinder, g *Grant) {
+	if g.ClaimKey != "" {
+		return
+	}
 	gc := "grant " + g.Name
 	if b.reqTable(g.Table, gc) {
 		b.reqCol(g.Table, g.GranteeCol, gc)
 		b.reqCol(g.Table, g.LevelCol, gc)
+		for _, scope := range g.Scopes {
+			b.reqCol(g.Table, scope.Column, gc)
+		}
 		if g.ActiveCol != "" {
 			b.reqCol(g.Table, g.ActiveCol, gc)
 		}

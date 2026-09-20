@@ -113,6 +113,9 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		return nil, err
 	}
 	s.defEmitMaterializedFlatMembers(&out, seen)
+	if err := s.defEmitPermissionExports(&out, virtual); err != nil {
+		return nil, err
+	}
 
 	for i := range out {
 		out[i].Schema = s.definerSchema()
@@ -154,7 +157,10 @@ func (s *Spec) defEmitMembership(out *[]GenFn) error {
 func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 	gseen := map[string]bool{}
 	for _, g := range s.Grants {
-		name := g.Table + "_reach"
+		if g.ClaimKey != "" {
+			continue
+		}
+		name := g.definerBase() + "_reach"
 		if gseen[name] {
 			continue
 		}
@@ -170,7 +176,8 @@ func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 		if g.ExpiresCol != "" {
 			conj = append(conj, fmt.Sprintf("%s > now()", g.ExpiresCol))
 		}
-		*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("user_id %s, check_%s_id %s", s.idType(), g.Level, s.idType()), Body: grantEdgeExists(g.Table, conj...)})
+		scoped := append(append([]string(nil), conj...), s.grantSessionScopeConjuncts(g)...)
+		*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("user_id %s, check_%s_id %s", s.idType(), g.Level, s.idType()), Body: grantEdgeExists(g.Table, scoped...)})
 
 		// THE SET FORM, and why both are emitted.
 		//
@@ -200,13 +207,14 @@ func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 		// maps ONE grantee to what it may reach, and that set is small by
 		// construction in any domain. Nothing here assumes a hierarchy.
 		setConj := []string{fmt.Sprintf("%s = user_id", g.GranteeCol)}
-		setConj = append(setConj, conj[2:]...)
+		setConj = append(setConj, scoped[2:]...)
 		*out = append(*out, GenFn{
 			Name:    name + "_set",
 			Sig:     fmt.Sprintf("user_id %s", s.idType()),
 			Returns: "SETOF " + s.idType(),
 			Body:    fmt.Sprintf("%s FROM %s WHERE %s", g.LevelCol, g.Table, strings.Join(setConj, " AND ")),
 		})
+		*out = append(*out, s.grantScopeDefiners(g, conj)...)
 	}
 }
 
@@ -485,8 +493,10 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 }
 
 func accessorReprCovered(r Repr) bool {
-	switch r.(type) {
-	case ViaColumn, ViaGrant, ViaRole, ViaGroup, ViaClosure, ViaComposition:
+	switch repr := r.(type) {
+	case ViaClosure:
+		return repr.Claim == ""
+	case ViaColumn, ViaGrant, ViaRole, ViaGroup, ViaComposition:
 		return true
 	default:
 		return false
@@ -712,7 +722,7 @@ func (s *Spec) defEmitCrossObject(out *[]GenFn, seen map[string]bool, virtual ma
 			if !ok {
 				continue
 			}
-			name := vo.Object + "_can_" + vo.Verb
+			name := vo.functionName()
 			if seen[name] {
 				continue
 			}
@@ -721,7 +731,7 @@ func (s *Spec) defEmitCrossObject(out *[]GenFn, seen map[string]bool, virtual ma
 			if other == nil {
 				return fmt.Errorf("relation %q references unknown object %q", r.Name, vo.Object)
 			}
-			pred, err := s.objectVerbPredicate(other, vo.Verb, virtual)
+			pred, err := s.objectVerbPredicateFor(other, vo.Verb, vo.Op, virtual)
 			if err != nil {
 				return err
 			}
@@ -1024,7 +1034,7 @@ func (s *Spec) operatorReach(level string) string {
 		}
 		if sub.Reach == "grant" {
 			if g := s.grantByName(sub.ReachGrant); g != nil && g.Level == level {
-				return fmt.Sprintf("%s_reach(user_id, check_%s_id)", g.Table, g.Level)
+				return fmt.Sprintf("%s_reach(user_id, check_%s_id)", g.definerBase(), g.Level)
 			}
 		}
 	}
@@ -1287,6 +1297,9 @@ func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Rela
 	case ViaGroup:
 		return groupAccessorBranch(obj.Table, obj.pk(), kind, repr, s.groupFlatName(obj, r, repr)), nil
 	case ViaClosure:
+		if repr.Claim != "" {
+			return "", fmt.Errorf("relation %q is confined by the caller's %q claim, which names no principal to enumerate", name, repr.Claim)
+		}
 		return closureAccessorBranch(obj.Table, obj.pk(), kind, repr), nil
 	case ViaObject:
 		if ok, reason := s.viaObjectCovered(repr, map[string]bool{}); !ok {
@@ -1472,7 +1485,7 @@ func (s *Spec) roleAccessorBranch(obj *Object, adminExcl string) (string, bool) 
 		}
 		rsCol := rs.ScopeCols[i]
 		rowCol := s.scopeCol(obj, lvl)
-		if i == len(obj.Scoped)-1 {
+		if i == min(len(obj.Scoped), len(rs.ScopeCols))-1 {
 			scopeConds = append(scopeConds, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = r.%s)", rsCol, rsCol, rowCol))
 		} else {
 			scopeConds = append(scopeConds, fmt.Sprintf("ra.%s = r.%s", rsCol, rowCol))
@@ -1536,8 +1549,8 @@ func (s *Spec) structuralAccessorDefiner(obj *Object) (GenFn, bool, error) {
 	}
 
 	for _, g := range s.Grants {
-		if s.levelOnObjectPath(obj, g.Level) {
-			branches = append(branches, s.grantEnumSQL(obj, g))
+		if e := s.enumeratedGrant(obj, g); e != nil {
+			branches = append(branches, s.grantEnumSQL(obj, e))
 		}
 	}
 	if len(branches) == 0 {

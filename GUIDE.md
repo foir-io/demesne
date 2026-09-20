@@ -727,6 +727,188 @@ that has already run `SessionSetupSQL` and the `Claims.Mint()` result.
 
 ---
 
+## Shaping reach
+
+A grant, a wildcard and a borrowed permission cover most trees. The constructs
+below cover the cases where one reach has to differ by object, by operation or by
+where the session stands. Every one of them compiles into the same policies and
+definers as everything else, so the floor, the `Can<Verb>` point checks and the
+reverse enumerators keep agreeing. The examples use a document service: an
+estate holds spaces, a space holds a tree of folders, and `paths` is the folder
+closure (one row per ancestor and descendant pair, including the self pair).
+
+### An accessor's role join widens at the deepest level the store covers
+
+A role assignment left NULL at its deepest scope column reaches everything below
+it. The accessor enumerator used to widen only at the object's own leaf, so a
+document scoped `estate > space > folder` behind a rolestore that stops at
+`space` pinned `space` strictly and lost the space-wide assignment from its
+listing, while the policy still admitted it. The widening now lands at the
+deepest level both the object and the store carry.
+
+### A claim that lifts one level
+
+```demesne
+grant overview at folder via claim view_mode = "all" confers select
+```
+
+A helpdesk supervisor whose session carries `view_mode = all` reads documents in
+every folder of the space they stand in. The disjunct lands inside the `folder`
+containment term of every object scoped at `folder`, next to any edge reach
+there, so the estate and space terms and the object's own permission still
+apply. It lands only on the operations it names, which is why `confers` is
+required: a supervisor's writes stay confined to their own folder. There is no
+edge, no subject and no definer, and the claim is minted by your session code the
+way a `@kind` value is.
+
+### Scope levels on a grant edge
+
+A support approval is issued for a whole estate, or narrowed to one space, or to
+one folder. The edge carries the deeper columns and the grant names them in order:
+
+```demesne
+grant support at estate
+  via edge approvals(holder_id, estate_id)
+  active ended_at expires expires_at
+  scope space  on space_id  missing deny
+  scope folder on folder_id missing allow
+```
+
+`<table>_reach` and `<table>_reach_set` then admit an approval when each deeper
+column is NULL (the approval covers every value there) or equals the session's
+claim for that level. They read the session, not the protected row, so an
+approval pinned to a folder reaches nothing while its holder stands in a sibling
+folder. `missing` says what an absent claim means at that level: `deny` refuses a
+pinned approval to a session that names no space, `allow` admits a
+folder-pinned approval to a session standing at the space, where the object's own
+folder term then bounds what it reads. The session claims are read through
+`NULLIF`, so the definers answer rather than raise when called outside a request.
+
+Three more functions come with a ladder. `<table>_reach_unscoped` and its `_set`
+admit only approvals with every scope column NULL. `<table>_reach_in_<level>`
+takes the selection as parameters, one per level down to that one, for callers
+that are not policies; an empty selection (the empty string for text
+identifiers, NULL otherwise) admits a pinned approval, because the question
+there is whether the approval covers anything at the selection.
+
+An object chooses which of these its policies use, per operation:
+
+```demesne
+object invoice {
+  table invoices
+  scoped estate
+  reach support unscoped
+  permission view = @scoped @rls maps select
+}
+
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  reach support bound space for select
+  reach support unscoped for update, delete
+  permission view = @scoped @rls maps select
+  permission edit = @scoped @rls maps update
+}
+```
+
+`unscoped` keeps estate billing away from a narrowed approval. `bound space`
+admits an unscoped approval, or a narrowed one only for the row at the space the
+session stands in, so a space-pinned helper can name its own space without
+enumerating the others. The bound level must be one of the grant's scope levels,
+and the object need not be scoped at it: an estate-scoped table whose rows carry
+a `space_id` can let a space-pinned helper read its own space's rows and no
+other space's, while the estate's own containment stays as declared.
+`ValidateAgainst` requires that column on the object's table.
+
+### Two directions over one edge
+
+Documents are administered downward: a session at a folder reads the documents of
+every folder beneath it. Templates are inherited upward: a folder reads the
+templates of every folder above it and none of its children's. Both read the
+same closure, with the columns swapped:
+
+```demesne
+grant descendants at folder via edge paths(ancestor_id, descendant_id) confers select
+grant ancestors   at folder via edge paths(descendant_id, ancestor_id) named paths_up confers select
+subject viewer { anchor folder; reach via grant descendants; identifies folder_id; roles none }
+
+object template {
+  table templates
+  scoped estate > space > folder wildcard confers select
+  reach descendants via ancestors for select
+  permission view = @scoped @rls maps select
+}
+```
+
+A grant's definers are named after its edge table. Two grants over one table
+that emit different predicates must not share those names, so validation refuses
+them until one is `named`. `reach <grant> via <other>` takes the subject's reach
+through a different grant at the same level for the named operations, and the
+reverse enumerator follows the same choice.
+
+### Borrowing a predicate for an operation
+
+A predicate-only permission compiles with no operation, so a bounded wildcard and
+a grant that confers only `select` both take their strict form. A version history
+table that borrows its document's reach would then read less than the document.
+Naming the operation compiles the borrowed permission as that operation would:
+
+```demesne
+object version {
+  table versions
+  scoped estate > space
+  relation reader: viewer via object template_reach->bound on template_id for select
+  relation writer: viewer via object template_reach->bound on template_id
+  permission view = @scoped and reader @rls maps select
+  permission edit = @scoped and writer @rls maps update
+}
+```
+
+This emits `template_reach_can_bound_for_select` beside `template_reach_can_bound`.
+`for` applies only to a predicate-only permission; a permission that maps an
+operation already has one.
+
+### Credential confinement, admit arms and exported permissions
+
+An integration token belongs to no principal table. Its authority is its kind and
+the folder it is confined to, carried as claims:
+
+```demesne
+object folder {
+  table folders
+  scoped estate > space
+  relation confined:        robot via closure paths(ancestor_id, descendant_id) on id        from claim folder_id missing allow
+  relation confined_parent: robot via closure paths(ancestor_id, descendant_id) on parent_id from claim folder_id missing allow
+  relation member: person via grant folder_members(folder_id, principal_kind, principal_id, access)
+  permission view   = @holds(folders:read) + member:read  @rls maps select
+  permission create = @holds(folders:write)              @rls maps insert
+  permission edit   = @holds(folders:write)              @rls maps update
+  admit select, update = @kind("robot") and @within(estate) and @within(space) and confined
+  admit insert         = @kind("robot") and @within(estate) and @within(space) and confined_parent
+  export edit as folder_write_allowed(id text as check_folder_id, estate_id text as row_estate_id, space_id text as row_space_id)
+}
+```
+
+`via closure ... from claim <key>` keys the closure on a claim instead of the
+owner. `missing allow` treats a token with no folder claim as unconfined;
+`missing deny` refuses it. With no `base`, the closure is yours to maintain and
+no trigger is emitted. A claim-keyed closure names no principal, so a reverse
+enumerator refuses to reverse it inside a permission.
+
+`admit <ops> = <expression>` adds an arm to the table's policy for those
+operations, contained like the permission. It is not part of the permission: a
+`via object folder->view` borrow lends `view` without it, and the accessor
+listing for `folders` lists people rather than tokens. The `Can<Verb>` point
+checks and exports do include it, because they answer for the table.
+
+`export <verb> as <name>(<column> <type> [as <parameter>], ...)` emits the
+operation's whole predicate (the permission, its admit arms and its `require`)
+as a boolean function over parameters in place of the row's columns. A
+hand-written move function can then ask whether the caller may write the folder
+at its destination with the same predicate the policy enforces, rather than a
+second copy of it. Every row column the predicate reads must be bound.
+
 ## What it is not
 
 Demesne is not general-purpose ReBAC, and not a Zanzibar- or Permify-style Check

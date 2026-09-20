@@ -27,6 +27,9 @@ func (s *Spec) GrantSurface(name string) (*GrantSurface, error) {
 	if g == nil {
 		return nil, fmt.Errorf("GrantSurface: no grant %q in the spec", name)
 	}
+	if g.ClaimKey != "" {
+		return nil, fmt.Errorf("GrantSurface: claim grant %q has no writable edge", name)
+	}
 	return &GrantSurface{
 		Name:         g.Name,
 		Level:        g.Level,

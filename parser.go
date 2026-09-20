@@ -758,6 +758,18 @@ func (p *parser) parseObjectBody(o *Object) error {
 			continue
 		}
 		switch {
+		case p.isKw("export"):
+			if err := p.parsePermissionExport(o); err != nil {
+				return err
+			}
+		case p.isKw("reach"):
+			if err := p.parseGrantUse(o); err != nil {
+				return err
+			}
+		case p.isKw("admit"):
+			if err := p.parseAdmit(o); err != nil {
+				return err
+			}
 		case p.isKw("use"):
 			if err := p.parseUse(o); err != nil {
 				return err
@@ -1194,15 +1206,15 @@ func (p *parser) parseReprClosure() (Repr, error) {
 	if len(cloCols) != 2 {
 		return nil, p.errf("via closure needs a closure table with 2 columns (ancestor, descendant), got %d", len(cloCols))
 	}
-	if err := p.expectKw("base"); err != nil {
-		return nil, err
-	}
-	base, baseCols, err := p.parseTableCols()
-	if err != nil {
-		return nil, err
-	}
-	if len(baseCols) != 2 {
-		return nil, p.errf("via closure base needs 2 columns (id, parent), got %d", len(baseCols))
+	base, baseCols := "", []string{"", ""}
+	if p.acceptKw("base") {
+		base, baseCols, err = p.parseTableCols()
+		if err != nil {
+			return nil, err
+		}
+		if len(baseCols) != 2 {
+			return nil, p.errf("via closure base needs 2 columns (id, parent), got %d", len(baseCols))
+		}
 	}
 	if err := p.expectKw("on"); err != nil {
 		return nil, err
@@ -1211,10 +1223,25 @@ func (p *parser) parseReprClosure() (Repr, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ViaClosure{
+	c := ViaClosure{
 		Closure: clo, AncestorCol: cloCols[0], DescendantCol: cloCols[1],
 		Base: base, BaseID: baseCols[0], BaseParent: baseCols[1], Col: col,
-	}, nil
+	}
+	if p.acceptKw("from") {
+		if err := p.expectKw("claim"); err != nil {
+			return nil, err
+		}
+		if c.Claim, err = p.ident(); err != nil {
+			return nil, err
+		}
+		if err := p.expectKw("missing"); err != nil {
+			return nil, err
+		}
+		if c.Missing, err = p.ident(); err != nil {
+			return nil, err
+		}
+	}
+	return c, nil
 }
 
 func (p *parser) parseReprGroup() (Repr, error) {
@@ -1269,7 +1296,13 @@ func (p *parser) parseReprObject() (Repr, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ViaObject{Object: other, Verb: verb, Col: col}, nil
+	v := ViaObject{Object: other, Verb: verb, Col: col}
+	if p.acceptKw("for") {
+		if v.Op, err = p.ident(); err != nil {
+			return nil, err
+		}
+	}
+	return v, nil
 }
 
 func (p *parser) parseReprMemberIn() (Repr, error) {
@@ -2014,6 +2047,23 @@ func (p *parser) parseGrant() (*Grant, error) {
 	if err := p.expectKw("via"); err != nil {
 		return nil, err
 	}
+	if p.acceptKw("claim") {
+		if g.ClaimKey, err = p.ident(); err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tEq); err != nil {
+			return nil, err
+		}
+		value, err := p.expect(tString)
+		if err != nil {
+			return nil, err
+		}
+		g.ClaimValue = value.lit
+		if err := p.parseGrantOptions(g); err != nil {
+			return nil, err
+		}
+		return g, nil
+	}
 	if err := p.expectKw("edge"); err != nil {
 		return nil, err
 	}
@@ -2043,18 +2093,26 @@ func (p *parser) parseGrant() (*Grant, error) {
 
 func (p *parser) parseGrantOptions(g *Grant) error {
 	for {
-		if p.acceptKw("confers") {
-			for {
-				v, err := p.ident()
-				if err != nil {
-					return err
-				}
-				g.Verbs = append(g.Verbs, v)
-				if p.peekKind() != tComma {
-					break
-				}
-				p.advance()
+		if p.acceptKw("named") {
+			named, err := p.ident()
+			if err != nil {
+				return err
 			}
+			g.Named = named
+			continue
+		}
+		if p.acceptKw("scope") {
+			if err := p.parseGrantScope(g); err != nil {
+				return err
+			}
+			continue
+		}
+		if p.acceptKw("confers") {
+			verbs, err := p.parseOperationList()
+			if err != nil {
+				return err
+			}
+			g.Verbs = append(g.Verbs, verbs...)
 			continue
 		}
 		if p.acceptKw("column") {

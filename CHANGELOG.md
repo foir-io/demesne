@@ -1,5 +1,88 @@
 # Changelog
 
+## Unreleased
+
+Six engine additions, one accessor fix and one validation that turns a silent
+wrong emission into a refusal. A spec that names none of the new grammar emits
+what it emitted at v0.82.0 with two exceptions, both below: accessor definers for
+an object scoped deeper than its rolestore, and a spec with two grants over one
+edge table that emit different predicates. Re-emit and diff; expect only those.
+
+### An accessor's role join widens at the deepest level the store covers
+
+`roleAccessorBranch` widened the role assignment's scope match at the object's
+last level. For an object scoped deeper than the rolestore that level has no
+assignment column, so the widening was dropped and every level the store did
+cover was matched strictly: an assignment left NULL at its deepest column, which
+reaches everything below it, vanished from the `<table>_accessors` listing while
+the policy kept admitting it. The widening now lands at
+`min(len(scoped), len(scope columns)) - 1`. Objects no deeper than their store
+emit byte for byte what they did.
+
+### A claim can lift one level's containment
+
+`grant <name> at <level> via claim <key> = "<value>" confers <ops>` ORs
+`<claim> = '<value>'` into the containment term at that level, beside any edge
+reach there, on the named operations only. It needs no subject and emits no
+definer. It is refused on a virtual level, without `confers`, with edge options,
+as a subject's reach, as a `via grant` term and in an object's `reach` clause.
+Its key is not added to the claims contract; like a `@kind` value it is minted by
+the adopter.
+
+### A grant edge can carry scope levels, and an object chooses which reach it uses
+
+`scope <level> on <column> missing allow|deny`, repeated down the tree, narrows a
+grant row to a subtree. `<table>_reach` and `_reach_set` admit a row whose deeper
+columns are NULL or equal the session's claim at that level, reading the claims
+through `NULLIF` so a direct call outside a request answers rather than raises.
+A ladder also emits `_reach_unscoped`, `_reach_unscoped_set` and one
+`_reach_in_<level>` probe per scope level, which takes the selection as
+parameters.
+
+In an object, `reach <grant> unscoped [for <ops>]` uses the unscoped set and
+`reach <grant> bound <level> [for <ops>]` uses the unscoped set or the scoped set
+confined to rows whose column at that level equals the session's claim. The level
+must be one of the grant's scope levels; the object need not be scoped at it, only
+carry its column, which `ValidateAgainst` binds. A grant with no scope levels
+emits exactly what it did.
+
+### Grants over one edge table are told apart, and an object can reach through another
+
+A grant's definers are named after its edge table, and a second grant over the
+same table was skipped at emission, so its policies silently called the first
+grant's functions. Two grants over one table that emit different predicates are
+now refused until one declares `named <base>`; grants that emit the same
+predicate still share. `reach <grant> via <other> [for <ops>]` takes a subject's
+reach through another edge grant at the same level, which is how one closure
+serves downward administration on some objects and upward inheritance on others.
+The structural accessor enumerator follows the selection.
+
+### A borrowed predicate can be compiled for an operation
+
+`via object <other>-><verb> on <col> for <op>` emits `<other>_can_<verb>_for_<op>`,
+the predicate-only permission compiled with that operation's containment: a
+bounded wildcard, grants that confer only that operation and claim reach all
+apply. The unsuffixed borrow is unchanged. `for` on a permission that already
+maps an operation is refused.
+
+### Admit arms, claim-keyed closures and exported permissions
+
+`admit <ops> = <expression>` ORs a contained arm into the object's policy for
+those operations. Borrows of the object's permissions and its accessor
+enumeration do not see the arm; `Can<Verb>` point checks and exports do. An arm
+for an operation no permission maps is refused.
+
+`via closure <C>(anc, desc) on <col> from claim <key> missing allow|deny` keys a
+closure relation on a claim rather than the owner. `base` becomes optional for
+this form, and a closure with no base emits no maintenance trigger. The accessor
+enumerators refuse to reverse it.
+
+`export <verb> as <name>(<column> <type> [as <parameter>], ...)` emits the
+operation's predicate, admit arms and `require` included, as a boolean function
+over parameters bound in place of the row's columns. Validation refuses an
+unbound column, an unsupported type, a repeated binding and a verb that maps no
+operation; emission refuses a name a generated function already uses.
+
 ## v0.82.0
 
 One engine change, additive in surface and a plan change in effect. A spec is

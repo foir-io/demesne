@@ -81,7 +81,7 @@ func (s *Spec) EmitRLS() (*RLSResult, error) {
 			if pm.PredicateOnly {
 				continue
 			}
-			pred, err := s.rlsPredicate(obj, pm, custSubj, virtual)
+			pred, err := s.admissionPredicate(obj, pm, custSubj, virtual)
 			if err != nil {
 				res.Unsupported = append(res.Unsupported, fmt.Sprintf("%s.%s: %v", obj.Name, pm.Verb, err))
 				continue
@@ -152,7 +152,7 @@ func (s *Spec) permPointCheckSQL(o *Object, pm *Perm) (string, error) {
 		}
 	}
 	cust := s.ownerSubject(o.Scoped[len(o.Scoped)-1])
-	pred, err := s.permPredicate(o, pm, cust, virtual)
+	pred, err := s.admissionWithRequire(o, pm, cust, virtual)
 	if err != nil {
 		return "", err
 	}
@@ -300,7 +300,20 @@ func (s *Spec) rlsSubjectBranches(obj *Object, virtual map[string]bool, objLeaf 
 			top, grantInject = s.rlsApplyGrantReach(obj, sub, objLeaf, objIsGlobal, top, grantInject, op)
 		}
 	}
+	s.rlsApplyClaimReach(obj, objIsGlobal, grantInject, op)
 	return top, grantInject
+}
+
+func (s *Spec) rlsApplyClaimReach(obj *Object, objIsGlobal bool, grantInject map[string][]string, op string) {
+	if objIsGlobal {
+		return
+	}
+	for _, g := range s.Grants {
+		if g.ClaimKey == "" || !g.Confers(op) || !contains(obj.Scoped, g.Level) {
+			continue
+		}
+		grantInject[g.Level] = append(grantInject[g.Level], s.claimReachPredicate(g))
+	}
 }
 
 func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, objIsGlobal bool, top []string, grantInject map[string][]string, op string) ([]string, map[string][]string) {
@@ -316,7 +329,10 @@ func (s *Spec) rlsApplyGrantReach(obj *Object, sub *Subject, objLeaf string, obj
 	if g.Table == obj.Table {
 		return top, grantInject
 	}
-	reach := s.grantReachPredicate(obj, sub, g)
+	reach, ok := s.grantReachPredicate(obj, g, sub.Identifies, op)
+	if !ok {
+		return top, grantInject
+	}
 	if s.grantReachIsContained(obj, sub, g, objLeaf, objIsGlobal) {
 		grantInject[g.Level] = append(grantInject[g.Level], reach)
 	} else {
@@ -377,9 +393,12 @@ func (s *Spec) rlsExprTopBranches(obj *Object, pm *Perm, top []string, grantInje
 		if g := s.grantByName(t.GrantRef); g != nil && !g.Confers(pm.Maps) {
 			continue
 		}
-		reach, err := s.grantRefReach(obj, t.GrantRef)
+		reach, err := s.grantRefReach(obj, t.GrantRef, pm.Maps)
 		if err != nil {
 			return nil, false, err
+		}
+		if reach == "" {
+			continue
 		}
 		// A grant may be named twice over: once by a subject that reaches
 		// through it, and again by a `via grant` term in the permission
@@ -480,7 +499,7 @@ func (s *Spec) rlsContainmentBlock(obj *Object, objLeaf string, grantInject map[
 	return strings.Join(pathPreds, " OR "), nil
 }
 
-func (s *Spec) grantRefReach(obj *Object, grantName string) (string, error) {
+func (s *Spec) grantRefReach(obj *Object, grantName, op string) (string, error) {
 	g := s.grantByName(grantName)
 	if g == nil {
 		return "", fmt.Errorf("object %q: permission references unknown grant %q (via grant)", obj.Name, grantName)
@@ -498,8 +517,8 @@ func (s *Spec) grantRefReach(obj *Object, grantName string) (string, error) {
 	if claim == "" {
 		return "", fmt.Errorf("object %q: grant %q has no reaching subject (a `subject … reach via grant %s`) to supply a claim", obj.Name, grantName, grantName)
 	}
-	return fmt.Sprintf("%s IN (SELECT %s.%s_reach_set(%s))",
-		s.scopeCol(obj, g.Level), s.definerSchema(), g.Table, s.idClaim(claim)), nil
+	reach, _ := s.grantReachPredicate(obj, g, claim, op)
+	return reach, nil
 }
 
 // grantReachPredicate is the reach as an RLS predicate.
@@ -519,14 +538,45 @@ func (s *Spec) grantRefReach(obj *Object, grantName string) (string, error) {
 //
 // The scalar definer is still emitted and is still what another definer's body
 // calls, where the value is a parameter and the call happens once.
-func (s *Spec) grantReachPredicate(obj *Object, sub *Subject, g *Grant) string {
-	return fmt.Sprintf("%s IN (SELECT %s.%s_reach_set(%s))",
-		s.scopeCol(obj, g.Level), s.definerSchema(), g.Table, s.idClaim(sub.Identifies))
+func (s *Spec) grantReachPredicate(obj *Object, g *Grant, claim, op string) (string, bool) {
+	col := s.scopeCol(obj, g.Level)
+	member := func(fn string) string {
+		return fmt.Sprintf("%s IN (SELECT %s.%s(%s))", col, s.definerSchema(), fn, s.idClaim(claim))
+	}
+	use := obj.grantUse(g.Name, op)
+	switch {
+	case use == nil:
+		return member(g.definerBase() + "_reach_set"), true
+	case use.Via != "":
+		via := s.grantByName(use.Via)
+		if via == nil || !via.Confers(op) {
+			return "", false
+		}
+		return member(via.definerBase() + "_reach_set"), true
+	case use.Unscoped:
+		return member(g.definerBase() + "_reach_unscoped_set"), true
+	}
+	return fmt.Sprintf("(%s OR (%s AND %s = %s))",
+		member(g.definerBase()+"_reach_unscoped_set"), member(g.definerBase()+"_reach_set"),
+		s.scopeCol(obj, use.Bound), s.idClaim(s.claimKeyForLevel(use.Bound))), true
+}
+
+func (s *Spec) claimReachPredicate(g *Grant) string {
+	return fmt.Sprintf("%s = '%s'", s.claim(g.ClaimKey), strings.ReplaceAll(g.ClaimValue, "'", "''"))
 }
 
 func (s *Spec) objectVerbPredicate(obj *Object, verb string, virtual map[string]bool) (string, error) {
+	return s.objectVerbPredicateFor(obj, verb, "", virtual)
+}
+
+func (s *Spec) objectVerbPredicateFor(obj *Object, verb, op string, virtual map[string]bool) (string, error) {
 	for _, pm := range obj.Perms {
 		if pm.Verb == verb && contains(pm.Layers, "rls") {
+			if op != "" {
+				borrowed := *pm
+				borrowed.Maps = op
+				pm = &borrowed
+			}
 			cust := s.ownerSubject(obj.Scoped[len(obj.Scoped)-1])
 			return s.permPredicate(obj, pm, cust, virtual)
 		}
@@ -896,7 +946,13 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 
 		return []string{fmt.Sprintf("%s.%s_composition_%s(%s, '%s')", s.definerSchema(), obj.Name, r.Name, pk, access)}, nil
 	case ViaClosure:
-
+		if repr.Claim != "" {
+			call := fmt.Sprintf("%s.%s_reachable(%s, %s)", s.definerSchema(), repr.Closure, s.idClaim(repr.Claim), repr.Col)
+			if repr.Missing == "allow" {
+				call = fmt.Sprintf("(%s IS NULL OR %s)", s.claim(repr.Claim), call)
+			}
+			return []string{call}, nil
+		}
 		if err := reqClaim(custClaim, obj, "closure relation "+t.Ident); err != nil {
 			return nil, err
 		}
@@ -925,7 +981,7 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		return []string{frag}, nil
 	case ViaObject:
 
-		return []string{fmt.Sprintf("%s.%s_can_%s(%s)", s.definerSchema(), repr.Object, repr.Verb, repr.Col)}, nil
+		return []string{fmt.Sprintf("%s.%s(%s)", s.definerSchema(), repr.functionName(), repr.Col)}, nil
 	case ViaGrant:
 
 		return s.emitGrantFrags(obj, r, &repr, accessFor(pm.Maps))
