@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.83.0
 
 Six engine additions, one accessor fix and one validation that turns a silent
 wrong emission into a refusal. A spec that names none of the new grammar emits
