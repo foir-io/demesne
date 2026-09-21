@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.86.0
 
 Two additions to the grammar, both of which a spec only meets if it asks for
 them. Emission is unchanged for every spec that does not: re-emitting a
