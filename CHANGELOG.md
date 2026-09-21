@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.88.0
 
 One structural change, and a defect it closes that has been latent for a long
 time. A spec emits byte-identical output unless its read contains `and` or
