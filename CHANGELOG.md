@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+One fix, to a gap v0.85.0 left. A spec only meets it if it writes a shape that
+previously failed validation, so emission is unchanged for everything else:
+re-emitting a 340-policy, 49-definer spec on v0.86.0 and on this gives
+byte-identical output.
+
+### A conjunction of only conditional terms is one admission, not a refusal
+
+v0.85.0 taught the accessor enumerator about a term that admits readers it
+cannot name — a claim, the app plane, a public mode — when that term stands
+alone on a disjunct. A conjunction of ONLY such terms fell through to the
+conjunction path, which looks for a relational term to enumerate from, found
+none, and refused:
+
+```
+cannot soundly enumerate accessors — a conjunction of only narrowing terms
+(@app_scope, not @claim) leaves no relational term to enumerate
+```
+
+The refusal was wrong. The conjunction admits readers perfectly well; it simply
+names no subject, which is the case the conditional enumerator exists for. Both
+shapes it blocked are ordinary:
+
+```demesne
+(@app_scope(exclude admin_owner) and @kind("service"))          // a plane confined to one caller kind
+(@app_scope(exclude admin_owner) and not @claim("credential", "public"))  // a plane with a credential subtracted
+```
+
+The fold: the `source` comes from the term that ADMITS, since the others only
+qualify it, and every row-side condition is ANDed into the anchor so the row
+appears exactly where the conjunction does. A negated kid contributes no anchor
+— it subtracts on the request side, which is the part no query can express, and
+that is precisely why the row is conditional rather than enumerated.
+
+**A conjunction carrying a relational term is untouched.** It is enumerable, and
+folding it into a nameless row would lose the subjects it can actually name.
+That guard has a test, and the test was rewritten after a mutation went unkilled
+against its first version: it paired the relation with `@kind`, which admits
+nothing on its own, so the fold never triggered and the assertion passed whether
+or not the guard was there.
+
 ## v0.86.0
 
 Two additions to the grammar, both of which a spec only meets if it asks for

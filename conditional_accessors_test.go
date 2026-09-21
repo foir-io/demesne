@@ -185,3 +185,78 @@ func TestConditional_AppScopeExcludesEveryNamedPlane(t *testing.T) {
 		t.Errorf("the app_scope row must be anchored on every exclusion:\n%s", cond.Body)
 	}
 }
+
+// A conjunction of ONLY conditional terms is one admission that names nobody,
+// not a refusal.
+//
+// v0.85.0 handled a conditional term standing alone on a disjunct and left this
+// case to accessorAndSQL, which looks for a relational term to enumerate from,
+// finds none, and refuses. The refusal was wrong: the conjunction admits
+// readers perfectly well, it simply names no subject — which is the case the
+// conditional enumerator exists for.
+//
+// Both shapes here are real adopter needs. The first confines a plane to one
+// caller kind; the second subtracts a credential from it.
+func TestConditional_ConjunctionOfOnlyConditionalTermsIsOneAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, wantSource, wantAnchor string
+	}{
+		{
+			name:       "plane narrowed to a caller kind",
+			body:       `(@app_scope(exclude admin_owner) and @kind("service")) + owner + grantee:read   @rls maps select`,
+			wantSource: "'app_scope'::text",
+			wantAnchor: "FROM docs WHERE id = p_id AND admin_owner_id IS NULL",
+		},
+		{
+			name:       "plane with a credential subtracted",
+			body:       `(@app_scope(exclude admin_owner) and not @claim("credential", "public")) + owner + grantee:read   @rls maps select`,
+			wantSource: "'app_scope'::text",
+			wantAnchor: "FROM docs WHERE id = p_id AND admin_owner_id IS NULL",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sp := validSpec(t, condSpec(tc.body))
+			fns, have := claimDefiners(t, sp)
+			cond, ok := fns["docs_accessors_conditional"]
+			if !ok {
+				t.Fatalf("expected docs_accessors_conditional, have: %s", have)
+			}
+			if !strings.Contains(cond.Body, tc.wantSource) {
+				t.Errorf("the admitting term must name the row's source:\n%s", cond.Body)
+			}
+			// The row-side half of the conjunction still anchors it; the
+			// request-side half is what makes the row conditional at all.
+			if !strings.Contains(cond.Body, tc.wantAnchor) {
+				t.Errorf("expected the anchor %q:\n%s", tc.wantAnchor, cond.Body)
+			}
+			// The relational disjuncts are untouched — folding the conjunction
+			// must not swallow the branches that CAN be enumerated.
+			for _, want := range []string{"'owner'::text", "'grant'::text"} {
+				if !strings.Contains(cond.Body, want) {
+					t.Errorf("folding the conjunction dropped the %s branch:\n%s", want, cond.Body)
+				}
+			}
+		})
+	}
+}
+
+// The control: a conjunction containing a RELATIONAL term is enumerable and
+// must NOT be folded into a nameless row. Without this, the fold above could
+// swallow every conjunction in the spec and the listing would name nobody.
+func TestConditional_ConjunctionWithARelationalTermStaysEnumerated(t *testing.T) {
+	// The conjunction must carry BOTH a relational term and an ADMITTING
+	// conditional one. An earlier version paired the relation with @kind, which
+	// admits nothing on its own, so the fold never triggered and the test passed
+	// whether or not the guard was there — a mutation removing the guard went
+	// unkilled. @app_scope admits, so removing the guard now folds this
+	// conjunction and loses the grantee branch, which is the defect.
+	sp := validSpec(t, condSpec(`(grantee:read and @app_scope(exclude admin_owner)) + owner   @rls maps select`))
+	fns, have := claimDefiners(t, sp)
+	if _, ok := fns["docs_accessors_conditional"]; ok {
+		t.Error("a conjunction with a relational term is enumerable — folding it into a " +
+			"nameless row would lose the grantees it can actually name")
+	}
+	if _, ok := fns["docs_accessors"]; !ok {
+		t.Fatalf("expected docs_accessors, have: %s", have)
+	}
+}

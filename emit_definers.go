@@ -1429,6 +1429,9 @@ func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relati
 			if s.isConditionalLeaf(obj, k, rels) {
 				continue
 			}
+			if _, ok := s.conditionalConjunction(obj, k, rels); ok {
+				continue
+			}
 			sql, err := s.accessorTreeSQL(obj, k, rels)
 			if err != nil {
 				return "", err
@@ -1552,6 +1555,68 @@ func (s *Spec) conditionalTerm(obj *Object, t *Term, rels map[string]*Relation) 
 	return conditionalAdmission{}, false
 }
 
+// conditionalConjunction reports whether n is an `and` that admits readers the
+// enumeration cannot name, and folds it into the single row that says so.
+//
+// v0.85.0 handled a conditional term standing alone on a disjunct. A conjunction
+// of ONLY such terms — `(@app_scope and @kind("service"))`, `(@app_scope and not
+// @claim(...))` — fell through to accessorAndSQL, which looks for a relational
+// term to enumerate from, finds none, and refuses. That refusal is wrong: the
+// conjunction is a perfectly ordinary admission, it simply names no subject, and
+// "names no subject" is the case the conditional enumerator exists for.
+//
+// The fold: the SOURCE comes from the term that admits, since the others only
+// narrow it, and every row-side condition is ANDed into the anchor so the row
+// appears exactly where the conjunction does. A `not` kid contributes no anchor
+// — it subtracts on the request side, which is the part no query can express,
+// and that is precisely why the row is conditional rather than enumerated.
+func (s *Spec) conditionalConjunction(obj *Object, n *PermNode, rels map[string]*Relation) (conditionalAdmission, bool) {
+	if n == nil || n.Op != "and" || len(n.Kids) == 0 {
+		return conditionalAdmission{}, false
+	}
+	var admit conditionalAdmission
+	var conds []string
+	found := false
+
+	for _, k := range n.Kids {
+		// A negated narrowing or conditional kid subtracts on the REQUEST side.
+		// There is nothing to anchor on, and that is exactly why the row this
+		// produces is conditional rather than enumerated.
+		if k.Op == "not" && len(k.Kids) == 1 &&
+			(narrowingAccessorLeaf(k.Kids[0]) || s.isConditionalLeaf(obj, k.Kids[0], rels)) {
+			continue
+		}
+		if k.Op != "leaf" {
+			return conditionalAdmission{}, false
+		}
+		if a, ok := s.conditionalTerm(obj, k.Term, rels); ok {
+			// The first admitting term names the row. A second one only adds
+			// its anchor: two admissions ANDed are one admission narrowed.
+			if !found {
+				admit, found = a, true
+			} else if a.RowCond != "" {
+				conds = append(conds, a.RowCond)
+			}
+			continue
+		}
+		// A narrowing leaf qualifies the admission and contributes no branch.
+		// Anything else is relational, which means the conjunction IS
+		// enumerable and must not be folded away.
+		if !narrowingAccessorLeaf(k) {
+			return conditionalAdmission{}, false
+		}
+	}
+
+	if !found {
+		return conditionalAdmission{}, false
+	}
+	if admit.RowCond != "" {
+		conds = append([]string{admit.RowCond}, conds...)
+	}
+	admit.RowCond = strings.Join(conds, " AND ")
+	return admit, true
+}
+
 func (s *Spec) isConditionalLeaf(obj *Object, n *PermNode, rels map[string]*Relation) bool {
 	if n == nil || n.Op != "leaf" {
 		return false
@@ -1616,10 +1681,15 @@ func (s *Spec) addingConditionalTerms(obj *Object, n *PermNode, rels map[string]
 		// the accessor set.
 		return nil
 	case "and":
-		// A conjunct narrows, and a narrowing leaf is simply dropped — that can
-		// only add names to the listing, which is the safe direction. But a
-		// conjunct may itself contain a disjunction, and a conditional term
-		// inside THAT still widens, so the rest of the kids are walked.
+		// A conjunction of only conditional terms is ONE admission that names
+		// nobody, not a refusal — see conditionalConjunction.
+		if a, ok := s.conditionalConjunction(obj, n, rels); ok {
+			return []conditionalAdmission{a}
+		}
+		// Otherwise a conjunct narrows, and a narrowing leaf is simply dropped —
+		// that can only add names to the listing, which is the safe direction.
+		// But a conjunct may itself contain a disjunction, and a conditional
+		// term inside THAT still widens, so the rest of the kids are walked.
 		var out []conditionalAdmission
 		for _, k := range n.Kids {
 			if narrowingAccessorLeaf(k) {

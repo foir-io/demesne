@@ -367,6 +367,13 @@ render as a person in any caller that did not know to look for it, and a boolean
 beside the function is something a caller can ignore without writing a line of
 code that acknowledges it. A NULL in the column you were going to read is neither.
 
+A conjunction of ONLY such terms — `(@app_scope(exclude admin_owner) and
+@kind("service"))` — is one conditional admission rather than a refusal. The
+`source` comes from the term that admits, the others qualify it, and every
+row-side condition is ANDed into the anchor. A conjunction carrying a
+*relational* term is untouched: it is enumerable, and folding it would lose the
+subjects it can name.
+
 A **negated** claim is the mirror case and is simply dropped. `and not
 @claim(…)` narrows, and dropping any conjunct can only add names to the listing,
 so the enumeration over-reports and stays sound while the forward policy goes on
