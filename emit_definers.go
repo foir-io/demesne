@@ -478,7 +478,11 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 		if _, vg := grantRelation(obj); vg == nil {
 			continue
 		}
+		cond := s.conditionalAccessors(obj)
 		name := obj.Table + "_accessors"
+		if len(cond) > 0 {
+			name = obj.Table + "_accessors_conditional"
+		}
 		if seen[name] {
 			continue
 		}
@@ -487,7 +491,7 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 			return fmt.Errorf("object %q: cannot soundly enumerate accessors (auth.%s would under-report) — %s", obj.Name, name, reason)
 		}
 		seen[name] = true
-		*out = append(*out, s.pureAccessorDefiners(obj)...)
+		*out = append(*out, s.accessorDefiners(obj, cond)...)
 	}
 	return nil
 }
@@ -589,6 +593,15 @@ func (s *Spec) viaObjectCovered(vo ViaObject, seen map[string]bool) (bool, strin
 	}
 	if _, vg := grantRelation(other); vg == nil {
 		return false, fmt.Sprintf("borrowed object %q has no accessor enumerator", vo.Object)
+	}
+	// The borrow is compiled as a LATERAL call to the other object's plain
+	// enumerator. An object that admits readers by a claim does not have one,
+	// and its conditional enumerator cannot stand in: the claim would have to
+	// travel outwards as a condition on THIS object's listing, which is a
+	// different function signature and a different question. Refuse instead of
+	// borrowing the identity half and losing the rest.
+	if cond := s.conditionalAccessors(other); len(cond) > 0 {
+		return false, fmt.Sprintf("borrowed object %q admits readers by the %q claim, so it enumerates conditionally and has no plain accessor to borrow", vo.Object, cond[0].ClaimKey)
 	}
 	return s.accessorCoverageSeen(other, seen)
 }
@@ -1129,6 +1142,56 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 	return []GenFn{direct, full}
 }
 
+// accessorDefiners wraps the enumerator in its conditional form when the
+// object's read admits a claim, and otherwise returns it unchanged.
+func (s *Spec) accessorDefiners(obj *Object, cond []*Term) []GenFn {
+	fns := s.pureAccessorDefiners(obj)
+	if len(cond) == 0 || len(fns) == 0 {
+		return fns
+	}
+	// pureAccessorDefiners returns either one function or a _direct_accessors
+	// pair whose second element is the composed whole. The conditional shape
+	// belongs on whichever one callers name, which is the last.
+	fns[len(fns)-1] = s.conditionalAccessorGenFn(obj, fns[len(fns)-1], cond)
+	return fns
+}
+
+// conditionalAccessorGenFn rebuilds the enumerator as
+// auth.<table>_accessors_conditional: the identity rows it already produced,
+// widened with two null columns, then one row per admitting claim.
+//
+// A claim row carries a NULL principal on purpose. The alternatives were worse.
+// A sentinel principal ("everyone", a nil UUID) renders as a person in any
+// caller that does not know to look for it, which is the failure this is meant
+// to prevent, dressed up as a feature. Leaving the claim out and adding a
+// boolean beside the function is something a caller can ignore without ever
+// writing a line of code acknowledging it. A NULL principal cannot be rendered
+// as a person or ignored: it is missing data in the column the caller reads,
+// and the two claim columns say exactly what is missing and why.
+func (s *Spec) conditionalAccessorGenFn(obj *Object, base GenFn, claims []*Term) GenFn {
+	idT := s.idType()
+	branches := []string{fmt.Sprintf(
+		"SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text AS via_claim_key, NULL::text AS via_claim_value\n    FROM (\n%s\n    ) b(source, principal_kind, principal_id, access)",
+		base.Body)}
+	for _, c := range claims {
+		// FROM the table, so an id that names no row still enumerates to
+		// nothing — the plain enumerator's behaviour, which callers rely on to
+		// tell "no readers" from "no such row" the same way they always have.
+		// 'read' is not a guess: conditionalAccessors only ever looks at the
+		// permission that maps to SELECT.
+		branches = append(branches, fmt.Sprintf(
+			"SELECT 'claim'::text, NULL::text, NULL::%s, 'read'::text, '%s'::text, '%s'::text\n    FROM %s WHERE %s = p_id",
+			idT, c.ClaimKey, c.ClaimVal, obj.Table, obj.pk()))
+	}
+	return GenFn{
+		Name:    obj.Table + "_accessors_conditional",
+		Sig:     "p_id " + idT,
+		Returns: "TABLE(source text, principal_kind text, principal_id " + idT + ", access text, via_claim_key text, via_claim_value text)",
+		RawBody: true,
+		Body:    "  " + strings.Join(branches, "\n  UNION ALL\n  "),
+	}
+}
+
 func (s *Spec) defCompositionAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
 	if sel == nil {
 		return nil
@@ -1273,6 +1336,9 @@ func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Rela
 	if t == nil {
 		return "", fmt.Errorf("empty term in the SELECT permission tree")
 	}
+	if t.Builtin == "claim" {
+		return "", fmt.Errorf("term %q is a condition on the request, not a subject, so it cannot be a branch of an accessor union; a claim can only narrow a conjunction or widen a disjunct (which makes the object enumerate conditionally) — it cannot be negated or nested where neither applies", t.String())
+	}
 	if t.Ident == "" {
 		return "", fmt.Errorf("term %q has no accessor branch (only owner/grant/group/closure/object relation leaves enumerate)", t.String())
 	}
@@ -1324,6 +1390,13 @@ func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relati
 	case "or":
 		var parts []string
 		for _, k := range n.Kids {
+			// A claim disjunct is not a branch of this union — it names no
+			// principal to select. It is not being dropped either:
+			// conditionalAccessors reports it and the object emits the
+			// conditional enumerator, which carries it in its own columns.
+			if isClaimLeaf(k) {
+				continue
+			}
 			sql, err := s.accessorTreeSQL(obj, k, rels)
 			if err != nil {
 				return "", err
@@ -1343,15 +1416,103 @@ func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relati
 // A claim-side builtin conjunct is enforced by the forward RLS predicate;
 // dropping it from the reverse enumeration can only over-report, never
 // under-report, so the accessor stays sound.
+//
+// The direction is the whole argument, and it is worth stating plainly because
+// the same term in the other position is the one case this engine cannot
+// enumerate at all. A conjunct NARROWS: drop it and the listing grows, which
+// costs precision and nothing else. A disjunct WIDENS: drop it and the listing
+// misses people who can read the row. See conditionalAccessors for what happens
+// to a claim that arrives on the widening side.
 func claimNeutralAccessorLeaf(n *PermNode) bool {
 	if n == nil || n.Op != "leaf" || n.Term == nil {
 		return false
 	}
 	switch n.Term.Builtin {
-	case "kind", "app_scope", "session", "within", "scoped", "holds":
+	case "kind", "app_scope", "session", "within", "scoped", "holds", "claim":
 		return true
 	}
 	return false
+}
+
+func isClaimLeaf(n *PermNode) bool {
+	return n != nil && n.Op == "leaf" && n.Term != nil && n.Term.Builtin == "claim"
+}
+
+// conditionalAccessors reports the @claim terms in obj's SELECT permission that
+// ADD authority: the ones sitting on a disjunct, where they admit callers no
+// other branch admits.
+//
+// Such a term is why an object cannot have a plain accessor enumerator. Every
+// other leaf names a SUBJECT and so can be read backwards off a row — an
+// owner column, a grant table, a membership, a borrowed object. A claim names
+// a CONDITION on the request. Nothing in the database records who satisfies it,
+// so no query over the row can list them, and a listing that quietly leaves
+// them out is not a smaller truth but a wrong answer: it says "these are the
+// people who can read this" when the real answer is "these, plus anyone whose
+// request carries this claim".
+//
+// An object with one of these emits auth.<table>_accessors_conditional instead
+// of auth.<table>_accessors, so the caller has to look at the claim columns and
+// decide what to do about them. A caller that has not been updated asks for a
+// function that is not there, which is a loud failure rather than a plausible
+// and incomplete list.
+func (s *Spec) conditionalAccessors(obj *Object) []*Term {
+	sel := objectSelectPerm(obj)
+	if sel == nil {
+		return nil
+	}
+	// Mirror how pureAccessorDefiners chooses its path, so the two cannot
+	// disagree about which claims the emitted union already accounts for.
+	if accessorTreeOp(sel.Tree) != "" {
+		return addingClaimTerms(sel.Tree)
+	}
+	var out []*Term
+	for _, t := range sel.Expr {
+		if t != nil && t.Builtin == "claim" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func addingClaimTerms(n *PermNode) []*Term {
+	if n == nil {
+		return nil
+	}
+	switch n.Op {
+	case "leaf":
+		if isClaimLeaf(n) {
+			return []*Term{n.Term}
+		}
+		return nil
+	case "not":
+		// A negated subtree subtracts authority, so nothing inside it widens
+		// the accessor set.
+		return nil
+	case "and":
+		var out []*Term
+		for _, k := range n.Kids {
+			if claimNeutralAccessorLeaf(k) {
+				continue
+			}
+			out = append(out, addingClaimTerms(k)...)
+		}
+		return out
+	}
+	var out []*Term
+	for _, k := range n.Kids {
+		out = append(out, addingClaimTerms(k)...)
+	}
+	return out
+}
+
+func objectSelectPerm(obj *Object) *Perm {
+	for _, pm := range obj.Perms {
+		if pm.Maps == "select" {
+			return pm
+		}
+	}
+	return nil
 }
 
 func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, error) {

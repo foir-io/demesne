@@ -9,7 +9,7 @@ import (
 
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true, "check": true}
-var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true, "within": true, "holds": true}
+var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true, "within": true, "holds": true, "claim": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -1153,6 +1153,15 @@ func valCheckBuiltinTerm(s *Spec, o *Object, pm *Perm, t *Term, rels map[string]
 		}
 		if !hasRLS {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @kind but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
+		}
+	}
+
+	if t.Builtin == "claim" {
+		if t.ClaimKey == "" || t.ClaimVal == "" {
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @claim with an empty key or value — `@claim(\"<key>\", \"<value>\")`", pm.Pos.Line, o.Name, pm.Verb))
+		}
+		if !hasRLS {
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @claim but is not @rls — a claim is a row-layer test and the decision point cannot read it", pm.Pos.Line, o.Name, pm.Verb))
 		}
 	}
 

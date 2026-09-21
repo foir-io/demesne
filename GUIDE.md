@@ -262,7 +262,7 @@ invariant can be enforced on INSERT without also being enforced on the UPDATE
 path that cleans up rows which predate it.
 
 Claim-side builtins (`@kind`, `@session`, `@app_scope`, `@within`, `@scoped`,
-`@holds`) compose inside intersections: `(@kind("admin") and grantee:read)`
+`@holds`, `@claim`) compose inside intersections: `(@kind("admin") and grantee:read)`
 enforces both in the emitted policy. The reverse accessor enumeration treats a
 claim-side conjunct as neutral — it drops the conjunct and may over-report,
 never under-report, because the forward RLS still enforces it — and refuses,
@@ -280,6 +280,72 @@ wildcard at that level, so a tenant-wide assignment reaches every project and an
 assignment left NULL at the *root* level is global — it reaches every tenant.
 That root NULL is how a platform-wide scope is expressed; there is no separate
 level for it.
+
+### `@claim` — a condition on the request, in a permission
+
+```demesne
+permission view = owner + grantee:read + @claim("view_all", "true")   @rls maps select
+```
+
+The caller's request carries `view_all = "true"`, and that alone admits them.
+The term compiles to the obvious test against the claims accessor and nothing
+else: no edge, no subject, no definer. Like `@kind`, the claim is minted by your
+session code, so what it means and who may be given it is yours to decide.
+
+It takes two arguments rather than an infix `=` because a permission expression
+has no comparison operator — it is terms combined with `and`, `or` and `not` —
+and introducing one would raise a precedence question against `and`/`or` that
+every existing expression would silently inherit. The two-argument form is the
+shape `@kind` and `@external` already use.
+
+A `@claim` is legal only in an `@rls` permission. A claim is read at the row
+layer; a permission that compiles to no policy has no row layer to read it in,
+so the term would be quietly ignored. That is a refusal, not a warning.
+
+#### Which side it lands on is the whole story
+
+On a **conjunct** a claim narrows, and the reverse accessor enumeration treats it
+as neutral exactly like its claim-side siblings: the conjunct is dropped, the
+listing may over-report and can never under-report, and the forward policy still
+enforces it.
+
+On a **disjunct** it does the opposite. It admits callers no other branch
+admits, and unlike every other term in the language it names no subject that can
+be read back off a row. An owner is a column, a grantee is a row in the grant
+table, a member is a row in the membership table — a claim is a condition on the
+request, and nothing in the database records who satisfies it. Drop it from the
+listing and the answer is not shorter but wrong: it says "these are the people
+who can read this row" when the truth is "these, plus anyone whose request
+carries this claim".
+
+So an object whose read admits a claim does not get a plain enumerator. It gets
+
+```
+auth.<table>_accessors_conditional(p_id)
+  → (source, principal_kind, principal_id, access, via_claim_key, via_claim_value)
+```
+
+which is the identity rows it always had, widened with two null columns, plus one
+row per admitting claim: `source = 'claim'`, a **NULL principal**, and the key and
+value that admit the reader.
+
+`auth.<table>_accessors` is not emitted for that object. That is the load-bearing
+part. A caller that has not been updated asks for a function that is not there
+and fails loudly, rather than being handed a confident and incomplete list. The
+NULL principal is deliberate for the same reason: a sentinel principal would
+render as a person in any caller that did not know to look for it, and a boolean
+beside the function is something a caller can ignore without writing a line of
+code that acknowledges it. A NULL in the column you were going to read is neither.
+
+Two consequences follow. A `via object` **borrow** of a conditional object is
+refused at validation: the borrow compiles to a call to the other object's plain
+enumerator, and taking the identity half while losing the claim is the failure
+this is meant to prevent. And in the Go runtime, `ResourceAccessSurface` refuses
+a conditional object and names the alternative —
+`ConditionalResourceAccessSurface`, which returns the same surface over the
+conditional function, reports `IsConditional()`, and whose `AccessorsSQL()`
+selects the claim columns. A caller written against the conditional constructor
+stays correct if a claim is added to the spec later.
 
 ### `wildcard` — a NULL scope column on the *row* side
 

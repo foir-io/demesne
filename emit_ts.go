@@ -136,6 +136,12 @@ type tsResourceAccessProj struct {
 	DiscrimCol   string   `json:"discrimCol"`
 	DiscrimVal   string   `json:"discrimVal"`
 	AccessorFn   string   `json:"accessorFn"`
+
+	// AccessorsConditional marks a listing that includes rows naming no
+	// principal, because this object's read admits a claim. accessorFn already
+	// names a different function in that case, so a consumer that ignores this
+	// flag fails on the call rather than on a wrong list.
+	AccessorsConditional bool `json:"accessorsConditional"`
 }
 
 func strs(ss []string) []string {
@@ -251,6 +257,7 @@ func tsResAccess(r *ResourceAccessSurface) tsResourceAccessProj {
 		ReadModes: setKeys(r.readModes), GrantKinds: setKeys(r.grantKinds),
 		AclTable: r.aclTable, RecordCol: r.recordCol, KindCol: r.kindCol, PrincipalCol: r.principalCol,
 		AccessCol: r.accessCol, DiscrimCol: r.discrimCol, DiscrimVal: r.discrimVal, AccessorFn: r.accessorFn,
+		AccessorsConditional: r.conditional,
 	}
 }
 
@@ -318,7 +325,11 @@ func (s *Spec) EmitTS() (string, error) {
 		if objectGrantEdge(o) == nil {
 			continue
 		}
-		r, err := s.ResourceAccessSurface(o.Name)
+		// The descriptor DESCRIBES the surface rather than querying it, so it
+		// can carry a conditional one; accessorFn and accessorsConditional say
+		// which it is. Refusing here would only stop the generator from
+		// describing a spec it understands perfectly well.
+		r, err := s.ConditionalResourceAccessSurface(o.Name)
 		if err != nil {
 			return "", fmt.Errorf("EmitTS resourceAccess %q: %w", o.Name, err)
 		}

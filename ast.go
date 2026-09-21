@@ -548,6 +548,18 @@ type Term struct {
 	KindVal string
 	SelfCol string
 
+	// ClaimKey and ClaimVal are @claim("key", "value"): the request carries this
+	// claim with this value.
+	//
+	// It differs from every other term in WHO it admits. The rest name a subject
+	// — an owner, a grantee, a member of a group — and a subject can be listed.
+	// This names a CONDITION, and the set of callers who satisfy it is not
+	// derivable from any row. That is the whole reason it is a separate kind of
+	// term rather than another relation, and it is what the accessor emitter has
+	// to account for; see conditionalAccessors.
+	ClaimKey string
+	ClaimVal string
+
 	WithinLevel    string
 	WithinNullable bool
 

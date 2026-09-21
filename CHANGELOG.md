@@ -1,5 +1,72 @@
 # Changelog
 
+## Unreleased
+
+One engine addition: `@claim`, a permission term that tests a claim on the
+request. It comes with the accessor rule that makes it safe, which is the larger
+half of the change.
+
+A spec that does not name `@claim` emits the same SQL it emitted at v0.83.0 —
+verified by re-emitting a 340-policy, 49-definer spec on both and diffing: byte
+for byte identical. The one visible change for every spec is in the **TypeScript
+descriptor**, which gains `accessorsConditional: false` on each resource-access
+entry. Re-emit and diff; expect only that.
+
+### `@claim("key", "value")` — a condition on the request, in a permission
+
+```demesne
+permission view = owner + grantee:read + @claim("view_all", "true")   @rls maps select
+```
+
+Compiles to the obvious test against the claims accessor: no edge, no subject,
+no definer. Two arguments rather than an infix `=`, because a permission
+expression has no comparison operator and adding one would raise a precedence
+question against `and`/`or` that every existing expression would inherit. Legal
+only in an `@rls` permission — a claim is read at the row layer, so a permission
+that compiles to no policy would silently ignore it, and that is now a refusal.
+
+### An object whose read admits a claim enumerates conditionally
+
+This is the part worth reading before adopting the term.
+
+Every other leaf in the language names a subject that can be read back off a
+row. A claim names a condition on the request, and nothing in the database
+records who satisfies it. On a **conjunct** that costs nothing: the existing
+rule already drops claim-side conjuncts from the reverse enumeration, which can
+only over-report, and `@claim` joins `@kind`, `@session`, `@app_scope`,
+`@within`, `@scoped` and `@holds` in that set.
+
+On a **disjunct** it is the opposite, and this was previously emitted wrongly
+rather than refused. A builtin term on a `+` chain was silently skipped by the
+accessor builder, so an object admitting readers by a claim still got a plain
+`auth.<table>_accessors` that listed its owners and grantees and left out every
+reader the claim admits — the under-reporting direction the engine refuses
+everywhere else.
+
+Such an object now emits
+
+```
+auth.<table>_accessors_conditional(p_id)
+  → (source, principal_kind, principal_id, access, via_claim_key, via_claim_value)
+```
+
+— the identity rows it always had, widened with two null columns, plus one row
+per admitting claim with `source = 'claim'`, a NULL principal, and the key and
+value. **`auth.<table>_accessors` is not emitted for that object**, so a caller
+that has not been updated asks for a function that is not there instead of
+receiving a confident, incomplete list. A sentinel principal was rejected because
+it renders as a person in exactly the caller this protects; a flag beside the
+function was rejected because it can be ignored without writing a line of code.
+
+Two consequences. A `via object` borrow of such an object is refused at
+validation, because the borrow compiles to a call to the plain enumerator and
+taking the identity half while losing the claim is the failure being prevented.
+And `ResourceAccessSurface` refuses a conditional object, naming
+`ConditionalResourceAccessSurface` — same surface over the conditional function,
+with `IsConditional()` and an `AccessorsSQL()` that selects the claim columns. A
+caller written against the conditional constructor stays correct if a claim is
+added to the spec later.
+
 ## v0.83.0
 
 Six engine additions, one accessor fix and one validation that turns a silent

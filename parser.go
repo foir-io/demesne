@@ -1692,6 +1692,10 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 		return p.parseTermKind(t)
 	}
 
+	if b == "claim" {
+		return p.parseTermClaim(t)
+	}
+
 	if b == "self" {
 		col, err := p.parenIdent()
 		if err != nil {
@@ -1734,6 +1738,35 @@ func (p *parser) parseTermKind(t *Term) error {
 		return err
 	}
 	t.KindVal = val.lit
+	_, err = p.expect(tRParen)
+	return err
+}
+
+// parseTermClaim reads @claim("key", "value").
+//
+// TWO ARGUMENTS RATHER THAN AN INFIX `=`. A permission expression has no
+// comparison operator — its grammar is terms combined with `and`, `or` and
+// `not` — so spelling this `@claim("key") = "value"` would mean introducing one,
+// and with it a precedence question against `and`/`or` that every existing
+// expression would silently inherit. The two-argument form reuses the shape
+// @kind and @external already have.
+func (p *parser) parseTermClaim(t *Term) error {
+	if _, err := p.expect(tLParen); err != nil {
+		return err
+	}
+	key, err := p.expect(tString)
+	if err != nil {
+		return err
+	}
+	t.ClaimKey = key.lit
+	if _, err := p.expect(tComma); err != nil {
+		return err
+	}
+	val, err := p.expect(tString)
+	if err != nil {
+		return err
+	}
+	t.ClaimVal = val.lit
 	_, err = p.expect(tRParen)
 	return err
 }

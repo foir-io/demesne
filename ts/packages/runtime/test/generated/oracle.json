@@ -384,7 +384,8 @@
           "accessCol": "access",
           "discrimCol": "resource_type",
           "discrimVal": "record",
-          "accessorFn": "auth.records_accessors"
+          "accessorFn": "auth.records_accessors",
+          "accessorsConditional": false
         }
       },
       "roleAssignment": {

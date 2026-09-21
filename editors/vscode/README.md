@@ -5,7 +5,7 @@ Syntax highlighting for Demesne authorization specs (`.demesne`).
 Highlights: top-level blocks (`topology`, `vocabulary`, `subject`, `object`,
 `template`, `procedures`, `ungoverned`, `fieldscopes`, `rolestore`, `grant`,
 `claims`, `definers`, `tables`); clause keywords; `@`-prefixed terms
-(`@rls`, `@pdp`, `@scoped`, `@session`, `@app_scope`, `@store_manage`, `@kind`, …);
+(`@rls`, `@pdp`, `@scoped`, `@session`, `@app_scope`, `@store_manage`, `@kind`, `@claim`, …);
 `via <repr>` relation kinds (`role`/`edge`/`grant`/`closure`/`group`/`object`/`memberin`);
 permission/scope keys (`content:write`, `records:read:*`); operators (`->`, `+`, `|`,
 `>=`, `*`); strings and `//` comments.
