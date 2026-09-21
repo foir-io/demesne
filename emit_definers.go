@@ -1477,6 +1477,13 @@ func claimNeutralAccessorLeaf(n *PermNode) bool {
 	return false
 }
 
+// isClaimLeaf is the bare question "is this node a @claim?", with none of the
+// object context isConditionalLeaf needs. Used where the answer does not depend
+// on where the claim sits — a negated claim is unreversible wherever it is.
+func isClaimLeaf(n *PermNode) bool {
+	return n != nil && n.Op == "leaf" && n.Term != nil && n.Term.Builtin == "claim"
+}
+
 // conditionalAdmission is a disjunct admitting readers the enumeration cannot
 // name: it becomes one row of <table>_accessors_conditional.
 type conditionalAdmission struct {
@@ -1520,17 +1527,26 @@ func (s *Spec) conditionalTerm(obj *Object, t *Term, rels map[string]*Relation) 
 		// term and appears in no table. This row is that remainder, which is
 		// why it stands beside the role branch rather than replacing it.
 		a := conditionalAdmission{Source: "app_scope"}
-		if t.ExcludeRel != "" {
-			if r := rels[t.ExcludeRel]; r != nil {
-				if vc, ok := r.Repr.(ViaColumn); ok {
-					if vc.DiscrimCol != "" {
-						a.RowCond = fmt.Sprintf("%s IS DISTINCT FROM '%s'", vc.DiscrimCol, vc.DiscrimVal)
-					} else {
-						a.RowCond = fmt.Sprintf("%s IS NULL", vc.Column)
-					}
-				}
+		var conds []string
+		for _, ex := range t.ExcludeRels {
+			r := rels[ex]
+			if r == nil {
+				continue
+			}
+			vc, ok := r.Repr.(ViaColumn)
+			if !ok {
+				continue
+			}
+			if vc.DiscrimCol != "" {
+				conds = append(conds, fmt.Sprintf("%s IS DISTINCT FROM '%s'", vc.DiscrimCol, vc.DiscrimVal))
+			} else {
+				conds = append(conds, fmt.Sprintf("%s IS NULL", vc.Column))
 			}
 		}
+		// Every exclusion, not just the first: the row this contributes is the
+		// remainder the plane admits, so an anchor that dropped one would put a
+		// row in the listing for a row the plane does not in fact admit.
+		a.RowCond = strings.Join(conds, " AND ")
 		return a, true
 	}
 	return conditionalAdmission{}, false
@@ -1638,6 +1654,25 @@ func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relatio
 			if len(k.Kids) != 1 {
 				return "", fmt.Errorf("malformed negation in the SELECT permission tree")
 			}
+			// A negated CLAIM is dropped rather than reversed. Dropping any
+			// conjunct over-reports and never under-reports, and reversing this
+			// one is not merely hard but meaningless: a claim names a condition
+			// on the request, so "everyone who does NOT satisfy it" is no more
+			// enumerable than everyone who does.
+			//
+			// DELIBERATELY ONLY A CLAIM, though the over-report argument would
+			// cover every narrowing leaf. The other members of that set are
+			// coupled to branch generation in a way a claim is not — the role
+			// branch exists only because @app_scope is present
+			// (roleAccessorBranch is gated on selectUsesAppScope), so negating
+			// it is not a conjunct that can simply be lifted out. A claim
+			// generates no branch at all, so nothing downstream changes shape
+			// when it goes. Widening this to the rest would also turn an
+			// existing refusal into an emission for specs that rely on it.
+			if isClaimLeaf(k.Kids[0]) {
+				dropped = append(dropped, "not "+k.Kids[0].Term.String())
+				continue
+			}
 			negatives = append(negatives, k.Kids[0])
 		case narrowingAccessorLeaf(k):
 			dropped = append(dropped, k.Term.String())
@@ -1708,13 +1743,23 @@ func defOwnerAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation)
 }
 
 func defAdminExclCond(sel *Perm, rels map[string]*Relation) string {
+	// Every exclusion the term names, ANDed, so the role branch is narrowed by
+	// the same set the plane is. Taking only the first would leave the branch
+	// wider than the policy it is meant to mirror.
 	for _, t := range sel.Expr {
-		if t != nil && t.Builtin == "app_scope" && t.ExcludeRel != "" {
-			if r := rels[t.ExcludeRel]; r != nil {
+		if t == nil || t.Builtin != "app_scope" {
+			continue
+		}
+		var conds []string
+		for _, ex := range t.ExcludeRels {
+			if r := rels[ex]; r != nil {
 				if vc, ok := r.Repr.(ViaColumn); ok {
-					return ownerExclCond(vc)
+					conds = append(conds, ownerExclCond(vc))
 				}
 			}
+		}
+		if len(conds) > 0 {
+			return strings.Join(conds, " AND ")
 		}
 	}
 	return ""

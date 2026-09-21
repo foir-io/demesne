@@ -1131,11 +1131,11 @@ func valCheckBuiltinTerm(s *Spec, o *Object, pm *Perm, t *Term, rels map[string]
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses unknown builtin @%s (app_scope|scoped|session|open|store_manage|public|kind|self|within|holds)", pm.Pos.Line, o.Name, pm.Verb, t.Builtin))
 	}
 
-	if t.ExcludeRel != "" {
-		if r := rels[t.ExcludeRel]; r == nil {
-			errs = append(errs, fmt.Errorf("line %d: permission %s.%s @app_scope(exclude %q) names no relation", pm.Pos.Line, o.Name, pm.Verb, t.ExcludeRel))
+	for _, ex := range t.ExcludeRels {
+		if r := rels[ex]; r == nil {
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s @app_scope(exclude %q) names no relation", pm.Pos.Line, o.Name, pm.Verb, ex))
 		} else if _, ok := r.Repr.(ViaColumn); !ok {
-			errs = append(errs, fmt.Errorf("line %d: permission %s.%s @app_scope(exclude %q) must exclude an owner column relation", pm.Pos.Line, o.Name, pm.Verb, t.ExcludeRel))
+			errs = append(errs, fmt.Errorf("line %d: permission %s.%s @app_scope(exclude %q) must exclude an owner column relation", pm.Pos.Line, o.Name, pm.Verb, ex))
 		}
 	}
 

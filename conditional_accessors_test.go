@@ -146,3 +146,42 @@ func TestConditional_ModeDisjunctNoLongerBlocksAConjunctionElsewhere(t *testing.
 		t.Errorf("the mode disjunct must appear as its own row:\n%s", cond.Body)
 	}
 }
+
+// @app_scope(exclude a, b) subtracts MORE THAN ONE owner plane.
+//
+// A table can be owned on more than one plane — an admin-owned row and a
+// customer-owned row are both somebody's private data — and a trusted caller
+// presenting no subject of its own has no business reading either. One
+// exclusion could only ever name one of them, which is why the adopter that
+// needed both had to filter the second in application code.
+func TestConditional_AppScopeExcludesEveryNamedPlane(t *testing.T) {
+	sp := validSpec(t, condSpec(`@app_scope(exclude admin_owner, owner) + owner + grantee:read   @rls maps select`))
+
+	res, err := sp.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit rls: %v", err)
+	}
+	var using string
+	for _, p := range res.Policies {
+		if strings.Contains(p.Name, "docs_select") {
+			using = p.Using
+		}
+	}
+	for _, want := range []string{"admin_owner_id IS NULL", "member_id IS NULL"} {
+		if !strings.Contains(using, want) {
+			t.Errorf("the plane must subtract %s:\n%s", want, using)
+		}
+	}
+
+	// And the conditional row is anchored on BOTH, so it appears only where the
+	// plane really admits. Anchoring on the first alone would put a row in the
+	// listing for a row the plane does not admit at all.
+	fns, have := claimDefiners(t, sp)
+	cond, ok := fns["docs_accessors_conditional"]
+	if !ok {
+		t.Fatalf("expected docs_accessors_conditional, have: %s", have)
+	}
+	if !strings.Contains(cond.Body, "admin_owner_id IS NULL AND member_id IS NULL") {
+		t.Errorf("the app_scope row must be anchored on every exclusion:\n%s", cond.Body)
+	}
+}

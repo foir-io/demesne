@@ -107,7 +107,9 @@ func (s *Spec) exportedRow(obj *Object, pm *Perm) *Object {
 	for _, t := range terms {
 		used[strings.Split(t.Ident, ":")[0]] = true
 		used[t.SessionRel] = true
-		used[t.ExcludeRel] = true
+		for _, ex := range t.ExcludeRels {
+			used[ex] = true
+		}
 	}
 	row.Relations = nil
 	for _, rel := range obj.Relations {

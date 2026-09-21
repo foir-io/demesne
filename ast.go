@@ -537,7 +537,13 @@ type Term struct {
 	Builtin    string
 	SessionRel string
 
-	ExcludeRel string
+	// ExcludeRels are the owner relations @app_scope(exclude a, b) subtracts:
+	// the app plane admits a caller presenting no subject claim, MINUS the rows
+	// those relations own. More than one because a table can be owned on more
+	// than one plane — an admin-owned row and a customer-owned row are both
+	// somebody's private data, and a trusted caller with no subject of its own
+	// has no business reading either.
+	ExcludeRels []string
 
 	ModeCol   string
 	ModeVal   string

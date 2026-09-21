@@ -363,10 +363,10 @@ func TestAccessorCoverage_BuiltinLeaf_Covered(t *testing.T) {
 		Name: "record", Table: "records",
 		Relations: []*Relation{{Name: "owner", Repr: ViaColumn{Column: "owner_id"}}},
 		Perms: []*Perm{selectPerm(
-			[]*Term{{Ident: "owner"}, {Builtin: "app_scope", ExcludeRel: "owner"}},
+			[]*Term{{Ident: "owner"}, {Builtin: "app_scope", ExcludeRels: []string{"owner"}}},
 			&PermNode{Op: "or", Kids: []*PermNode{
 				{Op: "leaf", Term: &Term{Ident: "owner"}},
-				{Op: "leaf", Term: &Term{Builtin: "app_scope", ExcludeRel: "owner"}},
+				{Op: "leaf", Term: &Term{Builtin: "app_scope", ExcludeRels: []string{"owner"}}},
 			}},
 		)},
 	}

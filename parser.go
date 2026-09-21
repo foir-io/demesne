@@ -1678,11 +1678,17 @@ func (p *parser) parseTermBuiltin(t *Term) error {
 		if err := p.expectKw("exclude"); err != nil {
 			return err
 		}
-		rel, err := p.ident()
-		if err != nil {
-			return err
+		for {
+			rel, err := p.ident()
+			if err != nil {
+				return err
+			}
+			t.ExcludeRels = append(t.ExcludeRels, rel)
+			if p.peekKind() != tComma {
+				break
+			}
+			p.advance()
 		}
-		t.ExcludeRel = rel
 		if _, err := p.expect(tRParen); err != nil {
 			return err
 		}

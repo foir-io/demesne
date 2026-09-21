@@ -273,6 +273,11 @@ request, but it narrows just the same. A
 "everyone", and `@self` binds a row column to the caller's claim, which the
 enumerator cannot reverse.
 
+`@app_scope(exclude a, b)` may name more than one owner plane. Each is ANDed
+on, so the app plane admits a subject-less caller minus every plane named — a
+table owned on two planes (an admin owner column and a customer owner column)
+subtracts both, and a caller with no subject of its own reads neither.
+
 A permission can also gate on what the caller *holds*: `@holds(docs:publish)`
 means "the caller's admin role confers `docs:publish` at this row's scope" and
 compiles to a generated `<admin>_has_perm` definer matching the verb against the
@@ -361,6 +366,15 @@ NULL principal is deliberate for the same reason: a sentinel principal would
 render as a person in any caller that did not know to look for it, and a boolean
 beside the function is something a caller can ignore without writing a line of
 code that acknowledges it. A NULL in the column you were going to read is neither.
+
+A **negated** claim is the mirror case and is simply dropped. `and not
+@claim(…)` narrows, and dropping any conjunct can only add names to the listing,
+so the enumeration over-reports and stays sound while the forward policy goes on
+enforcing it. Reversing it would be meaningless anyway — "everyone who does not
+carry the claim" is no more enumerable than everyone who does. This is not
+extended to the other claim-side builtins: `@app_scope` *gates* the role branch,
+so negating it is not a conjunct that lifts out cleanly, and `not @app_scope`
+still fails closed.
 
 Two consequences follow. A `via object` **borrow** of a conditional object is
 refused at validation: the borrow compiles to a call to the other object's plain

@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+Two additions to the grammar, both of which a spec only meets if it asks for
+them. Emission is unchanged for every spec that does not: re-emitting a
+340-policy, 49-definer spec on v0.85.0 and on this gives byte-identical output.
+
+One breaking change to the Go AST, for anyone building `Term` values
+programmatically rather than parsing a spec: `Term.ExcludeRel string` is now
+`Term.ExcludeRels []string`.
+
+### `@app_scope(exclude a, b)` takes more than one owner plane
+
+`@app_scope` admits a caller presenting no subject claim; `exclude` subtracts a
+plane it should not reach. It took exactly one relation, and a table can be
+owned on more than one — an admin-owned row and a customer-owned row are both
+somebody's private data, and a trusted caller with no subject of its own has no
+business reading either.
+
+One exclusion could only ever name one of them, so the adopter that needed both
+filtered the second in application code: a second gate for one read, on a rule
+the row layer was already half-expressing. Each exclusion is now ANDed on, in
+spec order, and the conditional accessor's app_scope row is anchored on all of
+them — anchoring on the first alone would put a row in the listing for a row the
+plane does not admit at all.
+
+### A negated `@claim` is dropped from the enumeration rather than refused
+
+`(… ) and not @claim("k", "v")` previously failed validation: the reverse
+enumeration reached the negated leaf and refused, because a claim names no
+subject to reverse.
+
+Refusing was too strong. Dropping ANY conjunct from the enumeration can only add
+names, never remove one, so the listing over-reports and stays sound — and the
+forward policy still enforces the term. Reversing this one is not merely hard
+but meaningless: "everyone who does NOT carry the claim" is no more enumerable
+than everyone who does.
+
+**Only a claim, deliberately.** The same argument would cover every narrowing
+leaf, and it is not applied to them, for two reasons. The others are coupled to
+branch generation in a way a claim is not — the role branch exists only because
+`@app_scope` is present, so negating that is not a conjunct that lifts out
+cleanly — and widening this would turn an existing refusal into an emission for
+specs that rely on it. `not @app_scope` still fails closed, and a test drives
+that case so the distinction cannot quietly erode.
+
 ## v0.85.0
 
 One change, and it is a **breaking emission change** for any spec whose read

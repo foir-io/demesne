@@ -875,16 +875,18 @@ func (s *Spec) rlsEmitAppScope(obj *Object, t *Term, rels map[string]*Relation, 
 		return nil, err
 	}
 	base := s.claim(custClaim) + " IS NULL"
-	if t.ExcludeRel != "" {
-		r := rels[t.ExcludeRel]
+	// Each exclusion is ANDed on: the plane admits a subject-less caller, minus
+	// every plane whose owner relation is named here. Order follows the spec so
+	// the emission is stable and a diff reads as the spec reads.
+	for _, ex := range t.ExcludeRels {
+		r := rels[ex]
 		if r == nil {
-			return nil, fmt.Errorf("@app_scope(exclude %q): unknown relation", t.ExcludeRel)
+			return nil, fmt.Errorf("@app_scope(exclude %q): unknown relation", ex)
 		}
 		vc, ok := r.Repr.(ViaColumn)
 		if !ok {
-			return nil, fmt.Errorf("@app_scope(exclude %q): excluded relation must be an owner column", t.ExcludeRel)
+			return nil, fmt.Errorf("@app_scope(exclude %q): excluded relation must be an owner column", ex)
 		}
-
 		if vc.DiscrimCol != "" {
 			base = fmt.Sprintf("(%s AND %s IS DISTINCT FROM '%s')", base, vc.DiscrimCol, vc.DiscrimVal)
 		} else {

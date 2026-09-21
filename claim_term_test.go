@@ -284,3 +284,52 @@ func TestClaim_PlainObjectKeepsThePlainSurface(t *testing.T) {
 		t.Errorf("a plain surface must keep its four columns, got: %s", r.AccessorsSQL())
 	}
 }
+
+// A NEGATED claim narrows, so the enumeration drops it rather than refusing.
+// Dropping any conjunct over-reports and never under-reports, and reversing
+// this one is meaningless: "everyone who does NOT carry the claim" is no more
+// enumerable than everyone who does.
+func TestClaim_NegatedIsDroppedNotRefused(t *testing.T) {
+	sp := validSpec(t, claimSpec(`(owner + grantee:read) and not @claim("credential", "public")   @rls maps select`))
+
+	res, err := sp.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit rls: %v", err)
+	}
+	var using string
+	for _, p := range res.Policies {
+		if strings.Contains(p.Name, "docs_select") {
+			using = p.Using
+		}
+	}
+	// The forward policy still enforces it — dropping is only safe because
+	// this is still here.
+	if !strings.Contains(using, "'credential') = 'public') IS NOT TRUE") {
+		t.Errorf("the negated claim must still be enforced by the policy: %s", using)
+	}
+
+	fns, have := claimDefiners(t, sp)
+	if _, ok := fns["docs_accessors_conditional"]; ok {
+		t.Error("a negated claim SUBTRACTS, so it must not force the conditional form")
+	}
+	plain, ok := fns["docs_accessors"]
+	if !ok {
+		t.Fatalf("expected docs_accessors, have: %s", have)
+	}
+	if strings.Contains(plain.Body, "credential") {
+		t.Errorf("the negation is enforced by the policy, not reversed into the listing:\n%s", plain.Body)
+	}
+}
+
+// The control for the rule above, and the reason it is written narrowly: the
+// over-report argument would cover every narrowing leaf, but the others are
+// coupled to branch generation in a way a claim is not. @app_scope GATES the
+// role branch, so negating it is not a conjunct that lifts out cleanly, and it
+// must still fail closed.
+func TestClaim_NegatedAppScopeStillRefuses(t *testing.T) {
+	sp := mustSpec(t, claimSpec(`(owner + grantee:read) and not @app_scope   @rls maps select`))
+	if err := Validate(sp); err == nil {
+		t.Fatal("a negated @app_scope must still fail closed — it gates the role branch, " +
+			"so dropping it is not the same trade as dropping a claim")
+	}
+}
