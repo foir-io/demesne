@@ -393,6 +393,16 @@ conditional function, reports `IsConditional()`, and whose `AccessorsSQL()`
 selects the claim columns. A caller written against the conditional constructor
 stays correct if a claim is added to the spec later.
 
+#### One tail, two shapes
+
+A permission carrying `and`/`not` composes into a single SQL expression; a pure
+`+` chain is a union of per-relation branches. They differ there and nowhere
+else: the **role branch** and **composition**'s `<table>_direct_accessors` split
+belong to the object rather than to the expression, so both shapes pick them up
+from the same tail. A composition on a disjunct is added by that tail; one
+nested inside an `and` refuses, because a union arm added afterwards is not an
+intersection.
+
 ### `wildcard` — a NULL scope column on the *row* side
 
 The rule above is about a role assignment: NULL at a scope level means "every

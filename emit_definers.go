@@ -1102,34 +1102,58 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 		}
 	}
 
+	// ONE PATH, TWO SHAPES OF THE SAME WALK.
+	//
+	// A permission carrying `and`/`not` composes into a single SQL expression
+	// (intersections and subtractions cannot be a union of independent
+	// branches); a pure `+` chain is a union of per-relation branches. That much
+	// is irreducible. What is NOT irreducible is what used to follow: the tree
+	// shape returned here and skipped everything below, so an object with one
+	// `and` anywhere in its read silently lost its ROLE branch and could not
+	// carry a COMPOSITION relation at all.
+	//
+	// Neither of those is a property of the permission's shape. The role branch
+	// is gated on the object's rolestore and its use of @app_scope; composition
+	// needs the direct/full split whatever the rest of the permission looks
+	// like. They belong to the tail both shapes share, which is where they are
+	// now — so the two shapes differ only in how the relational terms compose,
+	// and in nothing else.
+	var branches []string
+	var adminExcl string
+	composedTree := false
+
 	if sel != nil && accessorTreeOp(sel.Tree) != "" {
 		if composed, err := s.accessorTreeSQL(obj, sel.Tree, rels); err == nil {
-			return []GenFn{accessorGenFn(obj.Table, s.idType(), []string{composed})}
+			branches = append(branches, composed)
+			composedTree = true
 		}
 	}
 
-	var branches []string
-	var adminExcl string
 	if sel != nil {
-
-		branches = append(branches, defOwnerAccessorBranches(obj, sel, rels)...)
-
 		adminExcl = defAdminExclCond(sel, rels)
+		// The composed expression already carries every relational term, so the
+		// per-relation builders would union them in a second time.
+		if !composedTree {
+			branches = append(branches, defOwnerAccessorBranches(obj, sel, rels)...)
+		}
 	}
 
-	if _, vg := grantRelation(obj); vg != nil {
-		branches = append(branches, grantAccessorBranch(vg))
+	if !composedTree {
+		if _, vg := grantRelation(obj); vg != nil {
+			branches = append(branches, grantAccessorBranch(vg))
+		}
 	}
 
+	// Shared by both shapes from here down.
 	if rb, ok := s.roleAccessorBranch(obj, adminExcl); ok {
 		branches = append(branches, rb)
 	}
 
-	branches = append(branches, s.defGroupAccessorBranches(obj, sel, rels)...)
-
-	branches = append(branches, defClosureAccessorBranches(obj, sel, rels)...)
-
-	branches = append(branches, s.defObjectAccessorBranches(obj, sel, rels)...)
+	if !composedTree {
+		branches = append(branches, s.defGroupAccessorBranches(obj, sel, rels)...)
+		branches = append(branches, defClosureAccessorBranches(obj, sel, rels)...)
+		branches = append(branches, s.defObjectAccessorBranches(obj, sel, rels)...)
+	}
 
 	comp := s.defCompositionAccessorBranches(obj, sel, rels)
 	if len(comp) == 0 {
@@ -1432,6 +1456,9 @@ func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relati
 			if _, ok := s.conditionalConjunction(obj, k, rels); ok {
 				continue
 			}
+			if isCompositionLeaf(k, rels) {
+				continue
+			}
 			sql, err := s.accessorTreeSQL(obj, k, rels)
 			if err != nil {
 				return "", err
@@ -1615,6 +1642,29 @@ func (s *Spec) conditionalConjunction(obj *Object, n *PermNode, rels map[string]
 	}
 	admit.RowCond = strings.Join(conds, " AND ")
 	return admit, true
+}
+
+// isCompositionLeaf reports whether n names a composition relation.
+//
+// Composition is emitted by the TAIL both permission shapes share, because it
+// needs the <table>_direct_accessors split to stay free of recursion — a
+// property of the relation, not of the permission it appears in. So the tree
+// walk skips it on a DISJUNCT and lets the tail add its arm, exactly as the
+// flat shape does.
+//
+// Only on a disjunct. Inside an `and` the tail cannot reproduce the semantics —
+// a union arm added afterwards is not an intersection — so it still refuses
+// there, which is the honest answer rather than a quietly wrong one.
+func isCompositionLeaf(n *PermNode, rels map[string]*Relation) bool {
+	if n == nil || n.Op != "leaf" || n.Term == nil || n.Term.Ident == "" {
+		return false
+	}
+	r := rels[n.Term.Ident]
+	if r == nil {
+		return false
+	}
+	_, ok := r.Repr.(ViaComposition)
+	return ok
 }
 
 func (s *Spec) isConditionalLeaf(obj *Object, n *PermNode, rels map[string]*Relation) bool {

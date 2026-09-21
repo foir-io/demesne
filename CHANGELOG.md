@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+One structural change, and a defect it closes that has been latent for a long
+time. A spec emits byte-identical output unless its read contains `and` or
+`not`: re-emitting a 340-policy, 49-definer spec on v0.87.0 and on this gives
+the same bytes.
+
+### The accessor enumerator had two shapes and, wrongly, two paths
+
+A permission carrying `and`/`not` composes into one SQL expression;
+intersections and subtractions cannot be a union of independent branches. A pure
+`+` chain is such a union. That difference is irreducible.
+
+What was not irreducible is what used to follow it. The tree shape produced its
+expression and **returned**, skipping everything the flat shape did afterwards.
+Two things live in that tail, and neither is a property of a permission's shape:
+
+* the **role branch**, gated on the object's rolestore and its use of
+  `@app_scope`, and
+* **composition**, which needs the `<table>_direct_accessors` split to stay free
+  of recursion — a property of the relation.
+
+So an object with one `and` anywhere in its read **silently lost its role
+branch**, and could not carry a composition relation at all. The first is the
+under-reporting direction this enumerator exists to prevent: the listing simply
+stopped naming role holders, with nothing said.
+
+Both now live in the tail both shapes share, so the shapes differ only in how
+relational terms compose and in nothing else. A composition on a DISJUNCT is
+skipped by the walk and added by the tail, exactly as the flat shape does; one
+nested inside an `and` still refuses, because the tail can only add a union arm
+and a union arm is not an intersection.
+
+### Why this, rather than another targeted fix
+
+v0.84.0 through v0.87.0 each taught one of the two paths something the other
+already knew — conditional terms dropped silently on one, refused on the other;
+a negated claim refused on one; an all-conditional conjunction refused on one.
+Every one was a real fix and every one was a symptom. The shared tail is the
+cause, and with it in place the remaining divergence is the one the grammar
+actually requires.
+
 ## v0.87.0
 
 One fix, to a gap v0.85.0 left. A spec only meets it if it writes a shape that
