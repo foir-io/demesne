@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.87.0
 
 One fix, to a gap v0.85.0 left. A spec only meets it if it writes a shape that
 previously failed validation, so emission is unchanged for everything else:
