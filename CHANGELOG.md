@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.84.0
 
 One engine addition: `@claim`, a permission term that tests a claim on the
 request. It comes with the accessor rule that makes it safe, which is the larger
