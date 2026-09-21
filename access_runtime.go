@@ -25,22 +25,26 @@ type ResourceAccessSurface struct {
 	discrimVal   string
 	accessorFn   string
 	conditional  bool
+	// conditionalBy names the admissions that made it conditional, for the
+	// refusal message and for a caller deciding what to render.
+	conditionalBy string
 }
 
 // ResourceAccessSurface describes object's grant store and its accessor
 // enumerator.
 //
-// It refuses an object whose read admits a @claim, because that object has no
-// plain enumerator to describe — see conditionalAccessors. Use
-// ConditionalResourceAccessSurface, which returns the same surface over the
-// conditional function and a query shape that carries the claim columns.
+// It refuses an object whose read admits readers the enumeration cannot name,
+// because that object has no plain enumerator to describe — see
+// conditionalAccessors. Use ConditionalResourceAccessSurface, which returns the
+// same surface over the conditional function and a query shape that carries the
+// extra columns.
 func (s *Spec) ResourceAccessSurface(object string) (*ResourceAccessSurface, error) {
 	r, err := s.resourceAccessSurface(object)
 	if err != nil {
 		return nil, err
 	}
 	if r.conditional {
-		return nil, fmt.Errorf("ResourceAccessSurface: object %q admits readers by a claim, so %s lists only the accessors it can name and never the ones the claim admits; call ConditionalResourceAccessSurface and decide what the claim rows mean for this caller", object, r.accessorFn)
+		return nil, fmt.Errorf("ResourceAccessSurface: object %q admits readers its enumeration cannot name (%s), so %s lists only the accessors it can name and never the rest; call ConditionalResourceAccessSurface and decide what those rows mean for this caller", object, r.conditionalBy, r.accessorFn)
 	}
 	return r, nil
 }
@@ -77,8 +81,9 @@ func (s *Spec) resourceAccessSurface(object string) (*ResourceAccessSurface, err
 		discrimVal:   edge.DiscrimVal,
 		accessorFn:   fmt.Sprintf("%s.%s_accessors", s.definerSchema(), obj.Table),
 	}
-	if len(s.conditionalAccessors(obj)) > 0 {
+	if cond := s.conditionalAccessors(obj); len(cond) > 0 {
 		r.conditional = true
+		r.conditionalBy = admissionNames(cond)
 		r.accessorFn = fmt.Sprintf("%s.%s_accessors_conditional", s.definerSchema(), obj.Table)
 	}
 	for _, lvl := range obj.Scoped {
@@ -177,9 +182,13 @@ func (r *ResourceAccessSurface) ListGrantsArgs(resourceID string) []any {
 	return []any{resourceID}
 }
 
-// IsConditional reports whether this object's read admits a claim, so that its
-// listing carries rows naming no principal.
+// IsConditional reports whether this object's read admits readers the
+// enumeration cannot name, so that its listing carries rows naming no
+// principal. ConditionalBy names which admissions those are — 'app_scope',
+// 'mode', 'claim <key>'.
 func (r *ResourceAccessSurface) IsConditional() bool { return r.conditional }
+
+func (r *ResourceAccessSurface) ConditionalBy() string { return r.conditionalBy }
 
 // AccessorsSQL selects the enumerator. On a conditional surface it selects the
 // claim columns too: they are the part of the answer that names nobody, and a

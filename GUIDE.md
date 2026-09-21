@@ -266,7 +266,9 @@ Claim-side builtins (`@kind`, `@session`, `@app_scope`, `@within`, `@scoped`,
 enforces both in the emitted policy. The reverse accessor enumeration treats a
 claim-side conjunct as neutral — it drops the conjunct and may over-report,
 never under-report, because the forward RLS still enforces it — and refuses,
-fail-closed, when a conjunction leaves no relational term to enumerate. A
+fail-closed, when a conjunction leaves no relational term to enumerate. A `mode`
+conjunct is dropped on the same argument: it tests the row rather than the
+request, but it narrows just the same. A
 `@public`, `@open`, or `@self` conjunct still refuses: the first two would mean
 "everyone", and `@self` binds a row column to the caller's claim, which the
 enumerator cannot reverse.
@@ -310,15 +312,31 @@ listing may over-report and can never under-report, and the forward policy still
 enforces it.
 
 On a **disjunct** it does the opposite. It admits callers no other branch
-admits, and unlike every other term in the language it names no subject that can
-be read back off a row. An owner is a column, a grantee is a row in the grant
-table, a member is a row in the membership table — a claim is a condition on the
-request, and nothing in the database records who satisfies it. Drop it from the
-listing and the answer is not shorter but wrong: it says "these are the people
-who can read this row" when the truth is "these, plus anyone whose request
-carries this claim".
+admits, and unlike a relational term it names no subject that can be read back
+off a row. An owner is a column, a grantee is a row in the grant table, a member
+is a row in the membership table — a claim is a condition on the request, and
+nothing in the database records who satisfies it. Drop it from the listing and
+the answer is not shorter but wrong: it says "these are the people who can read
+this row" when the truth is "these, plus anyone whose request carries this
+claim".
 
-So an object whose read admits a claim does not get a plain enumerator. It gets
+`@claim` is not alone in this, and the rule is about the POSITION rather than
+about which terms are special. Two others admit readers no query can name, and
+both are covered the same way:
+
+| disjunct | who it admits that cannot be named |
+| -- | -- |
+| `@claim("k", "v")` | anyone whose request carries the claim |
+| `@app_scope` | anyone presenting no subject claim at all |
+| `mode <col> = "<v>"` | anyone, when the row carries that mode |
+
+`@app_scope` is the subtle one, because part of it IS nameable: where a
+rolestore exists, the role branch enumerates the assignments, and that branch
+still stands. The conditional row is the REMAINDER — a trusted caller holding no
+assignment anywhere satisfies the term and appears in no table.
+
+So an object whose read carries one of these does not get a plain enumerator. It
+gets
 
 ```
 auth.<table>_accessors_conditional(p_id)
@@ -326,8 +344,15 @@ auth.<table>_accessors_conditional(p_id)
 ```
 
 which is the identity rows it always had, widened with two null columns, plus one
-row per admitting claim: `source = 'claim'`, a **NULL principal**, and the key and
-value that admit the reader.
+row per admission that names nobody. Each carries a **NULL principal id**, the
+`source` that admitted it, and for a claim the key and value.
+
+Where the term carries a test against the **row**, the row is anchored on it and
+appears only when it actually holds — a `mode` row shows up on a public row and
+not on a private one, and `@app_scope(exclude admin_owner)` contributes nothing
+to an admin-owned row. Where the term narrows to one kind of caller —
+`mode … for admin` — `principal_kind` is filled, because only the id was ever
+unknowable.
 
 `auth.<table>_accessors` is not emitted for that object. That is the load-bearing
 part. A caller that has not been updated asks for a function that is not there

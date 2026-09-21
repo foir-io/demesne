@@ -1,5 +1,88 @@
 # Changelog
 
+## Unreleased
+
+One change, and it is a **breaking emission change** for any spec whose read
+carries `@app_scope` or a `mode` disjunct: those objects now emit
+`auth.<table>_accessors_conditional` and stop emitting
+`auth.<table>_accessors`. Re-emit and diff before upgrading; the section below
+says how to tell which objects are affected.
+
+Nothing else changes. A spec with no such disjunct emits what it emitted at
+v0.84.0.
+
+### The accessor rule now covers every disjunct that names nobody
+
+v0.84.0 introduced the conditional enumerator for `@claim` and said the rule was
+about POSITION rather than about which term was special. It was, and `@claim`
+was not the only term on the wrong side of it.
+
+`@app_scope` and a `mode` disjunct admit readers no query can name, exactly as a
+claim does, and both were being dropped from the enumeration **in silence** —
+the accessor builder reverses relation leaves only, and on a flat `+` chain a
+non-relation term was skipped with no error. An object reading
+
+```demesne
+permission view = @app_scope + owner + mode access_mode = "public" + grantee:read  @rls maps select
+```
+
+emitted a `<table>_accessors` listing its owners and grantees, saying nothing
+about "any caller presenting no subject claim" or "anyone, because this row is
+public". That is the under-reporting direction this engine refuses everywhere
+else.
+
+Both are now conditional admissions, carried as their own rows:
+
+| disjunct | `source` | `principal_kind` | row anchor |
+| -- | -- | -- | -- |
+| `@claim("k", "v")` | `claim` | NULL | — (plus `via_claim_key`/`via_claim_value`) |
+| `@app_scope` | `app_scope` | NULL | the `exclude` relation's column test, when present |
+| `mode <col> = "<v>"` | `mode` | the `for <subject>`, when present | `<col> = '<v>'` |
+
+**Row-anchored where the term tests the row.** A `mode` row appears on a public
+row and not on a private one; `@app_scope(exclude admin_owner)` contributes
+nothing to an admin-owned row. The listing is accurate per row rather than a
+blanket statement about the table.
+
+**`principal_kind` is filled where the term narrows to one plane.**
+`mode … for admin` yields `('mode', 'admin', NULL, …)` — only the id was ever
+unknowable.
+
+`@app_scope` deserves a note: part of it IS nameable. Where a rolestore exists,
+`roleAccessorBranch` enumerates the assignments and that branch still stands.
+The conditional row is the remainder — a trusted caller holding no assignment
+anywhere satisfies the term and appears in no table.
+
+### A narrowing `mode` conjunct is now dropped rather than refused
+
+The mirror image. A `mode` on a conjunct narrows, so dropping it from the
+enumeration can only over-report, which is the safe direction — the same
+argument that has always applied to the claim-side builtins. It joins them, and
+the refusal for a conjunction with no relational term left now reads "a
+conjunction of only narrowing terms".
+
+This unblocks a shape that was previously impossible: a `mode` disjunct used to
+make the entire SELECT tree un-enumerable the moment any `and` appeared anywhere
+in it, because the tree path refused the mode leaf instead of skipping it. A
+permission like
+
+```demesne
+permission view = admin_owner + owner + mode access_mode = "public" + (@kind("admin") and grantee:read)
+```
+
+now emits: the mode becomes a conditional row and the conjunction enumerates
+from its relational term.
+
+### Upgrading
+
+Emit before and after and diff the function names. An object is affected if and
+only if its `@rls maps select` permission carries `@app_scope` or a `mode`
+disjunct. In the Go runtime, `ResourceAccessSurface` refuses such an object and
+names `ConditionalResourceAccessSurface`; `IsConditional()` and
+`ConditionalBy()` say which admissions were responsible. In the TypeScript
+descriptor, `accessorsConditional` flips to `true` and `accessorFn` names the
+conditional function.
+
 ## v0.84.0
 
 One engine addition: `@claim`, a permission term that tests a claim on the

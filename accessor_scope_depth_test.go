@@ -40,7 +40,7 @@ func TestAccessorRoleJoinWidensAtTheDeepestSharedLevel(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, d := range defs {
-				if d.Name != "assets_accessors" {
+				if d.Name != "assets_accessors_conditional" {
 					continue
 				}
 				line := ""

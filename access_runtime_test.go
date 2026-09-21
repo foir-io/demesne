@@ -13,7 +13,10 @@ func TestResourceAccessSurface(t *testing.T) {
 	if err := Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	r, err := s.ResourceAccessSurface("record")
+	// This fixture's read admits by @app_scope and a public mode, so it
+	// enumerates conditionally; the projections under test here are the same
+	// either way, and the conditional constructor accepts both.
+	r, err := s.ConditionalResourceAccessSurface("record")
 	if err != nil {
 		t.Fatalf("surface: %v", err)
 	}
@@ -35,7 +38,7 @@ func TestResourceAccessSurface(t *testing.T) {
 	if got := r.SetVisibilitySQL(); got != "UPDATE records SET access_mode = $1 WHERE id = $2" {
 		t.Errorf("SetVisibilitySQL = %q", got)
 	}
-	if got := r.AccessorsSQL(); got != "SELECT source, principal_kind, principal_id, access FROM auth.records_accessors($1)" {
+	if got := r.AccessorsSQL(); got != "SELECT source, principal_kind, principal_id, access, via_claim_key, via_claim_value FROM auth.records_accessors_conditional($1)" {
 		t.Errorf("AccessorsSQL = %q", got)
 	}
 

@@ -132,7 +132,7 @@ func TestAgnostic_NonIDPrimaryKey(t *testing.T) {
 		t.Errorf("kernel gate still assumes an `id` PK:\n%s", kernel.Body)
 	}
 
-	surf, err := s.ResourceAccessSurface("asset")
+	surf, err := s.ConditionalResourceAccessSurface("asset")
 	if err != nil {
 		t.Fatalf("resource access surface: %v", err)
 	}

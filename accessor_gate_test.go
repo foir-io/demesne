@@ -275,9 +275,9 @@ func TestAccessorAnd_OnlyClaimTerms_FailsClosed(t *testing.T) {
 	}
 	ok, reason := cover(obj)
 	if ok {
-		t.Fatal("a conjunction of only claim-side builtins must fail closed")
+		t.Fatal("a conjunction of only narrowing terms must fail closed")
 	}
-	for _, want := range []string{"@kind", "@session", "claim-side"} {
+	for _, want := range []string{"@kind", "@session", "narrowing"} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("reason should contain %q, got: %s", want, reason)
 		}

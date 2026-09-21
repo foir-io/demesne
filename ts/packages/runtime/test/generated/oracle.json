@@ -187,7 +187,7 @@
         "kind": "resourceAccess.listGrantsSQL"
       },
       {
-        "expect": "SELECT source, principal_kind, principal_id, access FROM auth.records_accessors($1)",
+        "expect": "SELECT source, principal_kind, principal_id, access, via_claim_key, via_claim_value FROM auth.records_accessors_conditional($1)",
         "input": {
           "object": "record"
         },
@@ -384,8 +384,8 @@
           "accessCol": "access",
           "discrimCol": "resource_type",
           "discrimVal": "record",
-          "accessorFn": "auth.records_accessors",
-          "accessorsConditional": false
+          "accessorFn": "auth.records_accessors_conditional",
+          "accessorsConditional": true
         }
       },
       "roleAssignment": {

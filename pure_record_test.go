@@ -98,10 +98,12 @@ func TestPureRecord_EmitsGrantDefinersAndAccessor(t *testing.T) {
 		}
 	}
 
-	acc := grantFnByName(t, s, "records_accessors")
+	// The read admits by @app_scope and by a public mode, neither of which
+	// names a principal, so the object enumerates conditionally.
+	acc := grantFnByName(t, s, "records_accessors_conditional")
 	for _, want := range []string{
-		"CREATE OR REPLACE FUNCTION auth.records_accessors(p_id text)",
-		"RETURNS TABLE(source text, principal_kind text, principal_id text, access text)",
+		"CREATE OR REPLACE FUNCTION auth.records_accessors_conditional(p_id text)",
+		"RETURNS TABLE(source text, principal_kind text, principal_id text, access text, via_claim_key text, via_claim_value text)",
 		"SECURITY DEFINER",
 
 		"SELECT 'owner'::text AS source, 'customer'::text AS principal_kind, customer_id AS principal_id, 'write'::text AS access\n    FROM records WHERE id = p_id AND customer_id IS NOT NULL",
@@ -112,9 +114,15 @@ func TestPureRecord_EmitsGrantDefinersAndAccessor(t *testing.T) {
 
 		"SELECT 'role'::text, 'admin'::text, ra.principal_id, 'read'::text",
 		"WHERE r.id = p_id AND r.admin_owner_id IS NULL",
+
+		// The two admissions that name nobody. @app_scope's `exclude
+		// admin_owner` is a row test, so it anchors the row; the mode row
+		// appears only when the row really is public.
+		"SELECT 'app_scope'::text, NULL::text, NULL::text, 'read'::text, NULL::text, NULL::text\n    FROM records WHERE id = p_id AND admin_owner_id IS NULL",
+		"SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text, NULL::text\n    FROM records WHERE id = p_id AND access_mode = 'public'",
 	} {
 		if !strings.Contains(acc, want) {
-			t.Errorf("records_accessors missing %q:\n%s", want, acc)
+			t.Errorf("records_accessors_conditional missing %q:\n%s", want, acc)
 		}
 	}
 }
@@ -131,17 +139,17 @@ func TestPureAccessor_CustomerOnly(t *testing.T) {
 		{"records", "record"},
 		{"files", "file"},
 	} {
-		acc := grantFnByName(t, pure, tc.table+"_accessors")
+		acc := grantFnByName(t, pure, tc.table+"_accessors_conditional")
 		if strings.Contains(acc, "admin_owner_id") {
-			t.Errorf("%s_accessors (customer-only) should not reference admin_owner_id:\n%s", tc.table, acc)
+			t.Errorf("%s_accessors_conditional (customer-only) should not reference admin_owner_id:\n%s", tc.table, acc)
 		}
 
 		if !strings.Contains(acc, "'owner'::text AS source, 'customer'::text AS principal_kind, customer_id AS principal_id, 'write'::text AS access\n    FROM "+tc.table+" WHERE id = p_id AND customer_id IS NOT NULL") {
-			t.Errorf("%s_accessors missing customer-owner branch:\n%s", tc.table, acc)
+			t.Errorf("%s_accessors_conditional missing customer-owner branch:\n%s", tc.table, acc)
 		}
 
 		if !strings.Contains(acc, "FROM resource_acl WHERE resource_id = p_id AND resource_type = '"+tc.discrim+"'") {
-			t.Errorf("%s_accessors missing discriminated grant branch:\n%s", tc.table, acc)
+			t.Errorf("%s_accessors_conditional missing discriminated grant branch:\n%s", tc.table, acc)
 		}
 	}
 }

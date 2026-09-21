@@ -17,7 +17,7 @@ func TestResourceAccessSurface_PureProjection(t *testing.T) {
 		{"record", "records", "record"},
 		{"file", "files", "file"},
 	} {
-		ps, err := pure.ResourceAccessSurface(tc.obj)
+		ps, err := pure.ConditionalResourceAccessSurface(tc.obj)
 		if err != nil {
 			t.Fatalf("pure surface %s: %v", tc.obj, err)
 		}
@@ -50,7 +50,7 @@ func TestResourceAccessSurface_PureProjection(t *testing.T) {
 		if got, want := ps.ListGrantsSQL(), "SELECT principal_kind, principal_id, access, created_at FROM resource_acl WHERE resource_id = $1 AND resource_type = $2 ORDER BY created_at"; got != want {
 			t.Errorf("%s ListGrantsSQL = %q, want %q", tc.obj, got, want)
 		}
-		if got, want := ps.AccessorsSQL(), "SELECT source, principal_kind, principal_id, access FROM auth."+tc.table+"_accessors($1)"; got != want {
+		if got, want := ps.AccessorsSQL(), "SELECT source, principal_kind, principal_id, access, via_claim_key, via_claim_value FROM auth."+tc.table+"_accessors_conditional($1)"; got != want {
 			t.Errorf("%s AccessorsSQL = %q, want %q", tc.obj, got, want)
 		}
 	}

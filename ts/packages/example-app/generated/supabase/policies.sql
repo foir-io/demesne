@@ -10,18 +10,24 @@ AS $$
   SELECT EXISTS (SELECT 1 FROM note_acl WHERE note_ref = p_note_id AND grantee_kind = 'member' AND grantee_ref = p_member_id AND perm = p_access);
 $$;
 
-CREATE OR REPLACE FUNCTION demesne.notes_accessors(p_id text)
-RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
+CREATE OR REPLACE FUNCTION demesne.notes_accessors_conditional(p_id text)
+RETURNS TABLE(source text, principal_kind text, principal_id text, access text, via_claim_key text, via_claim_value text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
+  SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text AS via_claim_key, NULL::text AS via_claim_value
+    FROM (
   SELECT 'owner'::text AS source, 'member'::text AS principal_kind, owner_ref AS principal_id, 'write'::text AS access
     FROM notes WHERE note_pk = p_id AND owner_ref IS NOT NULL
   UNION ALL
   SELECT 'grant'::text, grantee_kind, grantee_ref, perm
     FROM note_acl WHERE note_ref = p_id
+    ) b(source, principal_kind, principal_id, access)
+  UNION ALL
+  SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text, NULL::text
+    FROM notes WHERE note_pk = p_id AND visibility = 'open'
 $$;
 
 

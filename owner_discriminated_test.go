@@ -62,7 +62,7 @@ func TestDiscriminatedOwnerColumn(t *testing.T) {
 		t.Errorf("select policy missing the discriminated admin-owner exclusion:\n%s", sel)
 	}
 
-	acc := grantFnByName(t, s, "records_accessors")
+	acc := grantFnByName(t, s, "records_accessors_conditional")
 	for _, want := range []string{
 		"'customer'::text AS principal_kind, owner_id AS principal_id",
 		"owner_id IS NOT NULL AND owner_kind = 'customer'",

@@ -72,7 +72,7 @@ func TestClaimConjunct_OnlyClaimTermsFailClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("a conjunction with no relational positive must fail closed")
 	}
-	for _, want := range []string{"claim-side", "@kind"} {
+	for _, want := range []string{"narrowing", "@kind"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal should name the dropped builtins (%q), got:\n%v", want, err)
 		}

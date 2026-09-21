@@ -104,7 +104,10 @@ func TestEmitTS_ResourceAccess(t *testing.T) {
 		`"aclTable": "resource_acl"`,
 		`"discrimCol": "resource_type"`,
 		`"discrimVal": "record"`,
-		`"accessorFn": "auth.records_accessors"`,
+		`"accessorFn": "auth.records_accessors_conditional"`,
+		// The descriptor says so as well, so a consumer reading the JSON sees
+		// it without having to notice the function name changed.
+		`"accessorsConditional": true`,
 	})
 }
 

@@ -601,7 +601,7 @@ func (s *Spec) viaObjectCovered(vo ViaObject, seen map[string]bool) (bool, strin
 	// different function signature and a different question. Refuse instead of
 	// borrowing the identity half and losing the rest.
 	if cond := s.conditionalAccessors(other); len(cond) > 0 {
-		return false, fmt.Sprintf("borrowed object %q admits readers by the %q claim, so it enumerates conditionally and has no plain accessor to borrow", vo.Object, cond[0].ClaimKey)
+		return false, fmt.Sprintf("borrowed object %q admits readers its enumeration cannot name (%s), so it enumerates conditionally and has no plain accessor to borrow", vo.Object, admissionNames(cond))
 	}
 	return s.accessorCoverageSeen(other, seen)
 }
@@ -1142,9 +1142,32 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 	return []GenFn{direct, full}
 }
 
+func admissionNames(adms []conditionalAdmission) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, a := range adms {
+		n := a.Source
+		if a.ClaimKey != "" {
+			n += " " + a.ClaimKey
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+func sqlTextOrNull(v string) string {
+	if v == "" {
+		return "NULL::text"
+	}
+	return "'" + v + "'::text"
+}
+
 // accessorDefiners wraps the enumerator in its conditional form when the
 // object's read admits a claim, and otherwise returns it unchanged.
-func (s *Spec) accessorDefiners(obj *Object, cond []*Term) []GenFn {
+func (s *Spec) accessorDefiners(obj *Object, cond []conditionalAdmission) []GenFn {
 	fns := s.pureAccessorDefiners(obj)
 	if len(cond) == 0 || len(fns) == 0 {
 		return fns
@@ -1168,20 +1191,29 @@ func (s *Spec) accessorDefiners(obj *Object, cond []*Term) []GenFn {
 // writing a line of code acknowledging it. A NULL principal cannot be rendered
 // as a person or ignored: it is missing data in the column the caller reads,
 // and the two claim columns say exactly what is missing and why.
-func (s *Spec) conditionalAccessorGenFn(obj *Object, base GenFn, claims []*Term) GenFn {
+func (s *Spec) conditionalAccessorGenFn(obj *Object, base GenFn, adms []conditionalAdmission) GenFn {
 	idT := s.idType()
 	branches := []string{fmt.Sprintf(
 		"SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text AS via_claim_key, NULL::text AS via_claim_value\n    FROM (\n%s\n    ) b(source, principal_kind, principal_id, access)",
 		base.Body)}
-	for _, c := range claims {
+	for _, a := range adms {
 		// FROM the table, so an id that names no row still enumerates to
 		// nothing — the plain enumerator's behaviour, which callers rely on to
 		// tell "no readers" from "no such row" the same way they always have.
+		// A term with a row-side test adds it here, so its row appears only
+		// when the row really does admit that way.
+		//
 		// 'read' is not a guess: conditionalAccessors only ever looks at the
 		// permission that maps to SELECT.
+		where := obj.pk() + " = p_id"
+		if a.RowCond != "" {
+			where += " AND " + a.RowCond
+		}
 		branches = append(branches, fmt.Sprintf(
-			"SELECT 'claim'::text, NULL::text, NULL::%s, 'read'::text, '%s'::text, '%s'::text\n    FROM %s WHERE %s = p_id",
-			idT, c.ClaimKey, c.ClaimVal, obj.Table, obj.pk()))
+			"SELECT '%s'::text, %s, NULL::%s, 'read'::text, %s, %s\n    FROM %s WHERE %s",
+			a.Source, sqlTextOrNull(a.PrincipalKind), idT,
+			sqlTextOrNull(a.ClaimKey), sqlTextOrNull(a.ClaimVal),
+			obj.Table, where))
 	}
 	return GenFn{
 		Name:    obj.Table + "_accessors_conditional",
@@ -1390,11 +1422,11 @@ func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relati
 	case "or":
 		var parts []string
 		for _, k := range n.Kids {
-			// A claim disjunct is not a branch of this union — it names no
-			// principal to select. It is not being dropped either:
+			// A conditional disjunct is not a branch of this union — it names
+			// no principal to select. It is not being dropped either:
 			// conditionalAccessors reports it and the object emits the
-			// conditional enumerator, which carries it in its own columns.
-			if isClaimLeaf(k) {
+			// conditional enumerator, which carries it as its own row.
+			if s.isConditionalLeaf(obj, k, rels) {
 				continue
 			}
 			sql, err := s.accessorTreeSQL(obj, k, rels)
@@ -1423,6 +1455,17 @@ func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relati
 // costs precision and nothing else. A disjunct WIDENS: drop it and the listing
 // misses people who can read the row. See conditionalAccessors for what happens
 // to a claim that arrives on the widening side.
+// narrowingAccessorLeaf is a conjunct the reverse enumeration may drop: the
+// claim-side builtins, and a mode leaf, which tests the ROW rather than the
+// request but narrows just the same. Dropping either over-reports and never
+// under-reports.
+func narrowingAccessorLeaf(n *PermNode) bool {
+	if claimNeutralAccessorLeaf(n) {
+		return true
+	}
+	return n != nil && n.Op == "leaf" && n.Term != nil && n.Term.ModeCol != ""
+}
+
 func claimNeutralAccessorLeaf(n *PermNode) bool {
 	if n == nil || n.Op != "leaf" || n.Term == nil {
 		return false
@@ -1434,8 +1477,71 @@ func claimNeutralAccessorLeaf(n *PermNode) bool {
 	return false
 }
 
-func isClaimLeaf(n *PermNode) bool {
-	return n != nil && n.Op == "leaf" && n.Term != nil && n.Term.Builtin == "claim"
+// conditionalAdmission is a disjunct admitting readers the enumeration cannot
+// name: it becomes one row of <table>_accessors_conditional.
+type conditionalAdmission struct {
+	// Source is the row's `source` label — 'claim', 'app_scope', 'mode'.
+	Source string
+	// PrincipalKind is filled when the term narrows to one kind of caller and
+	// left empty when it admits any. Only the ID is ever unknowable.
+	PrincipalKind string
+	// ClaimKey/ClaimVal are populated for @claim and empty otherwise.
+	ClaimKey, ClaimVal string
+	// RowCond is the part of the term that tests the ROW rather than the
+	// request, so the row only appears when it actually holds. A mode term is
+	// entirely row-side; @app_scope is row-side only in its exclusion.
+	RowCond string
+}
+
+// conditionalTerm classifies one disjunct. ok is false for a term the
+// enumeration already covers with a branch of its own.
+func (s *Spec) conditionalTerm(obj *Object, t *Term, rels map[string]*Relation) (conditionalAdmission, bool) {
+	if t == nil {
+		return conditionalAdmission{}, false
+	}
+	switch {
+	case t.Builtin == "claim":
+		return conditionalAdmission{Source: "claim", ClaimKey: t.ClaimKey, ClaimVal: t.ClaimVal}, true
+
+	case t.ModeCol != "":
+		// A mode term is a pure row test plus, with `for <subject>`, a plane.
+		// The row test anchors the row; the plane names the kind.
+		return conditionalAdmission{
+			Source:        "mode",
+			PrincipalKind: t.ModeScope,
+			RowCond:       fmt.Sprintf("%s = '%s'", t.ModeCol, t.ModeVal),
+		}, true
+
+	case t.Builtin == "app_scope":
+		// @app_scope admits every caller presenting no subject claim. Some of
+		// them are nameable and are already listed — roleAccessorBranch is
+		// gated on this very term and enumerates the role assignments. The rest
+		// are not: a trusted caller with no assignment anywhere satisfies the
+		// term and appears in no table. This row is that remainder, which is
+		// why it stands beside the role branch rather than replacing it.
+		a := conditionalAdmission{Source: "app_scope"}
+		if t.ExcludeRel != "" {
+			if r := rels[t.ExcludeRel]; r != nil {
+				if vc, ok := r.Repr.(ViaColumn); ok {
+					if vc.DiscrimCol != "" {
+						a.RowCond = fmt.Sprintf("%s IS DISTINCT FROM '%s'", vc.DiscrimCol, vc.DiscrimVal)
+					} else {
+						a.RowCond = fmt.Sprintf("%s IS NULL", vc.Column)
+					}
+				}
+			}
+		}
+		return a, true
+	}
+	return conditionalAdmission{}, false
+}
+
+func (s *Spec) isConditionalLeaf(obj *Object, n *PermNode, rels map[string]*Relation) bool {
+	if n == nil || n.Op != "leaf" {
+		return false
+	}
+	_, ok := s.conditionalTerm(obj, n.Term, rels)
+	return ok
 }
 
 // conditionalAccessors reports the @claim terms in obj's SELECT permission that
@@ -1456,33 +1562,37 @@ func isClaimLeaf(n *PermNode) bool {
 // decide what to do about them. A caller that has not been updated asks for a
 // function that is not there, which is a loud failure rather than a plausible
 // and incomplete list.
-func (s *Spec) conditionalAccessors(obj *Object) []*Term {
+func (s *Spec) conditionalAccessors(obj *Object) []conditionalAdmission {
 	sel := objectSelectPerm(obj)
 	if sel == nil {
 		return nil
 	}
-	// Mirror how pureAccessorDefiners chooses its path, so the two cannot
-	// disagree about which claims the emitted union already accounts for.
-	if accessorTreeOp(sel.Tree) != "" {
-		return addingClaimTerms(sel.Tree)
+	rels := map[string]*Relation{}
+	for _, r := range obj.Relations {
+		rels[r.Name] = r
 	}
-	var out []*Term
+	// Mirror how pureAccessorDefiners chooses its path, so the two cannot
+	// disagree about which disjuncts the emitted union already accounts for.
+	if accessorTreeOp(sel.Tree) != "" {
+		return s.addingConditionalTerms(obj, sel.Tree, rels)
+	}
+	var out []conditionalAdmission
 	for _, t := range sel.Expr {
-		if t != nil && t.Builtin == "claim" {
-			out = append(out, t)
+		if a, ok := s.conditionalTerm(obj, t, rels); ok {
+			out = append(out, a)
 		}
 	}
 	return out
 }
 
-func addingClaimTerms(n *PermNode) []*Term {
+func (s *Spec) addingConditionalTerms(obj *Object, n *PermNode, rels map[string]*Relation) []conditionalAdmission {
 	if n == nil {
 		return nil
 	}
 	switch n.Op {
 	case "leaf":
-		if isClaimLeaf(n) {
-			return []*Term{n.Term}
+		if a, ok := s.conditionalTerm(obj, n.Term, rels); ok {
+			return []conditionalAdmission{a}
 		}
 		return nil
 	case "not":
@@ -1490,18 +1600,22 @@ func addingClaimTerms(n *PermNode) []*Term {
 		// the accessor set.
 		return nil
 	case "and":
-		var out []*Term
+		// A conjunct narrows, and a narrowing leaf is simply dropped — that can
+		// only add names to the listing, which is the safe direction. But a
+		// conjunct may itself contain a disjunction, and a conditional term
+		// inside THAT still widens, so the rest of the kids are walked.
+		var out []conditionalAdmission
 		for _, k := range n.Kids {
-			if claimNeutralAccessorLeaf(k) {
+			if narrowingAccessorLeaf(k) {
 				continue
 			}
-			out = append(out, addingClaimTerms(k)...)
+			out = append(out, s.addingConditionalTerms(obj, k, rels)...)
 		}
 		return out
 	}
-	var out []*Term
+	var out []conditionalAdmission
 	for _, k := range n.Kids {
-		out = append(out, addingClaimTerms(k)...)
+		out = append(out, s.addingConditionalTerms(obj, k, rels)...)
 	}
 	return out
 }
@@ -1525,7 +1639,7 @@ func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relatio
 				return "", fmt.Errorf("malformed negation in the SELECT permission tree")
 			}
 			negatives = append(negatives, k.Kids[0])
-		case claimNeutralAccessorLeaf(k):
+		case narrowingAccessorLeaf(k):
 			dropped = append(dropped, k.Term.String())
 		default:
 			positives = append(positives, k)
@@ -1533,7 +1647,7 @@ func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relatio
 	}
 	if len(positives) == 0 {
 		if len(dropped) > 0 {
-			return "", fmt.Errorf("a conjunction of only claim-side builtins (%s) leaves no relational term to enumerate", strings.Join(dropped, ", "))
+			return "", fmt.Errorf("a conjunction of only narrowing terms (%s) leaves no relational term to enumerate", strings.Join(dropped, ", "))
 		}
 		return "", fmt.Errorf("a conjunction needs a positive relational term to enumerate")
 	}

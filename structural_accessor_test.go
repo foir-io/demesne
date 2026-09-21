@@ -18,8 +18,10 @@ func findAccessor(t *testing.T, spec string, table string) string {
 	if err != nil {
 		t.Fatalf("emit definers: %v", err)
 	}
+	// An object emits one enumerator or the other, never both: the conditional
+	// form replaces the plain one when the read admits readers it cannot name.
 	for _, d := range defs {
-		if d.Name == table+"_accessors" {
+		if d.Name == table+"_accessors" || d.Name == table+"_accessors_conditional" {
 			return d.CreateSQL()
 		}
 	}

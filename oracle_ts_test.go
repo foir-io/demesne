@@ -271,7 +271,9 @@ func buildOracleEntry(s *Spec) (map[string]any, error) {
 		if objectGrantEdge(o) == nil {
 			continue
 		}
-		r, err := s.ResourceAccessSurface(o.Name)
+		// The oracle DESCRIBES every object's surface, including the ones that
+		// enumerate conditionally, so it uses the constructor that accepts both.
+		r, err := s.ConditionalResourceAccessSurface(o.Name)
 		if err != nil {
 			return nil, err
 		}
