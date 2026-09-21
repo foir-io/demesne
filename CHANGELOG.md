@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.85.0
 
 One change, and it is a **breaking emission change** for any spec whose read
 carries `@app_scope` or a `mode` disjunct: those objects now emit
