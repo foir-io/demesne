@@ -732,7 +732,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 	if relName, access, ok := grantSelector(t.Ident, rels); ok {
 		r := rels[relName]
 		vg := r.Repr.(ViaGrant)
-		return s.emitGrantFrags(obj, r, &vg, access)
+		return s.emitGrantFrags(obj, r, &vg, access, custClaim)
 	}
 	if frags, handled, err := s.rlsEmitBuiltin(obj, pm, t, rels, custClaim); handled {
 		return frags, err
@@ -989,7 +989,7 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		return []string{fmt.Sprintf("%s.%s(%s)", s.definerSchema(), repr.functionName(), repr.Col)}, nil
 	case ViaGrant:
 
-		return s.emitGrantFrags(obj, r, &repr, accessFor(pm.Maps))
+		return s.emitGrantFrags(obj, r, &repr, accessFor(pm.Maps), custClaim)
 	case ViaRole:
 		return s.rlsEmitRole(obj, r, repr)
 	default:
@@ -1012,16 +1012,47 @@ func (s *Spec) rlsEmitRole(obj *Object, r *Relation, repr ViaRole) ([]string, er
 	return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), fn, s.idClaim(s.adminIdentify()), strings.Join(cols, ", "))}, nil
 }
 
-func (s *Spec) emitGrantFrags(obj *Object, r *Relation, vg *ViaGrant, access string) ([]string, error) {
+func (s *Spec) emitGrantFrags(obj *Object, r *Relation, vg *ViaGrant, access, custClaim string) ([]string, error) {
 	var frags []string
 	for i := range r.Types {
 		name, _, _, claim := s.grantRelBinding(obj, vg, r, i)
 		if claim == "" {
 			return nil, fmt.Errorf("grant relation %q kind %q: no subject resolves a claim", r.Name, r.Types[i])
 		}
-		frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), name, s.idClaim(claim), obj.Table+"."+obj.pk(), access))
+		frag := fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), name, s.idClaim(claim), obj.Table+"."+obj.pk(), access)
+		if plane := s.grantKindPlaneGuard(claim, custClaim); plane != "" {
+			frag = "(" + frag + " AND " + plane + ")"
+		}
+		frags = append(frags, frag)
 	}
 	return frags, nil
+}
+
+// grantKindPlaneGuard binds a grant row's principal KIND to the caller's plane.
+//
+// A multi-kind grant relation emits one fragment per kind, each keyed on that
+// kind's own claim. That is only as strong as the claims being disjoint, and
+// they are not symmetrical: the owner-plane claim is minted for owner-plane
+// callers and nobody else, so a fragment keyed on it already answers false for
+// everyone else. The other plane's claim is the generic subject, which an
+// adopter may also populate for an owner-plane caller — and then a grant row
+// naming the OTHER kind becomes reachable by an id collision across two id
+// spaces that were never meant to meet.
+//
+// So the guard is emitted where it is load-bearing and not where it is implied:
+// a kind on the non-owner plane is conjoined with "the owner claim is absent".
+// The mirror test on an owner-plane kind is left out deliberately, because the
+// fragment's own argument already is that claim — emitting it would restate the
+// call's first parameter as a condition on itself.
+//
+// Narrowing only. It removes no principal from any enumeration (the accessor
+// definers list grant ROWS, and every row still lists), and it takes access
+// away only from a caller answering to a kind that was never theirs.
+func (s *Spec) grantKindPlaneGuard(claim, custClaim string) string {
+	if custClaim == "" || claim == custClaim {
+		return ""
+	}
+	return s.claim(custClaim) + " IS NULL"
 }
 
 func ownerColPresent(vc ViaColumn) string {

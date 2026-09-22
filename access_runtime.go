@@ -10,6 +10,13 @@ type ResourceAccessSurface struct {
 
 	ScopeCols []string
 
+	// scopeNullable marks, per ScopeCols entry, a level declared `wildcard`.
+	// Such a column's commonest legitimate value is SQL NULL — that is what
+	// the marker means, and `(col IS NULL OR col = claim)` is what it emits —
+	// so a caller has to be able to say "no instance of this level". See
+	// GrantInsert.
+	scopeNullable []bool
+
 	ModeCol string
 
 	pk         string
@@ -88,6 +95,7 @@ func (s *Spec) resourceAccessSurface(object string) (*ResourceAccessSurface, err
 	}
 	for _, lvl := range obj.Scoped {
 		r.ScopeCols = append(r.ScopeCols, s.scopeCol(obj, lvl))
+		r.scopeNullable = append(r.scopeNullable, obj.scopeIsWildcard(lvl))
 	}
 
 	for _, pm := range obj.Perms {
@@ -121,8 +129,8 @@ func (r *ResourceAccessSurface) SetVisibilitySQL() string {
 func (r *ResourceAccessSurface) GrantInsert(scope []string, resourceID, kind, principalID, access string) (string, []any) {
 	cols := append([]string{}, r.ScopeCols...)
 	args := make([]any, 0, len(scope)+5)
-	for _, v := range scope {
-		args = append(args, v)
+	for i, v := range scope {
+		args = append(args, r.scopeArg(i, v))
 	}
 	if r.discrimCol != "" {
 		cols = append(cols, r.discrimCol)
@@ -145,6 +153,29 @@ func (r *ResourceAccessSurface) GrantInsert(scope []string, resourceID, kind, pr
 		"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING RETURNING created_at",
 		r.aclTable, strings.Join(cols, ", "), strings.Join(ph, ", "), strings.Join(conflict, ", "))
 	return sql, args
+}
+
+// scopeArg binds one containment value, turning "" into SQL NULL for a level
+// declared `wildcard`.
+//
+// WHY THE SURFACE AND NOT THE CALLER. A wildcard level is nullable by
+// definition, so an adopter that declares one has a containment column whose
+// commonest legitimate value is NULL — and a []string parameter has no way to
+// say it. The failure this prevents is not the loud one: passing "" produces an
+// RLS WITH CHECK violation (42501) on a grant the caller plainly owns, naming a
+// column they never mentioned, because '' satisfies neither `col IS NULL` nor
+// `col = <absent claim>`. The empty string is not absence.
+//
+// The surface knows which levels carry the marker and the caller does not have
+// to, which is the whole reason it is decided here: a call site cannot get it
+// wrong by forgetting. A non-wildcard column keeps "" untouched, so a genuinely
+// missing value still fails loudly against NOT NULL rather than being papered
+// over.
+func (r *ResourceAccessSurface) scopeArg(i int, v string) any {
+	if v == "" && i < len(r.scopeNullable) && r.scopeNullable[i] {
+		return nil
+	}
+	return v
 }
 
 func (r *ResourceAccessSurface) RevokeDelete(resourceID, kind, principalID, access string) (string, []any) {

@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.89.0
+
+Two adopter-reported engine defects, both narrowing and both previously carried
+as compensation in the adopter's own code.
+
+### A grant row's principal kind now binds the caller's plane
+
+A grant relation naming several kinds emits one RLS fragment per kind, each
+keyed on that kind's subject claim. That is only as strong as the claims being
+disjoint, and they are not symmetrical. The owner-plane claim is minted for
+owner-plane callers and nobody else, so a fragment keyed on it already answers
+false for everyone else. The other plane's claim is the generic subject, which
+an adopter may also populate for an owner-plane caller — and then a grant row
+naming the OTHER kind becomes reachable by an id collision between two id spaces
+that were never meant to meet.
+
+Nothing in the generated layer objected to that, so the defence had to live in
+whatever the adopter happened to put in a claim, and its removal would have been
+silent. A fragment for a kind on the non-owner plane is now conjoined with "the
+owner claim is absent".
+
+Emitted where it is load-bearing and not where it is implied: the mirror test on
+an owner-plane kind is deliberately left out, because that fragment's own first
+argument is the claim in question and emitting the test would restate the call
+as a condition on itself. A single-kind owner-plane grant — the common shape —
+emits byte-identical SQL.
+
+Narrowing only. It removes no principal from any enumeration: the accessor
+definers list grant ROWS and every row still lists, because the plane test is a
+condition on the request, not on the grant.
+
+### `GrantInsert` can express an absent wildcard level
+
+A `wildcard` level is nullable by definition — `(col IS NULL OR col = claim)` is
+what the marker emits — so an adopter that declares one has a containment column
+whose commonest legitimate value is SQL NULL. `GrantInsert` takes `[]string`, so
+the only absence a caller could express was `""`, and `''` satisfies neither
+disjunct: the insert's own `WITH CHECK` refuses it with `42501` on a grant the
+caller plainly owns, naming a column they never mentioned.
+
+The surface knows which of its levels carry the marker, so it binds `""` as NULL
+for those and leaves every other column alone — a genuinely missing value still
+fails loudly against `NOT NULL`. No signature change, and a call site cannot get
+it wrong by forgetting.
+
 ## v0.88.0
 
 One structural change, and a defect it closes that has been latent for a long
