@@ -70,6 +70,10 @@ func DefinersSQL(defs []GenFn) string {
 }
 
 func (s *Spec) EmitDefiners() ([]GenFn, error) {
+	return s.inDefinerBodies().emitDefiners()
+}
+
+func (s *Spec) emitDefiners() ([]GenFn, error) {
 	var out []GenFn
 
 	virtual := s.defVirtualLevels()
@@ -758,7 +762,14 @@ func (s *Spec) defEmitCrossObject(out *[]GenFn, seen map[string]bool, virtual ma
 	return nil
 }
 
+// defEmitComposition renders each composition definer's body without the
+// relation probes other definer bodies carry. The body repeats the parent's
+// predicate once per access, so a probe there is planned three times on every
+// call; a policy calls these definers per row, so every read would pay that.
 func (s *Spec) defEmitComposition(out *[]GenFn, seen map[string]bool, virtual map[string]bool) error {
+	plain := *s
+	plain.definerBody = false
+	s = &plain
 
 	branches := []struct{ access, op string }{
 		{"read", "select"}, {"write", "update"}, {"delete", "delete"},

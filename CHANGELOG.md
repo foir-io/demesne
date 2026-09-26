@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.90.0
+
+### A definer body probes a relation's first hop before calling its definer
+
+A SQL definer called from another definer's body is planned again on every
+outer call. A composition or via-object arm inside a definer body therefore
+cost a full plan of the callee's body per row, even for a caller the arm could
+never admit: a record with no composition edge still paid for planning the
+parent's whole predicate, once per access branch, on every call.
+
+Inside a definer body, a composition arm is now preceded by its first hop (an
+edge row naming the record, of the relation's kind, with a parent), or by the
+parent column itself when the edge is the object's own column. A via-object arm
+is preceded by the existence of the row it names. Each probe is implied by the
+definer it guards, so the conjunction admits exactly what the call admits, and
+a caller the hop rules out never plans the callee.
+
+Where it is not emitted, on purpose:
+
+- **Policies.** A policy reads with the caller's privileges, where a probe could
+  see less than the definer it guards and refuse what the definer would admit.
+  Policies call the definers exactly as before.
+- **Composition definer bodies.** They repeat the parent's predicate once per
+  access, so a probe there is planned three times on every call, and a policy
+  calls them per row. Measured, probing inside them slowed ordinary list reads
+  for callers who can read the rows.
+- **Grant arms.** A grant definer is a single index lookup. Inlining it would
+  grow every call's plan to save a call only a refused caller reaches.
+
+Measured on an adopter's spec and a seeded Postgres 17 database, per call of a
+record's view definer: a caller who reads half the rows went from 2.2ms to
+0.07ms, and one who reads none from 4.3ms to 0.11ms. On records that are
+composed children, where the probe passes, both got faster (0.84ms to 0.75ms and
+4.6ms to 1.9ms). A caller an earlier arm admits pays only for planning the longer
+body, about 0.006ms per call. Emitted SQL changes only for definer bodies that
+call a composition or via-object definer; every admit decision is unchanged.
+
 ## v0.89.0
 
 Two adopter-reported engine defects, both narrowing and both previously carried

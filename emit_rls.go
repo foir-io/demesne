@@ -949,7 +949,8 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		return []string{fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), repr.Table, s.idClaim(custClaim), pk, access)}, nil
 	case ViaComposition:
 
-		return []string{fmt.Sprintf("%s.%s_composition_%s(%s, '%s')", s.definerSchema(), obj.Name, r.Name, pk, access)}, nil
+		call := fmt.Sprintf("%s.%s_composition_%s(%s, '%s')", s.definerSchema(), obj.Name, r.Name, pk, access)
+		return []string{s.probed(compositionProbe(obj, repr), call)}, nil
 	case ViaClosure:
 		if repr.Claim != "" {
 			call := fmt.Sprintf("%s.%s_reachable(%s, %s)", s.definerSchema(), repr.Closure, s.idClaim(repr.Claim), repr.Col)
@@ -986,7 +987,8 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 		return []string{frag}, nil
 	case ViaObject:
 
-		return []string{fmt.Sprintf("%s.%s(%s)", s.definerSchema(), repr.functionName(), repr.Col)}, nil
+		call := fmt.Sprintf("%s.%s(%s)", s.definerSchema(), repr.functionName(), repr.Col)
+		return []string{s.probed(s.objectProbe(obj, repr), call)}, nil
 	case ViaGrant:
 
 		return s.emitGrantFrags(obj, r, &repr, accessFor(pm.Maps), custClaim)
@@ -995,6 +997,39 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 	default:
 		return nil, fmt.Errorf("relation %q has an unknown representation", r.Name)
 	}
+}
+
+// probed puts a relation definer's cheap first hop in front of the call, inside
+// a definer body only. A definer called from another definer's body is planned
+// afresh on every outer call, so a caller the hop rules out should never reach
+// it. The probe is implied by the callee, which makes the conjunction equal to
+// the call alone; it is only equal where the probe reads with the callee's
+// privileges, which a definer body does and a policy does not.
+func (s *Spec) probed(probe, call string) string {
+	if !s.definerBody || probe == "" {
+		return call
+	}
+	return "(" + probe + " AND " + call + ")"
+}
+
+func compositionProbe(obj *Object, vc ViaComposition) string {
+	if vc.Table == obj.Table && vc.ChildCol == obj.pk() {
+		return fmt.Sprintf("%s.%s IS NOT NULL", obj.Table, vc.ParentCol)
+	}
+	conds := []string{fmt.Sprintf("hop.%s = %s.%s", vc.ChildCol, obj.Table, obj.pk())}
+	if vc.KindCol != "" {
+		conds = append(conds, fmt.Sprintf("hop.%s = '%s'", vc.KindCol, vc.KindVal))
+	}
+	conds = append(conds, fmt.Sprintf("hop.%s IS NOT NULL", vc.ParentCol))
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s hop WHERE %s)", vc.Table, strings.Join(conds, " AND "))
+}
+
+func (s *Spec) objectProbe(obj *Object, vo ViaObject) string {
+	other := s.objectByName(vo.Object)
+	if other == nil {
+		return ""
+	}
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s hop WHERE hop.%s = %s.%s)", other.Table, other.pk(), obj.Table, vo.Col)
 }
 
 func (s *Spec) rlsEmitRole(obj *Object, r *Relation, repr ViaRole) ([]string, error) {

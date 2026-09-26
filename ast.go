@@ -21,6 +21,14 @@ type Spec struct {
 	TableSchema string
 
 	Identifiers string
+
+	definerBody bool
+}
+
+func (s *Spec) inDefinerBodies() *Spec {
+	c := *s
+	c.definerBody = true
+	return &c
 }
 
 func (s *Spec) idType() string {
