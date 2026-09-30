@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.91.0
+
+### A transient subject: a claim that stands for one request
+
+`subject <name> { ... transient }` declares a subject the adopter mints for one
+request rather than a principal that exists between requests: a caller the
+application has already judged may write a row belonging to someone else
+carries that owner in a claim for the one transaction, and a relation to the
+transient subject admits rows whose column equals the claim.
+
+```demesne
+subject delegate { anchor tenant reach self identifies acting_for roles none transient }
+relation acting_for: delegate via owner_id where owner_kind = "member"
+permission create = owner + acting_for   @rls maps insert
+```
+
+The policy compiles as any column relation does: `owner_id = <acting_for claim>
+AND owner_kind = 'member'`, inside the object's containment. What changes is
+the accessor listing. A relation to a standing subject lists the principal the
+column names; a transient subject is nobody who could be listed, so its
+relation contributes a conditional row instead, keyed on the claim and valued
+from the row: `('claim', NULL, NULL, 'read', 'acting_for', owner_id)`. Listed as
+a principal, it named the row's owner a second time under a kind no caller
+recognises.
+
+Validation refuses a transient subject that holds roles, binds a plane,
+reaches beyond itself or is identified via a membership, and a relation that
+mixes it with standing subjects or reaches it through anything but a column.
+
 ## v0.90.0
 
 ### A definer body probes a relation's first hop before calling its definer

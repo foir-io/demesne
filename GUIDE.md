@@ -403,6 +403,43 @@ from the same tail. A composition on a disjunct is added by that tail; one
 nested inside an `and` refuses, because a union arm added afterwards is not an
 intersection.
 
+### `transient`: a subject that stands for one request
+
+A subject is usually a principal that exists between requests: a customer, an
+operator, a service. Sometimes the application decides, for one request, that
+the caller may act on rows belonging to someone else: a job writing a record it
+attributes to a customer, a collaborator adding a child under a parent they may
+edit. Bypassing RLS for that write takes every read beside it out of the
+containment too. A transient subject keeps the write under RLS instead:
+
+```demesne
+subject delegate { anchor tenant reach self identifies acting_for roles none transient }
+
+object doc {
+  table docs
+  scoped tenant
+  relation owner:      member via owner_id where owner_kind = "member"
+  relation acting_for: delegate via owner_id where owner_kind = "member"
+  permission view   = owner + acting_for   @rls maps select
+  permission create = owner + acting_for   @rls maps insert
+}
+```
+
+The session code sets `acting_for` only after deciding the caller may act for
+that owner, and only for that transaction. The relation compiles like any
+column relation, `owner_id = <acting_for claim> AND owner_kind = 'member'`, and
+sits inside the object's containment, so the write and every read in the same
+transaction stay in the caller's scope.
+
+It differs in the accessor listing. The claim is carried by whichever request
+the application gave it to, so nobody can be named: the relation contributes a
+conditional row, `('claim', NULL, NULL, 'read', 'acting_for', owner_id)`, and
+the object enumerates through `<table>_accessors_conditional`.
+
+A transient subject is `reach self` and `roles none`, binds no plane, and is
+identified by its claim directly rather than via a membership. A relation to
+one is a column relation and names no standing subject beside it.
+
 ### `wildcard` — a NULL scope column on the *row* side
 
 The rule above is about a role assignment: NULL at a scope level means "every

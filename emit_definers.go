@@ -1145,7 +1145,7 @@ func (s *Spec) pureAccessorDefiners(obj *Object) []GenFn {
 		// The composed expression already carries every relational term, so the
 		// per-relation builders would union them in a second time.
 		if !composedTree {
-			branches = append(branches, defOwnerAccessorBranches(obj, sel, rels)...)
+			branches = append(branches, s.defOwnerAccessorBranches(obj, sel, rels)...)
 		}
 	}
 
@@ -1244,10 +1244,14 @@ func (s *Spec) conditionalAccessorGenFn(obj *Object, base GenFn, adms []conditio
 		if a.RowCond != "" {
 			where += " AND " + a.RowCond
 		}
+		claimVal := sqlTextOrNull(a.ClaimVal)
+		if a.ClaimValCol != "" {
+			claimVal = a.ClaimValCol + "::text"
+		}
 		branches = append(branches, fmt.Sprintf(
 			"SELECT '%s'::text, %s, NULL::%s, 'read'::text, %s, %s\n    FROM %s WHERE %s",
 			a.Source, sqlTextOrNull(a.PrincipalKind), idT,
-			sqlTextOrNull(a.ClaimKey), sqlTextOrNull(a.ClaimVal),
+			sqlTextOrNull(a.ClaimKey), claimVal,
 			obj.Table, where))
 	}
 	return GenFn{
@@ -1535,6 +1539,7 @@ type conditionalAdmission struct {
 	PrincipalKind string
 	// ClaimKey/ClaimVal are populated for @claim and empty otherwise.
 	ClaimKey, ClaimVal string
+	ClaimValCol string
 	// RowCond is the part of the term that tests the ROW rather than the
 	// request, so the row only appears when it actually holds. A mode term is
 	// entirely row-side; @app_scope is row-side only in its exclusion.
@@ -1589,8 +1594,41 @@ func (s *Spec) conditionalTerm(obj *Object, t *Term, rels map[string]*Relation) 
 		// row in the listing for a row the plane does not in fact admit.
 		a.RowCond = strings.Join(conds, " AND ")
 		return a, true
+
+	case t.Ident != "":
+		return s.transientAdmission(rels[t.Ident])
 	}
 	return conditionalAdmission{}, false
+}
+
+func (s *Spec) transientAdmission(r *Relation) (conditionalAdmission, bool) {
+	vc, ok := s.transientColumn(r)
+	if !ok {
+		return conditionalAdmission{}, false
+	}
+	conds := []string{vc.Column + " IS NOT NULL"}
+	if vc.DiscrimCol != "" {
+		conds = append(conds, fmt.Sprintf("%s = '%s'", vc.DiscrimCol, vc.DiscrimVal))
+	}
+	return conditionalAdmission{
+		Source:      "claim",
+		ClaimKey:    s.subjectByName(r.Types[0]).Identifies,
+		ClaimValCol: vc.Column,
+		RowCond:     strings.Join(conds, " AND "),
+	}, true
+}
+
+func (s *Spec) transientColumn(r *Relation) (ViaColumn, bool) {
+	if r == nil || len(r.Types) == 0 {
+		return ViaColumn{}, false
+	}
+	for _, t := range r.Types {
+		if st := s.subjectByName(t); st == nil || !st.Transient {
+			return ViaColumn{}, false
+		}
+	}
+	vc, ok := r.Repr.(ViaColumn)
+	return vc, ok
 }
 
 // conditionalConjunction reports whether n is an `and` that admits readers the
@@ -1848,7 +1886,7 @@ func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relatio
 	return fmt.Sprintf("SELECT a.* FROM (%s) a(source, principal_kind, principal_id, access)\n    WHERE %s", base, strings.Join(filters, "\n      AND ")), nil
 }
 
-func defOwnerAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+func (s *Spec) defOwnerAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
 	var branches []string
 	first := true
 	for _, t := range sel.Expr {
@@ -1861,6 +1899,9 @@ func defOwnerAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation)
 		}
 		vc, ok := r.Repr.(ViaColumn)
 		if !ok {
+			continue
+		}
+		if _, transient := s.transientColumn(r); transient {
 			continue
 		}
 		kind := ""

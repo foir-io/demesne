@@ -398,7 +398,30 @@ func validateSubject(s *Spec, sub *Subject, levels, vocabs map[string]bool) erro
 	if sub.Membership != nil && (sub.Membership.Table == "" || sub.Membership.IDCol == "" || sub.Membership.FlagCol == "") {
 		errs = append(errs, fmt.Errorf("line %d: subject %q membership must name a table, id column and flag column (V9)", sub.Pos.Line, sub.Name))
 	}
+	if sub.Transient {
+		errs = append(errs, validateTransientSubject(sub)...)
+	}
 	return errors.Join(errs...)
+}
+
+func validateTransientSubject(sub *Subject) []error {
+	var errs []error
+	if sub.Identifies == "" {
+		errs = append(errs, fmt.Errorf("line %d: transient subject %q must name the claim it is identified by (`identifies <claim>`)", sub.Pos.Line, sub.Name))
+	}
+	if sub.Reach != "self" {
+		errs = append(errs, fmt.Errorf("line %d: transient subject %q must `reach self`: it stands for one request, not a principal with descendants or grants", sub.Pos.Line, sub.Name))
+	}
+	if !sub.RolesNone || sub.Roles != "" {
+		errs = append(errs, fmt.Errorf("line %d: transient subject %q must be `roles none`: a role is held by a standing principal, and a transient subject is a claim on one request", sub.Pos.Line, sub.Name))
+	}
+	if sub.Binds != "" {
+		errs = append(errs, fmt.Errorf("line %d: transient subject %q cannot bind a plane (`binds %s`): a plane's owner is a standing principal", sub.Pos.Line, sub.Name, sub.Binds))
+	}
+	if sub.Membership != nil {
+		errs = append(errs, fmt.Errorf("line %d: transient subject %q cannot be identified via a membership", sub.Pos.Line, sub.Name))
+	}
+	return errs
 }
 
 func validateObject(s *Spec, o *Object, chain []*Level) error {
@@ -747,8 +770,30 @@ func valCheckObjectRelations(s *Spec, o *Object) (map[string]*Relation, error) {
 		if g, ok := r.Repr.(ViaGrant); ok && g.Async && !g.Tracked {
 			errs = append(errs, fmt.Errorf("line %d: object %q relation %q is `via grant ... async` without `tracked` — the async affordance index is maintained off the changelog, which requires `tracked`", r.Pos.Line, o.Name, r.Name))
 		}
+
+		errs = append(errs, valCheckTransientRelation(s, o, r)...)
 	}
 	return relByName, errors.Join(errs...)
+}
+
+func valCheckTransientRelation(s *Spec, o *Object, r *Relation) []error {
+	transient := 0
+	for _, t := range r.Types {
+		if st := s.subjectByName(t); st != nil && st.Transient {
+			transient++
+		}
+	}
+	if transient == 0 {
+		return nil
+	}
+	var errs []error
+	if transient != len(r.Types) {
+		errs = append(errs, fmt.Errorf("line %d: object %q relation %q mixes a transient subject with standing ones %v: the listing names standing principals and reports a transient one as a claim, so they cannot share a relation", r.Pos.Line, o.Name, r.Name, r.Types))
+	}
+	if _, ok := r.Repr.(ViaColumn); !ok {
+		errs = append(errs, fmt.Errorf("line %d: object %q relation %q names a transient subject %T: a transient subject is a claim compared to a column of the row (`via <column>`)", r.Pos.Line, o.Name, r.Name, r.Repr))
+	}
+	return errs
 }
 
 func valCheckViaRole(s *Spec, o *Object, r *Relation) []error {
