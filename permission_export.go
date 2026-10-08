@@ -135,7 +135,7 @@ func (s *Spec) exportedColumns(row *Object) map[string]bool {
 	}
 	for _, rq := range row.Requires {
 		for _, t := range rq.Expr {
-			for _, column := range []string{t.ModeCol, t.SelfCol} {
+			for _, column := range []string{t.ModeCol, t.SelfCol, t.RowCol} {
 				if column != "" {
 					binder.reqCol(row.Table, column, "export requirement")
 				}

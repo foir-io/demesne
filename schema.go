@@ -181,6 +181,9 @@ func (s *Spec) schCheckObjectRefs(b *schBinder, o *Object) {
 			if t.SelfCol != "" {
 				b.reqCol(o.Table, t.SelfCol, oc+" @self term")
 			}
+			if t.RowCol != "" {
+				b.reqCol(o.Table, t.RowCol, oc+" @row term")
+			}
 			if t.Builtin == "within" && t.WithinLevel != "" {
 				b.reqCol(o.Table, s.scopeCol(o, t.WithinLevel), oc+" @within term")
 			}

@@ -9,7 +9,7 @@ import (
 
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true, "check": true}
-var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true, "within": true, "holds": true, "claim": true}
+var knownBuiltins = map[string]bool{"app_scope": true, "scoped": true, "session": true, "open": true, "store_manage": true, "public": true, "kind": true, "self": true, "within": true, "holds": true, "claim": true, "row": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -496,6 +496,9 @@ func valCheckRequireTerms(s *Spec, o *Object, rq *Require, rels map[string]*Rela
 	var errs []error
 	if rq.Tree != nil && !permPositive(rq.Tree) {
 		errs = append(errs, fmt.Errorf("line %d: require %s.%s is not positively gated — a `not` must be combined with `and` with a positive term", rq.Pos.Line, o.Name, rq.Verb))
+	}
+	if t := rowTermAdmitting(rq.Tree); t != nil {
+		errs = append(errs, fmt.Errorf("line %d: require %s.%s uses %s by itself — a row term only narrows another term: write it inside an `and`", rq.Pos.Line, o.Name, rq.Verb, t.String()))
 	}
 	for _, t := range rq.Expr {
 		switch {
@@ -1040,7 +1043,74 @@ func valCheckPermPolarity(o *Object, pm *Perm) error {
 	if pm.Tree != nil && !permPositive(pm.Tree) {
 		return fmt.Errorf("line %d: permission %s.%s is not positively gated — a `not` (exclusion) must be combined with `and` with a positive grant, never used alone or as a union (`+`/`or`) branch", pm.Pos.Line, o.Name, pm.Verb)
 	}
+	if t := rowTermAdmitting(pm.Tree); t != nil {
+		return fmt.Errorf("line %d: permission %s.%s uses %s where it would admit a caller by itself — a row term tests the row and names nobody, so it only narrows another term: write it inside an `and`, beside a term that grants", pm.Pos.Line, o.Name, pm.Verb, t.String())
+	}
 	return nil
+}
+
+func isRowLeaf(n *PermNode) bool {
+	return n != nil && n.Op == "leaf" && n.Term != nil && n.Term.Builtin == "row"
+}
+
+func rowTermAdmitting(n *PermNode) *Term {
+	if n == nil {
+		return nil
+	}
+	switch n.Op {
+	case "leaf":
+		if isRowLeaf(n) {
+			return n.Term
+		}
+		return nil
+	case "not":
+		if len(n.Kids) == 1 && isRowLeaf(n.Kids[0]) {
+			return n.Kids[0].Term
+		}
+	case "and":
+		return rowTermAdmittingInAnd(n)
+	}
+	for _, k := range n.Kids {
+		if t := rowTermAdmitting(k); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+func rowTermAdmittingInAnd(n *PermNode) *Term {
+	var rowTerm *Term
+	grants := false
+	for _, k := range n.Kids {
+		switch {
+		case isRowLeaf(k):
+			rowTerm = k.Term
+		case k.Op == "not" && len(k.Kids) == 1 && isRowLeaf(k.Kids[0]):
+			rowTerm = k.Kids[0].Term
+		default:
+			if t := rowTermAdmitting(k); t != nil {
+				return t
+			}
+			if permPositive(k) {
+				grants = true
+			}
+		}
+	}
+	if rowTerm != nil && !grants {
+		return rowTerm
+	}
+	return nil
+}
+
+func valCheckRowTerm(o *Object, pm *Perm, t *Term, hasPred bool) []error {
+	var errs []error
+	if t.RowCol == "" || t.RowVal == "" {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @row with an empty column or value — `@row(<column>, \"<value>\")`", pm.Pos.Line, o.Name, pm.Verb))
+	}
+	if !hasPred {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @row but compiles no row predicate — a row term is a test of the row and the decision point cannot read it", pm.Pos.Line, o.Name, pm.Verb))
+	}
+	return errs
 }
 
 func valCheckPermLayers(o *Object, pm *Perm) (hasRLS, hasKernel, hasPDP, hasCheck bool, err error) {
@@ -1127,6 +1197,8 @@ func valCheckPermTerms(s *Spec, o *Object, pm *Perm, rels map[string]*Relation, 
 			add(valCheckGrantRefTerm(s, o, pm, t, hasPred))
 		case t.ModeCol != "":
 			add(valCheckModeTerm(s, o, pm, t, hasPred))
+		case t.Builtin == "row":
+			add(errors.Join(valCheckRowTerm(o, pm, t, hasPred)...))
 		case t.Builtin != "":
 			add(valCheckBuiltinTerm(s, o, pm, t, rels, hasPred, hasPDP))
 		case isGrantSelectorTerm(t.Ident, rels):

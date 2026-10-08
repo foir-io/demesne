@@ -35,6 +35,30 @@ after `transient`.
 
 A one-value transient subject compiles as it did.
 
+### `@row`: narrow a term to rows with a value
+
+`@row(<column>, "<value>")` is true of a row whose column holds the value. It
+tests the row and names nobody, so it is written inside an `and`, beside a term
+that grants, and narrows that term:
+
+```demesne
+permission view = owner + (member and not @row(owner_kind, "customer"))   @rls maps select
+```
+
+It compiles to `<column> = '<value>'`, and negated to `(<column> = '<value>')
+IS NOT TRUE`, which is true of a row whose column is NULL.
+
+Until now the only term that tested a row was `mode`, and `mode` is the
+object's visibility: its column is what `track visibility` records and its
+values are the visibilities the access surface accepts. A spec that used it to
+test another column moved both to that column. `@row` reads any column and
+changes neither.
+
+Validation refuses a row term wherever it would admit a caller by itself: as a
+branch of a union, as the only term, and inside an `and` with no term that
+grants. It is legal in a `require` on the same rule. The accessor listing drops
+it beside a relation, and anchors a conditional row on it exactly.
+
 ## v0.91.0
 
 ### A transient subject: a claim that stands for one request

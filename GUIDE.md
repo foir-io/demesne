@@ -403,6 +403,38 @@ from the same tail. A composition on a disjunct is added by that tail; one
 nested inside an `and` refuses, because a union arm added afterwards is not an
 intersection.
 
+### `@row`: narrow a term to rows with a value
+
+```demesne
+permission view = owner + (member and not @row(owner_kind, "customer"))   @rls maps select
+```
+
+`@row(<column>, "<value>")` is true of a row whose column holds the value. It
+tests the row and names nobody, so it never admits a caller by itself: it is
+written inside an `and`, beside a term that grants, and narrows that term to
+the rows it is true of. Above, a member reaches every row except one a
+customer owns.
+
+It compiles to `<column> = '<value>'`. Negated, it compiles to `(<column> =
+'<value>') IS NOT TRUE`, so `not @row(...)` is true of a row whose column is
+NULL: "this row is not a customer's" holds for a row nobody owns.
+
+Validation refuses it anywhere it would be the reason a caller is admitted: as
+a branch of a union, as the only term, and inside an `and` whose other terms
+are all negations or row terms. It is legal in a `require` on the same rule.
+
+It is not `mode`. A `mode` term is the object's visibility: a row carrying
+that mode is open to everyone the term is scoped to, the mode column is what
+`track visibility` records, and its values are the visibilities the access
+surface lets a row be set to. `@row` is none of those. It reads any column,
+changes nothing about how the object is tracked or shared, and only narrows.
+
+In the accessor listing a row term beside a relation is dropped, as a `mode`
+conjunct is: the listing may over-report and never under-reports, and the
+policy goes on enforcing it. Beside a claim or another term that makes the
+listing conditional, it is exact: the conditional row appears only where the
+row term holds.
+
 ### `transient`: a subject that stands for one request
 
 A subject is usually a principal that exists between requests: a customer, an

@@ -576,6 +576,9 @@ type Term struct {
 	ClaimKey string
 	ClaimVal string
 
+	RowCol string
+	RowVal string
+
 	WithinLevel    string
 	WithinNullable bool
 

@@ -1516,7 +1516,7 @@ func claimNeutralAccessorLeaf(n *PermNode) bool {
 		return false
 	}
 	switch n.Term.Builtin {
-	case "kind", "app_scope", "session", "within", "scoped", "holds", "claim":
+	case "kind", "app_scope", "session", "within", "scoped", "holds", "claim", "row":
 		return true
 	}
 	return false
@@ -1658,12 +1658,20 @@ func (s *Spec) conditionalConjunction(obj *Object, n *PermNode, rels map[string]
 		// A negated narrowing or conditional kid subtracts on the REQUEST side.
 		// There is nothing to anchor on, and that is exactly why the row this
 		// produces is conditional rather than enumerated.
+		if k.Op == "not" && len(k.Kids) == 1 && isRowLeaf(k.Kids[0]) {
+			conds = append(conds, fmt.Sprintf("(%s = '%s') IS NOT TRUE", k.Kids[0].Term.RowCol, k.Kids[0].Term.RowVal))
+			continue
+		}
 		if k.Op == "not" && len(k.Kids) == 1 &&
 			(narrowingAccessorLeaf(k.Kids[0]) || s.isConditionalLeaf(obj, k.Kids[0], rels)) {
 			continue
 		}
 		if k.Op != "leaf" {
 			return conditionalAdmission{}, false
+		}
+		if isRowLeaf(k) {
+			conds = append(conds, fmt.Sprintf("%s = '%s'", k.Term.RowCol, k.Term.RowVal))
+			continue
 		}
 		if a, ok := s.conditionalTerm(obj, k.Term, rels); ok {
 			// The first admitting term names the row. A second one only adds
@@ -1838,7 +1846,7 @@ func (s *Spec) accessorAndSQL(obj *Object, n *PermNode, rels map[string]*Relatio
 			// generates no branch at all, so nothing downstream changes shape
 			// when it goes. Widening this to the rest would also turn an
 			// existing refusal into an emission for specs that rely on it.
-			if isClaimLeaf(k.Kids[0]) {
+			if isClaimLeaf(k.Kids[0]) || isRowLeaf(k.Kids[0]) {
 				dropped = append(dropped, "not "+k.Kids[0].Term.String())
 				continue
 			}

@@ -1622,7 +1622,11 @@ func (p *parser) parseTerm() (*Term, error) {
 			return nil, err
 		}
 		t.Builtin = b
-		if err := p.parseTermBuiltin(t); err != nil {
+		parse := p.parseTermBuiltin
+		if b == "row" {
+			parse = p.parseTermRow
+		}
+		if err := parse(t); err != nil {
 			return nil, err
 		}
 		return t, nil
@@ -1776,6 +1780,27 @@ func (p *parser) parseTermClaim(t *Term) error {
 		return err
 	}
 	t.ClaimVal = val.lit
+	_, err = p.expect(tRParen)
+	return err
+}
+
+func (p *parser) parseTermRow(t *Term) error {
+	if _, err := p.expect(tLParen); err != nil {
+		return err
+	}
+	col, err := p.ident()
+	if err != nil {
+		return err
+	}
+	t.RowCol = col
+	if _, err := p.expect(tComma); err != nil {
+		return err
+	}
+	val, err := p.expect(tString)
+	if err != nil {
+		return err
+	}
+	t.RowVal = val.lit
 	_, err = p.expect(tRParen)
 	return err
 }
@@ -2239,6 +2264,8 @@ func (t *Term) String() string {
 		return "@holds(" + t.HoldsPerm + ")"
 	case t.Builtin == "external":
 		return "@external(" + t.ExternalFn + ")"
+	case t.Builtin == "row":
+		return "@row(" + t.RowCol + ", \"" + t.RowVal + "\")"
 	case t.Builtin != "":
 		return "@" + t.Builtin
 	case t.WalkVerb != "":

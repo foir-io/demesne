@@ -831,6 +831,9 @@ func (s *Spec) rlsEmitBuiltin(obj *Object, pm *Perm, t *Term, rels map[string]*R
 	case t.Builtin == "claim":
 
 		return []string{fmt.Sprintf("%s = '%s'", s.claim(t.ClaimKey), t.ClaimVal)}, true, nil
+	case t.Builtin == "row":
+
+		return []string{fmt.Sprintf("%s = '%s'", t.RowCol, t.RowVal)}, true, nil
 	case t.Builtin == "within":
 		col := s.scopeCol(obj, t.WithinLevel)
 		claim := s.idClaim(s.claimKeyForLevel(t.WithinLevel))
