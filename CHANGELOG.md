@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.92.0
+
+### A transient set: a claim that lists several values
+
+A transient subject is identified by one value: the owner a write is made for,
+the one row a request acts on. `transient set` declares a subject whose claim
+holds a JSON array, and a relation to it admits a row whose column is any
+element. It is for the case where one request has the same standing over
+several values of a column and no other.
+
+```demesne
+subject curator { anchor tenant reach self identifies curates roles none transient set }
+relation curated: curator via category
+permission view = owner + curated   @rls maps select
+```
+
+The relation compiles to `category = ANY(ARRAY(SELECT e FROM
+jsonb_array_elements_text(<curates claim>::jsonb) e))`, with each element cast
+to the identifier type where one is declared. The array is read once for a
+statement. The claim is read as an array whether it was minted as one or as
+its text in a string.
+
+No claim and an empty array admit nothing. A claim that is not an array fails
+the statement, so a set minted wrongly is never read as empty or as everything.
+A `null` element matches no row.
+
+The accessor listing reports it as it reports any transient subject: a
+conditional row keyed on the claim and valued from the row's column.
+
+Validation holds a set to everything a transient subject is held to, and
+refuses a relation that names a set beside another subject. `set` is read only
+after `transient`.
+
+A one-value transient subject compiles as it did.
+
 ## v0.91.0
 
 ### A transient subject: a claim that stands for one request

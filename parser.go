@@ -581,6 +581,7 @@ func (p *parser) parseSubject() (*Subject, error) {
 			sub.Binds, err = p.ident()
 		case p.acceptKw("transient"):
 			sub.Transient = true
+			sub.TransientSet = p.acceptKw("set")
 		default:
 			return nil, p.errf("unexpected %s %q in subject %q", p.peekKind(), p.cur().lit, sub.Name)
 		}

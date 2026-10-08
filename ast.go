@@ -216,9 +216,10 @@ type Subject struct {
 	RolesNone  bool
 	ReachGrant string
 
-	Binds     string
-	Transient bool
-	Pos       Pos
+	Binds        string
+	Transient    bool
+	TransientSet bool
+	Pos          Pos
 }
 
 type Membership struct {

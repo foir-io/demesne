@@ -440,6 +440,46 @@ A transient subject is `reach self` and `roles none`, binds no plane, and is
 identified by its claim directly rather than via a membership. A relation to
 one is a column relation and names no standing subject beside it.
 
+#### `transient set`: a claim that lists several values
+
+One request can be given the same standing over several values of a column:
+every row of two categories, say, and of no other. Declared `transient set`, a
+subject's claim holds a JSON array, and a relation to it admits a row whose
+column is any element:
+
+```demesne
+subject curator { anchor tenant reach self identifies curates roles none transient set }
+
+object doc {
+  table docs
+  scoped tenant
+  relation owner:   member via owner_id where owner_kind = "member"
+  relation curated: curator via category
+  permission view = owner + curated   @rls maps select
+}
+```
+
+The relation compiles to a membership test, `category = ANY(ARRAY(SELECT e FROM
+jsonb_array_elements_text(<curates claim>::jsonb) e))`. The array is read once
+for a statement, not once for a row. It reads the claim as an array whether the
+session minted one or minted its text as a string, so a claims type whose
+values are strings carries a set as `["a","b"]`.
+
+Three cases are worth knowing:
+
+- **No claim, or an empty array, admits nothing.** The relation is false, not
+  an error.
+- **A claim that is not an array is an error.** One bare value, or an object,
+  fails the statement. A set that was minted wrongly refuses loudly; it is
+  never read as empty or as everything.
+- **A `null` element matches no row,** and a row whose column is NULL is in no
+  set.
+
+It is listed as a transient subject is: a conditional row keyed on the claim
+and valued from the row's column, which reads "a request whose claim lists this
+value". A set names one subject, so a relation cannot put it beside another,
+transient or standing.
+
 ### `wildcard` — a NULL scope column on the *row* side
 
 The rule above is about a role assignment: NULL at a scope level means "every

@@ -43,6 +43,18 @@ func (s *Spec) idClaim(key string) string {
 	return s.claim(key) + s.idCast()
 }
 
+func (s *Spec) idClaimSet(key string) string {
+	return fmt.Sprintf("ARRAY(SELECT e%s FROM jsonb_array_elements_text(%s::jsonb) e)", s.idCast(), s.claim(key))
+}
+
+func (s *Spec) transientSet(r *Relation) bool {
+	if r == nil || len(r.Types) == 0 {
+		return false
+	}
+	st := s.subjectByName(r.Types[0])
+	return st != nil && st.TransientSet
+}
+
 func accessFor(op string) string {
 	switch op {
 	case "select":
@@ -936,6 +948,9 @@ func (s *Spec) rlsEmitRelation(obj *Object, pm *Perm, t *Term, rels map[string]*
 			return nil, err
 		}
 		base := fmt.Sprintf("%s = %s", repr.Column, s.idClaim(claimKey))
+		if s.transientSet(r) {
+			base = fmt.Sprintf("%s = ANY(%s)", repr.Column, s.idClaimSet(claimKey))
+		}
 
 		if repr.DiscrimCol != "" {
 			base = fmt.Sprintf("(%s AND %s = '%s')", base, repr.DiscrimCol, repr.DiscrimVal)

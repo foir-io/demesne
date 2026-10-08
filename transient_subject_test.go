@@ -104,3 +104,133 @@ func TestTransient_RefusesWhatAStandingPrincipalHolds(t *testing.T) {
 		})
 	}
 }
+
+const (
+	readerSubject  = `subject reader { anchor tenant reach self identifies reads_all roles none transient set }`
+	readerRelation = `relation reads_all: reader via kind`
+)
+
+func TestTransientSet_ComparesTheColumnToEachValueOfItsClaim(t *testing.T) {
+	sp := validSpec(t, transientSpec(readerSubject, readerRelation, `owner + reads_all + grantee:read   @rls maps select`))
+	res, err := sp.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit rls: %v", err)
+	}
+	for _, p := range res.Policies {
+		if p.Name != "docs_select" {
+			continue
+		}
+		want := "kind = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((current_setting('request.jwt.claims', true)::json ->> 'reads_all')::jsonb) e))"
+		if !strings.Contains(p.Using, want) {
+			t.Fatalf("the set relation did not reach the row predicate as a membership test: %s", p.Using)
+		}
+		if strings.Contains(p.Using, "kind = (current_setting('request.jwt.claims', true)::json ->> 'reads_all')") {
+			t.Fatalf("the set relation was compared to its claim as one value: %s", p.Using)
+		}
+		return
+	}
+	t.Fatal("no docs_select policy emitted")
+}
+
+func TestTransientSet_KeepsTheRelationsDiscriminator(t *testing.T) {
+	sp := validSpec(t, transientSpec(readerSubject, `relation reads_all: reader via owner_id where owner_kind = "member"`, `owner + reads_all + grantee:read   @rls maps select`))
+	res, err := sp.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit rls: %v", err)
+	}
+	for _, p := range res.Policies {
+		if p.Name != "docs_select" {
+			continue
+		}
+		want := "(owner_id = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((current_setting('request.jwt.claims', true)::json ->> 'reads_all')::jsonb) e)) AND owner_kind = 'member')"
+		if !strings.Contains(p.Using, want) {
+			t.Fatalf("the set relation lost its discriminator: %s", p.Using)
+		}
+		return
+	}
+	t.Fatal("no docs_select policy emitted")
+}
+
+func TestTransientSet_CastsEachValueToTheIdentifierType(t *testing.T) {
+	sp := validSpec(t, "identifiers uuid\n"+transientSpec(readerSubject, `relation reads_all: reader via owner_id`, `owner + reads_all + grantee:read   @rls maps select`))
+	res, err := sp.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit rls: %v", err)
+	}
+	for _, p := range res.Policies {
+		if p.Name != "docs_select" {
+			continue
+		}
+		if !strings.Contains(p.Using, "owner_id = ANY(ARRAY(SELECT e::uuid FROM jsonb_array_elements_text(") {
+			t.Fatalf("the set's values were not cast to the identifier type: %s", p.Using)
+		}
+		return
+	}
+	t.Fatal("no docs_select policy emitted")
+}
+
+func TestTransientSet_LeavesAOneValueTransientAsItWas(t *testing.T) {
+	sp := validSpec(t, transientSpec(delegateSubject+"\n"+readerSubject, delegateRelation+"\n  "+readerRelation, `owner + acting_for + reads_all + grantee:read   @rls maps select`))
+	res, err := sp.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit rls: %v", err)
+	}
+	for _, p := range res.Policies {
+		if p.Name != "docs_select" {
+			continue
+		}
+		if !strings.Contains(p.Using, "owner_id = (current_setting('request.jwt.claims', true)::json ->> 'acting_for') AND owner_kind = 'member'") {
+			t.Fatalf("a one-value transient relation beside a set was not compared to its claim: %s", p.Using)
+		}
+		return
+	}
+	t.Fatal("no docs_select policy emitted")
+}
+
+func TestTransientSet_IsListedAsAClaimValuedFromTheRow(t *testing.T) {
+	sp := validSpec(t, transientSpec(readerSubject, readerRelation, `owner + reads_all + grantee:read   @rls maps select`))
+	fns, have := claimDefiners(t, sp)
+	if _, ok := fns["docs_accessors"]; ok {
+		t.Error("docs_accessors must not be emitted: the set admits any request whose claim lists the row's value")
+	}
+	cond, ok := fns["docs_accessors_conditional"]
+	if !ok {
+		t.Fatalf("expected docs_accessors_conditional, have: %s", have)
+	}
+	want := "SELECT 'claim'::text, NULL::text, NULL::text, 'read'::text, 'reads_all'::text, kind::text\n    FROM docs WHERE id = p_id AND kind IS NOT NULL"
+	if !strings.Contains(cond.Body, want) {
+		t.Errorf("expected a claim row keyed on the set's claim and valued from the row's column:\n%s", cond.Body)
+	}
+}
+
+func TestTransientSet_RefusesWhatItCannotMean(t *testing.T) {
+	for _, tc := range []struct {
+		name, subject, relation, says string
+	}{
+		{"beside another transient", delegateSubject + "\n" + readerSubject, `relation reads_all: reader | delegate via kind`, "names the transient set"},
+		{"beside a standing subject", readerSubject, `relation reads_all: reader | member via kind`, "mixes a transient subject with standing ones"},
+		{"through a grant", readerSubject, `relation reads_all: reader via grant other_acl(resource_id, principal_kind, principal_id, access)`, "a transient subject is a claim compared to a column"},
+		{"holding roles", `subject reader { anchor tenant reach self identifies reads_all roles configurable v transient set }`, readerRelation, "must be `roles none`"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sp, err := Parse(transientSpec(tc.subject, tc.relation, `owner + grantee:read   @rls maps select`))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err = Validate(sp)
+			if err == nil {
+				t.Fatal("accepted, want a refusal")
+			}
+			if !strings.Contains(err.Error(), tc.says) {
+				t.Fatalf("refusal %q does not say %q", err.Error(), tc.says)
+			}
+		})
+	}
+}
+
+func TestTransientSet_IsOnlySaidOfATransientSubject(t *testing.T) {
+	_, err := Parse(transientSpec(`subject reader { anchor tenant reach self identifies reads_all roles none set }`, readerRelation, `owner + grantee:read   @rls maps select`))
+	if err == nil {
+		t.Fatal("`set` with no `transient` before it was accepted")
+	}
+}

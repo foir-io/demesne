@@ -793,6 +793,14 @@ func valCheckTransientRelation(s *Spec, o *Object, r *Relation) []error {
 	if _, ok := r.Repr.(ViaColumn); !ok {
 		errs = append(errs, fmt.Errorf("line %d: object %q relation %q names a transient subject %T: a transient subject is a claim compared to a column of the row (`via <column>`)", r.Pos.Line, o.Name, r.Name, r.Repr))
 	}
+	if len(r.Types) > 1 {
+		for _, t := range r.Types {
+			if st := s.subjectByName(t); st != nil && st.TransientSet {
+				errs = append(errs, fmt.Errorf("line %d: object %q relation %q names the transient set %q beside other subjects %v: a set's claim lists values and another subject's claim holds one, so they cannot share a relation", r.Pos.Line, o.Name, r.Name, t, r.Types))
+				break
+			}
+		}
+	}
 	return errs
 }
 
