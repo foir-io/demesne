@@ -79,5 +79,8 @@ export function listGrantsArgs(p: ResourceAccessSurface, resourceID: string): Sq
 }
 
 export function accessorsSQL(p: ResourceAccessSurface): string {
+  if (p.accessorsConditional) {
+    return `SELECT source, principal_kind, principal_id, access, via_claim_key, via_claim_value FROM ${p.accessorFn}($1)`;
+  }
   return `SELECT source, principal_kind, principal_id, access FROM ${p.accessorFn}($1)`;
 }

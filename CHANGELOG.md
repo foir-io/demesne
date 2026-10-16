@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### The TypeScript runtime lists a conditional surface's claim columns
+
+A resource-access surface whose read admits a claim lists, beside each
+principal, the claim key and value a row is reached by. The Go builder selected
+`via_claim_key` and `via_claim_value` on such a surface and the TypeScript
+`accessorsSQL` did not, so the two disagreed on that surface and the emitted
+projection did not typecheck against the runtime's types. The surface now
+carries `accessorsConditional`, and `accessorsSQL` selects the claim columns
+when it is set, as the Go builder does.
+
+### Release notes keep a commit's `@` words out of mentions
+
+A commit subject that names a builtin, such as `@row`, went into the release
+notes as written, and GitHub read it as a mention of the account with that
+name. A subject that contains `@` is now set as code in the notes.
+
 ## v0.93.0
 
 ### A composition definer is one statement per access

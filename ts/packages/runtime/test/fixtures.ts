@@ -281,6 +281,7 @@ export const recordAccess: ResourceAccessSurface = {
   discrimCol: "resource_type",
   discrimVal: "record",
   accessorFn: "auth.records_accessors",
+  accessorsConditional: false,
 };
 
 export const platformVocab: Vocabulary = {

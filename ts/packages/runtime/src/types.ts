@@ -166,6 +166,7 @@ export interface ResourceAccessSurface {
   discrimVal: string;
 
   accessorFn: string;
+  accessorsConditional: boolean;
 }
 
 export interface DelegationCap {
