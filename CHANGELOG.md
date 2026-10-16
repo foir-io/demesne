@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.93.1
 
 ### The TypeScript runtime lists a conditional surface's claim columns
 
@@ -11,6 +11,16 @@ principal, the claim key and value a row is reached by. The Go builder selected
 projection did not typecheck against the runtime's types. The surface now
 carries `accessorsConditional`, and `accessorsSQL` selects the claim columns
 when it is set, as the Go builder does.
+
+### The npm packages are published again
+
+`@foir/demesne` and the `@foir/demesne-cli` packages were last published at
+0.89.0: the token the release used to publish them stopped working, so 0.90.0
+to 0.93.0 exist as Go module tags and GitHub releases but not on npm. Releases
+now publish to npm through npm's trusted publishing, from this repository's
+release workflow with no stored token, and each version is staged for a
+maintainer to approve before it is installable. 0.93.1 is the first version
+published this way.
 
 ### Release notes keep a commit's `@` words out of mentions
 
