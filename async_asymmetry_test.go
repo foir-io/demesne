@@ -121,3 +121,14 @@ func TestAsync_NoneIsNoOp(t *testing.T) {
 		t.Errorf("oracle must be a no-op for a non-async spec, got: %v", err)
 	}
 }
+
+func TestAsync_FloorBodiesReadEveryArmOfADefiner(t *testing.T) {
+	defs := []GenFn{{Name: "f", Sig: "p_x text, p_access text", ArmParam: "p_access", Arms: []DefinerArm{
+		{Value: "read", Body: "EXISTS (SELECT 1 FROM t WHERE t.id = p_x)"},
+		{Value: "write", Body: "auth.docs_grantee_async_affordance(p_x)"},
+	}}}
+	got := asyncTokensInBodies(floorBodies(nil, defs), []string{"auth.docs_grantee_async"})
+	if len(got) != 1 {
+		t.Errorf("an async surface in a definer's second arm was not seen: %v", got)
+	}
+}

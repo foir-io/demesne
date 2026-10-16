@@ -4,6 +4,7 @@ CREATE OR REPLACE FUNCTION auth.note_acl_grants(p_member_id text, p_note_id text
 RETURNS boolean
 LANGUAGE sql
 STABLE
+STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$

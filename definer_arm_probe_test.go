@@ -49,7 +49,7 @@ func armProbeDefiner(t *testing.T, name string) (*Spec, string) {
 	}
 	for _, d := range defs {
 		if d.Name == name {
-			return s, d.Body
+			return s, d.Text()
 		}
 	}
 	t.Fatalf("no %s definer", name)

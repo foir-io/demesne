@@ -97,31 +97,38 @@ func TestComposition_CascadeWiringAndDefiner(t *testing.T) {
 		t.Errorf("definer sig = %q", fn.Sig)
 	}
 
-	wantPrefix := "EXISTS (SELECT 1 FROM record_relationships e WHERE e.from_record_id = p_record_id AND e.kind = 'composition' AND CASE p_access "
-	if !strings.HasPrefix(fn.Body, wantPrefix) {
-		t.Errorf("definer body prefix mismatch:\n%s", fn.Body)
+	if fn.ArmParam != "p_access" || len(fn.Arms) != 3 {
+		t.Fatalf("definer arms = %q over %d arms, want p_access over read, write and delete", fn.ArmParam, len(fn.Arms))
 	}
-	for _, frag := range []string{
-		"WHEN 'read' THEN EXISTS (SELECT 1 FROM records WHERE records.id = e.to_record_id AND (",
-		"WHEN 'write' THEN EXISTS (SELECT 1 FROM records WHERE records.id = e.to_record_id AND (",
-		"WHEN 'delete' THEN EXISTS (SELECT 1 FROM records WHERE records.id = e.to_record_id AND (",
-		"ELSE false END",
-	} {
-		if !strings.Contains(fn.Body, frag) {
-			t.Errorf("definer body missing %q:\n%s", frag, fn.Body)
+	wantPrefix := "EXISTS (SELECT 1 FROM record_relationships e WHERE e.from_record_id = p_record_id AND e.kind = 'composition' AND EXISTS (SELECT 1 FROM records WHERE records.id = e.to_record_id AND ("
+	for i, access := range []string{"read", "write", "delete"} {
+		a := fn.Arms[i]
+		if a.Value != access {
+			t.Errorf("arm %d answers %q, want %q", i, a.Value, access)
+		}
+		if !strings.HasPrefix(a.Body, wantPrefix) {
+			t.Errorf("%s arm prefix mismatch:\n%s", access, a.Body)
+		}
+		if !strings.Contains(a.Body, "auth.resource_acl_grants_record((current_setting('request.jwt.claims', true)::json ->> 'customer_id'), records.id, '"+access+"')") {
+			t.Errorf("%s arm does not borrow the parent's %s grant:\n%s", access, access, a.Body)
+		}
+		for _, other := range []string{"read", "write", "delete"} {
+			if other != access && strings.Contains(a.Body, ", '"+other+"')") {
+				t.Errorf("%s arm carries the %s check, which every call of it would plan:\n%s", access, other, a.Body)
+			}
 		}
 	}
+	if strings.Contains(fn.Text(), "CASE p_access") {
+		t.Errorf("definer still branches on p_access inside one statement:\n%s", fn.Text())
+	}
 
-	if strings.Contains(fn.Body, "record_composition_comp_parent") {
-		t.Errorf("definer is self-recursive — composition was NOT pruned from the parent predicate:\n%s", fn.Body)
+	if strings.Contains(fn.Text(), "record_composition_comp_parent") {
+		t.Errorf("definer is self-recursive — composition was NOT pruned from the parent predicate:\n%s", fn.Text())
 	}
 
 	c := "(current_setting('request.jwt.claims', true)::json ->> 'customer_id')"
-	if !strings.Contains(fn.Body, "customer_id = "+c) {
-		t.Errorf("read branch does not borrow the parent's owner predicate:\n%s", fn.Body)
-	}
-	if !strings.Contains(fn.Body, "auth.resource_acl_grants") {
-		t.Errorf("read branch does not borrow the parent's grant predicate (so a shared parent would not cascade):\n%s", fn.Body)
+	if !strings.Contains(fn.Arms[0].Body, "customer_id = "+c) {
+		t.Errorf("read arm does not borrow the parent's owner predicate:\n%s", fn.Arms[0].Body)
 	}
 }
 
@@ -143,11 +150,13 @@ func TestComposition_NoKindFilter(t *testing.T) {
 	}
 	for i := range defs {
 		if defs[i].Name == "record_composition_comp_parent" {
-			if strings.Contains(defs[i].Body, "AND e.kind") {
-				t.Errorf("undiscriminated composition should emit no kind filter:\n%s", defs[i].Body)
+			if strings.Contains(defs[i].Text(), "AND e.kind") {
+				t.Errorf("undiscriminated composition should emit no kind filter:\n%s", defs[i].Text())
 			}
-			if !strings.Contains(defs[i].Body, "WHERE e.child_id = p_record_id AND CASE p_access") {
-				t.Errorf("undiscriminated composition body shape:\n%s", defs[i].Body)
+			for _, a := range defs[i].Arms {
+				if !strings.HasPrefix(a.Body, "EXISTS (SELECT 1 FROM edges e WHERE e.child_id = p_record_id AND EXISTS (") {
+					t.Errorf("undiscriminated composition %s arm shape:\n%s", a.Value, a.Body)
+				}
 			}
 			return
 		}

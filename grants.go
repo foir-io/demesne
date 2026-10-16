@@ -56,6 +56,12 @@ func grantEdgeExists(edge string, conjuncts ...string) string {
 // principal (a group) admits the principal the definer was asked about (a
 // member). Aliased, because the join needs two tables in scope.
 func grantGroupExists(vg *ViaGrant, obj *Object, param string) string {
+	return fmt.Sprintf(
+		"EXISTS (SELECT 1 FROM %s g JOIN %s gc ON gc.%s = g.%s WHERE %s)",
+		vg.Table, vg.GroupClosure, vg.GroupGroupCol, vg.PrincipalCol, strings.Join(grantGroupConds(vg, obj, param), " AND "))
+}
+
+func grantGroupConds(vg *ViaGrant, obj *Object, param string) []string {
 	conds := []string{
 		fmt.Sprintf("g.%s = p_%s_id", vg.RecordCol, obj.Name),
 	}
@@ -67,9 +73,7 @@ func grantGroupExists(vg *ViaGrant, obj *Object, param string) string {
 		fmt.Sprintf("gc.%s = p_%s_id", vg.GroupMemberCol, param),
 		fmt.Sprintf("g.%s = p_access", vg.AccessCol),
 	)
-	return fmt.Sprintf(
-		"EXISTS (SELECT 1 FROM %s g JOIN %s gc ON gc.%s = g.%s WHERE %s)",
-		vg.Table, vg.GroupClosure, vg.GroupGroupCol, vg.PrincipalCol, strings.Join(conds, " AND "))
+	return conds
 }
 
 func touchOnConflict(bareKey, nullableKey, sets []string) string {

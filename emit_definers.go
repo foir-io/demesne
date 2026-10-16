@@ -17,6 +17,16 @@ type GenFn struct {
 	Returns string
 
 	RawBody bool
+
+	Strict bool
+
+	ArmParam string
+	Arms     []DefinerArm
+}
+
+type DefinerArm struct {
+	Value string
+	Body  string
 }
 
 func (d GenFn) schema() string {
@@ -51,13 +61,71 @@ func (d GenFn) CreateSQL() string {
 	if returns == "" {
 		returns = "boolean"
 	}
-	body := "  SELECT " + d.Body + ";"
+	lang, body := "sql", "  SELECT "+d.Body+";"
 	if d.RawBody {
 		body = d.Body
 	}
+	if len(d.Arms) > 0 {
+		lang, body = "plpgsql", d.armsBody()
+	}
+	strict := ""
+	if d.Strict {
+		strict = "STRICT\n"
+	}
 	return fmt.Sprintf(
-		"CREATE OR REPLACE FUNCTION %s.%s(%s)\nRETURNS %s\nLANGUAGE sql\nSTABLE\nSECURITY DEFINER\nSET search_path = %s\nAS $$\n%s\n$$;",
-		d.schema(), d.Name, d.Sig, returns, d.tableSchema(), body)
+		"CREATE OR REPLACE FUNCTION %s.%s(%s)\nRETURNS %s\nLANGUAGE %s\nSTABLE\n%sSECURITY DEFINER\nSET search_path = %s\nAS $$\n%s\n$$;",
+		d.schema(), d.Name, d.Sig, returns, lang, strict, d.tableSchema(), body)
+}
+
+func (d GenFn) armsBody() string {
+	var b strings.Builder
+	b.WriteString("#variable_conflict use_column\nBEGIN\n")
+	for _, a := range d.Arms {
+		fmt.Fprintf(&b, "  IF %s = '%s' THEN\n    RETURN %s;\n  END IF;\n", d.ArmParam, a.Value, a.Body)
+	}
+	b.WriteString("  RETURN false;\nEND")
+	return b.String()
+}
+
+func (d GenFn) Text() string {
+	if len(d.Arms) == 0 {
+		return d.Body
+	}
+	bodies := make([]string, len(d.Arms))
+	for i, a := range d.Arms {
+		bodies[i] = a.Body
+	}
+	return strings.Join(bodies, "\n")
+}
+
+func sigArgs(sig string) []string {
+	var args []string
+	for _, p := range strings.Split(sig, ",") {
+		if f := strings.Fields(strings.TrimSpace(p)); len(f) > 0 {
+			args = append(args, f[0])
+		}
+	}
+	return args
+}
+
+func bindsEvery(sig string, conjuncts ...[]string) bool {
+	for _, arg := range sigArgs(sig) {
+		for _, conj := range conjuncts {
+			if !bindsArg(conj, arg) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func bindsArg(conj []string, arg string) bool {
+	for _, c := range conj {
+		if strings.HasSuffix(c, " = "+arg) {
+			return true
+		}
+	}
+	return false
 }
 
 func DefinersSQL(defs []GenFn) string {
@@ -148,12 +216,12 @@ func (s *Spec) defEmitMembership(out *[]GenFn) error {
 		if m.IDCol == "" || m.FlagCol == "" {
 			return fmt.Errorf("subject %q membership needs (idcol, flagcol)", sub.Name)
 		}
-		body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = user_id AND %s", m.Table, m.IDCol, m.FlagCol)
+		conj := []string{m.IDCol + " = user_id", m.FlagCol}
 		if m.ActiveCol != "" {
-			body += fmt.Sprintf(" AND %s = '%s'", m.ActiveCol, m.ActiveVal)
+			conj = append(conj, fmt.Sprintf("%s = '%s'", m.ActiveCol, m.ActiveVal))
 		}
-		body += ")"
-		*out = append(*out, GenFn{Name: m.FlagCol, Sig: "user_id " + s.idType(), Body: body})
+		sig := "user_id " + s.idType()
+		*out = append(*out, GenFn{Name: m.FlagCol, Sig: sig, Body: grantEdgeExists(m.Table, conj...), Strict: bindsEvery(sig, conj)})
 	}
 	return nil
 }
@@ -181,7 +249,8 @@ func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 			conj = append(conj, fmt.Sprintf("%s > now()", g.ExpiresCol))
 		}
 		scoped := append(append([]string(nil), conj...), s.grantSessionScopeConjuncts(g)...)
-		*out = append(*out, GenFn{Name: name, Sig: fmt.Sprintf("user_id %s, check_%s_id %s", s.idType(), g.Level, s.idType()), Body: grantEdgeExists(g.Table, scoped...)})
+		sig := fmt.Sprintf("user_id %s, check_%s_id %s", s.idType(), g.Level, s.idType())
+		*out = append(*out, GenFn{Name: name, Sig: sig, Body: grantEdgeExists(g.Table, scoped...), Strict: bindsEvery(sig, scoped)})
 
 		// THE SET FORM, and why both are emitted.
 		//
@@ -212,11 +281,13 @@ func (s *Spec) defEmitGrantReach(out *[]GenFn) {
 		// construction in any domain. Nothing here assumes a hierarchy.
 		setConj := []string{fmt.Sprintf("%s = user_id", g.GranteeCol)}
 		setConj = append(setConj, scoped[2:]...)
+		setSig := fmt.Sprintf("user_id %s", s.idType())
 		*out = append(*out, GenFn{
 			Name:    name + "_set",
-			Sig:     fmt.Sprintf("user_id %s", s.idType()),
+			Sig:     setSig,
 			Returns: "SETOF " + s.idType(),
 			Body:    fmt.Sprintf("%s FROM %s WHERE %s", g.LevelCol, g.Table, strings.Join(setConj, " AND ")),
+			Strict:  bindsEvery(setSig, setConj),
 		})
 		*out = append(*out, s.grantScopeDefiners(g, conj)...)
 	}
@@ -461,17 +532,21 @@ func (s *Spec) defEmitGrantRelations(out *[]GenFn, seen map[string]bool) {
 				fmt.Sprintf("%s = p_access", vg.AccessCol),
 			)
 			body := grantEdgeExists(vg.Table, conjuncts...)
+			disjuncts := [][]string{conjuncts}
 			// The membership hop: a grant row naming a GROUP admits everyone
 			// the closure lists as its member. ORed into every kind's definer
 			// rather than gated per kind, because membership itself is the
 			// restriction — the closure's member column decides who is in.
 			if vg.GroupClosure != "" {
 				body += " OR " + grantGroupExists(vg, obj, param)
+				disjuncts = append(disjuncts, grantGroupConds(vg, obj, param))
 			}
+			sig := fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", param, obj.Name)
 			*out = append(*out, GenFn{
-				Name: name,
-				Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", param, obj.Name),
-				Body: body,
+				Name:   name,
+				Sig:    sig,
+				Body:   body,
+				Strict: bindsEvery(sig, disjuncts...),
 			})
 		}
 	}
@@ -687,10 +762,13 @@ func (s *Spec) defEmitClosure(out *[]GenFn, seen map[string]bool) {
 				continue
 			}
 			seen[name] = true
+			sig := "p_ancestor text, p_descendant text"
+			conj := []string{c.AncestorCol + " = p_ancestor", c.DescendantCol + " = p_descendant"}
 			*out = append(*out, GenFn{
-				Name: name,
-				Sig:  "p_ancestor text, p_descendant text",
-				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_ancestor AND %s = p_descendant)", c.Closure, c.AncestorCol, c.DescendantCol),
+				Name:   name,
+				Sig:    sig,
+				Body:   grantEdgeExists(c.Closure, conj...),
+				Strict: bindsEvery(sig, conj),
 			})
 		}
 	}
@@ -752,10 +830,13 @@ func (s *Spec) defEmitCrossObject(out *[]GenFn, seen map[string]bool, virtual ma
 			if err != nil {
 				return err
 			}
+			sig := fmt.Sprintf("p_%s_id text", vo.Object)
+			key := fmt.Sprintf("%s.%s = p_%s_id", other.Table, other.pk(), vo.Object)
 			*out = append(*out, GenFn{
-				Name: name,
-				Sig:  fmt.Sprintf("p_%s_id text", vo.Object),
-				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = p_%s_id AND (%s))", other.Table, other.Table, other.pk(), vo.Object, pred),
+				Name:   name,
+				Sig:    sig,
+				Body:   grantEdgeExists(other.Table, key, "("+pred+")"),
+				Strict: bindsEvery(sig, []string{key}),
 			})
 		}
 	}
@@ -763,9 +844,9 @@ func (s *Spec) defEmitCrossObject(out *[]GenFn, seen map[string]bool, virtual ma
 }
 
 // defEmitComposition renders each composition definer's body without the
-// relation probes other definer bodies carry. The body repeats the parent's
-// predicate once per access, so a probe there is planned three times on every
-// call; a policy calls these definers per row, so every read would pay that.
+// relation probes other definer bodies carry. A policy calls these definers per
+// row, and each access arm is a statement of its own, so an arm is planned once
+// for a session with only its own access's predicate in it.
 func (s *Spec) defEmitComposition(out *[]GenFn, seen map[string]bool, virtual map[string]bool) error {
 	plain := *s
 	plain.definerBody = false
@@ -786,7 +867,11 @@ func (s *Spec) defEmitComposition(out *[]GenFn, seen map[string]bool, virtual ma
 				continue
 			}
 			seen[name] = true
-			var cases []string
+			kindFilter := ""
+			if vc.KindCol != "" {
+				kindFilter = fmt.Sprintf(" AND e.%s = '%s'", vc.KindCol, vc.KindVal)
+			}
+			var arms []DefinerArm
 			for _, b := range branches {
 				pred, err := s.opPredicate(base, b.op, virtual)
 				if err != nil {
@@ -795,24 +880,19 @@ func (s *Spec) defEmitComposition(out *[]GenFn, seen map[string]bool, virtual ma
 				if pred == "" {
 					continue
 				}
-
-				cases = append(cases, fmt.Sprintf("WHEN '%s' THEN EXISTS (SELECT 1 FROM %s WHERE %s.%s = e.%s AND (%s))",
-					b.access, obj.Table, obj.Table, obj.pk(), vc.ParentCol, pred))
+				arms = append(arms, DefinerArm{Value: b.access, Body: fmt.Sprintf(
+					"EXISTS (SELECT 1 FROM %s e WHERE e.%s = p_%s_id%s AND EXISTS (SELECT 1 FROM %s WHERE %s.%s = e.%s AND (%s)))",
+					vc.Table, vc.ChildCol, obj.Name, kindFilter, obj.Table, obj.Table, obj.pk(), vc.ParentCol, pred)})
 			}
-			if len(cases) == 0 {
+			if len(arms) == 0 {
 				return fmt.Errorf("object %q composition relation %q: object has no cascadable @rls verb predicate", obj.Name, r.Name)
 			}
-			kindFilter := ""
-			if vc.KindCol != "" {
-				kindFilter = fmt.Sprintf(" AND e.%s = '%s'", vc.KindCol, vc.KindVal)
-			}
-			body := fmt.Sprintf(
-				"EXISTS (SELECT 1 FROM %s e WHERE e.%s = p_%s_id%s AND CASE p_access %s ELSE false END)",
-				vc.Table, vc.ChildCol, obj.Name, kindFilter, strings.Join(cases, " "))
 			*out = append(*out, GenFn{
-				Name: name,
-				Sig:  fmt.Sprintf("p_%s_id text, p_access text", obj.Name),
-				Body: body,
+				Name:     name,
+				Sig:      fmt.Sprintf("p_%s_id text, p_access text", obj.Name),
+				ArmParam: "p_access",
+				Arms:     arms,
+				Strict:   true,
 			})
 		}
 	}
@@ -942,10 +1022,13 @@ func (s *Spec) defStoreManageWhens(out *[]GenFn, seen map[string]bool, virtual m
 			if err != nil {
 				return nil, fmt.Errorf("@store_manage dispatch for %q: %w", store, err)
 			}
+			sig := "p_id " + s.idType()
+			key := fmt.Sprintf("%s.%s = p_id", o.Table, o.pk())
 			*out = append(*out, GenFn{
-				Name: canEdit,
-				Sig:  "p_id " + s.idType(),
-				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = p_id AND (%s))", o.Table, o.Table, o.pk(), pred),
+				Name:   canEdit,
+				Sig:    sig,
+				Body:   grantEdgeExists(o.Table, key, "("+pred+")"),
+				Strict: bindsEvery(sig, []string{key}),
 			})
 		}
 		whens = append(whens, fmt.Sprintf("WHEN '%s' THEN %s.%s(p_id)", objectGrantEdge(o).DiscrimVal, s.definerSchema(), canEdit))
@@ -1539,7 +1622,7 @@ type conditionalAdmission struct {
 	PrincipalKind string
 	// ClaimKey/ClaimVal are populated for @claim and empty otherwise.
 	ClaimKey, ClaimVal string
-	ClaimValCol string
+	ClaimValCol        string
 	// RowCond is the part of the term that tests the ROW rather than the
 	// request, so the row only appears when it actually holds. A mode term is
 	// entirely row-side; @app_scope is row-side only in its exclusion.

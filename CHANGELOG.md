@@ -1,5 +1,69 @@
 # Changelog
 
+## v0.93.0
+
+### A composition definer is one statement per access
+
+A composition definer answers read, write and delete. It was one SQL
+statement that chose between the three with `CASE p_access`. Postgres plans a
+SQL function's statement without knowing its arguments, so every plan held all
+three access checks, and a policy that calls the definer for each row planned
+all three again in every statement that read the table.
+
+It is now PL/pgSQL with an arm per access:
+
+```sql
+#variable_conflict use_column
+BEGIN
+  IF p_access = 'read' THEN
+    RETURN EXISTS (SELECT 1 FROM edges e WHERE e.child_id = p_doc_id AND EXISTS (...the parent's read check...));
+  END IF;
+  IF p_access = 'write' THEN
+    RETURN EXISTS (...);
+  END IF;
+  IF p_access = 'delete' THEN
+    RETURN EXISTS (...);
+  END IF;
+  RETURN false;
+END
+```
+
+Each arm is a statement of its own, so its plan holds one access's check and
+is kept for the session. The signature, the policies that call it and the
+answer for every access are unchanged. An access with no arm, and a null one,
+answer false as before. `#variable_conflict use_column` keeps SQL's rule that a
+column name wins over a parameter of the same name.
+
+Measured on Postgres 17 on a table whose rows borrow their readability from a
+parent: a read that checked 150 rows took 13.1 ms with the single statement and
+7.9 ms with the arms.
+
+It also matters on Postgres 18, which caches a SQL function's plan across
+calls. With the `CASE` the cached plan is always dearer than one made for the
+call's arguments, so Postgres 18 planned the statement again on every call: the
+same read took 77.5 ms, against 13.4 ms on Postgres 17 on the same machine. With
+the arms and strict definers it takes 6.3 ms on Postgres 18 and 6.4 ms on 17.
+
+### A definer whose every argument is compared to a column is STRICT
+
+A policy passes a claim to a definer, and a claim can be absent. When every
+argument of a definer is equal to a column in a conjunct of every branch of its
+body, a null argument can only answer false or no rows, so the definer is now
+`STRICT` and Postgres skips the call instead of planning and running it.
+
+That covers grant edges and their reach and set forms, the unscoped ladder,
+cross-object `_can_<verb>` and `_can_edit` definers, closure reachability,
+membership flags and composition definers. A scoped probe (`_reach_in_<level>`)
+tests its scope argument for absence and is not strict.
+
+A strict definer answers null where it answered false. Every emitted predicate
+reads a definer's answer through AND, OR, `IS NOT TRUE` or a `CASE` condition,
+and a policy admits a row only when its predicate is true, so null and false
+admit the same rows everywhere the floor reads them.
+
+On the same read on Postgres 17, with the arms: 5.7 ms with strict definers,
+against 7.9 ms without.
+
 ## v0.92.0
 
 ### A transient set: a claim that lists several values

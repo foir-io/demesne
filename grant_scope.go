@@ -138,9 +138,11 @@ func (s *Spec) grantScopeDefiners(g *Grant, conj []string) []GenFn {
 		unscoped = append(unscoped, scope.Column+" IS NULL")
 	}
 	setConj := append([]string{conj[0]}, unscoped[2:]...)
+	unscopedSig := fmt.Sprintf("user_id %s, check_%s_id %s", s.idType(), g.Level, s.idType())
+	setSig := "user_id " + s.idType()
 	out := []GenFn{
-		{Name: base + "_unscoped", Sig: fmt.Sprintf("user_id %s, check_%s_id %s", s.idType(), g.Level, s.idType()), Body: grantEdgeExists(g.Table, unscoped...)},
-		{Name: base + "_unscoped_set", Sig: "user_id " + s.idType(), Returns: "SETOF " + s.idType(), Body: fmt.Sprintf("%s FROM %s WHERE %s", g.LevelCol, g.Table, strings.Join(setConj, " AND "))},
+		{Name: base + "_unscoped", Sig: unscopedSig, Body: grantEdgeExists(g.Table, unscoped...), Strict: bindsEvery(unscopedSig, unscoped)},
+		{Name: base + "_unscoped_set", Sig: setSig, Returns: "SETOF " + s.idType(), Body: fmt.Sprintf("%s FROM %s WHERE %s", g.LevelCol, g.Table, strings.Join(setConj, " AND ")), Strict: bindsEvery(setSig, setConj)},
 	}
 	explicit := append([]string(nil), conj...)
 	args := []string{"user_id " + s.idType(), fmt.Sprintf("check_%s_id %s", g.Level, s.idType())}
@@ -152,7 +154,8 @@ func (s *Spec) grantScopeDefiners(g *Grant, conj []string) []GenFn {
 		}
 		explicit = append(explicit, fmt.Sprintf("(%s IS NULL OR %s OR %s = %s)", scope.Column, empty, scope.Column, param))
 		args = append(args, param+" "+s.idType())
-		out = append(out, GenFn{Name: base + "_in_" + scope.Level, Sig: strings.Join(args, ", "), Body: grantEdgeExists(g.Table, explicit...)})
+		sig := strings.Join(args, ", ")
+		out = append(out, GenFn{Name: base + "_in_" + scope.Level, Sig: sig, Body: grantEdgeExists(g.Table, explicit...), Strict: bindsEvery(sig, explicit)})
 	}
 	return out
 }

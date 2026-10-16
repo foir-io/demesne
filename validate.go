@@ -105,21 +105,24 @@ func validateAsyncFloorAsymmetry(s *Spec) error {
 	if err != nil {
 		return fmt.Errorf("async asymmetry (V12): kernel does not emit: %w", err)
 	}
-	var bodies []string
-	for _, p := range res.Policies {
-		bodies = append(bodies, p.Using, p.Check)
-	}
-	for _, d := range defs {
-		bodies = append(bodies, d.Body)
-	}
-
-	bodies = append(bodies, s.FlatsSQL(), s.TriggersSQL(), s.ChangelogSQL())
+	bodies := append(floorBodies(res.Policies, defs), s.FlatsSQL(), s.TriggersSQL(), s.ChangelogSQL())
 
 	var errs []error
 	for _, tok := range asyncTokensInBodies(bodies, tokens) {
 		errs = append(errs, fmt.Errorf("async asymmetry (V12): a floor artifact references async surface %q — the floor must read only sync, committed truth; an async index may serve an affordance Check but never gate enforcement", tok))
 	}
 	return errors.Join(errs...)
+}
+
+func floorBodies(policies []Policy, defs []GenFn) []string {
+	var bodies []string
+	for _, p := range policies {
+		bodies = append(bodies, p.Using, p.Check)
+	}
+	for _, d := range defs {
+		bodies = append(bodies, d.Text())
+	}
+	return bodies
 }
 
 func valCheckVocabs(s *Spec) (map[string]bool, error) {
