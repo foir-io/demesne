@@ -1670,76 +1670,71 @@ func (p *parser) parseTerm() (*Term, error) {
 }
 
 func (p *parser) parseTermBuiltin(t *Term) error {
-	b := t.Builtin
-
-	if b == "session" && p.peekKind() == tLParen {
-		rel, err := p.parenIdent()
-		if err != nil {
-			return err
-		}
-		t.SessionRel = rel
-	}
-
-	if b == "app_scope" && p.peekKind() == tLParen {
-		p.advance()
-		if err := p.expectKw("exclude"); err != nil {
-			return err
-		}
-		for {
-			rel, err := p.ident()
+	switch t.Builtin {
+	case "session":
+		if p.peekKind() == tLParen {
+			rel, err := p.parenIdent()
 			if err != nil {
 				return err
 			}
-			t.ExcludeRels = append(t.ExcludeRels, rel)
-			if p.peekKind() != tComma {
-				break
-			}
-			p.advance()
+			t.SessionRel = rel
 		}
-		if _, err := p.expect(tRParen); err != nil {
-			return err
+	case "app_scope":
+		if p.peekKind() == tLParen {
+			return p.parseTermAppScope(t)
 		}
-	}
-
-	if b == "kind" {
+	case "kind":
 		return p.parseTermKind(t)
-	}
-
-	if b == "claim" {
+	case "claim":
 		return p.parseTermClaim(t)
-	}
-
-	if b == "self" {
+	case "self":
 		col, err := p.parenIdent()
 		if err != nil {
 			return err
 		}
 		t.SelfCol = col
-	}
-
-	if b == "within" {
+	case "within":
 		return p.parseWithin(t)
-	}
-
-	if b == "external" {
+	case "external":
 		return p.parseTermExternal(t)
-	}
-
-	if b == "holds" {
-		if _, err := p.expect(tLParen); err != nil {
-			return err
-		}
-		switch p.peekKind() {
-		case tPermKey, tString:
-			t.HoldsPerm = p.advance().lit
-		default:
-			return p.errf("@holds needs a permission verb (`@holds(<domain>:<verb>)`), got %s %q", p.peekKind(), p.cur().lit)
-		}
-		if _, err := p.expect(tRParen); err != nil {
-			return err
-		}
+	case "holds":
+		return p.parseTermHolds(t)
 	}
 	return nil
+}
+
+func (p *parser) parseTermAppScope(t *Term) error {
+	p.advance()
+	if err := p.expectKw("exclude"); err != nil {
+		return err
+	}
+	for {
+		rel, err := p.ident()
+		if err != nil {
+			return err
+		}
+		t.ExcludeRels = append(t.ExcludeRels, rel)
+		if p.peekKind() != tComma {
+			break
+		}
+		p.advance()
+	}
+	_, err := p.expect(tRParen)
+	return err
+}
+
+func (p *parser) parseTermHolds(t *Term) error {
+	if _, err := p.expect(tLParen); err != nil {
+		return err
+	}
+	switch p.peekKind() {
+	case tPermKey, tString:
+		t.HoldsPerm = p.advance().lit
+	default:
+		return p.errf("@holds needs a permission verb (`@holds(<domain>:<verb>)`), got %s %q", p.peekKind(), p.cur().lit)
+	}
+	_, err := p.expect(tRParen)
+	return err
 }
 
 func (p *parser) parseTermKind(t *Term) error {

@@ -1275,46 +1275,45 @@ func valCheckBuiltinTerm(s *Spec, o *Object, pm *Perm, t *Term, rels map[string]
 		errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @public but maps to %q — @public is a world-read grant, valid only on select", pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
 	}
 
-	if t.Builtin == "kind" {
+	errs = append(errs, valCheckBuiltinArgs(s, o, pm, t, hasRLS, hasPDP)...)
+	return errors.Join(errs...)
+}
+
+func valCheckBuiltinArgs(s *Spec, o *Object, pm *Perm, t *Term, hasRLS, hasPDP bool) []error {
+	var errs []error
+	switch t.Builtin {
+	case "kind":
 		if t.KindVal == "" {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @kind with an empty value — `@kind(\"<value>\")`", pm.Pos.Line, o.Name, pm.Verb))
 		}
 		if !hasRLS {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @kind but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
 		}
-	}
-
-	if t.Builtin == "claim" {
+	case "claim":
 		if t.ClaimKey == "" || t.ClaimVal == "" {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @claim with an empty key or value — `@claim(\"<key>\", \"<value>\")`", pm.Pos.Line, o.Name, pm.Verb))
 		}
 		if !hasRLS {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @claim but is not @rls — a claim is a row-layer test and the decision point cannot read it", pm.Pos.Line, o.Name, pm.Verb))
 		}
-	}
-
-	if t.Builtin == "self" {
+	case "self":
 		if t.SelfCol == "" {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @self with no column — `@self(<column>)`", pm.Pos.Line, o.Name, pm.Verb))
 		}
 		if !hasRLS {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @self but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
 		}
-	}
-
-	if t.Builtin == "within" {
+	case "within":
 		if s.Topology.LevelByName(t.WithinLevel) == nil {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @within(%q) which is not a topology level", pm.Pos.Line, o.Name, pm.Verb, t.WithinLevel))
 		}
 		if !hasRLS {
 			errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @within but is not @rls", pm.Pos.Line, o.Name, pm.Verb))
 		}
-	}
-
-	if t.Builtin == "holds" {
+	case "holds":
 		errs = append(errs, s.valCheckHoldsTerm(o, pm, t, hasRLS, hasPDP)...)
 	}
-	return errors.Join(errs...)
+	return errs
 }
 
 func (s *Spec) valCheckHoldsTerm(o *Object, pm *Perm, t *Term, hasPred, hasPDP bool) []error {
