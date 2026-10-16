@@ -54,6 +54,8 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: pnpm
           cache-dependency-path: ts/pnpm-lock.yaml
+      - name: npm that publishes by trusted publishing
+        run: npm install -g npm@^11.5.1
       - name: install
         run: pnpm install --frozen-lockfile
         working-directory: ts
@@ -93,6 +95,8 @@ jobs:
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
+      - name: npm that publishes by trusted publishing
+        run: npm install -g npm@^11.5.1
       - name: stage packages
         run: node npm/scripts/build-npm.mjs "${GITHUB_REF_NAME#v}"
       - name: publish platform packages then launcher
