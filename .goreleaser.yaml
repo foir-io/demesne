@@ -49,6 +49,9 @@ snapshot:
 changelog:
   use: github
   sort: asc
+  format: >-
+    {{ .SHA }}: {{ if contains .Message "@" }}`` {{ .Message }} ``{{ else }}{{ .Message }}{{ end }}
+    ({{ with .AuthorUsername }}@{{ . }}{{ else }}{{ .AuthorName }}{{ end }})
   filters:
     exclude:
       - "^docs:"
