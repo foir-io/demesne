@@ -17,6 +17,7 @@ demesne-runtime = { path = "crates/runtime", version = "0.94.0-dev" }
 demesne-model = { path = "crates/model", version = "0.94.0-dev" }
 demesne-emit-sql = { path = "crates/emit-sql", version = "0.94.0-dev" }
 demesne-emit-go = { path = "crates/emit-go", version = "0.94.0-dev" }
+demesne-emit-rust = { path = "crates/emit-rust", version = "0.94.0-dev" }
 demesne-emit-ts = { path = "crates/emit-ts", version = "0.94.0-dev" }
 demesne-postgres = { path = "crates/postgres", version = "0.94.0-dev" }
 

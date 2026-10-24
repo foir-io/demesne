@@ -179,6 +179,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "demesne-emit-rust"
+version = "0.94.0-dev"
+dependencies = [
+ "demesne-emit-sql",
+ "demesne-model",
+ "demesne-runtime",
+ "demesne-syntax",
+]
+
+[[package]]
 name = "demesne-emit-sql"
 version = "0.94.0-dev"
 dependencies = [
@@ -249,6 +259,17 @@ name = "demesne-runtime"
 version = "0.94.0-dev"
 dependencies = [
  "demesne-gocompat",
+]
+
+[[package]]
+name = "demesne-static-parity"
+version = "0.94.0-dev"
+dependencies = [
+ "demesne-emit-rust",
+ "demesne-emit-sql",
+ "demesne-model",
+ "demesne-runtime",
+ "demesne-syntax",
 ]
 
 [[package]]
