@@ -5,7 +5,15 @@ GO="$1"
 RUST="$2"
 BASE="$3"
 OUT="$4"
+TLS="${5:-}"
 ROOT="$(git rev-parse --show-toplevel)"
+CLEAN=(-u DATABASE_URL)
+for v in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGAPPNAME PGCONNECT_TIMEOUT PGSSLMODE PGSSLKEY PGSSLCERT PGSSLSNI \
+  PGSSLROOTCERT PGSSLPASSWORD PGSSLNEGOTIATION PGTARGETSESSIONATTRS PGSERVICE PGSERVICEFILE PGTZ PGOPTIONS \
+  PGMINPROTOCOLVERSION PGMAXPROTOCOLVERSION; do
+  CLEAN+=(-u "$v")
+done
+CLEAN+=(PGPASSFILE=/nonexistent/pgpass)
 rm -rf "$OUT"
 mkdir -p "$OUT/go" "$OUT/rust" "$OUT/specs"
 
@@ -19,7 +27,15 @@ role() {
 
 total=0
 same=0
-diverged=0
+EXTRA_ENV=()
+run_env() {
+  local name="$1" envs="$2"
+  shift 2
+  EXTRA_ENV=()
+  for kv in $envs; do EXTRA_ENV+=("$kv"); done
+  run "$name" "$@"
+  EXTRA_ENV=()
+}
 run() {
   local name="$1"
   shift
@@ -28,7 +44,7 @@ run() {
     local bin="$GO"
     [ "$side" = rust ] && bin="$RUST"
     local rc=0
-    env -u DATABASE_URL "$bin" "$@" >"$OUT/$side/$name.out" 2>"$OUT/$side/$name.err" </dev/null || rc=$?
+    env "${CLEAN[@]}" ${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"} "$bin" "$@" >"$OUT/$side/$name.out" 2>"$OUT/$side/$name.err" </dev/null || rc=$?
     printf 'exit: %s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$rc" "$(cat "$OUT/$side/$name.out")" "$(cat "$OUT/$side/$name.err")" >"$OUT/$side/$name.txt"
   done
   if cmp -s "$OUT/go/$name.txt" "$OUT/rust/$name.txt"; then
@@ -39,30 +55,15 @@ run() {
   fi
 }
 
-run_driver_error() {
-  local name="$1"
-  shift
-  total=$((total + 1))
-  local grc=0 rrc=0
-  env -u DATABASE_URL "$GO" "$@" >"$OUT/go/$name.out" 2>"$OUT/go/$name.err" </dev/null || grc=$?
-  env -u DATABASE_URL "$RUST" "$@" >"$OUT/rust/$name.out" 2>"$OUT/rust/$name.err" </dev/null || rrc=$?
-  if [ "$grc" = "$rrc" ] && cmp -s "$OUT/go/$name.out" "$OUT/rust/$name.out" &&
-    head -c 9 "$OUT/go/$name.err" | grep -q '^demesne: ' && head -c 9 "$OUT/rust/$name.err" | grep -q '^demesne: '; then
-    diverged=$((diverged + 1))
-    echo "NAMED $name: driver error text differs by design"
-    echo "  go:   $(cat "$OUT/go/$name.err")"
-    echo "  rust: $(cat "$OUT/rust/$name.err")"
-  else
-    echo "DIFF $name: exit $grc vs $rrc"
-  fi
-}
-
 role authenticated ""
 role bypasser "BYPASSRLS"
+psql "$BASE/postgres" -v ON_ERROR_STOP=1 -q -X -c "DO \$\$BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'scramuser') THEN CREATE ROLE scramuser LOGIN; END IF; END\$\$" -c "ALTER ROLE scramuser PASSWORD 'scram-pass'" >/dev/null
+psql "$BASE/postgres" -v ON_ERROR_STOP=1 -q -X -c "DO \$\$BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'md5user') THEN CREATE ROLE md5user LOGIN; END IF; END\$\$" -c "SET password_encryption = 'md5'" -c "ALTER ROLE md5user PASSWORD 'md5-pass'" >/dev/null 2>&1
 
 fresh demesne_live_example
 grep -v '^CREATE ROLE authenticated' "$ROOT/ts/packages/example-app/sql/schema.sql" | sql demesne_live_example
 sql demesne_live_example -f "$ROOT/ts/packages/example-app/generated/policies.sql"
+sql demesne_live_example -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO scramuser"
 EX="$BASE/demesne_live_example"
 SPEC="$ROOT/examples/roundtrip.demesne"
 run introspect-example introspect "$EX"
@@ -113,7 +114,7 @@ for side in go rust; do
   bin="$GO"
   [ "$side" = rust ] && bin="$RUST"
   rc=0
-  env -u DATABASE_URL "$bin" scaffold -i "$FK" <"$OUT/specs/answers" >"$OUT/$side/scaffold-interactive.out" 2>"$OUT/$side/scaffold-interactive.err" || rc=$?
+  env "${CLEAN[@]}" "$bin" scaffold -i "$FK" <"$OUT/specs/answers" >"$OUT/$side/scaffold-interactive.out" 2>"$OUT/$side/scaffold-interactive.err" || rc=$?
   printf 'exit: %s\n%s\n%s' "$rc" "$(cat "$OUT/$side/scaffold-interactive.out")" "$(cat "$OUT/$side/scaffold-interactive.err")" >"$OUT/$side/scaffold-interactive.txt"
 done
 total=$((total + 1))
@@ -188,8 +189,67 @@ run check-global-plane check "$OUT/specs/plane.demesne" "$GL"
 run nodsn-check check "$SPEC"
 run nodsn-introspect introspect
 run nospec-check check
-run_driver_error baddsn-introspect introspect "postgres://postgres@127.0.0.1:1/nowhere?sslmode=disable"
-run_driver_error baddb-check check "$SPEC" "$BASE/demesne_no_such_db"
+run baddsn-introspect introspect "postgres://postgres@127.0.0.1:1/nowhere?sslmode=disable"
+run baddb-check check "$SPEC" "$BASE/demesne_no_such_db"
+run dns-introspect introspect "postgres://postgres@nosuchhost.invalid:5467/x"
+run timeout-introspect introspect "postgres://postgres@10.255.255.1:5467/x?connect_timeout=1&sslmode=disable"
+run parse-port-introspect introspect "postgres://u:secret@h:99999/db"
+run parse-sslmode-check check "$SPEC" "host=127.0.0.1 password=secret sslmode=bogus"
+run multihost-introspect introspect "host=127.0.0.1,127.0.0.1 port=1,5467 user=postgres dbname=demesne_live_example sslmode=disable"
+run kv-introspect introspect "host=127.0.0.1 port=5467 user=postgres dbname=demesne_live_example sslmode=disable"
+run unix-introspect introspect "host=/tmp port=5467 user=postgres dbname=demesne_live_example"
+run unix-missing-introspect introspect "host=/nonexistent port=5467 user=postgres dbname=x"
+run_env env-introspect "PGHOST=127.0.0.1 PGPORT=5467 PGUSER=postgres PGSSLMODE=disable" introspect "dbname=demesne_live_example"
+run tsa-read-only introspect "$EX?sslmode=disable&target_session_attrs=read-only"
+run tsa-standby introspect "$EX?sslmode=disable&target_session_attrs=standby"
+run tsa-prefer-standby introspect "$EX?sslmode=disable&target_session_attrs=prefer-standby"
+run tsa-read-write introspect "$EX?sslmode=disable&target_session_attrs=read-write"
+run minproto-introspect introspect "$EX?sslmode=disable&min_protocol_version=3.2"
+run unknown-param-introspect introspect "$EX?sslmode=disable&foo_bar=1"
+run app-name-introspect introspect "$EX?sslmode=disable&application_name=demesne%20parity&options=-c%20search_path%3Dpublic"
+SCR="postgres://scramuser:scram-pass@127.0.0.1:5467/demesne_live_example"
+printf '127.0.0.1:5467:*:scramuser:scram-pass\n' >"$OUT/specs/pgpass"
+run scram-introspect introspect "$SCR?sslmode=disable"
+run scram-badpw-introspect introspect "postgres://scramuser:wrong@127.0.0.1:5467/demesne_live_example"
+run scram-nopw-introspect introspect "postgres://scramuser@127.0.0.1:5467/demesne_live_example?sslmode=disable"
+run_env scram-passfile-introspect "PGPASSFILE=$OUT/specs/pgpass" introspect "postgres://scramuser@127.0.0.1:5467/demesne_live_example?sslmode=disable"
+run scram-cb-plain-introspect introspect "$SCR?sslmode=disable&channel_binding=require"
+run scram-cb-disable-introspect introspect "$SCR?channel_binding=disable"
+run md5-introspect introspect "postgres://md5user:md5-pass@127.0.0.1:5467/demesne_live_example?sslmode=disable"
+run md5-badpw-introspect introspect "postgres://md5user:wrong@127.0.0.1:5467/demesne_live_example?sslmode=disable"
+run scram-unix-introspect introspect "host=/tmp port=5467 user=scramuser password=scram-pass dbname=demesne_live_example"
 
-echo "live-db: scenarios $total  identical $same  named-divergence $diverged  differ $((total - same - diverged))"
-[ $((total - same - diverged)) -eq 0 ]
+fresh demesne_live_auditerr
+sql demesne_live_auditerr -c "
+  CREATE TABLE docs (id text PRIMARY KEY, tenant_id text, project_id text);
+  CREATE TABLE roles (id text PRIMARY KEY, key text);
+  CREATE TABLE ra_base (id text PRIMARY KEY, principal_kind text, user_id text, tenant_id text, project_id text, role_id text, revoked_at timestamptz);
+  CREATE VIEW role_assignments AS SELECT id, principal_kind, user_id, (1/0)::text AS tenant_id, project_id, role_id, revoked_at FROM ra_base;
+"
+run check-audit-error check "$OUT/specs/global.demesne" "$BASE/demesne_live_auditerr"
+
+if [ -n "$TLS" ]; then
+  TEX="postgres://postgres@127.0.0.1:5467/demesne_live_example"
+  LEX="postgres://postgres@localhost:5467/demesne_live_example"
+  run tls-prefer introspect "$TEX"
+  run tls-require introspect "$TEX?sslmode=require"
+  run tls-require-rootcert introspect "$TEX?sslmode=require&sslrootcert=$TLS/ca.crt"
+  run tls-verify-ca introspect "$TEX?sslmode=verify-ca&sslrootcert=$TLS/ca.crt"
+  run tls-verify-ca-wrong-ca introspect "$TEX?sslmode=verify-ca&sslrootcert=$TLS/other-ca.crt"
+  run tls-verify-full-ip introspect "$TEX?sslmode=verify-full&sslrootcert=$TLS/ca.crt"
+  run tls-verify-full-localhost introspect "$LEX?sslmode=verify-full&sslrootcert=$TLS/ca.crt"
+  run tls-verify-full-wrong-ca introspect "$LEX?sslmode=verify-full&sslrootcert=$TLS/other-ca.crt"
+  run tls-missing-rootcert introspect "$TEX?sslmode=verify-ca&sslrootcert=/nonexistent/ca.crt"
+  run tls-direct introspect "$TEX?sslnegotiation=direct"
+  run tls-check check "$SPEC" "$TEX?sslmode=require"
+  run tls-diff diff "$SPEC" "$TEX?sslmode=verify-ca&sslrootcert=$TLS/ca.crt"
+  run_env tls-env-verify-full "PGSSLMODE=verify-full PGSSLROOTCERT=$TLS/ca.crt" introspect "$TEX"
+  run tls-tsa-read-only introspect "$TEX?target_session_attrs=read-only"
+  run tls-baddb introspect "postgres://postgres@127.0.0.1:5467/demesne_no_such_db"
+  run tls-channel-binding introspect "$TEX?channel_binding=require"
+  run tls-scram-cb-require introspect "$SCR?sslmode=require&channel_binding=require"
+  run tls-scram-prefer introspect "$SCR"
+fi
+
+echo "live-db: scenarios $total  identical $same  differ $((total - same))"
+[ "$same" -eq "$total" ]

@@ -1,4 +1,4 @@
-use demesne_parity::{api, corpus, fuzz, goast, oracle, runner};
+use demesne_parity::{api, corpus, dsn, fuzz, goast, oracle, runner};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,58 @@ USAGE:
   demesne-parity corpus
   demesne-parity fuzz --seed <n> --count <n> --mutate <n> --out <dir>
   demesne-parity run --go-tag <tag> --go-cli <path> [--rust-cli <path>] --out <dir> [--extra <prefix>=<dir>]... [--only <substr>] [--show <n>]
+  demesne-parity dsn --cases <file> --work <dir> --go <go-dump> --out <rust-dump>
 ";
+
+fn dsn_cmd(args: &[String]) -> Result<bool, String> {
+    let mut cases = None;
+    let mut work = None;
+    let mut go = None;
+    let mut out = None;
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?.clone();
+        match flag.as_str() {
+            "--cases" => cases = Some(v),
+            "--work" => work = Some(v),
+            "--go" => go = Some(v),
+            "--out" => out = Some(v),
+            other => return Err(format!("unknown flag {other}")),
+        }
+    }
+    let (Some(cases), Some(work), Some(go), Some(out)) = (cases, work, go, out) else { return Err("dsn needs --cases, --work, --go and --out".into()) };
+    let text = fs::read_to_string(&cases).map_err(|e| format!("{cases}: {e}"))?;
+    let parsed = dsn::parse_cases(&text);
+    let rust = dsn::dump_cases(&parsed, Path::new(&work))?;
+    fs::write(&out, &rust).map_err(|e| format!("{out}: {e}"))?;
+    let go_text = fs::read_to_string(&go).map_err(|e| format!("{go}: {e}"))?;
+    let go_cases = dsn::split_dump(&go_text);
+    let rust_cases = dsn::split_dump(&rust);
+    if go_cases.len() != parsed.len() || rust_cases.len() != parsed.len() {
+        return Err(format!("case counts differ: cases {} go {} rust {}", parsed.len(), go_cases.len(), rust_cases.len()));
+    }
+    let (mut same, mut named, mut differ) = (0, 0, 0);
+    for ((name, g), (_, r)) in go_cases.iter().zip(rust_cases.iter()) {
+        let expected_divergence = name.starts_with("named ");
+        match (g == r, expected_divergence) {
+            (true, false) => same += 1,
+            (false, true) => {
+                named += 1;
+                println!("NAMED {name}\n  go:   {}\n  rust: {}", g.trim_end().replace('\n', "\n        "), r.trim_end().replace('\n', "\n        "));
+            }
+            (true, true) => {
+                differ += 1;
+                println!("UNEXPECTED MATCH {name}: a named divergence no longer diverges");
+            }
+            (false, false) => {
+                differ += 1;
+                println!("DIFF {name}\n  go:   {}\n  rust: {}", g.trim_end().replace('\n', "\n        "), r.trim_end().replace('\n', "\n        "));
+            }
+        }
+    }
+    println!("dsn: cases {}  identical {same}  named-divergence {named}  differ {differ}", parsed.len());
+    Ok(differ == 0)
+}
 
 struct Args {
     go_tag: String,
@@ -214,6 +265,18 @@ fn main() -> ExitCode {
         }
         Some("fuzz") => match fuzz_cmd(&argv[1..]) {
             Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("demesne-parity: {e}");
+                ExitCode::from(2)
+            }
+        },
+        Some("dsn-one") => {
+            print!("{}", demesne_postgres::parse_config_dump(argv.get(1).map(String::as_str).unwrap_or("")));
+            ExitCode::SUCCESS
+        }
+        Some("dsn") => match dsn_cmd(&argv[1..]) {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::from(1),
             Err(e) => {
                 eprintln!("demesne-parity: {e}");
                 ExitCode::from(2)

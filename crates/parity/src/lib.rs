@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod corpus;
+pub mod dsn;
 pub mod fuzz;
 pub mod goast;
 pub mod oracle;
