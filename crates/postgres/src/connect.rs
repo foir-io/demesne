@@ -365,8 +365,13 @@ fn attempt(cfg: &ConnConfig, a: &Attempt, ignore_not_preferred: bool) -> Result<
         pc.application_name(n);
     }
     match &a.addr {
+        #[cfg(unix)]
         Addr::Unix(dir) => {
             pc.host_path(dir);
+        }
+        #[cfg(not(unix))]
+        Addr::Unix(_) => {
+            return Err(Failure::plain(format!("dial error: dial unix {}: connect: unix sockets are not supported on this platform", a.address)));
         }
         Addr::Tcp(ip) => {
             pc.host(a.original);
