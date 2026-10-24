@@ -1,6 +1,6 @@
-use crate::Error;
+use crate::{Error, Str};
 use demesne_gocompat::go_export;
-use std::collections::BTreeMap;
+use std::borrow::Cow;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,14 +22,26 @@ impl fmt::Display for Decision {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Pdp {
-    pub emit_site: String,
-    pub policy: BTreeMap<String, String>,
-    pub ungoverned: BTreeMap<String, String>,
+    pub emit_site: Str,
+    pub policy: Cow<'static, [(Str, Str)]>,
+    pub ungoverned: Cow<'static, [(Str, Str)]>,
+}
+
+fn lookup<'a>(entries: &'a [(Str, Str)], key: &str) -> Option<&'a str> {
+    entries.binary_search_by(|(k, _)| k.as_ref().cmp(key)).ok().map(|i| entries[i].1.as_ref())
 }
 
 impl Pdp {
+    pub fn permission(&self, procedure: &str) -> Option<&str> {
+        lookup(&self.policy, procedure)
+    }
+
+    pub fn ungoverned_reason(&self, procedure: &str) -> Option<&str> {
+        lookup(&self.ungoverned, procedure)
+    }
+
     pub fn authorize(&self, procedure: &str, holds: impl Fn(&str) -> bool) -> Decision {
-        match self.policy.get(procedure) {
+        match self.permission(procedure) {
             Some(perm) if holds(perm) => Decision::Allow,
             Some(_) => Decision::Deny,
             None => Decision::NotGoverned,

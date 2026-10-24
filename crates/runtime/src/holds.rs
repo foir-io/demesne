@@ -1,21 +1,21 @@
-use crate::{Error, Vocabulary};
+use crate::{Error, Str, Strs, Vocabulary};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HoldsResolver {
-    pub assignments: String,
-    pub kind_col: String,
-    pub kind_val: String,
-    pub subject_col: String,
-    pub scope_cols: Vec<String>,
-    pub revoked_col: String,
-    pub plane: String,
+    pub assignments: Str,
+    pub kind_col: Str,
+    pub kind_val: Str,
+    pub subject_col: Str,
+    pub scope_cols: Strs,
+    pub revoked_col: Str,
+    pub plane: Str,
     pub plane_depth: i64,
-    pub role_col: String,
-    pub roles_table: String,
-    pub roles_id: String,
-    pub key_col: String,
-    pub perms_col: String,
+    pub role_col: Str,
+    pub roles_table: Str,
+    pub roles_id: Str,
+    pub key_col: Str,
+    pub perms_col: Str,
     pub vocab: Vocabulary,
 }
 
@@ -76,7 +76,7 @@ impl HoldsResolver {
         (self.plane_depth as usize).min(n)
     }
 
-    pub fn selected_scope_cols(&self) -> &[String] {
+    pub fn selected_scope_cols(&self) -> &[Str] {
         &self.scope_cols[..self.plane_depth()]
     }
 
@@ -143,7 +143,7 @@ impl HoldsResolver {
             if !scope_contains(clamp_scope(&a.scope, depth), scope) {
                 continue;
             }
-            let perms = if !self.perms_col.is_empty() {
+            let perms: Vec<String> = if !self.perms_col.is_empty() {
                 a.permissions.clone()
             } else {
                 self.vocab

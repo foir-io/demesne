@@ -1,23 +1,26 @@
+use crate::Str;
+use std::borrow::Cow;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppCheck {
-    pub verb: String,
-    pub check_sql: String,
+    pub verb: Str,
+    pub check_sql: Str,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppObjectSurface {
-    pub object: String,
-    pub table: String,
-    pub pk: String,
-    pub flat_list_fn: String,
-    pub async_check_sql: String,
-    pub edit_check_sql: String,
-    pub checks: Vec<AppCheck>,
+    pub object: Str,
+    pub table: Str,
+    pub pk: Str,
+    pub flat_list_fn: Str,
+    pub async_check_sql: Str,
+    pub edit_check_sql: Str,
+    pub checks: Cow<'static, [AppCheck]>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppCheckSurface {
-    pub objects: Vec<AppObjectSurface>,
+    pub objects: Cow<'static, [AppObjectSurface]>,
 }
 
 impl AppCheckSurface {
@@ -36,7 +39,7 @@ impl AppObjectSurface {
     }
 
     pub fn check_verb_sql(&self, verb: &str) -> &str {
-        self.checks.iter().find(|c| c.verb == verb).map(|c| c.check_sql.as_str()).unwrap_or("")
+        self.checks.iter().find(|c| c.verb == verb).map(|c| c.check_sql.as_ref()).unwrap_or("")
     }
 
     pub fn check_many_sql(&self) -> String {

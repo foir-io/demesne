@@ -413,31 +413,30 @@ pub trait SpecExt {
 
     fn claims_contract_entries(&self) -> Result<Vec<ClaimEntry>, String> {
         let chain = topology::non_virtual_chain(self.spec())?;
-        let mut by_key: BTreeMap<String, ClaimEntry> = BTreeMap::new();
+        let mut by_key: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
         for l in chain {
-            let k = l.claim_key();
-            by_key.entry(k.clone()).or_insert_with(|| ClaimEntry { key: k, ..Default::default() }).level = l.name.clone();
+            by_key.entry(l.claim_key()).or_default().0 = l.name.clone();
         }
         for sub in &self.spec().subjects {
             if let Some(id) = &sub.identifies {
-                by_key
-                    .entry(id.clone())
-                    .or_insert_with(|| ClaimEntry { key: id.clone(), ..Default::default() })
-                    .subjects
-                    .push(sub.name.clone());
+                by_key.entry(id.clone()).or_default().1.push(sub.name.clone());
             }
         }
         Ok(by_key
-            .into_values()
-            .map(|mut e| {
-                e.subjects.sort();
-                e
+            .into_iter()
+            .map(|(key, (level, mut subjects))| {
+                subjects.sort();
+                ClaimEntry {
+                    key: demesne_runtime::owned(key),
+                    level: demesne_runtime::owned(level),
+                    subjects: demesne_runtime::owned_list(subjects),
+                }
             })
             .collect())
     }
 
     fn claims_contract(&self) -> Result<Vec<String>, String> {
-        Ok(self.claims_contract_entries()?.into_iter().map(|e| e.key).collect())
+        Ok(self.claims_contract_entries()?.into_iter().map(|e| e.key.into_owned()).collect())
     }
 
     fn pinned_columns(&self, sub: &Subject) -> Result<(Vec<String>, bool), String> {
@@ -461,10 +460,10 @@ pub trait SpecExt {
         let s = self.spec();
         let mut out = Session::default();
         if let Some(c) = &s.claims {
-            out.setting = c.setting.clone();
-            out.cast = c.cast.clone();
+            out.setting = demesne_runtime::owned(c.setting.clone());
+            out.cast = demesne_runtime::owned(c.cast.clone());
             if let Some(role) = &c.role {
-                out.role = role.clone();
+                out.role = demesne_runtime::owned(role.clone());
             }
         }
         out

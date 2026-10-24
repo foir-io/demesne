@@ -1,29 +1,30 @@
-use crate::Error;
+use crate::{Error, Str, Strs};
+use std::borrow::Cow;
 use demesne_gocompat::quote;
 use std::collections::{BTreeSet, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Implication {
-    pub perm: String,
-    pub set: Vec<String>,
+    pub perm: Str,
+    pub set: Strs,
     pub star: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Preset {
-    pub name: String,
-    pub level: String,
-    pub set: Vec<String>,
+    pub name: Str,
+    pub level: Str,
+    pub set: Strs,
     pub star: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Vocabulary {
-    pub name: String,
-    pub permissions: Vec<String>,
-    pub implications: Vec<Implication>,
-    pub presets: Vec<Preset>,
-    pub rank: Vec<String>,
+    pub name: Str,
+    pub permissions: Strs,
+    pub implications: Cow<'static, [Implication]>,
+    pub presets: Cow<'static, [Preset]>,
+    pub rank: Strs,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -47,7 +48,7 @@ impl Vocabulary {
         if !prefix.ends_with(':') {
             return Vec::new();
         }
-        self.permissions.iter().filter(|p| p.starts_with(prefix)).cloned().collect()
+        self.permissions.iter().filter(|p| p.starts_with(prefix)).map(|p| p.to_string()).collect()
     }
 
     pub fn implied_permissions(&self, perm: &str) -> Result<Vec<String>, Error> {
@@ -67,12 +68,12 @@ impl Vocabulary {
         into.insert(perm.to_string());
         let Some(im) = self.implication_of(perm) else { return Ok(()) };
         if im.star {
-            into.extend(self.permissions.iter().cloned());
+            into.extend(self.permissions.iter().map(|p| p.to_string()));
             return Ok(());
         }
         on_stack.insert(perm.to_string());
         let result = (|| {
-            for item in &im.set {
+            for item in im.set.iter() {
                 let mut matched = self.match_wildcard(item);
                 if matched.is_empty() {
                     if !self.has_permission(item) {
@@ -83,7 +84,7 @@ impl Vocabulary {
                             quote(item)
                         )));
                     }
-                    matched = vec![item.clone()];
+                    matched = vec![item.to_string()];
                 }
                 for m in &matched {
                     self.expand_implication(m, into, on_stack)?;
@@ -131,14 +132,14 @@ impl Vocabulary {
             return Err(Error::new(format!("vocabulary {}: no preset {}", quote(&self.name), quote(name))));
         };
         if p.star {
-            into.extend(self.permissions.iter().cloned());
+            into.extend(self.permissions.iter().map(|p| p.to_string()));
             return Ok(());
         }
         on_stack.insert(name.to_string());
         let result = (|| {
-            for item in &p.set {
+            for item in p.set.iter() {
                 if self.has_permission(item) {
-                    into.insert(item.clone());
+                    into.insert(item.to_string());
                 } else if self.preset_by_name(item).is_some() {
                     self.expand_preset(item, into, on_stack)?;
                 } else {
@@ -162,11 +163,11 @@ impl Vocabulary {
 
     pub fn presets_at_or_above(&self, threshold: &str) -> Vec<String> {
         let Some(ti) = self.rank_of(threshold) else { return Vec::new() };
-        self.rank[..=ti].to_vec()
+        self.rank[..=ti].iter().map(|r| r.to_string()).collect()
     }
 
     pub fn cap_grant(&self, held: &[String], requested: &[String]) -> DelegationCap {
-        let in_vocab: HashSet<&str> = self.permissions.iter().map(String::as_str).collect();
+        let in_vocab: HashSet<&str> = self.permissions.iter().map(|p| p.as_ref()).collect();
         let held: HashSet<&str> = held.iter().map(String::as_str).collect();
         let mut unknown: Vec<String> = Vec::new();
         let mut excess: Vec<String> = Vec::new();

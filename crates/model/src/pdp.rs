@@ -4,8 +4,13 @@ use demesne_runtime::Pdp;
 use demesne_syntax::Spec;
 use std::collections::BTreeMap;
 
+struct Site {
+    policy: BTreeMap<String, String>,
+    ungoverned: BTreeMap<String, String>,
+}
+
 pub fn emit_pdp(s: &Spec) -> Result<BTreeMap<String, Pdp>, String> {
-    let mut out: BTreeMap<String, Pdp> = BTreeMap::new();
+    let mut out: BTreeMap<String, Site> = BTreeMap::new();
     let mut errs: Vec<String> = Vec::new();
     for pr in &s.procedures {
         let Some(v) = s.vocab_by_name(&pr.emit_site) else {
@@ -16,7 +21,7 @@ pub fn emit_pdp(s: &Spec) -> Result<BTreeMap<String, Pdp>, String> {
             ));
             continue;
         };
-        let p = out.entry(pr.emit_site.clone()).or_insert_with(|| Pdp { emit_site: pr.emit_site.clone(), ..Default::default() });
+        let p = out.entry(pr.emit_site.clone()).or_insert_with(|| Site { policy: BTreeMap::new(), ungoverned: BTreeMap::new() });
         for e in &pr.entries {
             if !v.permissions.iter().any(|x| x == &e.perm) {
                 errs.push(format!(
@@ -44,7 +49,7 @@ pub fn emit_pdp(s: &Spec) -> Result<BTreeMap<String, Pdp>, String> {
             ));
             continue;
         }
-        let p = out.entry(u.emit_site.clone()).or_insert_with(|| Pdp { emit_site: u.emit_site.clone(), ..Default::default() });
+        let p = out.entry(u.emit_site.clone()).or_insert_with(|| Site { policy: BTreeMap::new(), ungoverned: BTreeMap::new() });
         for e in &u.entries {
             if p.policy.contains_key(&e.proc_) {
                 errs.push(format!("line {}: procedure {} is both governed and ungoverned", e.pos.line, e.proc_));
@@ -55,7 +60,16 @@ pub fn emit_pdp(s: &Spec) -> Result<BTreeMap<String, Pdp>, String> {
     if !errs.is_empty() {
         return Err(format!("PDP emit:\n  {}", errs.join("\n  ")));
     }
-    Ok(out)
+    let pairs = |m: BTreeMap<String, String>| -> std::borrow::Cow<'static, [(demesne_runtime::Str, demesne_runtime::Str)]> {
+        m.into_iter().map(|(k, v)| (demesne_runtime::owned(k), demesne_runtime::owned(v))).collect::<Vec<_>>().into()
+    };
+    Ok(out
+        .into_iter()
+        .map(|(site, p)| {
+            let pdp = Pdp { emit_site: demesne_runtime::owned(site.clone()), policy: pairs(p.policy), ungoverned: pairs(p.ungoverned) };
+            (site, pdp)
+        })
+        .collect())
 }
 
 pub fn emit_field_scopes(s: &Spec) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {

@@ -9,11 +9,11 @@ use std::collections::{HashMap, HashSet};
 
 type R<T> = Result<T, String>;
 
-pub fn go_str_slice(ss: &[String]) -> String {
+pub fn go_str_slice<S: AsRef<str>>(ss: &[S]) -> String {
     if ss.is_empty() {
         return "[]string{}".into();
     }
-    let parts: Vec<String> = ss.iter().map(|s| quote(s)).collect();
+    let parts: Vec<String> = ss.iter().map(|s| quote(s.as_ref())).collect();
     format!("[]string{{{}}}", parts.join(", "))
 }
 
@@ -82,7 +82,7 @@ pub fn emit_framework(s: &Spec, pkg: &str) -> R<String> {
     g.claims(&contract);
     g.banner(&skipped);
     g.pdp_banner(&orphan);
-    for o in &surf.objects {
+    for o in surf.objects.iter() {
         if let Some(obj) = s.object_by_name(&o.object) {
             g.object(o, obj);
         }
@@ -324,7 +324,7 @@ impl Gen<'_> {
             let verb = go_export(&pm.verb);
             if pm.has_layer("pdp") {
                 self.pdp_can(&recv, pm);
-                self.pdp_checks.push(Check { object: o.object.clone(), verb: pm.verb.clone(), method: String::new() });
+                self.pdp_checks.push(Check { object: o.object.to_string(), verb: pm.verb.clone(), method: String::new() });
             } else if pm.maps() == "select" {
                 self.row_can(&recv, &exp, &o.object, &pm.verb, &format!("Can{verb}"), &o.check_sql());
             } else if pm.maps() == "update" {

@@ -29,3 +29,14 @@ pub use role_assignment::{RoleAssignmentSurface, touch_on_conflict};
 pub use vocab::{DelegationCap, Implication, Preset, Vocabulary};
 
 pub type SqlArg = Option<String>;
+
+pub type Str = std::borrow::Cow<'static, str>;
+pub type Strs = std::borrow::Cow<'static, [Str]>;
+
+pub fn owned(s: impl Into<String>) -> Str {
+    std::borrow::Cow::Owned(s.into())
+}
+
+pub fn owned_list<I: IntoIterator<Item = S>, S: Into<String>>(xs: I) -> Strs {
+    std::borrow::Cow::Owned(xs.into_iter().map(|s| owned(s)).collect())
+}

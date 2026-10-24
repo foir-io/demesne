@@ -1,26 +1,25 @@
-use crate::SqlArg;
-use crate::Error;
-use std::collections::BTreeSet;
+use crate::{Error, SqlArg, Str, Strs};
+use std::borrow::Cow;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResourceAccessSurface {
-    pub table: String,
-    pub scope_cols: Vec<String>,
-    pub scope_nullable: Vec<bool>,
-    pub mode_col: String,
-    pub pk: String,
-    pub read_modes: BTreeSet<String>,
-    pub grant_kinds: BTreeSet<String>,
-    pub acl_table: String,
-    pub record_col: String,
-    pub kind_col: String,
-    pub principal_col: String,
-    pub access_col: String,
-    pub discrim_col: String,
-    pub discrim_val: String,
-    pub accessor_fn: String,
+    pub table: Str,
+    pub scope_cols: Strs,
+    pub scope_nullable: Cow<'static, [bool]>,
+    pub mode_col: Str,
+    pub pk: Str,
+    pub read_modes: Strs,
+    pub grant_kinds: Strs,
+    pub acl_table: Str,
+    pub record_col: Str,
+    pub kind_col: Str,
+    pub principal_col: Str,
+    pub access_col: Str,
+    pub discrim_col: Str,
+    pub discrim_val: Str,
+    pub accessor_fn: Str,
     pub conditional: bool,
-    pub conditional_by: String,
+    pub conditional_by: Str,
 }
 
 impl ResourceAccessSurface {
@@ -37,11 +36,11 @@ impl ResourceAccessSurface {
     }
 
     pub fn is_read_mode(&self, mode: &str) -> bool {
-        self.read_modes.contains(mode)
+        self.read_modes.iter().any(|m| m == mode)
     }
 
     pub fn grant_kind_allowed(&self, kind: &str) -> bool {
-        self.grant_kinds.contains(kind)
+        self.grant_kinds.iter().any(|k| k == kind)
     }
 
     pub fn mode_sql(&self) -> String {
@@ -67,20 +66,20 @@ impl ResourceAccessSurface {
         principal_id: &str,
         access: &str,
     ) -> (String, Vec<SqlArg>) {
-        let mut cols = self.scope_cols.clone();
+        let mut cols: Vec<&str> = self.scope_cols.iter().map(|c| c.as_ref()).collect();
         let mut args: Vec<SqlArg> = scope.iter().enumerate().map(|(i, v)| self.scope_arg(i, v)).collect();
         if !self.discrim_col.is_empty() {
-            cols.push(self.discrim_col.clone());
-            args.push(Some(self.discrim_val.clone()));
+            cols.push(&self.discrim_col);
+            args.push(Some(self.discrim_val.to_string()));
         }
-        cols.extend([self.record_col.clone(), self.kind_col.clone(), self.principal_col.clone(), self.access_col.clone()]);
+        cols.extend([&*self.record_col, &*self.kind_col, &*self.principal_col, &*self.access_col]);
         args.extend([resource_id, kind, principal_id, access].map(|s| Some(s.to_string())));
         let ph: Vec<String> = (1..=cols.len()).map(|i| format!("${i}")).collect();
-        let mut conflict = Vec::new();
+        let mut conflict: Vec<&str> = Vec::new();
         if !self.discrim_col.is_empty() {
-            conflict.push(self.discrim_col.clone());
+            conflict.push(&self.discrim_col);
         }
-        conflict.extend([self.record_col.clone(), self.kind_col.clone(), self.principal_col.clone(), self.access_col.clone()]);
+        conflict.extend([&*self.record_col, &*self.kind_col, &*self.principal_col, &*self.access_col]);
         let sql = format!(
             "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO NOTHING RETURNING created_at",
             self.acl_table,
@@ -123,7 +122,7 @@ impl ResourceAccessSurface {
 
     pub fn list_grants_args(&self, resource_id: &str) -> Vec<SqlArg> {
         if !self.discrim_col.is_empty() {
-            return vec![Some(resource_id.to_string()), Some(self.discrim_val.clone())];
+            return vec![Some(resource_id.to_string()), Some(self.discrim_val.to_string())];
         }
         vec![Some(resource_id.to_string())]
     }

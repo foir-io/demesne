@@ -2,7 +2,7 @@ use crate::Sql;
 use demesne_model::SpecExt;
 use demesne_model::analysis::relation_is_async;
 use demesne_model::conditional::accessor_tree_op;
-use demesne_runtime::{AppCheck, AppCheckSurface, AppObjectSurface};
+use demesne_runtime::{AppCheck, AppCheckSurface, AppObjectSurface, owned};
 use demesne_syntax::*;
 
 impl Sql<'_> {
@@ -10,7 +10,7 @@ impl Sql<'_> {
         if self.s.objects.is_empty() {
             return Err("EmitAppSurface: the spec declares no objects".into());
         }
-        let mut out = AppCheckSurface::default();
+        let mut objects: Vec<AppObjectSurface> = Vec::new();
         for o in &self.s.objects {
             if !o.point_checkable() {
                 continue;
@@ -27,19 +27,19 @@ impl Sql<'_> {
                 if sql.is_empty() {
                     continue;
                 }
-                checks.push(AppCheck { verb: pm.verb.clone(), check_sql: sql });
+                checks.push(AppCheck { verb: owned(pm.verb.clone()), check_sql: owned(sql) });
             }
-            out.objects.push(AppObjectSurface {
-                object: o.name.clone(),
-                table: o.table.clone(),
-                pk: o.pk().into(),
-                flat_list_fn: self.flat_list_fn(o),
-                async_check_sql: self.async_check_sql(o),
-                edit_check_sql: edit_sql,
-                checks,
+            objects.push(AppObjectSurface {
+                object: owned(o.name.clone()),
+                table: owned(o.table.clone()),
+                pk: owned(o.pk()),
+                flat_list_fn: owned(self.flat_list_fn(o)),
+                async_check_sql: owned(self.async_check_sql(o)),
+                edit_check_sql: owned(edit_sql),
+                checks: checks.into(),
             });
         }
-        Ok(out)
+        Ok(AppCheckSurface { objects: objects.into() })
     }
 
     fn flat_list_fn(&self, o: &Object) -> String {

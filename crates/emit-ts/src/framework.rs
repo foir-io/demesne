@@ -45,7 +45,7 @@ pub fn emit_framework_ts(s: &Spec) -> R<String> {
     let skipped: Vec<&Object> = s.objects.iter().filter(|o| !o.point_checkable()).collect();
     g.banner(&skipped);
     g.pdp_banner(&orphan_pdp_verbs(s));
-    for o in &surf.objects {
+    for o in surf.objects.iter() {
         if let Some(obj) = s.object_by_name(&o.object) {
             g.object(o, obj);
         }
@@ -184,7 +184,7 @@ impl Gen<'_> {
             if pm.has_layer("pdp") {
                 self.need.eff = true;
                 parts.push(pdp_can(&method, pm));
-                self.pdp_checks.push(Check { object: o.object.clone(), verb: pm.verb.clone(), method: String::new() });
+                self.pdp_checks.push(Check { object: o.object.to_string(), verb: pm.verb.clone(), method: String::new() });
                 continue;
             }
             let sql = if pm.maps() == "select" {
@@ -193,7 +193,7 @@ impl Gen<'_> {
                 if o.edit_check_sql.is_empty() {
                     continue;
                 }
-                o.edit_check_sql.clone()
+                o.edit_check_sql.to_string()
             } else if pm.has_layer("check") {
                 let sql = o.check_verb_sql(&pm.verb);
                 if sql.is_empty() {
@@ -205,7 +205,7 @@ impl Gen<'_> {
             };
             self.need.compose = true;
             parts.push(row_can(&method, &sql));
-            self.checks.push(Check { object: o.object.clone(), verb: pm.verb.clone(), method: format!("{name}.{method}") });
+            self.checks.push(Check { object: o.object.to_string(), verb: pm.verb.clone(), method: format!("{name}.{method}") });
         }
         let list_sql = if o.flat_list_fn.is_empty() { o.list_resources_sql() } else { o.list_resources_fast_sql() };
         parts.push(format!(

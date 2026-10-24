@@ -220,7 +220,7 @@ fn emit_pdp_report(out: &mut Out, s: &Spec) -> R {
     let pdps = emit_pdp(s)?;
     for (site, p) in &pdps {
         out.print(&format!("# PDP {}: {} governed, {} ungoverned\n", quote(site), p.policy.len(), p.ungoverned.len()));
-        for (pr, perm) in &p.policy {
+        for (pr, perm) in p.policy.iter() {
             out.print(&format!("{pr} -> {perm}\n"));
         }
     }

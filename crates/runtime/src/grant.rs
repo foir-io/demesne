@@ -1,20 +1,20 @@
-use crate::SqlArg;
+use crate::{SqlArg, Str, Strs};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GrantSurface {
-    pub name: String,
-    pub level: String,
-    pub table: String,
-    pub grantee_col: String,
-    pub level_col: String,
-    pub active_col: String,
-    pub expires_col: String,
-    pub pk: String,
-    pub granted_by_col: String,
-    pub revoked_by_col: String,
-    pub created_at_col: String,
-    pub extra_cols: Vec<String>,
+    pub name: Str,
+    pub level: Str,
+    pub table: Str,
+    pub grantee_col: Str,
+    pub level_col: Str,
+    pub active_col: Str,
+    pub expires_col: Str,
+    pub pk: Str,
+    pub granted_by_col: Str,
+    pub revoked_by_col: Str,
+    pub created_at_col: Str,
+    pub extra_cols: Strs,
 }
 
 impl GrantSurface {
@@ -32,14 +32,14 @@ impl GrantSurface {
         conj.join(" AND ")
     }
 
-    fn grant_cols(&self) -> Vec<String> {
-        let mut cols = vec![self.pk.clone(), self.grantee_col.clone(), self.level_col.clone()];
+    fn grant_cols(&self) -> Vec<&str> {
+        let mut cols: Vec<&str> = vec![&self.pk, &self.grantee_col, &self.level_col];
         for c in [&self.granted_by_col, &self.expires_col, &self.created_at_col, &self.active_col, &self.revoked_by_col] {
             if !c.is_empty() {
-                cols.push(c.clone());
+                cols.push(c);
             }
         }
-        cols.extend(self.extra_cols.iter().cloned());
+        cols.extend(self.extra_cols.iter().map(|c| c.as_ref()));
         cols
     }
 
@@ -52,19 +52,19 @@ impl GrantSurface {
         expires_at: SqlArg,
         extra: &BTreeMap<String, String>,
     ) -> (String, Vec<SqlArg>) {
-        let mut cols = vec![self.pk.clone(), self.grantee_col.clone(), self.level_col.clone()];
+        let mut cols: Vec<&str> = vec![&self.pk, &self.grantee_col, &self.level_col];
         let mut args: Vec<SqlArg> = vec![Some(grant_id.into()), Some(grantee_id.into()), Some(level_id.into())];
         if !self.granted_by_col.is_empty() {
-            cols.push(self.granted_by_col.clone());
+            cols.push(&self.granted_by_col);
             args.push(Some(granted_by.into()));
         }
         if !self.expires_col.is_empty() {
-            cols.push(self.expires_col.clone());
+            cols.push(&self.expires_col);
             args.push(expires_at);
         }
-        for c in &self.extra_cols {
-            cols.push(c.clone());
-            args.push(extra.get(c).cloned());
+        for c in self.extra_cols.iter() {
+            cols.push(c);
+            args.push(extra.get(c.as_ref()).cloned());
         }
         let ph: Vec<String> = (1..=cols.len()).map(|i| format!("${i}")).collect();
         let sql = format!(

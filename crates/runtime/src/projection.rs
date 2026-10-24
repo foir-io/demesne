@@ -1,12 +1,12 @@
 use crate::*;
 use demesne_gocompat::json::Value;
 
-fn st(v: &Value, k: &str) -> String {
-    v.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+fn st(v: &Value, k: &str) -> Str {
+    owned(v.get(k).and_then(Value::as_str).unwrap_or(""))
 }
 
-fn list(v: &Value, k: &str) -> Vec<String> {
-    v.get(k).map(Value::string_list).unwrap_or_default()
+fn list(v: &Value, k: &str) -> Strs {
+    owned_list(v.get(k).map(Value::string_list).unwrap_or_default())
 }
 
 pub fn session(claims: &Value) -> Session {
@@ -14,7 +14,7 @@ pub fn session(claims: &Value) -> Session {
 }
 
 pub fn contract(claims: &Value) -> Vec<String> {
-    list(claims, "contract")
+    claims.get("contract").map(Value::string_list).unwrap_or_default()
 }
 
 pub fn app_object(v: &Value) -> AppObjectSurface {
@@ -25,7 +25,7 @@ pub fn app_object(v: &Value) -> AppObjectSurface {
         flat_list_fn: st(v, "flatListFn"),
         async_check_sql: st(v, "asyncCheckSQL"),
         edit_check_sql: st(v, "editCheckSQL"),
-        checks: Vec::new(),
+        checks: std::borrow::Cow::Borrowed(&[]),
     }
 }
 
@@ -37,11 +37,13 @@ pub fn vocabulary(v: &Value) -> Vocabulary {
         implications: entries("implications")
             .iter()
             .map(|im| Implication { perm: st(im, "perm"), set: list(im, "set"), star: im.get("star").and_then(Value::as_bool).unwrap_or(false) })
-            .collect(),
+            .collect::<Vec<_>>()
+            .into(),
         presets: entries("presets")
             .iter()
             .map(|p| Preset { name: st(p, "name"), level: st(p, "level"), set: list(p, "set"), star: p.get("star").and_then(Value::as_bool).unwrap_or(false) })
-            .collect(),
+            .collect::<Vec<_>>()
+            .into(),
         rank: list(v, "rank"),
     }
 }
@@ -107,11 +109,11 @@ pub fn resource_access(v: &Value) -> ResourceAccessSurface {
     ResourceAccessSurface {
         table: st(v, "table"),
         scope_cols: list(v, "scopeCols"),
-        scope_nullable: Vec::new(),
+        scope_nullable: std::borrow::Cow::Borrowed(&[]),
         mode_col: st(v, "modeCol"),
         pk: st(v, "pk"),
-        read_modes: list(v, "readModes").into_iter().collect(),
-        grant_kinds: list(v, "grantKinds").into_iter().collect(),
+        read_modes: list(v, "readModes"),
+        grant_kinds: list(v, "grantKinds"),
         acl_table: st(v, "aclTable"),
         record_col: st(v, "recordCol"),
         kind_col: st(v, "kindCol"),
@@ -121,6 +123,6 @@ pub fn resource_access(v: &Value) -> ResourceAccessSurface {
         discrim_val: st(v, "discrimVal"),
         accessor_fn: st(v, "accessorFn"),
         conditional: v.get("accessorsConditional").and_then(Value::as_bool).unwrap_or(false),
-        conditional_by: String::new(),
+        conditional_by: Str::Borrowed(""),
     }
 }

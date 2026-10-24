@@ -6,8 +6,16 @@ use demesne_runtime as rt;
 use demesne_syntax::*;
 use std::collections::BTreeMap;
 
-fn s(o: &Option<String>) -> String {
-    o.clone().unwrap_or_default()
+fn s(o: &Option<String>) -> rt::Str {
+    rt::owned(o.clone().unwrap_or_default())
+}
+
+fn o(v: impl Into<String>) -> rt::Str {
+    rt::owned(v)
+}
+
+fn l(v: &[String]) -> rt::Strs {
+    rt::owned_list(v.iter().cloned())
 }
 
 fn pick_role_store<'a>(spec: &'a Spec, rolestore: &str) -> Option<&'a RoleStore> {
@@ -37,7 +45,7 @@ pub trait SurfaceExt: SpecExt {
             kind_col: s(&rs.kind_col),
             kind_val: s(&rs.kind_val),
             subject_col: s(&rs.subject_col),
-            scope_cols: rs.scope_cols.clone(),
+            scope_cols: l(&rs.scope_cols),
             revoked_col: s(&rs.revoked_col),
             plane: s(&rs.plane),
             plane_depth: self.rolestore_plane_depth(rs) as i64,
@@ -56,17 +64,17 @@ pub trait SurfaceExt: SpecExt {
         };
         Ok(rt::RoleAssignmentSurface {
             assignments: s(&rs.assignments),
-            pk: rs.assignment_pk().to_string(),
+            pk: o(rs.assignment_pk()),
             kind_col: s(&rs.kind_col),
             kind_val: s(&rs.kind_val),
             subject_col: s(&rs.subject_col),
             role_col: s(&rs.role_col),
-            scope_cols: rs.scope_cols.clone(),
+            scope_cols: l(&rs.scope_cols),
             revoked_col: s(&rs.revoked_col),
             granted_at_col: s(&rs.granted_at_col),
             granted_by_col: s(&rs.granted_by_col),
             revoked_by_col: s(&rs.revoked_by_col),
-            extra_cols: rs.extra_cols.clone(),
+            extra_cols: l(&rs.extra_cols),
             roles_table: s(&rs.roles_table),
             roles_id: s(&rs.roles_id),
             key_col: s(&rs.key_col),
@@ -82,18 +90,18 @@ pub trait SurfaceExt: SpecExt {
             return Err(format!("GrantSurface: claim grant {} has no writable edge", quote(name)));
         }
         Ok(rt::GrantSurface {
-            name: g.name.clone(),
-            level: g.level.clone(),
+            name: o(g.name.clone()),
+            level: o(g.level.clone()),
             table: s(&g.table),
             grantee_col: s(&g.grantee_col),
             level_col: s(&g.level_col),
             active_col: s(&g.active_col),
             expires_col: s(&g.expires_col),
-            pk: g.grant_pk().to_string(),
+            pk: o(g.grant_pk()),
             granted_by_col: s(&g.granted_by_col),
             revoked_by_col: s(&g.revoked_by_col),
             created_at_col: s(&g.created_at_col),
-            extra_cols: g.extra_cols.clone(),
+            extra_cols: l(&g.extra_cols),
         })
     }
 
@@ -109,38 +117,40 @@ pub trait SurfaceExt: SpecExt {
         };
         let schema = self.spec().definer_schema();
         let mut r = rt::ResourceAccessSurface {
-            table: obj.table.clone(),
-            pk: obj.pk().to_string(),
-            acl_table: edge.table.clone(),
-            record_col: edge.record_col.clone(),
-            kind_col: edge.kind_col.clone(),
-            principal_col: edge.principal_col.clone(),
-            access_col: edge.access_col.clone(),
+            table: o(obj.table.clone()),
+            pk: o(obj.pk()),
+            acl_table: o(edge.table.clone()),
+            record_col: o(edge.record_col.clone()),
+            kind_col: o(edge.kind_col.clone()),
+            principal_col: o(edge.principal_col.clone()),
+            access_col: o(edge.access_col.clone()),
             discrim_col: s(&edge.discrim_col),
             discrim_val: s(&edge.discrim_val),
-            accessor_fn: format!("{schema}.{}_accessors", obj.table),
+            accessor_fn: o(format!("{schema}.{}_accessors", obj.table)),
             ..Default::default()
         };
         let cond = self.conditional_accessors(obj);
         if !cond.is_empty() {
             r.conditional = true;
-            r.conditional_by = admission_names(&cond);
-            r.accessor_fn = format!("{schema}.{}_accessors_conditional", obj.table);
+            r.conditional_by = o(admission_names(&cond));
+            r.accessor_fn = o(format!("{schema}.{}_accessors_conditional", obj.table));
         }
-        for lvl in &obj.scoped {
-            r.scope_cols.push(self.scope_col(obj, lvl));
-            r.scope_nullable.push(obj.scope_is_wildcard(lvl));
-        }
+        let scope_cols: Vec<String> = obj.scoped.iter().map(|lvl| self.scope_col(obj, lvl)).collect();
+        r.scope_cols = l(&scope_cols);
+        r.scope_nullable = obj.scoped.iter().map(|lvl| obj.scope_is_wildcard(lvl)).collect::<Vec<_>>().into();
+        let mut read_modes = std::collections::BTreeSet::new();
         for pm in &obj.perms {
             for t in pm.tree.leaves() {
                 if let Some(col) = t.mode_col() {
-                    r.mode_col = col.to_string();
-                    r.read_modes.insert(t.mode_val().to_string());
+                    r.mode_col = o(col);
+                    read_modes.insert(t.mode_val().to_string());
                 }
             }
         }
+        r.read_modes = rt::owned_list(read_modes);
         if let Some((rel, _)) = grant_relation(obj) {
-            r.grant_kinds.extend(rel.types.iter().cloned());
+            let kinds: std::collections::BTreeSet<String> = rel.types.iter().cloned().collect();
+            r.grant_kinds = rt::owned_list(kinds);
         }
         Ok(r)
     }

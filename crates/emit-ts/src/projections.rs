@@ -7,7 +7,7 @@ fn s(v: &str) -> Value {
     Value::str(v)
 }
 
-fn strs(v: &[String]) -> Value {
+fn strs<S: AsRef<str>>(v: &[S]) -> Value {
     Value::strings(v)
 }
 
@@ -53,9 +53,7 @@ pub fn app_object(o: &rt::AppObjectSurface) -> Value {
 }
 
 pub fn pdp(p: &rt::Pdp) -> Value {
-    let map = |m: &std::collections::BTreeMap<String, String>| {
-        Value::Map(m.iter().map(|(k, v)| (k.clone(), Value::str(v))).collect())
-    };
+    let map = |m: &[(rt::Str, rt::Str)]| Value::Map(m.iter().map(|(k, v)| (k.to_string(), Value::str(v.as_ref()))).collect());
     obj(vec![("emitSite", s(&p.emit_site)), ("policy", map(&p.policy)), ("ungoverned", map(&p.ungoverned))])
 }
 
@@ -139,7 +137,7 @@ pub fn grant(g: &rt::GrantSurface) -> Value {
 }
 
 pub fn res_access(r: &rt::ResourceAccessSurface) -> Value {
-    let set = |xs: &std::collections::BTreeSet<String>| Value::Array(xs.iter().map(|x| Value::str(x)).collect());
+    let set = |xs: &[rt::Str]| Value::strings(xs);
     obj(vec![
         ("table", s(&r.table)),
         ("scopeCols", strs(&r.scope_cols)),

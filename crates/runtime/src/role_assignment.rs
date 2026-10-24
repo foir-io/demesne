@@ -1,42 +1,42 @@
-use crate::SqlArg;
+use crate::{SqlArg, Str, Strs};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoleAssignmentSurface {
-    pub assignments: String,
-    pub pk: String,
-    pub kind_col: String,
-    pub kind_val: String,
-    pub subject_col: String,
-    pub role_col: String,
-    pub scope_cols: Vec<String>,
-    pub revoked_col: String,
-    pub granted_at_col: String,
-    pub granted_by_col: String,
-    pub revoked_by_col: String,
-    pub extra_cols: Vec<String>,
-    pub roles_table: String,
-    pub roles_id: String,
-    pub key_col: String,
-    pub perms_col: String,
+    pub assignments: Str,
+    pub pk: Str,
+    pub kind_col: Str,
+    pub kind_val: Str,
+    pub subject_col: Str,
+    pub role_col: Str,
+    pub scope_cols: Strs,
+    pub revoked_col: Str,
+    pub granted_at_col: Str,
+    pub granted_by_col: Str,
+    pub revoked_by_col: Str,
+    pub extra_cols: Strs,
+    pub roles_table: Str,
+    pub roles_id: Str,
+    pub key_col: Str,
+    pub perms_col: Str,
 }
 
-pub fn touch_on_conflict(bare_key: &[String], nullable_key: &[String], sets: &[String]) -> String {
-    let mut key: Vec<String> = bare_key.to_vec();
-    key.extend(nullable_key.iter().map(|c| format!("COALESCE({c}, '')")));
+pub fn touch_on_conflict<S: AsRef<str>>(bare_key: &[S], nullable_key: &[S], sets: &[String]) -> String {
+    let mut key: Vec<String> = bare_key.iter().map(|c| c.as_ref().to_string()).collect();
+    key.extend(nullable_key.iter().map(|c| format!("COALESCE({}, '')", c.as_ref())));
     format!("ON CONFLICT ({}) DO UPDATE SET {}", key.join(", "), sets.join(", "))
 }
 
 impl RoleAssignmentSurface {
-    fn assignment_cols(&self) -> Vec<String> {
-        let mut cols = vec![self.pk.clone(), self.kind_col.clone(), self.subject_col.clone(), self.role_col.clone()];
-        cols.extend(self.scope_cols.iter().cloned());
+    fn assignment_cols(&self) -> Vec<&str> {
+        let mut cols: Vec<&str> = vec![&self.pk, &self.kind_col, &self.subject_col, &self.role_col];
+        cols.extend(self.scope_cols.iter().map(|c| c.as_ref()));
         for c in [&self.granted_at_col, &self.granted_by_col, &self.revoked_col, &self.revoked_by_col] {
             if !c.is_empty() {
-                cols.push(c.clone());
+                cols.push(c);
             }
         }
-        cols.extend(self.extra_cols.iter().cloned());
+        cols.extend(self.extra_cols.iter().map(|c| c.as_ref()));
         cols
     }
 
@@ -74,20 +74,20 @@ impl RoleAssignmentSurface {
         granted_by: &str,
         extra: &BTreeMap<String, String>,
     ) -> (String, Vec<SqlArg>) {
-        let mut cols = vec![self.pk.clone(), self.kind_col.clone(), self.subject_col.clone(), self.role_col.clone()];
+        let mut cols: Vec<&str> = vec![&self.pk, &self.kind_col, &self.subject_col, &self.role_col];
         let mut args: Vec<SqlArg> =
-            vec![Some(assignment_id.into()), Some(self.kind_val.clone()), Some(subject_id.into()), Some(role_id.into())];
+            vec![Some(assignment_id.into()), Some(self.kind_val.to_string()), Some(subject_id.into()), Some(role_id.into())];
         for (i, c) in self.scope_cols.iter().enumerate() {
-            cols.push(c.clone());
+            cols.push(c);
             args.push(scope.get(i).cloned());
         }
         if !self.granted_by_col.is_empty() {
-            cols.push(self.granted_by_col.clone());
+            cols.push(&self.granted_by_col);
             args.push(Some(granted_by.into()));
         }
-        for c in &self.extra_cols {
-            cols.push(c.clone());
-            args.push(extra.get(c).cloned());
+        for c in self.extra_cols.iter() {
+            cols.push(c);
+            args.push(extra.get(c.as_ref()).cloned());
         }
         let ph: Vec<String> = (1..=cols.len()).map(|i| format!("${i}")).collect();
         let conflict = if touch { format!(" {}", self.touch_clause()) } else { String::new() };
@@ -103,9 +103,9 @@ impl RoleAssignmentSurface {
     }
 
     fn touch_clause(&self) -> String {
-        let bare = vec![self.kind_col.clone(), self.subject_col.clone(), self.role_col.clone()];
-        let mut nullable = self.scope_cols.clone();
-        nullable.extend(self.extra_cols.iter().cloned());
+        let bare: Vec<&str> = vec![&self.kind_col, &self.subject_col, &self.role_col];
+        let mut nullable: Vec<&str> = self.scope_cols.iter().map(|c| c.as_ref()).collect();
+        nullable.extend(self.extra_cols.iter().map(|c| c.as_ref()));
         let mut sets = Vec::new();
         if !self.revoked_col.is_empty() {
             sets.push(format!("{} = NULL", self.revoked_col));

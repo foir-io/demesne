@@ -1,24 +1,24 @@
-use crate::Error;
+use crate::{Error, Str, Strs};
 use demesne_gocompat::json::{self, Value};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClaimEntry {
-    pub key: String,
-    pub level: String,
-    pub subjects: Vec<String>,
+    pub key: Str,
+    pub level: Str,
+    pub subjects: Strs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
-    pub setting: String,
-    pub cast: String,
-    pub role: String,
+    pub setting: Str,
+    pub cast: Str,
+    pub role: Str,
 }
 
 impl Default for Session {
     fn default() -> Self {
-        Session { setting: "request.jwt.claims".into(), cast: "json".into(), role: "authenticated".into() }
+        Session { setting: Str::Borrowed("request.jwt.claims"), cast: Str::Borrowed("json"), role: Str::Borrowed("authenticated") }
     }
 }
 
@@ -37,16 +37,16 @@ impl Session {
     }
 }
 
-pub fn mint_claims_values(contract: &[String], values: &BTreeMap<String, String>) -> Result<String, Error> {
+pub fn mint_claims_values<S: AsRef<str>>(contract: &[S], values: &BTreeMap<String, String>) -> Result<String, Error> {
     mint_claims_values_with_extra(contract, values, None)
 }
 
-pub fn mint_claims_values_with_extra(
-    contract: &[String],
+pub fn mint_claims_values_with_extra<S: AsRef<str>>(
+    contract: &[S],
     values: &BTreeMap<String, String>,
     extra: Option<&BTreeMap<String, String>>,
 ) -> Result<String, Error> {
-    let known: HashSet<&str> = contract.iter().map(String::as_str).collect();
+    let known: HashSet<&str> = contract.iter().map(|k| k.as_ref()).collect();
     let bad: Vec<&str> = values.keys().map(String::as_str).filter(|k| !known.contains(k)).collect();
     if !bad.is_empty() {
         return Err(Error::new(format!("MintClaims: key(s) not in the claims contract: [{}]", bad.join(" "))));

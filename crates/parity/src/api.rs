@@ -62,8 +62,8 @@ pub fn api_dump(s: &Spec) -> String {
     let surf = sql.emit_app_surface();
     b.push_str(&format!("app surface: {}\n", st(&surf)));
     if let Ok(surf) = &surf {
-        for o in &surf.objects {
-            for c in &o.checks {
+        for o in surf.objects.iter() {
+            for c in o.checks.iter() {
                 b.push_str(&format!("  check {}.{}: {}\n", o.object, c.verb, c.check_sql));
             }
         }

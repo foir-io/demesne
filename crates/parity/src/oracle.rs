@@ -35,8 +35,8 @@ fn canonical_scope(n: usize) -> Vec<String> {
     (0..n).map(|i| format!("s{}", char::from_u32('1' as u32 + i as u32).unwrap())).collect()
 }
 
-fn canonical_extra(cols: &[String]) -> BTreeMap<String, String> {
-    cols.iter().map(|c| (c.clone(), format!("x_{c}"))).collect()
+fn canonical_extra<S: AsRef<str>>(cols: &[S]) -> BTreeMap<String, String> {
+    cols.iter().map(|c| (c.as_ref().to_string(), format!("x_{}", c.as_ref()))).collect()
 }
 
 fn str_map(m: &BTreeMap<String, String>) -> Value {
@@ -81,12 +81,12 @@ fn matrix_perm_sets(v: &rt::Vocabulary) -> Vec<Vec<String>> {
             out.push(set);
         }
     };
-    for im in &v.implications {
-        add(vec![im.perm.clone()]);
+    for im in v.implications.iter() {
+        add(vec![im.perm.to_string()]);
     }
     if let (Some(first), Some(last)) = (v.permissions.first(), v.permissions.last()) {
-        add(vec![first.clone()]);
-        add(vec![first.clone(), last.clone()]);
+        add(vec![first.to_string()]);
+        add(vec![first.to_string(), last.to_string()]);
     }
     add(vec!["totally:madeup".into()]);
     out
@@ -157,7 +157,7 @@ pub fn build_oracle_entry(sp: &Spec) -> Result<Value, String> {
     ));
     if let Ok(surf) = Sql::new(sp).emit_app_surface() {
         let mut objs = Vec::new();
-        for o in &surf.objects {
+        for o in surf.objects.iter() {
             objs.push(projections::app_object(o));
             let input = || Some(map(vec![("object", s(&o.object))]));
             cases.push(case("appSurface.checkSQL", input(), Value::Str(o.check_sql())));
