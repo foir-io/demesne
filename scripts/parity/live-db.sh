@@ -35,7 +35,7 @@ run() {
     same=$((same + 1))
   else
     echo "DIFF $name"
-    diff "$OUT/go/$name.txt" "$OUT/rust/$name.txt" | head -10
+    diff "$OUT/go/$name.txt" "$OUT/rust/$name.txt" | head -10 || true
   fi
 }
 
@@ -117,7 +117,7 @@ for side in go rust; do
   printf 'exit: %s\n%s\n%s' "$rc" "$(cat "$OUT/$side/scaffold-interactive.out")" "$(cat "$OUT/$side/scaffold-interactive.err")" >"$OUT/$side/scaffold-interactive.txt"
 done
 total=$((total + 1))
-if cmp -s "$OUT/go/scaffold-interactive.txt" "$OUT/rust/scaffold-interactive.txt"; then same=$((same + 1)); else echo "DIFF scaffold-interactive"; fi
+if cmp -s "$OUT/go/scaffold-interactive.txt" "$OUT/rust/scaffold-interactive.txt"; then same=$((same + 1)); else echo "DIFF scaffold-interactive"; diff "$OUT/go/scaffold-interactive.txt" "$OUT/rust/scaffold-interactive.txt" | head -10 || true; fi
 
 cat >"$OUT/specs/bypass.demesne" <<'EOF'
 claims via "request.jwt.claims" json role bypasser
