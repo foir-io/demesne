@@ -23,7 +23,7 @@ function resolveBinary() {
   if (!pkg) {
     fail(
       `no prebuilt binary for ${key}. Build from source: clone ` +
-        "github.com/foir-io/demesne and run 'go build ./cmd/demesne'"
+        "github.com/foir-io/demesne and run 'cargo build --release -p demesne-cli'"
     );
   }
   const binName = process.platform === "win32" ? "demesne.exe" : "demesne";

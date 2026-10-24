@@ -23,3 +23,6 @@ demesne-emit-sql.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.dist]
+dist = false

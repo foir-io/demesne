@@ -15,6 +15,7 @@ demesne-gocompat = { path = "crates/gocompat", version = "0.94.0-dev" }
 demesne-syntax = { path = "crates/syntax", version = "0.94.0-dev" }
 demesne-runtime = { path = "crates/runtime", version = "0.94.0-dev" }
 demesne-model = { path = "crates/model", version = "0.94.0-dev" }
+demesne-cli = { path = "crates/cli", version = "0.94.0-dev", default-features = false }
 demesne-emit-sql = { path = "crates/emit-sql", version = "0.94.0-dev" }
 demesne-emit-go = { path = "crates/emit-go", version = "0.94.0-dev" }
 demesne-emit-rust = { path = "crates/emit-rust", version = "0.94.0-dev" }
@@ -31,3 +32,7 @@ type_complexity = "allow"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

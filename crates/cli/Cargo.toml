@@ -8,9 +8,18 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+default = ["db"]
+db = ["dep:demesne-postgres", "dep:postgres"]
+
+[lib]
+name = "demesne_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "demesne"
 path = "src/main.rs"
+required-features = ["db"]
 
 [dependencies]
 demesne-gocompat.workspace = true
@@ -20,8 +29,8 @@ demesne-model.workspace = true
 demesne-emit-sql.workspace = true
 demesne-emit-go.workspace = true
 demesne-emit-ts.workspace = true
-demesne-postgres.workspace = true
-postgres = "0.19.14"
+demesne-postgres = { workspace = true, optional = true }
+postgres = { version = "0.19.14", optional = true }
 
 [lints]
 workspace = true

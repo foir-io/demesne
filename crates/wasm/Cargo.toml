@@ -1,0 +1,28 @@
+[package]
+name = "demesne-wasm"
+description = "demesne's compiler as WebAssembly: validate a spec and run the CLI's pure commands (validate, emit) over in-memory files, for the TypeScript packages and editors."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+demesne-cli = { workspace = true, default-features = false }
+demesne-syntax.workspace = true
+demesne-emit-sql.workspace = true
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+demesne-cli = { workspace = true, default-features = false }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"

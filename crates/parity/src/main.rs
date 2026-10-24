@@ -11,6 +11,7 @@ USAGE:
   demesne-parity fuzz --seed <n> --count <n> --mutate <n> --out <dir>
   demesne-parity run --go-tag <tag> --go-cli <path> [--rust-cli <path>] --out <dir> [--extra <prefix>=<dir>]... [--only <substr>] [--show <n>]
   demesne-parity dsn --cases <file> --work <dir> --go <go-dump> --out <rust-dump>
+  demesne-parity cli-table
 ";
 
 fn dsn_cmd(args: &[String]) -> Result<bool, String> {
@@ -270,6 +271,17 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Some("cli-table") => {
+            let rows: Vec<String> = runner::CLI_OUTPUTS
+                .iter()
+                .map(|c| {
+                    let args: Vec<String> = c.args.iter().map(|a| format!("{a:?}")).collect();
+                    format!("{{\"name\":{:?},\"args\":[{}]}}", c.name, args.join(","))
+                })
+                .collect();
+            println!("[{}]", rows.join(","));
+            ExitCode::SUCCESS
+        }
         Some("dsn-one") => {
             print!("{}", demesne_postgres::parse_config_dump(argv.get(1).map(String::as_str).unwrap_or("")));
             ExitCode::SUCCESS

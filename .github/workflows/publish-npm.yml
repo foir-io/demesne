@@ -1,0 +1,89 @@
+name: publish-npm
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  npm-runtime:
+    name: Publish @foir/demesne
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    env:
+      TAG: ${{ fromJson(inputs.plan).announcement_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+      - name: npm that stages by trusted publishing
+        run: npm install -g npm@^11.21.1
+      - name: install
+        run: pnpm install --frozen-lockfile
+        working-directory: ts
+      - name: set version
+        run: npm pkg set version="${TAG#v}"
+        working-directory: ts/packages/runtime
+      - name: build
+        run: pnpm --filter @foir/demesne build
+        working-directory: ts
+      - name: publish
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          if npm view "@foir/demesne@${version}" version >/dev/null 2>&1; then
+            echo "@foir/demesne@${version} is already published; skipping"
+            exit 0
+          fi
+          npm stage publish . --provenance --access public
+        working-directory: ts/packages/runtime
+
+  npm-cli:
+    name: Publish @foir/demesne-cli
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    env:
+      TAG: ${{ fromJson(inputs.plan).announcement_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: target/distrib
+          merge-multiple: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+      - name: npm that stages by trusted publishing
+        run: npm install -g npm@^11.21.1
+      - name: stage packages
+        run: node npm/scripts/build-npm.mjs "${TAG#v}"
+      - name: publish platform packages then launcher
+        run: |
+          set -euo pipefail
+          publish() {
+            dir="$1"
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} is already published; skipping"
+              return 0
+            fi
+            npm stage publish "$dir" --provenance --access public
+          }
+          for dir in npm/dist/cli-*; do
+            publish "$dir"
+          done
+          publish npm/dist/cli
