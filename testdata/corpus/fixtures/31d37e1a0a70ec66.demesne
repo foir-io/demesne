@@ -1,0 +1,23 @@
+topology {
+  level org
+  level workspace parent org
+}
+
+vocabulary reader {
+  permission doc:read
+}
+
+subject viewer {
+  anchor workspace
+  reach self
+  identifies viewer_folder
+  roles configurable reader
+  binds owner
+}
+
+object document {
+  table  documents
+  scoped org > workspace
+  relation in_folder: viewer via closure folder_closure(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id
+  permission view = in_folder @rls maps select
+}

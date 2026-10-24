@@ -1,0 +1,11 @@
+
+topology { level tenant level project parent tenant }
+vocabulary cust { permission self:read }
+subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
+object doc {
+  table  docs
+  scoped tenant > project
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant racl(resource_id, principal_kind, principal_id, access) where resource_type = "doc" tracked async
+  permission view = owner + grantee:read @rls maps select
+}

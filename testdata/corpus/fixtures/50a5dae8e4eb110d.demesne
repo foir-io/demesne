@@ -1,0 +1,4 @@
+
+		topology { level a }
+		subject x { anchor a reach self identifies sub roles none }
+		object o { table t scoped a relation owner: x via cid permission view = owner @rls maps select }

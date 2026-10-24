@@ -1,0 +1,17 @@
+topology { level a }
+vocabulary cust { permission self:read }
+subject customer { anchor a reach self identifies customer_id roles configurable cust binds owner }
+object doc {
+  table docs
+  scoped a
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "x"
+  permission view = owner + grantee:read @rls maps select
+}
+object note {
+  table notes
+  scoped a
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "x"
+  permission view = owner + grantee:read @rls maps select
+}

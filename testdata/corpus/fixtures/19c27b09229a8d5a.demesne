@@ -1,0 +1,15 @@
+
+topology { level platform virtual level tenant parent platform level project parent tenant }
+vocabulary v { permission c:r }
+grant g at tenant via edge grants_edge(grantee_id, tenant_id)
+subject operator { anchor platform reach via grant g identifies sub roles none }
+object grants_edge {
+  table  grants_edge
+  scoped tenant
+  permission view = @self(grantee_id) @rls maps select
+}
+object other_thing {
+  table  other_things
+  scoped tenant
+  permission view = @scoped @rls maps select
+}

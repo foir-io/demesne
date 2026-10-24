@@ -1,0 +1,35 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin {
+  permission content:read
+  preset project_admin @ project = content:read
+  preset tenant_owner  @ tenant  = content:read
+  rank tenant_owner > project_admin
+}
+vocabulary platform {
+  permission platform:manage
+  preset platform_admin @ platform = platform:manage
+}
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject staff { anchor platform; reach descendants; identifies sub; roles configurable platform }
+subject admin { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+object admin_user {
+  table  admin_users
+  scoped platform
+  relation staff:       staff via role
+  relation self:        admin via id
+  relation dir_tenant:  admin via memberin tenant(id, @tenant_id) reachedby
+  relation dir_project: admin via memberin project(id, @project_id) reachedby
+  permission view = staff + self + dir_tenant + dir_project @rls maps select
+}

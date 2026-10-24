@@ -1,0 +1,6 @@
+
+		topology { level tenant level project parent tenant }
+		vocabulary v { permission self:read }
+		subject customer { anchor project reach self identifies customer_id roles configurable v binds owner }
+		object record  { table records scoped tenant > project relation owner: customer via customer_id permission view = owner @rls maps select }
+		object file    { table files   scoped tenant > project relation owner: customer via customer_id permission view = owner @rls maps select }

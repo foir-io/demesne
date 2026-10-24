@@ -1,0 +1,17 @@
+
+topology { level estate level space parent estate level folder parent space }
+vocabulary crew { permission asset:read preset reader @ space = asset:read }
+rolestore crew {
+ assignments assignments kind member_kind = "crew" subject member_id
+ scope estate_ref space_ref rolejoin role_id roles id key revoked ended_at
+}
+subject crew { anchor estate reach descendants identifies sub roles configurable crew binds admin }
+subject member { anchor space reach self identifies member_ref roles none binds owner }
+subject estate_member { anchor estate reach self identifies member_ref roles none binds owner }
+subject folder_member { anchor folder reach self identifies member_ref roles none binds owner }
+object asset {
+ table assets scoped estate
+ relation owner: estate_member | member | folder_member via owner_id
+ relation grantee: estate_member | member | folder_member via grant asset_acl(asset_id, principal_kind, principal_id, access)
+ permission view = @app_scope + owner + grantee:read @rls maps select
+}

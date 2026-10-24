@@ -1,0 +1,11 @@
+tables schema "app"
+
+topology { level org level project parent org }
+vocabulary v { permission self:read }
+subject member { anchor project reach self identifies folder_id roles configurable v binds owner }
+object doc {
+  table  docs
+  scoped org > project
+  relation infolder: member via closure folder_closure(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id
+  permission view = infolder @rls maps select
+}

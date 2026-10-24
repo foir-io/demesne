@@ -1,0 +1,25 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+}
+vocabulary admin    { permission content:read  preset tenant_owner @ tenant = content:read }
+vocabulary platform { permission platform:manage  preset platform_admin @ platform = platform:manage }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject staff { anchor platform; reach descendants; identifies sub; roles configurable platform }
+subject admin { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+
+object plan_catalog {
+  table  billing_plans
+  scoped platform
+  relation staff: staff via role
+  permission view   = @public  @rls maps select
+  permission create = @public  @rls maps insert
+}

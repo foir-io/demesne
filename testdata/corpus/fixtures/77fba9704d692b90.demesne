@@ -1,0 +1,1 @@
+object r { table t scoped a permission view = owner - x @rls }

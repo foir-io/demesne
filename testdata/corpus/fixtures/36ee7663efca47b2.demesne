@@ -1,0 +1,29 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin { permission c:r  preset pa @ project = c:r }
+vocabulary cust  { permission self:read }
+rolestore admin {
+  assignments ra
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject admin    { anchor tenant  reach descendants identifies sub roles configurable admin binds admin }
+subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
+subject service  { anchor project reach self identifies sub roles none }
+object record {
+  table  records
+  scoped tenant > project
+  relation owner:       customer | service via customer_id
+  relation admin_owner: admin via admin_owner_id
+  relation grantee:     customer | admin via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
+  permission view   = @app_scope(exclude admin_owner) + owner + admin_owner + mode access_mode = "public" + grantee   @rls maps select
+  permission edit   = @app_scope(exclude admin_owner) + owner + admin_owner + grantee                               @rls maps update
+  permission delete = @app_scope(exclude admin_owner) + owner + admin_owner + grantee                              @rls maps delete
+}

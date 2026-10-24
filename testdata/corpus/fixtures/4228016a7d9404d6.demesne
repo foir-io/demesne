@@ -1,0 +1,38 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+  level org      parent project
+}
+vocabulary admin { permission content:read permission content:write
+  preset tenant_owner @ tenant = *
+  rank tenant_owner > tenant_owner }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject admin { anchor tenant; reach descendants; identifies sub; roles configurable admin; binds admin }
+
+// the shared tier is readable by an org-claimed caller, and writable only by one
+// standing in the row's own org
+object doc {
+  table  docs
+  scoped tenant > project > org wildcard confers select
+  permission view   = @scoped @rls maps select
+  permission create = @scoped @rls maps insert
+  permission edit   = @scoped @rls maps update
+  permission drop   = @scoped @rls maps delete
+}
+
+// unbounded: today's behaviour, every op admits NULL
+object legacy {
+  table  legacies
+  scoped tenant > project > org wildcard
+  permission view = @scoped @rls maps select
+  permission edit = @scoped @rls maps update
+}

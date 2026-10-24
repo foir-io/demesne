@@ -1,0 +1,10 @@
+
+topology { level tenant level project parent tenant }
+object record {
+  table records
+  scoped tenant > project
+  fields { self service scoped admin public }
+  field ssn { read = admin write = admin }
+  field nickname { read = public + self write = self + admin }
+  field secret { write = admin column secret_col }
+}

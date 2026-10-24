@@ -1,0 +1,30 @@
+identifiers citext
+
+topology { level tenant level project parent tenant }
+
+vocabulary staff {
+  permission docs:read
+  permission docs:manage
+  preset viewer  @ project = docs:read
+  preset steward @ project = *
+  rank steward > viewer
+}
+
+rolestore staff {
+  assignments role_grants
+  kind        grantee_kind = "staff"
+  subject     grantee_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+
+subject staffer { anchor tenant reach descendants identifies sub roles configurable staff binds admin }
+
+object doc {
+  table docs
+  scoped tenant > project
+  relation curator: staffer via role
+  permission view = curator @rls maps select
+  permission edit = @kind("staff") @rls maps update
+}

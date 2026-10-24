@@ -1,0 +1,4 @@
+
+		topology { level tenant level project parent tenant }
+		object a { table at scoped tenant > project relation r: b via object b->view on b_id permission view = r @rls maps select }
+		object b { table bt scoped tenant > project relation r: a via object a->view on a_id permission view = r @rls maps select }

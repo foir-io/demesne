@@ -1,0 +1,5 @@
+
+topology { level tenant }
+template t { permission view = @scoped @rls maps select }
+template t { permission edit = @scoped @rls maps update }
+object x { table x; scoped tenant; use t }

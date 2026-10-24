@@ -1,0 +1,13 @@
+
+topology { level tenant }
+vocabulary v { permission doc:read }
+subject member { anchor tenant reach self identifies member_id roles configurable v binds owner }
+subject reader { anchor tenant reach self identifies reads_all roles none transient set }
+object doc {
+  table docs
+  scoped tenant
+  relation owner:   member via owner_id where owner_kind = "member"
+  relation reads_all: reader via kind
+  relation grantee: member via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "doc" tracked
+  permission view = owner + reads_all + grantee:read   @rls maps select
+}

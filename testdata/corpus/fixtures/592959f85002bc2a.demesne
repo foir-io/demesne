@@ -1,0 +1,27 @@
+
+topology { level tenant level project parent tenant }
+
+vocabulary staff {
+  permission docs:read
+  permission docs:publish
+  preset viewer @ tenant = docs:read
+  preset admin  @ tenant = *
+  rank admin > viewer
+}
+vocabulary ops {
+  permission jobs:run
+}
+
+rolestore staff { assignments staff_grants kind grantee_kind = "staff" subject grantee_id scope tenant_id project_id rolejoin role_id roles id key revoked revoked_at }
+
+subject staffer { anchor tenant reach descendants identifies sub   roles configurable staff binds admin }
+subject opser   { anchor tenant reach descendants identifies opsid roles configurable ops   binds owner }
+
+object doc {
+  table docs
+  scoped tenant
+  relation admin: staffer via role
+  relation owner: opser   via owner_id
+  permission view = admin + owner @rls maps select
+  permission run  = jobs:run @pdp
+}

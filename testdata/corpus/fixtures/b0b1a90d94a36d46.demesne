@@ -1,0 +1,4 @@
+topology { level a }
+vocabulary cust { permission self:read }
+subject customer { anchor a reach self identifies customer_id roles configurable cust binds owner }
+object g { table empty_acl scoped a permission create = @store_manage @rls maps insert }

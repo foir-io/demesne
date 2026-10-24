@@ -1,0 +1,21 @@
+
+topology { level tenant }
+vocabulary v {
+  permission a:read
+  preset viewer @ tenant = a:read
+}
+rolestore v {
+  assignments role_assignments
+  kind        principal_kind = "x"
+  subject     principal_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject u { anchor tenant; reach descendants; identifies sub; roles configurable v; binds admin }
+object check {
+  table  checks
+  scoped tenant
+  relation owner: u via owner_id
+  permission view = owner @rls maps select
+}

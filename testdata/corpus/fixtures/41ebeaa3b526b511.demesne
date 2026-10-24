@@ -1,0 +1,3 @@
+
+		topology { level tenant level project parent tenant }
+		object comment { table comments scoped tenant > project relation doc: nope via object nope->view on doc_id permission view = doc @rls maps select }

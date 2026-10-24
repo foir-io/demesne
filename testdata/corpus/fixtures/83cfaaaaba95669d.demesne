@@ -1,0 +1,29 @@
+
+topology { level tenant level project parent tenant }
+
+vocabulary records {
+  permission records:read
+  permission records:write
+  permission records:read:*
+  preset viewer @ tenant = records:read
+  preset editor @ tenant = viewer + records:write
+  preset owner  @ tenant = *
+  rank owner > editor > viewer
+}
+vocabulary audit {
+  permission audit:view
+}
+
+rolestore records { assignments rec_grants kind grantee_kind = "rec" subject grantee_id scope tenant_id project_id rolejoin role_id roles id key revoked revoked_at }
+rolestore audit   { assignments aud_grants kind grantee_kind = "aud" subject grantee_id scope tenant_id project_id rolejoin role_id roles id key revoked revoked_at }
+
+subject recer { anchor tenant reach descendants identifies sub   roles configurable records binds admin }
+subject auder { anchor tenant reach descendants identifies audid roles configurable audit  binds owner }
+
+object thing {
+  table things
+  scoped tenant
+  relation admin: recer via role
+  relation owner: auder via owner_id
+  permission view = admin + owner @rls maps select
+}

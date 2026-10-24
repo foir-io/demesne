@@ -1,0 +1,7 @@
+topology { level tenant level project parent tenant }
+object record {
+			table records
+			scoped tenant > project
+			fields { admin admin }
+			field ssn { write = admin }
+		}

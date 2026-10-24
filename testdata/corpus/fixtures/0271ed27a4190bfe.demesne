@@ -1,0 +1,2 @@
+topology { level a }
+			      vocabulary v { permission a:b preset p = a:b + c:d }

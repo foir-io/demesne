@@ -1,0 +1,25 @@
+
+topology { level platform virtual level tenant parent platform level project parent tenant }
+vocabulary v { permission members:read preset padmin @ project = members:read preset tadmin @ tenant = members:read rank tadmin > padmin }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+  permissions permissions
+}
+subject admin { anchor tenant reach descendants identifies sub roles configurable v binds admin }
+object pinned {
+  table  pinned_rows
+  scoped tenant > project
+  permission view = @holds(members:read) @rls maps select
+  permission edit = @holds(members:read) @rls maps update
+}
+object spanning {
+  table  spanning_rows
+  scoped tenant > project wildcard
+  permission view = @holds(members:read) @rls maps select
+  permission edit = @holds(members:read) @rls maps update
+}

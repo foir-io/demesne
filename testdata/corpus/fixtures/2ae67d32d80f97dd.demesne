@@ -1,0 +1,21 @@
+
+topology {
+  level org
+  level team   parent org
+  level client parent org
+}
+vocabulary v { permission self:read }
+subject tmember { anchor team   reach self identifies tmem_id roles configurable v binds owner }
+subject cmember { anchor client reach self identifies cmem_id roles configurable v binds owner }
+object doc {
+  table  docs
+  scoped org > team
+  relation owner: tmember via owner_id
+  permission view = owner @rls maps select
+}
+object invoice {
+  table  invoices
+  scoped org > client
+  relation owner: cmember via owner_id
+  permission view = owner @rls maps select
+}

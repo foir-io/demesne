@@ -1,0 +1,27 @@
+
+topology { level tenant level project parent tenant }
+vocabulary cust { permission self:read }
+subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
+object group {
+  table  teams
+  scoped tenant > project
+  relation member:  customer via member_id
+  relation grantee: customer via grant team_acl(team_id, principal_kind, principal_id, access)
+  permission view = member + grantee:read @rls maps select
+}
+object record {
+  table  records
+  scoped tenant > project
+  relation owner:       customer via customer_id
+  relation grantee:     customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
+  relation comp_parent: record via composition record_relationships(from_record_id, to_record_id) where kind = "composition"
+  relation slice_root:  record via composition records(id, root_id)
+  relation in_team:     group via object group->view on team_id
+  permission view = owner + grantee:read + comp_parent + slice_root + in_team @rls maps select
+}
+object pin {
+  table  pins
+  scoped tenant > project
+  relation of: record via object record->view on record_id
+  permission view = of @rls maps select
+}

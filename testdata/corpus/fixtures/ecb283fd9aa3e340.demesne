@@ -1,0 +1,20 @@
+
+topology { level tenant }
+vocabulary v { permission doc:read }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject member { anchor tenant reach self identifies member_id roles configurable v binds owner }
+object doc {
+  table docs
+  scoped tenant
+  relation owner:   member via member_id
+  relation grantee: member via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "doc" tracked
+  relation parent:  doc via composition doc_edges(child_id, parent_id) where kind = "composition"
+  permission view = @app_scope + owner + (grantee:read and @kind("member")) + parent   @rls maps select
+}

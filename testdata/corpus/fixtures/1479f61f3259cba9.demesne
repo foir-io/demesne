@@ -1,0 +1,4 @@
+
+topology { level tenant }
+template t { permission view = @scoped @rls maps select }
+object x { table x; scoped tenant; use t; omit delete }

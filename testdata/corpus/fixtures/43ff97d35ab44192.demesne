@@ -1,0 +1,10 @@
+
+		topology { level tenant level project parent tenant }
+		subject admin { anchor tenant reach descendants identifies sub roles none }
+		object project {
+		  table projects
+		  level project
+		  scoped tenant > project
+		  relation tenant: tenant via tenant_id
+		  permission view = @scoped @rls maps select
+		}

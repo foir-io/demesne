@@ -1,0 +1,40 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+  level org      parent project
+}
+vocabulary admin { permission content:read permission content:write
+  preset tenant_owner @ tenant = *
+  rank tenant_owner > tenant_owner }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant readonly at org via edge readonly_edge(principal_id, org_id) active revoked_at confers select
+grant unbounded at org via edge unbounded_edge(principal_id, org_id) active revoked_at
+
+subject admin    { anchor tenant; reach descendants; identifies sub; roles configurable admin; binds admin }
+subject reader   { anchor org;    reach via grant readonly;  identifies customer_id; roles none }
+subject anyone   { anchor org;    reach via grant unbounded; identifies customer_id; roles none }
+
+object orgnode {
+  table  orgnodes
+  level  org
+  scoped tenant > project > org
+  permission view = @scoped @rls maps select
+}
+object doc {
+  table  docs
+  scoped tenant > project > org
+  relation owner: reader via customer_id
+  permission view   = owner @rls maps select
+  permission edit   = owner @rls maps update
+  permission create = owner @rls maps insert
+  permission drop   = owner @rls maps delete
+}

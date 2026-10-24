@@ -1,0 +1,5 @@
+
+topology { level tenant }
+vocabulary admin { permission a:read  preset v @ tenant = a:read }
+subject admin { anchor tenant; reach descendants; identifies sub; roles configurable admin; binds admin }
+object thing { table things; scoped tenant; permission view = @scoped @rls maps select }
