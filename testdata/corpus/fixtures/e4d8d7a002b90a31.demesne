@@ -1,0 +1,27 @@
+
+external predicate docs_in_tenant(text, text[])
+
+topology { level tenant level project parent tenant }
+vocabulary admin {
+  permission docs:write
+  preset editor @ project = docs:write
+}
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+  permissions permissions
+}
+subject admin { anchor tenant reach descendants identifies sub roles configurable admin binds admin }
+object doc {
+  table  docs
+  scoped tenant
+  relation author: admin via author_id
+  permission view   = @holds(docs:write) + author @rls maps select
+  permission create = @holds(docs:write) + @external(docs_in_tenant, tenant_id, tag_ids) @rls maps insert
+  permission edit   = @holds(docs:write) + author @rls maps update
+  require create = @external(docs_in_tenant, tenant_id, tag_ids)
+}

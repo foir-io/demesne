@@ -1,0 +1,4 @@
+topology { level a }
+		vocabulary v { permission self:read }
+		subject s { anchor a reach self identifies sub roles configurable v binds owner }
+		object o { table t scoped a relation x: s via xc relation y: s via yc permission view = x and not y @rls maps select }

@@ -1,0 +1,8 @@
+
+topology {
+  level org  claim org_ref
+  level team parent org claim team_ref
+}
+vocabulary admin { permission a:read  preset v @ team = a:read }
+subject admin { anchor team; reach descendants; identifies who; roles configurable admin; binds admin }
+object thing { table things; scoped org > team; relation m: admin via role; permission view = m @rls maps select }

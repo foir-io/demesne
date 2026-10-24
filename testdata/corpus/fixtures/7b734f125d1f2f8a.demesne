@@ -1,0 +1,44 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin {
+  permission c:r
+  preset project_admin @ project = c:r
+  preset tenant_owner  @ tenant  = *
+  rank tenant_owner > project_admin
+}
+vocabulary platform { permission p:m  preset platform_admin @ platform = p:m }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant impersonation at tenant
+  via edge impersonation_grants(grantee_id, tenant_id)
+  active revoked_at expires expires_at
+subject operator { anchor platform reach via grant impersonation identifies sub roles none }
+subject staff    { anchor platform reach descendants identifies sub roles configurable platform }
+subject admin    { anchor tenant   reach descendants identifies sub roles configurable admin binds admin }
+object project {
+  table  projects
+  level  project
+  scoped tenant > project
+  relation staff:  staff  via role
+  relation tenant: tenant via tenant_id
+  relation member: admin  via role
+  permission view = staff + tenant->owner + member + @session @rls maps select
+}
+object tenant {
+  table  tenants
+  level  tenant
+  scoped tenant
+  relation staff:         staff via role
+  relation tenant_access: admin via memberin tenant(@sub, id)
+  permission view = staff + tenant_access + @session @rls maps select
+}

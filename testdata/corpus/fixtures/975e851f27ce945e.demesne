@@ -1,0 +1,2 @@
+vocabulary admin { permission content:read }
+			procedures customer { a.v1.S/M -> content:read }

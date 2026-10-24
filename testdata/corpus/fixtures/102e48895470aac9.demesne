@@ -1,0 +1,30 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+}
+vocabulary admin {
+  permission content:read
+  preset tenant_owner @ tenant = content:read
+}
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant impersonation at tenant
+  via edge impersonation_grants(grantee_id, tenant_id)
+  active revoked_at expires expires_at
+
+subject operator { anchor platform; reach via grant impersonation; identifies sub; roles none }
+subject admin    { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+
+object billing {
+  table  billing_subscriptions
+  scoped tenant
+  permission view   = @scoped                  @rls maps select   // operator OR in-tenant
+  permission create = via grant impersonation  @pdp   // operator ONLY (in-tenant admin excluded)
+}

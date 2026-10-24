@@ -1,0 +1,14 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+installers = []
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
+unix-archive = ".tar.gz"
+windows-archive = ".zip"
+checksum = "sha256"
+include = ["NOTICE"]
+pr-run-mode = "plan"
+publish-jobs = ["./publish-npm"]

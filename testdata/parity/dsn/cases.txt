@@ -1,0 +1,419 @@
+# One case per "--- name" block. "env K=V" lines set the environment for that case only, after every PG*
+# variable is cleared and PGPASSFILE/PGSERVICEFILE point at missing files. "dsn" is the rest of the line.
+# $W is replaced with the run's work directory. Names starting "named " are expected to differ.
+
+--- empty dsn reads the defaults
+dsn
+
+--- environment supplies everything
+env PGHOST=db.example.com
+env PGPORT=6543
+env PGUSER=envuser
+env PGDATABASE=envdb
+env PGPASSWORD=envpw
+env PGAPPNAME=envapp
+env PGOPTIONS=-c search_path=x
+env PGTZ=UTC
+dsn
+
+--- environment is overridden by the url
+env PGHOST=db.example.com
+env PGUSER=envuser
+dsn postgres://urluser@urlhost:5440/urldb
+
+--- empty environment values are ignored
+env PGHOST=
+env PGUSER=
+dsn host=h
+
+--- url basic
+dsn postgres://u:p@h:5433/db?sslmode=disable
+
+--- url postgresql scheme
+dsn postgresql://u@h/db
+
+--- url without user or path
+dsn postgres://h
+
+--- url empty
+dsn postgres://
+
+--- url only scheme and path
+dsn postgres:///db
+
+--- url user without password
+dsn postgres://alice@h/db
+
+--- url empty password
+dsn postgres://alice:@h/db
+
+--- url percent-encoded credentials
+dsn postgres://al%40ice:p%3Aw%2Fd@h/db
+
+--- url bad escape in password
+dsn postgres://u:p%zz@h/db
+
+--- url invalid userinfo
+dsn postgres://u ser:p@h/db
+
+--- url control character
+dsn postgres://h/db	tab
+
+--- url multiple hosts and ports
+dsn postgres://u@h1:5001,h2:5002,h3/db
+
+--- url multiple hosts sharing one port
+dsn postgres://u@h1,h2,h3:5009/db
+
+--- url ipv6 with port
+dsn postgres://u@[::1]:5432/db
+
+--- url ipv6 without port
+dsn postgres://[::1]/db
+
+--- url ipv6 v4 literal refused
+dsn postgres://[127.0.0.1]:5432/db
+
+--- url ipv6 missing bracket
+dsn postgres://[::1/db
+
+--- url invalid port
+dsn postgres://h:abc/db
+
+--- url port out of range
+dsn postgres://h:70000/db
+
+--- url port zero
+dsn postgres://h:0/db
+
+--- url host with bad character
+dsn postgres://h^x/db
+
+--- url empty host before port
+dsn postgres://:5432/db
+
+--- url query params become runtime params
+dsn postgres://h/?dbname=qdb&application_name=app&search_path=s1&timezone=UTC
+
+--- url first duplicate query value wins
+dsn postgres://h/db?application_name=one&application_name=two
+
+--- url query with plus and escapes
+dsn postgres://h/db?options=-c%20search_path%3Dfoo+bar
+
+--- url query semicolon pair dropped
+dsn postgres://h/db?application_name=a;b&search_path=s
+
+--- url fragment ignored
+dsn postgres://h/db#frag
+
+--- url bad fragment escape
+dsn postgres://h/db#%zz
+
+--- url force query
+dsn postgres://h/db?
+
+--- url path escapes
+dsn postgres://h/my%20db
+
+--- uppercase scheme falls back to keyword value
+dsn POSTGRES://h/db
+
+--- keyword value basic
+dsn host=h port=1234 user=u password=pw dbname=d sslmode=require
+
+--- keyword value quoted value with spaces
+dsn host=h password='p w' application_name='my app'
+
+--- keyword value escapes
+dsn host=h password=a\ b\\c application_name='it\'s'
+
+--- keyword value spaces around equals
+dsn host = h  port =  5555   user=u
+
+--- keyword value empty user is skipped
+env PGUSER=envuser
+dsn host=h user=
+
+--- keyword value unterminated quote
+dsn host=h password='oops
+
+--- keyword value missing equals
+dsn host=h port
+
+--- keyword value empty key
+dsn =x host=h
+
+--- keyword value trailing backslash
+dsn host=h password=abc\
+
+--- keyword value empty value then key
+dsn host= port=5432
+
+--- keyword value dbname maps to database
+dsn host=h dbname=mydb
+
+--- keyword value unknown keys become runtime params
+dsn host=h search_path=a,b work_mem=64MB
+
+--- several hosts with fewer ports
+dsn host=a,b,c port=1,2
+
+--- several hosts with bad later port
+dsn host=a,b port=1,x
+
+--- unix socket host has no tls
+dsn host=/tmp port=5467 user=u sslmode=require
+
+--- unix socket and tcp mixed
+dsn host=/tmp,h port=5467,5432
+
+--- unix socket path is cleaned
+dsn host=/tmp//sub/../ port=5467
+
+--- sslmode disable
+dsn host=h sslmode=disable
+
+--- sslmode allow
+dsn host=h sslmode=allow
+
+--- sslmode prefer is the default
+dsn host=h
+
+--- sslmode require
+dsn host=h sslmode=require
+
+--- sslmode verify-ca without root cert
+dsn host=h sslmode=verify-ca
+
+--- sslmode verify-full without root cert
+dsn host=h sslmode=verify-full
+
+--- sslmode verify-full with ip host
+dsn host=127.0.0.1 sslmode=verify-full
+
+--- sslmode invalid
+dsn host=h sslmode=bogus
+
+--- sslmode from environment
+env PGSSLMODE=require
+dsn host=h
+
+--- root cert with require becomes chain verification
+dsn host=h sslmode=require sslrootcert=$W/ca.crt
+
+--- root cert with verify-ca
+dsn host=h sslmode=verify-ca sslrootcert=$W/ca.crt
+
+--- root cert with verify-full
+dsn host=h sslmode=verify-full sslrootcert=$W/ca.crt
+
+--- root cert with prefer stays unverified
+dsn host=h sslrootcert=$W/ca.crt
+
+--- root cert system forces verify-full
+dsn host=h sslmode=require sslrootcert=system
+
+--- root cert missing file
+dsn host=h sslmode=verify-ca sslrootcert=$W/missing.crt
+
+--- root cert not pem
+dsn host=h sslmode=verify-ca sslrootcert=$W/garbage.pem
+
+--- root cert ignored for unix socket
+dsn host=/tmp sslmode=verify-ca sslrootcert=$W/missing.crt
+
+--- sslsni off
+dsn host=h sslmode=require sslsni=0
+
+--- sslsni off still names the host for verify-full
+dsn host=h sslmode=verify-full sslsni=0 sslrootcert=$W/ca.crt
+
+--- sslsni with ip host
+dsn host=10.0.0.1 sslmode=require
+
+--- direct negotiation upgrades prefer to require
+dsn host=h sslnegotiation=direct
+
+--- direct negotiation with disable
+dsn host=h sslnegotiation=direct sslmode=disable
+
+--- client cert and key
+dsn host=h sslmode=require sslcert=$W/client.crt sslkey=$W/client.key
+
+--- client cert with pkcs1 key
+dsn host=h sslmode=require sslcert=$W/client.crt sslkey=$W/client-pkcs1.key
+
+--- client cert without key
+dsn host=h sslmode=require sslcert=$W/client.crt
+
+--- client key without cert
+dsn host=h sslmode=require sslkey=$W/client.key
+
+--- client key missing
+dsn host=h sslmode=require sslcert=$W/client.crt sslkey=$W/missing.key
+
+--- client key not pem
+dsn host=h sslmode=require sslcert=$W/client.crt sslkey=$W/garbage.pem
+
+--- client cert missing
+dsn host=h sslmode=require sslcert=$W/missing.crt sslkey=$W/client.key
+
+--- client cert does not match key
+dsn host=h sslmode=require sslcert=$W/ca.crt sslkey=$W/client.key
+
+--- client encrypted key without password
+dsn host=h sslmode=require sslcert=$W/client.crt sslkey=$W/client-enc.key
+
+--- named client encrypted key with password
+dsn host=h sslmode=require sslcert=$W/client.crt sslkey=$W/client-enc.key sslpassword=secret
+
+--- client cert ignored when sslmode disable
+dsn host=h sslmode=disable sslcert=$W/client.crt
+
+--- connect timeout
+dsn host=h connect_timeout=5
+
+--- connect timeout zero
+dsn host=h connect_timeout=0
+
+--- connect timeout negative
+dsn host=h connect_timeout=-1
+
+--- connect timeout not a number
+dsn host=h connect_timeout=abc
+
+--- connect timeout with plus sign
+dsn host=h connect_timeout=+7
+
+--- connect timeout from environment
+env PGCONNECT_TIMEOUT=9
+dsn host=h
+
+--- target session attrs read-write
+dsn host=h target_session_attrs=read-write
+
+--- target session attrs read-only
+dsn host=h target_session_attrs=read-only
+
+--- target session attrs primary
+dsn host=h target_session_attrs=primary
+
+--- target session attrs standby
+dsn host=h target_session_attrs=standby
+
+--- target session attrs prefer-standby
+dsn host=h target_session_attrs=prefer-standby
+
+--- target session attrs unknown
+dsn host=h target_session_attrs=bogus
+
+--- target session attrs empty
+dsn host=h target_session_attrs=
+
+--- protocol min 3.2 raises max
+dsn host=h min_protocol_version=3.2
+
+--- protocol max latest
+dsn host=h max_protocol_version=latest
+
+--- protocol min above explicit max
+dsn host=h min_protocol_version=3.2 max_protocol_version=3.0
+
+--- protocol min invalid
+dsn host=h min_protocol_version=4
+
+--- protocol max invalid
+dsn host=h max_protocol_version=x
+
+--- channel binding require
+dsn host=h channel_binding=require
+
+--- channel binding disable
+dsn host=h channel_binding=disable
+
+--- channel binding unknown
+dsn host=h channel_binding=always
+
+--- pgx statement cache capacity is consumed
+dsn host=h statement_cache_capacity=100 description_cache_capacity=50
+
+--- pgx statement cache capacity invalid
+dsn host=h statement_cache_capacity=abc
+
+--- pgx description cache capacity out of range
+dsn host=h description_cache_capacity=99999999999
+
+--- pgx default query exec mode valid
+dsn host=h default_query_exec_mode=simple_protocol
+
+--- pgx default query exec mode invalid
+dsn host=h default_query_exec_mode=fast
+
+--- passfile supplies the password
+env PGPASSFILE=$W/pgpass
+dsn host=db.example.com dbname=app user=alice
+
+--- passfile wildcard with escaped colon
+env PGPASSFILE=$W/pgpass
+dsn host=other.example.com port=6543 user=bob dbname=x
+
+--- passfile matches localhost for a unix socket
+env PGPASSFILE=$W/pgpass
+dsn host=/tmp user=carol
+
+--- passfile does not override an explicit password
+env PGPASSFILE=$W/pgpass
+dsn host=db.example.com dbname=app user=alice password=given
+
+--- passfile no match
+env PGPASSFILE=$W/pgpass
+dsn host=nomatch.example.com user=dave
+
+--- passfile from the connection string
+dsn host=db.example.com dbname=app user=alice passfile=$W/pgpass
+
+--- service from environment
+env PGSERVICEFILE=$W/services.conf
+env PGSERVICE=svc
+dsn
+
+--- service from the connection string with override
+env PGSERVICEFILE=$W/services.conf
+dsn service=svc port=7100
+
+--- service missing
+env PGSERVICEFILE=$W/services.conf
+dsn service=nope
+
+--- service file missing
+dsn service=svc
+
+--- service file malformed
+env PGSERVICEFILE=$W/badservices.conf
+dsn service=svc
+
+--- service file named in the connection string
+dsn service=svc servicefile=$W/services.conf
+
+--- redaction of a url password on a later error
+dsn postgres://u:secret@h:5432/db?sslmode=bogus
+
+--- redaction of a url password with port error
+dsn postgres://u:secret@h:99999/db
+
+--- redaction of a keyword password
+dsn host=h password=secret sslmode=bogus
+
+--- redaction of a quoted keyword password
+dsn host=h password='sec ret' connect_timeout=x
+
+--- redaction of a broken url
+dsn postgres://u:secret@h/db%zz
+
+--- krb settings are not runtime params
+dsn host=h krbsrvname=postgres krbspn=x
+
+--- options and application name from environment and dsn
+env PGOPTIONS=-c work_mem=1MB
+dsn host=h application_name=fromdsn

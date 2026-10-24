@@ -1,0 +1,52 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin {
+  permission content:read
+  preset project_admin @ project = content:read
+  preset tenant_owner  @ tenant  = content:read
+  rank tenant_owner > project_admin
+}
+vocabulary platform {
+  permission platform:manage
+  preset platform_admin @ platform = platform:manage
+}
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject staff { anchor platform; reach descendants; identifies sub; roles configurable platform }
+subject admin { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+
+object tenant {
+  table  tenants
+  level  tenant
+  scoped tenant
+  relation staff:         staff via role
+  relation tenant_access: admin via memberin tenant(@sub, id)
+  permission view = staff + tenant_access + @session  @rls maps select guard status <> "CHURNED"
+  permission edit = staff                             @rls maps update
+}
+object admin_user {
+  table  admin_users
+  scoped platform
+  relation staff:    staff via role
+  relation self:     admin via id
+  relation cotenant: admin via memberin tenant(id, @tenant_id)
+  permission view = staff + self + cotenant @rls maps select
+  permission edit = staff + self            @rls maps update
+}
+object admin_credential {
+  table  admin_credentials
+  scoped platform
+  relation staff: staff via role
+  relation owner: admin via admin_user_id
+  permission view = staff + owner @rls maps select
+}

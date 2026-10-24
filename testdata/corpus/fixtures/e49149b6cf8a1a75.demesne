@@ -1,0 +1,3 @@
+topology { level a level b parent a }
+			      object o { table t scoped b relation r: c via cid
+			                 permission p = r @rls maps select }

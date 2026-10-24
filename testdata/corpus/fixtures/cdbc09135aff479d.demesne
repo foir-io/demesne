@@ -1,0 +1,2 @@
+vocabulary admin { permission content:read }
+			procedures admin { a.v1.S/M -> content:write }

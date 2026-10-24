@@ -1,0 +1,45 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin { permission c:r  preset pa @ project = c:r }
+vocabulary cust  { permission self:read }
+rolestore admin {
+  assignments ra
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant impersonation at tenant
+  via edge impersonation_grants(grantee_id, tenant_id)
+  active revoked_at expires expires_at
+subject operator { anchor platform reach via grant impersonation identifies sub roles none }
+subject admin    { anchor tenant   reach descendants identifies sub roles configurable admin binds admin }
+subject customer { anchor project  reach self identifies customer_id roles configurable cust binds owner }
+object record {
+  table  records
+  scoped tenant > project
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
+  permission view = @app_scope + owner + grantee:read  @rls maps select
+  permission edit = @app_scope + owner + grantee:write @rls maps update
+}
+object file {
+  table  files
+  scoped tenant > project
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "file"
+  permission view = @app_scope + owner + grantee:read  @rls maps select
+  permission edit = @app_scope + owner + grantee:write @rls maps update
+}
+object resource_grant {
+  table  resource_acl
+  scoped tenant > project
+  permission view   = @store_manage @rls maps select
+  permission create = @store_manage @rls maps insert
+  permission delete = @store_manage @rls maps delete
+}

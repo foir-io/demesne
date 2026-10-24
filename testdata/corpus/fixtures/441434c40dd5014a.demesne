@@ -1,0 +1,4 @@
+
+topology { level platform virtual level tenant parent platform }
+subject admin { anchor tenant reach descendants identifies sub roles none binds admin }
+object global { table globals scoped platform wildcard permission view = @public @rls maps select }

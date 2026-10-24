@@ -1,0 +1,11 @@
+topology { level a }
+vocabulary cust { permission self:read }
+subject customer { anchor a reach self identifies customer_id roles configurable cust binds owner }
+object rec {
+  table records scoped a
+  relation owner:   customer via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access)
+  permission view = owner + grantee:read  @rls maps select
+  permission edit = owner + grantee:write @rls maps update
+}
+object g { table resource_acl scoped a permission create = @store_manage @rls maps insert }

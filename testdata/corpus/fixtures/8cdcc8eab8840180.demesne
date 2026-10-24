@@ -1,0 +1,4 @@
+topology { level a }
+			      object o { table t scoped a relation owner: c via cid
+			                 permission view = owner @rls maps select
+			                 permission peek = owner @rls maps select }

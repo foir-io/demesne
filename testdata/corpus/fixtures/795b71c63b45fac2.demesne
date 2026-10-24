@@ -1,0 +1,11 @@
+
+topology { level root virtual  level tenant parent root }
+rolestore store {
+  assignments asg
+  kind        k = "m"
+  subject     pid
+  scope       tenant_id
+  rolejoin    role_id roles id key
+  revoked     rev
+}
+subject u { anchor tenant; reach descendants; identifies sub; roles none }

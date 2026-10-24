@@ -1,0 +1,21 @@
+
+topology { level tenant level project parent tenant }
+vocabulary adminv { permission a:b  preset p @ project = a:b }
+vocabulary custv  { permission self:read }
+rolestore adminv {
+  assignments ra
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject staff { anchor tenant  reach descendants identifies admin_sub  roles configurable adminv binds admin }
+subject owner { anchor project reach self        identifies owner_claim roles configurable custv  binds owner }
+object doc {
+  table  docs
+  scoped tenant > project
+  relation owner: owner via owner_col
+  relation mgr:   staff via role
+  permission view = owner + mgr @rls maps select
+}

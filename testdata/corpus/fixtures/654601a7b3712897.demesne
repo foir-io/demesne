@@ -1,0 +1,5 @@
+
+topology { level tenant level project parent tenant }
+vocabulary v { permission a:read  preset r @ project = a:read }
+subject member { anchor tenant reach descendants identifies sub roles configurable v binds admin }
+object thing { table things; scoped tenant > project; relation m: member via role; permission view = m @rls maps select }

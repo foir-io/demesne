@@ -1,0 +1,11 @@
+
+		topology { level tenant level project parent tenant }
+		vocabulary v { permission self:read }
+		subject customer { anchor project reach self identifies cust roles configurable v binds owner }
+		object record {
+		  table  records
+		  scoped tenant > project
+		  relation owner: customer via owner_id
+		  relation comp_parent: record via composition edges(child_id, parent_id)
+		  permission view = owner + comp_parent @rls maps select
+		}

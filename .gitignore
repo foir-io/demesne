@@ -7,7 +7,7 @@ coverage.*
 go.work.sum
 /cmd/demesne/demesne
 
-# npm release staging (generated from dist/ at release time)
+# npm release staging (generated from target/distrib at release time)
 /npm/dist/
 
 # Editor / OS
@@ -19,3 +19,4 @@ go.work.sum
 *.vsix
 
 .claude/
+target/

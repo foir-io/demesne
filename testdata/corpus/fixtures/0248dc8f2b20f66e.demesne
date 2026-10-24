@@ -1,0 +1,11 @@
+
+topology { level tenant level project parent tenant }
+vocabulary cust { permission self:read }
+subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
+object doc {
+  table  docs
+  scoped tenant > project
+  relation grantee: customer via grant dacl(resource_id, principal_kind, principal_id, access)
+  relation team:    customer via group tc(grp, mem) edge te(mem, grp) on team_id
+  permission view = grantee:read + team @rls maps select
+}

@@ -1,5 +1,62 @@
 # Changelog
 
+## v0.94.0
+
+### The compiler, CLI and runtime are Rust, and their output is unchanged
+
+demesne is now a Cargo workspace under `crates/`: the parser, model and
+validation, the SQL, Go and TypeScript emitters, the runtime, the Postgres
+support and the CLI. Every output is byte-identical to v0.93.1: the SQL
+(definers, policies, enablement, triggers, closure, changelog, async, require
+and the Supabase profile), the emitted Go and TypeScript, both framework
+modules, `oracle.json` and the claims contract. That was checked over every
+example, every spec the Go test suites parse, Fóir's spec and 10,800 fuzzed
+specs, and the runtime passes `oracle.json`.
+
+The Go engine stays at v0.93.x. It is the full Go library for anyone who uses
+it, and the reference the Rust build is diffed against.
+
+### `demesne` and `@foir/demesne-cli` run the Rust binary
+
+The release binaries and the five `@foir/demesne-cli` platform packages carry
+the Rust CLI. Its seven subcommands print what the Go CLI printed, including
+the connection errors for every case tested (refused, unknown host, timeout,
+missing database, wrong password, certificate checks). A connection string
+means what it meant to pgx: the
+`PG*` environment, `.pgpass`, service files, every listed host in order, and
+libpq's `sslmode` rules, so `prefer` (the default) and `require` encrypt
+without checking the certificate, and `verify-ca` and `verify-full` check it.
+
+What changes:
+
+- Release archives are named `demesne-cli-<target>.tar.gz` (`.zip` on
+  Windows), each with a `.sha256` beside it and all of them in `sha256.sum`,
+  instead of `demesne_<version>_<os>_<arch>.tar.gz` and `checksums.txt`. The
+  Linux binaries are static.
+- To build from source, run `cargo build --release -p demesne-cli`, or
+  `cargo install demesne-cli`.
+- A client key in the legacy encrypted PEM format (`DEK-Info`, decrypted with
+  `sslpassword`) is refused with a message that says so. Decrypt it, or use
+  PKCS#8.
+
+### Rust crates
+
+- `demesne-runtime`: the holds resolver, the access, grant and
+  role-assignment surfaces, claims, sessions and the PDP, with no parser.
+- `demesne-emit-rust`: compiles a spec into Rust tables from `build.rs`, for
+  only the surfaces a crate names. Nothing is parsed at runtime, and a spec
+  error fails the build.
+- `demesne-syntax`, `demesne-model`, `demesne-emit-sql`, `demesne-emit-go` and
+  `demesne-emit-ts`: the compiler, as libraries.
+- `demesne-postgres` and `demesne-cli`: live-database support and the CLI.
+
+### The compiler runs as WebAssembly
+
+`demesne-wasm` builds the compiler for `wasm32-unknown-unknown`. `run` is the
+CLI's `validate` and `emit` over in-memory files, byte-identical to the
+native binary, and `validate` checks one spec, for editors and the TypeScript
+packages.
+
 ## v0.93.1
 
 ### The TypeScript runtime lists a conditional surface's claim columns

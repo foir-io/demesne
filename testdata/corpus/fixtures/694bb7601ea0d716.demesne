@@ -1,0 +1,39 @@
+
+topology {
+  level org    virtual
+  level tenant parent org
+  level team   parent tenant
+}
+
+vocabulary roles {
+  permission docs:read  permission docs:write  permission docs:publish
+  permission admin:read permission admin:write
+  preset viewer @ team   = docs:read + admin:read
+  preset editor @ team   = viewer + docs:write + docs:publish
+  preset owner  @ tenant = *
+  rank owner > editor > viewer
+}
+
+rolestore roles {
+  assignments role_assignments
+  kind        principal_kind = "member"
+  subject     principal_id
+  scope       tenant_id team_id
+  rolejoin    role_id roles_tbl id key
+  revoked     revoked_at
+}
+
+subject member { anchor team; reach descendants; identifies sub; roles configurable roles; binds admin }
+
+object doc {
+  table  docs
+  scoped tenant > team
+  permission view    = @holds("docs:read")    @rls maps select
+  permission publish = @holds(docs:publish)   @rls maps update
+  permission serve   = @holds("docs:read")    @check
+}
+object tenant_settings {
+  table  tenant_settings
+  scoped tenant
+  permission edit = @holds("admin:write") @rls maps update
+}

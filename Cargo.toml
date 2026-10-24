@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.94.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0"
+repository = "https://github.com/foir-io/demesne"
+homepage = "https://github.com/foir-io/demesne"
+
+[workspace.dependencies]
+demesne-gocompat = { path = "crates/gocompat", version = "0.94.0" }
+demesne-syntax = { path = "crates/syntax", version = "0.94.0" }
+demesne-runtime = { path = "crates/runtime", version = "0.94.0" }
+demesne-model = { path = "crates/model", version = "0.94.0" }
+demesne-cli = { path = "crates/cli", version = "0.94.0", default-features = false }
+demesne-emit-sql = { path = "crates/emit-sql", version = "0.94.0" }
+demesne-emit-go = { path = "crates/emit-go", version = "0.94.0" }
+demesne-emit-rust = { path = "crates/emit-rust", version = "0.94.0" }
+demesne-emit-ts = { path = "crates/emit-ts", version = "0.94.0" }
+demesne-postgres = { path = "crates/postgres", version = "0.94.0" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

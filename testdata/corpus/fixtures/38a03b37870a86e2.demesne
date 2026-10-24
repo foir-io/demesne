@@ -1,0 +1,4 @@
+
+topology { level tenant }
+vocabulary v { permission self:read }
+subject a { anchor tenant reach self identifies c roles configurable v binds frobnicate }

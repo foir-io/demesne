@@ -1,0 +1,28 @@
+[package]
+name = "demesne-static-parity"
+description = "Checks that the Rust tables emit-rust generates equal the surfaces the compiler builds, for every validating spec in the corpus."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+demesne-runtime.workspace = true
+
+[build-dependencies]
+demesne-syntax.workspace = true
+demesne-model.workspace = true
+demesne-emit-sql.workspace = true
+demesne-emit-rust.workspace = true
+
+[dev-dependencies]
+demesne-syntax.workspace = true
+demesne-model.workspace = true
+demesne-emit-sql.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.dist]
+dist = false

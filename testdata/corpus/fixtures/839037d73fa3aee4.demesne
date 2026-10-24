@@ -1,0 +1,4 @@
+
+topology { level tenant level project parent tenant }
+subject admin { anchor tenant reach descendants identifies sub roles none binds admin }
+object project { table projects pk id level project scoped tenant > project wildcard permission view = @public @rls maps select }

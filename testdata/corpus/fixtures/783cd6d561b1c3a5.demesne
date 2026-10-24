@@ -1,0 +1,29 @@
+
+topology { level platform virtual  level tenant parent platform  level project parent tenant }
+vocabulary admin {
+  permission content:read
+  preset project_viewer @ project = content:read
+  preset project_admin  @ project = project_viewer + content:read
+  rank project_admin > project_viewer
+}
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant impersonation at tenant via edge impersonation_grants(grantee_id, tenant_id) active revoked_at expires expires_at
+subject operator { anchor platform; reach via grant impersonation; identifies sub; roles none }
+subject admin    { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+subject customer { anchor project;  reach self; identifies customer_id; roles none; binds owner }
+subject service  { anchor project;  reach self; identifies sub; roles none }
+
+object customers {
+  table  customers
+  scoped tenant > project
+  relation self:   customer via id
+  relation member: admin via role
+  permission view = self + member + @kind("service")  @rls maps select
+}

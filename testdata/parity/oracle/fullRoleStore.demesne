@@ -1,0 +1,16 @@
+
+topology { level tenant  level project parent tenant }
+vocabulary admin { permission a:read  preset v @ project = a:read }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at by revoked_by
+  granted     granted_at by granted_by
+  permissions permissions
+  pk          id
+}
+subject admin { anchor tenant; reach descendants; identifies sub; roles configurable admin; binds admin }
+object thing { table things; scoped tenant > project; relation m: admin via role; permission view = m @rls maps select }

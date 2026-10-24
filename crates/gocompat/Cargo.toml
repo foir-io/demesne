@@ -1,0 +1,12 @@
+[package]
+name = "demesne-gocompat"
+description = "Byte-exact reproductions of the Go standard library formatting demesne's output depends on."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true

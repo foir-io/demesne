@@ -1,7 +1,7 @@
 {
   "name": "@foir/demesne-cli",
   "version": "0.0.0",
-  "description": "Demesne CLI — compile one .demesne spec into Postgres RLS plus a typed app surface. Wraps the prebuilt Go binary for your platform.",
+  "description": "Demesne CLI — compile one .demesne spec into Postgres RLS plus a typed app surface. Wraps the prebuilt binary for your platform.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

@@ -1,0 +1,24 @@
+
+topology { level platform virtual level tenant parent platform level project parent tenant }
+vocabulary v { permission a:b preset padmin @ project = a:b preset tadmin @ tenant = a:b rank tadmin > padmin }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject admin { anchor tenant reach descendants identifies sub roles configurable v binds admin }
+object item {
+  table  items
+  scoped tenant
+  relation tenant:  tenant  via tenant_id
+  relation project: project via project_id
+  permission view = tenant->owner
+                  + (project->owner and @within(project))
+                  + (@kind("service") and @within(project))
+                  + (mode shared = "true" and @within(project nullable))
+                  @rls maps select
+  permission remove = (project->owner and @within(project)) @rls maps delete
+}

@@ -1,0 +1,66 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform col tenant_ref claim tnt
+  level space    parent tenant   col space_ref  claim spc
+}
+
+vocabulary crew {
+  permission asset:read
+  permission asset:write
+  permission asset:publish
+
+  preset viewer @ space  = asset:read
+  preset editor @ space  = viewer + asset:write + asset:publish
+  preset boss   @ tenant = *
+  rank boss > editor > viewer
+}
+
+rolestore crew {
+  assignments crew_grants
+  kind        member_kind = "crew"
+  subject     member_ref
+  scope       tenant_ref space_ref
+  rolejoin    role_ref crew_roles row_id slug
+  revoked     killed_at
+}
+
+subject root   { anchor platform reach descendants identifies sub via membership ops_users(user_ref, is_ops) active state = "ON"; roles none }
+subject crew   { anchor tenant   reach descendants identifies sub;        roles configurable crew; binds admin }
+subject member { anchor space    reach self;       identifies member_ref; roles none;              binds owner }
+
+object space {
+  table  spaces
+  pk     space_pk
+  level  space
+  scoped tenant > space
+  relation tenant: tenant via tenant_ref
+  relation crew:   crew via role
+  relation boss:   crew via role
+  permission view = tenant->owner + crew + @session   @rls maps select
+  permission edit = tenant->owner + @session(boss)    @rls maps update
+}
+
+object asset {
+  table  assets
+  pk     asset_pk
+  scoped tenant > space
+  relation tenant:  tenant via tenant_ref
+  relation owner:   member via holder_ref
+  relation grantee: member via grant asset_acl(asset_ref, grantee_kind, grantee_ref, perm)
+  permission view    = owner + mode share = "open" + grantee:read   @rls,kernel maps select
+  permission edit    = owner + grantee:write   @rls maps update
+  permission create  = owner                   @rls maps insert
+  permission delete  = owner + grantee:delete  @rls maps delete
+  permission publish = asset:publish  @pdp
+}
+
+procedures crew {
+  assets.v1.AssetService/CreateAsset  -> asset:write
+  assets.v1.AssetService/GetAsset     -> asset:read
+  assets.v1.AssetService/PublishAsset -> asset:publish
+}
+
+ungoverned crew {
+  meta.v1.MetaService/Healthz : "liveness probe, no authz"
+}

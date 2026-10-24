@@ -1,0 +1,15 @@
+
+topology {
+  level org
+  level team   parent org
+  level folder parent org
+  level item   parents team, folder
+}
+object widget {
+  table  widgets
+  scoped org > team > folder > item
+  permission view = @scoped @rls maps select
+}
+
+vocabulary v { permission self:read }
+subject s { anchor item reach self identifies sid roles configurable v binds owner }

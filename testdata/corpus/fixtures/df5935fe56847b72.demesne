@@ -1,0 +1,10 @@
+
+topology { level control virtual level estate parent control level space parent estate }
+grant support at estate via edge approvals(holder_id, estate_id) scope space on space_id missing deny
+subject helper { anchor control; reach via grant support; identifies sub; roles none }
+object allowance {
+  table allowances
+  scoped estate
+  reach support bound space for select
+  permission view = @scoped @rls maps select
+}

@@ -1,0 +1,10 @@
+
+topology { level tenant level project parent tenant }
+vocabulary v { permission c:r }
+subject principal { anchor tenant reach descendants identifies actor_id roles configurable v binds admin }
+object thing {
+  table  things
+  scoped tenant
+  permission view   = @scoped + @self(actor_col) @rls maps select
+  permission create = @scoped @rls maps insert selfcheck actor_col
+}

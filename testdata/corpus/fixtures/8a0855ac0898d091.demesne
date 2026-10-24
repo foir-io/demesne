@@ -1,0 +1,5 @@
+
+topology { level tenant level project parent tenant }
+vocabulary v { permission self:read }
+subject a { anchor project reach self identifies c1 roles configurable v binds owner }
+subject b { anchor project reach self identifies c2 roles configurable v binds owner }

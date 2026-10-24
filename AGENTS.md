@@ -4,13 +4,24 @@ Guide for an agent (or a human) working in this repository.
 
 ## What this is
 
-Demesne is a Go compiler and library that turns one authorization spec (`.demesne`) into
-Postgres Row-Level Security (the enforcement floor) plus a typed application surface in Go
-and TypeScript. There is no running authorization service; enforcement lives in the database.
+Demesne is a compiler that turns one authorization spec (`.demesne`) into Postgres Row-Level
+Security (the enforcement floor) plus a typed application surface in Go, TypeScript and Rust.
+There is no running authorization service; enforcement lives in the database. The compiler,
+CLI and runtime are Rust; the Go engine is frozen at v0.93.x as the full Go library.
 
 ## Repository layout
 
-- `/` — the engine, module `github.com/foir-io/demesne`. Standard library only. The
+- `crates/` — the Rust workspace: `syntax` (lexer, parser), `model` (analysis and
+  validation), `emit-sql`, `emit-go`, `emit-ts`, `emit-rust` (static tables from `build.rs`),
+  `runtime` (no parser), `postgres` (live-database support), `cli` (the `demesne` binary, and a
+  library of its pure commands), `wasm` (the compiler as WebAssembly), `gocompat` (Go's
+  quoting, JSON escaping and sort order, for byte parity), and the test-only `parity` and
+  `static-parity`.
+- `scripts/parity/`, `testdata/` — the differential harness against the Go engine and its
+  corpus.
+- `npm/` — the `@foir/demesne-cli` launcher and the script that stages its platform packages
+  from dist's archives.
+- `/` — the Go engine, module `github.com/foir-io/demesne`. Standard library only. The
   lexer, parser, AST, validator, every `Emit*` target (RLS, definers, triggers, PDP, claims,
   app surface, framework codegen, changelog, TypeScript, Supabase profile), and the runtime
   helpers.
@@ -25,6 +36,8 @@ and TypeScript. There is no running authorization service; enforcement lives in 
 
 ## Build, test, lint
 
+- Rust: `cargo test --workspace`, `cargo clippy --workspace --all-targets`; the live-Postgres
+  suites run with `cargo test -p demesne-postgres -- --ignored` and `$DEMESNE_PG_URL` set.
 - Engine: `go build ./...`, `go test ./...`, `go vet ./...`, `golangci-lint run ./...`
 - CLI: `cd cmd/demesne && go test ./...`
 - pgx: `cd pgx && go test ./...`

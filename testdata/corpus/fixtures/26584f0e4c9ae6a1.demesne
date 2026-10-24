@@ -1,0 +1,48 @@
+definers schema "authz"
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin {
+  permission content:read  permission content:write
+  preset project_viewer @ project = content:read
+  preset project_admin  @ project = project_viewer + content:write
+  preset tenant_owner   @ tenant  = *
+  rank tenant_owner > project_admin > project_viewer
+}
+vocabulary customer {
+  permission self:read
+}
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant impersonation at tenant
+  via edge impersonation_grants(grantee_id, tenant_id)
+  active revoked_at expires expires_at
+
+subject operator { anchor platform; reach via grant impersonation; identifies sub; roles none }
+subject admin    { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+subject customer { anchor project;  reach self; identifies customer_id; roles configurable customer; binds owner }
+
+object project {
+  table  projects
+  level  project
+  scoped tenant > project
+  relation tenant: tenant via tenant_id
+  relation admin:  admin  via role
+  permission view = tenant->owner + @session            @rls maps select
+  permission edit = tenant->owner + @session(admin)     @rls maps update
+}
+object record {
+  table  records
+  scoped tenant > project
+  relation owner: customer via customer_id
+  permission view = owner @rls maps select
+}

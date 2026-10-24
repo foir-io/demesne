@@ -1,0 +1,19 @@
+[package]
+name = "demesne-emit-rust"
+description = "Emits demesne's Rust surface: a spec's runtime tables as statics, only for the surfaces a crate names, generated from build.rs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[dependencies]
+demesne-syntax.workspace = true
+demesne-runtime.workspace = true
+demesne-model.workspace = true
+demesne-emit-sql.workspace = true
+
+[lints]
+workspace = true

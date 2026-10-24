@@ -1,0 +1,25 @@
+[package]
+name = "demesne-parity"
+description = "The differential runner that proves demesne-rs byte-identical to the frozen Go engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+demesne-gocompat.workspace = true
+demesne-syntax.workspace = true
+demesne-runtime.workspace = true
+demesne-model.workspace = true
+demesne-emit-sql.workspace = true
+demesne-emit-go.workspace = true
+demesne-emit-ts.workspace = true
+demesne-postgres.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.dist]
+dist = false

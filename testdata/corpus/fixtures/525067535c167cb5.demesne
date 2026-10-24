@@ -1,0 +1,19 @@
+
+topology { level platform virtual level tenant parent platform level project parent tenant }
+vocabulary v { permission a:b preset tadmin @ tenant = a:b }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject admin { anchor tenant reach descendants identifies sub roles configurable v binds admin }
+
+object widget_control {
+  table  widgets
+  scoped tenant
+  relation tenant: tenant via tenant_id
+  permission control = tenant->owner @rls maps select predicate
+}

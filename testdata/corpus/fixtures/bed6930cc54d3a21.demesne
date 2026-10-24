@@ -1,0 +1,21 @@
+
+topology { level platform virtual  level tenant parent platform  level project parent tenant }
+vocabulary admin { permission c:r  preset r @ project = c:r }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant impersonation at tenant via edge impersonation_grants(grantee_id, tenant_id) active revoked_at
+subject operator { anchor platform reach via grant impersonation identifies sub roles none }
+subject member   { anchor tenant   reach descendants identifies sub roles configurable admin binds admin }
+object doc {
+  table  docs
+  scoped tenant > project
+  relation m:        member via role
+  relation infolder: member via closure folder_closure(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id
+  permission view = m + infolder @rls maps select
+}

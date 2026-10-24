@@ -1,0 +1,19 @@
+
+topology { level tenant  level project parent tenant }
+vocabulary a {
+  permission shared:verb
+  preset ap @ tenant = shared:verb
+}
+vocabulary b {
+  permission shared:verb
+  preset bp @ tenant = shared:verb
+}
+rolestore a { assignments ra kind k = "a" subject pid scope tenant_id project_id rolejoin role_id roles id key revoked rv permissions perms }
+rolestore b { assignments rb kind k = "b" subject pid scope tenant_id project_id rolejoin role_id roles id key revoked rv permissions perms }
+subject sa { anchor tenant reach descendants identifies sub  roles configurable a binds admin }
+subject sb { anchor tenant reach descendants identifies bsub roles configurable b binds owner }
+object doc {
+  table docs
+  scoped tenant > project
+  permission view = @holds(shared:verb) @rls maps select
+}

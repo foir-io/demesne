@@ -1,0 +1,36 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin {
+  permission c:r
+  preset project_admin @ project = c:r
+  preset tenant_owner  @ tenant  = *
+  rank tenant_owner > project_admin
+}
+vocabulary platform { permission p:m  preset platform_admin @ platform = p:m }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "operator"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant breakglass at tenant
+  via edge breakglass_grants(grantee_id, tenant_id)
+  active revoked_at expires expires_at
+subject operator  { anchor platform reach via grant breakglass identifies sub roles none }
+subject superuser { anchor platform reach descendants identifies sub roles configurable platform }
+subject member    { anchor tenant   reach descendants identifies sub roles configurable admin binds admin }
+object project {
+  table  projects
+  level  project
+  scoped tenant > project
+  relation crew:   superuser via role
+  relation tenant: tenant via tenant_id
+  relation member: member via role
+  permission view = crew + tenant->owner + member + @session @rls maps select
+}

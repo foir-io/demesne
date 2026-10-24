@@ -1,0 +1,6 @@
+
+topology { level tenant }
+vocabulary v { permission a:read }
+subject u { anchor tenant reach self identifies sub roles none }
+object acl { table resource_acl pk (resource_id, principal_id, access) scoped tenant relation o: u via principal_id permission view = o @rls maps select }
+object note { table notes scoped tenant relation o: u via owner_id permission view = o @rls maps select }

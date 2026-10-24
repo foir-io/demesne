@@ -1,0 +1,12 @@
+
+topology {
+  level org
+  level team   parent org
+  level folder parent org
+  level item   parents team, folder
+}
+object widget {
+  table  widgets
+  scoped org > team > folder > item
+  permission view = @scoped @rls maps select
+}

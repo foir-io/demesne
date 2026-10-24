@@ -1,0 +1,5 @@
+
+topology { level org virtual  level tenant parent org }
+vocabulary v { permission a:b preset p @ tenant = a:b }
+subject admin { anchor tenant; reach descendants; identifies sub; roles configurable v; binds admin }
+object t { table ts scoped tenant permission view = @holds("a:b") @rls maps select }

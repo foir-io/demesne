@@ -1,0 +1,11 @@
+
+topology { level platform virtual  level tenant parent platform }
+vocabulary admin { permission a:read  preset v @ tenant = a:read }
+grant impersonation at tenant
+  via edge impersonation_grants(grantee_id, tenant_id)
+  active revoked_at expires expires_at
+  pk id granted by granted_by revoked by revoked_by created created_at
+  column reason
+subject operator { anchor platform; reach via grant impersonation; identifies sub; roles none }
+subject admin    { anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }
+object thing { table things; scoped tenant; relation m: admin via role; permission view = m @rls maps select }

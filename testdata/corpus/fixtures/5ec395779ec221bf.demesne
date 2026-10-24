@@ -1,0 +1,40 @@
+
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin { permission c:r  preset pa @ project = c:r }
+vocabulary cust  { permission self:read }
+subject admin    { anchor tenant  reach descendants identifies sub roles configurable admin binds admin }
+subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
+subject service  { anchor project reach self identifies sub roles none }
+object resource_grant {
+  table  resource_acl
+  scoped tenant > project
+  permission view   = @store_manage   @rls maps select
+  permission create = @store_manage   @rls maps insert
+  permission edit   = @store_manage   @rls maps update
+  permission delete = @store_manage   @rls maps delete
+}
+
+object record {
+  table records
+  scoped tenant > project
+  relation owner:   customer | service via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
+  permission view   = @app_scope + owner + mode access_mode = "public" + grantee:read @rls maps select
+  permission edit   = @app_scope + owner + grantee:write  @rls maps update
+  permission create = @app_scope + owner                  @rls maps insert
+  permission delete = @app_scope + owner + grantee:delete @rls maps delete
+}
+object file {
+  table files
+  scoped tenant > project
+  relation owner:   customer | service via customer_id
+  relation grantee: customer via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "file"
+  permission view   = @app_scope + owner + mode access_mode = "public" + grantee:read @rls maps select
+  permission edit   = @app_scope + owner + grantee:write  @rls maps update
+  permission create = @app_scope + owner                  @rls maps insert
+  permission delete = @app_scope + owner + grantee:delete @rls maps delete
+}

@@ -1,0 +1,18 @@
+
+topology { level tenant level project parent tenant }
+vocabulary admin { permission content:write  preset ed @ project = content:write }
+vocabulary cust  { permission self:read }
+subject admin    { anchor tenant  reach descendants identifies sub roles configurable admin binds admin }
+subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
+object record {
+  table  records
+  scoped tenant > project
+  relation owner: customer via customer_id
+  permission view = owner @rls maps select
+}
+procedures admin {
+  records.v1.RecordsService/UpdateRecord -> content:write
+}
+ungoverned admin {
+  records.v1.RecordsService/GetRecord : "read path"
+}
