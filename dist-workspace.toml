@@ -10,5 +10,5 @@ unix-archive = ".tar.gz"
 windows-archive = ".zip"
 checksum = "sha256"
 include = ["NOTICE"]
-pr-run-mode = "plan"
+pr-run-mode = "upload"
 publish-jobs = ["./publish-npm"]

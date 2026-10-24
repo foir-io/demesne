@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.94.0
 
 ### The compiler, CLI and runtime are Rust, and their output is unchanged
 
