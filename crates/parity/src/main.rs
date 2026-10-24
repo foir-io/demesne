@@ -250,7 +250,7 @@ fn fuzz_cmd(argv: &[String]) -> Result<(), String> {
     for n in 0..mutate {
         let e = &base[r.below(base.len())];
         let src = fs::read_to_string(&e.path).map_err(|e| e.to_string())?;
-        fs::write(out.join(format!("mut-{seed}-{n:05}.demesne")), fuzz::mutate(r.next(), &src)).map_err(|e| e.to_string())?;
+        fs::write(out.join(format!("mut-{seed}-{n:05}.demesne")), fuzz::mutate(r.next_u64(), &src)).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

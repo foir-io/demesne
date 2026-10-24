@@ -7,7 +7,7 @@ fn s(x: &str) -> Value {
 }
 
 fn args(a: &[SqlArg]) -> Value {
-    Value::Array(a.iter().map(|x| x.as_ref().map(|v| Value::str(v)).unwrap_or(Value::Null)).collect())
+    Value::Array(a.iter().map(|x| x.as_ref().map(Value::str).unwrap_or(Value::Null)).collect())
 }
 
 fn stmt((sql, a): (String, Vec<SqlArg>)) -> Value {

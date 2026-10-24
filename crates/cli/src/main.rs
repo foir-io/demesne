@@ -43,7 +43,7 @@ fn introspect(dsn: &str) -> Result<(demesne_model::Schema, demesne_postgres::Int
 
 fn strip_bool_flag(args: &[String], name: &str) -> (bool, Vec<String>) {
     let flag = format!("--{name}");
-    let found = args.iter().any(|a| *a == flag);
+    let found = args.contains(&flag);
     (found, args.iter().filter(|a| **a != flag).cloned().collect())
 }
 

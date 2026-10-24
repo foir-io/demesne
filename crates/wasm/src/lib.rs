@@ -12,11 +12,29 @@ impl Files for MemFiles {
     }
 }
 
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 pub struct RunResult {
-    pub code: u8,
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
+    code: u8,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl RunResult {
+    #[wasm_bindgen(getter)]
+    pub fn code(&self) -> u8 {
+        self.code
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn stdout(&self) -> Vec<u8> {
+        self.stdout.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn stderr(&self) -> Vec<u8> {
+        self.stderr.clone()
+    }
 }
 
 pub fn run_native(args: &[String], files: BTreeMap<String, Vec<u8>>) -> Output {

@@ -5,7 +5,7 @@ impl Rng {
         Rng(seed ^ 0x9E37_79B9_7F4A_7C15)
     }
 
-    pub fn next(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -14,11 +14,11 @@ impl Rng {
     }
 
     pub fn below(&mut self, n: usize) -> usize {
-        if n == 0 { 0 } else { (self.next() % n as u64) as usize }
+        if n == 0 { 0 } else { (self.next_u64() % n as u64) as usize }
     }
 
     pub fn chance(&mut self, pct: u64) -> bool {
-        self.next() % 100 < pct
+        self.next_u64() % 100 < pct
     }
 
     pub fn pick<'a, T>(&mut self, xs: &'a [T]) -> &'a T {
@@ -425,7 +425,7 @@ fn object(r: &mut Rng, w: &mut World, out: &mut String, i: usize) {
         body.push_str("  require edit = @self(created_by)\n");
     }
     if r.chance(10) {
-        body.push_str(&format!("  admit select = @claim(\"support\", \"on\")\n"));
+        body.push_str("  admit select = @claim(\"support\", \"on\")\n");
     }
     if r.chance(30) && body.contains("mode visibility") {
         body.push_str("  track visibility\n");

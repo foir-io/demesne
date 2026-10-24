@@ -46,6 +46,10 @@ impl AsyncIndex {
         )
     }
 
+    fn fn_name(&self, suffix: &str) -> String {
+        format!("{}_{suffix}", self.base)
+    }
+
     pub fn apply_fn_sql(&self) -> String {
         format!(
             r#"CREATE OR REPLACE FUNCTION {f}()
@@ -79,7 +83,7 @@ BEGIN
   RETURN h;
 END;
 $$;"#,
-            f = format!("{}_apply", self.base),
+            f = self.fn_name("apply"),
             cur = self.cursor,
             key = self.index_key(),
             cl = self.changelog,
@@ -112,7 +116,7 @@ BEGIN
   RETURN h;
 END;
 $$;"#,
-            f = format!("{}_rebuild", self.base),
+            f = self.fn_name("rebuild"),
             cur = self.cursor,
             key = self.index_key(),
             b = self.base,
@@ -134,7 +138,7 @@ AS $$
   SELECT EXISTS(SELECT 1 FROM {b} WHERE resource_id = p_resource AND principal_kind = p_kind AND principal_id = p_principal),
          COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = '{key}'), '0'::xid8);
 $$;"#,
-            f = format!("{}_affordance", self.base),
+            f = self.fn_name("affordance"),
             b = self.base,
             cur = self.cursor,
             key = self.index_key(),
@@ -145,7 +149,7 @@ $$;"#,
     pub fn watermark_fn_sql(&self) -> String {
         format!(
             "CREATE OR REPLACE FUNCTION {f}()\nRETURNS xid8\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public\nAS $$ SELECT COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = '{key}'), '0'::xid8); $$;",
-            f = format!("{}_watermark", self.base),
+            f = self.fn_name("watermark"),
             cur = self.cursor,
             key = self.index_key()
         )

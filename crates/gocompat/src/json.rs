@@ -179,28 +179,6 @@ fn write_object<'a>(
     out.push('}');
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn escapes_like_encoding_json() {
-        let mut s = String::new();
-        write_string(&mut s, "a<b>&\"\\\n\u{1}\u{7f}\u{2028}é");
-        assert_eq!(s, "\"a\\u003cb\\u003e\\u0026\\\"\\\\\\n\\u0001\u{7f}\\u2028é\"");
-    }
-
-    #[test]
-    fn indents_like_marshal_indent() {
-        let v = Value::Map(vec![
-            ("b".into(), Value::Array(vec![])),
-            ("a".into(), Value::Struct(vec![("x".into(), Value::Int(1)), ("e".into(), Value::Map(vec![]))])),
-        ]);
-        assert_eq!(marshal_indent(&v, "", "  "), "{\n  \"a\": {\n    \"x\": 1,\n    \"e\": {}\n  },\n  \"b\": []\n}");
-        assert_eq!(marshal(&v), "{\"a\":{\"x\":1,\"e\":{}},\"b\":[]}");
-    }
-}
-
 pub fn parse(src: &str) -> Result<Value, String> {
     let mut p = Parser { b: src.as_bytes(), i: 0 };
     p.ws();
@@ -400,5 +378,27 @@ impl Value {
 
     pub fn string_list(&self) -> Vec<String> {
         self.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escapes_like_encoding_json() {
+        let mut s = String::new();
+        write_string(&mut s, "a<b>&\"\\\n\u{1}\u{7f}\u{2028}é");
+        assert_eq!(s, "\"a\\u003cb\\u003e\\u0026\\\"\\\\\\n\\u0001\u{7f}\\u2028é\"");
+    }
+
+    #[test]
+    fn indents_like_marshal_indent() {
+        let v = Value::Map(vec![
+            ("b".into(), Value::Array(vec![])),
+            ("a".into(), Value::Struct(vec![("x".into(), Value::Int(1)), ("e".into(), Value::Map(vec![]))])),
+        ]);
+        assert_eq!(marshal_indent(&v, "", "  "), "{\n  \"a\": {\n    \"x\": 1,\n    \"e\": {}\n  },\n  \"b\": []\n}");
+        assert_eq!(marshal(&v), "{\"a\":{\"x\":1,\"e\":{}},\"b\":[]}");
     }
 }

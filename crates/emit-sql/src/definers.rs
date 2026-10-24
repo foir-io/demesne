@@ -802,7 +802,7 @@ impl<'a> Sql<'a> {
                 let pred = self.object_verb_predicate_for(other, &vo.verb, vo.op.as_deref().unwrap_or(""), virt)?;
                 let sig = format!("p_{}_id text", vo.object);
                 let key = format!("{}.{} = p_{}_id", other.table, other.pk(), vo.object);
-                let strict = binds_every(&sig, &[&[key.clone()]]);
+                let strict = binds_every(&sig, &[std::slice::from_ref(&key)]);
                 out.push(GenFn {
                     name,
                     sig,
@@ -903,7 +903,7 @@ impl<'a> Sql<'a> {
                     .map_err(|e| format!("@store_manage dispatch for {}: {e}", quote(store)))?;
                 let sig = format!("p_id {}", self.s.id_type());
                 let key = format!("{}.{} = p_id", o.table, o.pk());
-                let strict = binds_every(&sig, &[&[key.clone()]]);
+                let strict = binds_every(&sig, &[std::slice::from_ref(&key)]);
                 out.push(GenFn {
                     name: can_edit.clone(),
                     sig,
@@ -1106,7 +1106,7 @@ impl<'a> Sql<'a> {
         }
     }
 
-    fn sel_leaves<'b>(sel: Option<&'b Perm>) -> Vec<&'b Term> {
+    fn sel_leaves(sel: Option<&Perm>) -> Vec<&Term> {
         sel.map(|s| s.tree.leaves()).unwrap_or_default()
     }
 
