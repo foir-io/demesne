@@ -29,6 +29,10 @@ impl Value {
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
 pub fn write_string(dst: &mut String, s: &str) {
+    write_string_opts(dst, s, true)
+}
+
+pub fn write_string_opts(dst: &mut String, s: &str, escape_html: bool) {
     dst.push('"');
     for c in s.chars() {
         match c {
@@ -41,7 +45,7 @@ pub fn write_string(dst: &mut String, s: &str) {
             '\n' => dst.push_str("\\n"),
             '\r' => dst.push_str("\\r"),
             '\t' => dst.push_str("\\t"),
-            '<' | '>' | '&' => push_u00(dst, c as u8),
+            '<' | '>' | '&' if escape_html => push_u00(dst, c as u8),
             c if (c as u32) < 0x20 => push_u00(dst, c as u8),
             '\u{2028}' => dst.push_str("\\u2028"),
             '\u{2029}' => dst.push_str("\\u2029"),
@@ -58,29 +62,33 @@ fn push_u00(dst: &mut String, b: u8) {
 }
 
 pub fn marshal(v: &Value) -> String {
+    marshal_opts(v, true)
+}
+
+pub fn marshal_opts(v: &Value, escape_html: bool) -> String {
     let mut out = String::new();
-    write_compact(&mut out, v);
+    write_compact(&mut out, v, escape_html);
     out
 }
 
-fn write_compact(out: &mut String, v: &Value) {
+fn write_compact(out: &mut String, v: &Value, h: bool) {
     match v {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Value::Int(i) => out.push_str(&i.to_string()),
-        Value::Str(s) => write_string(out, s),
+        Value::Str(s) => write_string_opts(out, s, h),
         Value::Array(xs) => {
             out.push('[');
             for (i, x) in xs.iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
-                write_compact(out, x);
+                write_compact(out, x, h);
             }
             out.push(']');
         }
-        Value::Struct(fields) => write_object(out, fields.iter().map(|(k, v)| (k.as_str(), v)), None, 0),
-        Value::Map(entries) => write_object(out, sorted(entries).into_iter(), None, 0),
+        Value::Struct(fields) => write_object(out, fields.iter().map(|(k, v)| (k.as_str(), v)), None, 0, h),
+        Value::Map(entries) => write_object(out, sorted(entries).into_iter(), None, 0, h),
     }
 }
 
@@ -91,8 +99,12 @@ fn sorted(entries: &[(String, Value)]) -> Vec<(&str, &Value)> {
 }
 
 pub fn marshal_indent(v: &Value, prefix: &str, indent: &str) -> String {
+    marshal_indent_opts(v, prefix, indent, true)
+}
+
+pub fn marshal_indent_opts(v: &Value, prefix: &str, indent: &str, escape_html: bool) -> String {
     let mut out = String::new();
-    write_indented(&mut out, v, prefix, indent, 0);
+    write_indented(&mut out, v, prefix, indent, 0, escape_html);
     out
 }
 
@@ -104,7 +116,7 @@ fn newline(out: &mut String, prefix: &str, indent: &str, depth: usize) {
     }
 }
 
-fn write_indented(out: &mut String, v: &Value, prefix: &str, indent: &str, depth: usize) {
+fn write_indented(out: &mut String, v: &Value, prefix: &str, indent: &str, depth: usize, h: bool) {
     match v {
         Value::Array(xs) => {
             if xs.is_empty() {
@@ -117,16 +129,16 @@ fn write_indented(out: &mut String, v: &Value, prefix: &str, indent: &str, depth
                     out.push(',');
                 }
                 newline(out, prefix, indent, depth + 1);
-                write_indented(out, x, prefix, indent, depth + 1);
+                write_indented(out, x, prefix, indent, depth + 1, h);
             }
             newline(out, prefix, indent, depth);
             out.push(']');
         }
         Value::Struct(fields) => {
-            write_object(out, fields.iter().map(|(k, v)| (k.as_str(), v)), Some((prefix, indent)), depth)
+            write_object(out, fields.iter().map(|(k, v)| (k.as_str(), v)), Some((prefix, indent)), depth, h)
         }
-        Value::Map(entries) => write_object(out, sorted(entries).into_iter(), Some((prefix, indent)), depth),
-        other => write_compact(out, other),
+        Value::Map(entries) => write_object(out, sorted(entries).into_iter(), Some((prefix, indent)), depth, h),
+        other => write_compact(out, other, h),
     }
 }
 
@@ -135,6 +147,7 @@ fn write_object<'a>(
     fields: impl Iterator<Item = (&'a str, &'a Value)>,
     pretty: Option<(&str, &str)>,
     depth: usize,
+    h: bool,
 ) {
     let fields: Vec<_> = fields.collect();
     if fields.is_empty() {
@@ -149,14 +162,14 @@ fn write_object<'a>(
         match pretty {
             Some((prefix, indent)) => {
                 newline(out, prefix, indent, depth + 1);
-                write_string(out, k);
+                write_string_opts(out, k, h);
                 out.push_str(": ");
-                write_indented(out, v, prefix, indent, depth + 1);
+                write_indented(out, v, prefix, indent, depth + 1, h);
             }
             None => {
-                write_string(out, k);
+                write_string_opts(out, k, h);
                 out.push(':');
-                write_compact(out, v);
+                write_compact(out, v, h);
             }
         }
     }

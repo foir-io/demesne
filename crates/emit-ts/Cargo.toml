@@ -1,0 +1,20 @@
+[package]
+name = "demesne-emit-ts"
+description = "Emits demesne's TypeScript surface: projections for @foir/demesne and the typed framework module."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+demesne-gocompat.workspace = true
+demesne-syntax.workspace = true
+demesne-runtime.workspace = true
+demesne-model.workspace = true
+demesne-emit-sql.workspace = true
+demesne-emit-go.workspace = true
+
+[lints]
+workspace = true

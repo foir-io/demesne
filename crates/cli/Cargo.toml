@@ -18,6 +18,8 @@ demesne-syntax.workspace = true
 demesne-runtime.workspace = true
 demesne-model.workspace = true
 demesne-emit-sql.workspace = true
+demesne-emit-go.workspace = true
+demesne-emit-ts.workspace = true
 
 [lints]
 workspace = true

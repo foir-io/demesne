@@ -149,7 +149,7 @@ fn cmd_emit(out: &mut Out, args: &[String]) -> R {
     }
     match target.as_str() {
         "go" => {}
-        "ts" => return Err("emit --target ts: not yet ported".into()),
+        "ts" => return emit_ts(out, &s, kind),
         other => return Err(format!("unknown --target {} (go|ts)", quote(other))),
     }
     let sql = Sql::new(&s);
@@ -161,9 +161,16 @@ fn cmd_emit(out: &mut Out, args: &[String]) -> R {
             out.print(&sql.triggers_sql());
             Ok(())
         }
-        "claims" => Err("emit claims: not yet ported".into()),
+        "claims" => {
+            out.print(&demesne_emit_go::render_claims_contract_go(&s, "ClaimsContract")?);
+            Ok(())
+        }
         "pdp" => emit_pdp_report(out, &s),
-        "framework" => Err("emit framework: not yet ported".into()),
+        "framework" => {
+            let pkg = args.get(2).map(String::as_str).unwrap_or("authz");
+            out.print(&demesne_emit_go::emit_framework(&s, pkg)?);
+            Ok(())
+        }
         "all" => emit_all_sql(out, &sql),
         other => Err(format!(
             "unknown emit kind {} (rls|definers|enablement|triggers|claims|pdp|framework|all)",
@@ -240,4 +247,36 @@ fn emit_all_sql(out: &mut Out, sql: &Sql) -> R {
         out.print(&format!("\n{a}"));
     }
     Ok(())
+}
+
+fn emit_ts(out: &mut Out, s: &Spec, kind: &str) -> R {
+    match kind {
+        "all" | "projections" => {
+            out.print(&demesne_emit_ts::emit_ts(s)?);
+            Ok(())
+        }
+        "claims" => {
+            out.print(&demesne_emit_ts::render_claims_contract_ts(s, "ClaimsContract")?);
+            Ok(())
+        }
+        "pdp" => {
+            let pdps = emit_pdp(s)?;
+            for (i, (site, p)) in pdps.iter().enumerate() {
+                if i > 0 {
+                    out.print("\n");
+                }
+                out.print(&demesne_emit_ts::render_pdp_ts(p, &format!("{site}Policy")));
+            }
+            Ok(())
+        }
+        "framework" => {
+            out.print(&demesne_emit_ts::emit_framework_ts(s)?);
+            Ok(())
+        }
+        "rls" | "policies" | "definers" | "enablement" | "triggers" => Err(format!(
+            "emit kind {} is language-neutral SQL/DDL — it has no TypeScript target; emit it without --target ts",
+            quote(kind)
+        )),
+        other => Err(format!("unknown emit kind {} for --target ts (claims|pdp|projections|framework|all)", quote(other))),
+    }
 }
