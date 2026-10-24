@@ -1,6 +1,4 @@
-mod corpus;
-mod goast;
-mod runner;
+use demesne_parity::{api, corpus, goast, oracle, runner};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,11 +57,23 @@ fn dump_rust_lib(entries: &[corpus::Entry], out: &Path) {
         let dir = out.join(&e.id);
         fs::create_dir_all(&dir).unwrap();
         let src = fs::read(&e.path).unwrap();
-        let ast = match demesne_syntax::parse_bytes(&src) {
-            Ok(s) => demesne_gocompat::json::marshal(&goast::spec(&s)) + "\n",
-            Err(err) => format!("parse error: {err}\n"),
+        let spec = match demesne_syntax::parse_bytes(&src) {
+            Ok(s) => s,
+            Err(err) => {
+                fs::write(dir.join("ast.json"), format!("parse error: {err}\n")).unwrap();
+                return;
+            }
         };
-        fs::write(dir.join("ast.json"), ast).unwrap();
+        fs::write(dir.join("ast.json"), demesne_gocompat::json::marshal(&goast::spec(&spec)) + "\n").unwrap();
+        if demesne_emit_sql::validate(&spec).is_err() {
+            return;
+        }
+        let oracle = match oracle::build_oracle_entry(&spec) {
+            Ok(v) => demesne_gocompat::json::marshal_indent(&v, "", "  ") + "\n",
+            Err(e) => format!("error: {e}\n"),
+        };
+        fs::write(dir.join("oracle.json"), oracle).unwrap();
+        fs::write(dir.join("api.txt"), api::api_dump(&spec)).unwrap();
     });
 }
 
@@ -83,6 +93,7 @@ fn run(a: Args) -> Result<bool, String> {
 
     let status = Command::new(root.join("scripts/parity/go-dump.sh"))
         .args([a.go_tag.as_str(), list.to_str().unwrap(), go.to_str().unwrap()])
+        .env("DEMESNE_PARITY_ORACLE_SPECS", a.out.join("oracle-specs"))
         .status()
         .map_err(|e| e.to_string())?;
     if !status.success() {

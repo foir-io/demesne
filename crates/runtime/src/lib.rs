@@ -8,6 +8,7 @@ mod error;
 mod grant;
 mod holds;
 mod pdp;
+pub mod projection;
 mod role_assignment;
 mod vocab;
 

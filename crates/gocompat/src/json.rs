@@ -200,3 +200,205 @@ mod tests {
         assert_eq!(marshal(&v), "{\"a\":{\"x\":1,\"e\":{}},\"b\":[]}");
     }
 }
+
+pub fn parse(src: &str) -> Result<Value, String> {
+    let mut p = Parser { b: src.as_bytes(), i: 0 };
+    p.ws();
+    let v = p.value()?;
+    p.ws();
+    if p.i != p.b.len() {
+        return Err(format!("json: trailing data at byte {}", p.i));
+    }
+    Ok(v)
+}
+
+struct Parser<'a> {
+    b: &'a [u8],
+    i: usize,
+}
+
+impl Parser<'_> {
+    fn ws(&mut self) {
+        while self.i < self.b.len() && matches!(self.b[self.i], b' ' | b'\t' | b'\n' | b'\r') {
+            self.i += 1;
+        }
+    }
+
+    fn eat(&mut self, c: u8) -> Result<(), String> {
+        if self.b.get(self.i) == Some(&c) {
+            self.i += 1;
+            Ok(())
+        } else {
+            Err(format!("json: expected {:?} at byte {}", c as char, self.i))
+        }
+    }
+
+    fn lit(&mut self, word: &str, v: Value) -> Result<Value, String> {
+        if self.b[self.i..].starts_with(word.as_bytes()) {
+            self.i += word.len();
+            Ok(v)
+        } else {
+            Err(format!("json: bad literal at byte {}", self.i))
+        }
+    }
+
+    fn value(&mut self) -> Result<Value, String> {
+        match self.b.get(self.i) {
+            Some(b'{') => {
+                self.i += 1;
+                let mut out = Vec::new();
+                self.ws();
+                if self.b.get(self.i) == Some(&b'}') {
+                    self.i += 1;
+                    return Ok(Value::Map(out));
+                }
+                loop {
+                    self.ws();
+                    let k = self.string()?;
+                    self.ws();
+                    self.eat(b':')?;
+                    self.ws();
+                    let v = self.value()?;
+                    out.push((k, v));
+                    self.ws();
+                    if self.b.get(self.i) == Some(&b',') {
+                        self.i += 1;
+                        continue;
+                    }
+                    self.eat(b'}')?;
+                    return Ok(Value::Map(out));
+                }
+            }
+            Some(b'[') => {
+                self.i += 1;
+                let mut out = Vec::new();
+                self.ws();
+                if self.b.get(self.i) == Some(&b']') {
+                    self.i += 1;
+                    return Ok(Value::Array(out));
+                }
+                loop {
+                    self.ws();
+                    out.push(self.value()?);
+                    self.ws();
+                    if self.b.get(self.i) == Some(&b',') {
+                        self.i += 1;
+                        continue;
+                    }
+                    self.eat(b']')?;
+                    return Ok(Value::Array(out));
+                }
+            }
+            Some(b'"') => Ok(Value::Str(self.string()?)),
+            Some(b't') => self.lit("true", Value::Bool(true)),
+            Some(b'f') => self.lit("false", Value::Bool(false)),
+            Some(b'n') => self.lit("null", Value::Null),
+            Some(c) if *c == b'-' || c.is_ascii_digit() => {
+                let start = self.i;
+                self.i += 1;
+                while self.i < self.b.len() && (self.b[self.i].is_ascii_digit()) {
+                    self.i += 1;
+                }
+                let text = std::str::from_utf8(&self.b[start..self.i]).unwrap();
+                text.parse::<i64>().map(Value::Int).map_err(|e| format!("json: {e}"))
+            }
+            _ => Err(format!("json: unexpected byte at {}", self.i)),
+        }
+    }
+
+    fn string(&mut self) -> Result<String, String> {
+        self.eat(b'"')?;
+        let mut out = String::new();
+        loop {
+            let Some(&c) = self.b.get(self.i) else { return Err("json: unterminated string".into()) };
+            self.i += 1;
+            match c {
+                b'"' => return Ok(out),
+                b'\\' => {
+                    let e = *self.b.get(self.i).ok_or("json: bad escape")?;
+                    self.i += 1;
+                    match e {
+                        b'"' => out.push('"'),
+                        b'\\' => out.push('\\'),
+                        b'/' => out.push('/'),
+                        b'b' => out.push('\u{8}'),
+                        b'f' => out.push('\u{c}'),
+                        b'n' => out.push('\n'),
+                        b'r' => out.push('\r'),
+                        b't' => out.push('\t'),
+                        b'u' => {
+                            let hex = std::str::from_utf8(&self.b[self.i..self.i + 4]).map_err(|e| e.to_string())?;
+                            self.i += 4;
+                            let mut cp = u32::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+                            if (0xD800..0xDC00).contains(&cp) && self.b[self.i..].starts_with(b"\\u") {
+                                let lo = u32::from_str_radix(std::str::from_utf8(&self.b[self.i + 2..self.i + 6]).unwrap(), 16)
+                                    .map_err(|e| e.to_string())?;
+                                self.i += 6;
+                                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            }
+                            out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+                        }
+                        _ => return Err("json: bad escape".into()),
+                    }
+                }
+                _ => {
+                    let start = self.i - 1;
+                    let mut end = self.i;
+                    while end < self.b.len() && self.b[end] != b'"' && self.b[end] != b'\\' {
+                        end += 1;
+                    }
+                    out.push_str(std::str::from_utf8(&self.b[start..end]).map_err(|e| e.to_string())?);
+                    self.i = end;
+                }
+            }
+        }
+    }
+}
+
+impl Value {
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        match self {
+            Value::Map(e) | Value::Struct(e) => e.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Value::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Value::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<&[Value]> {
+        match self {
+            Value::Array(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    pub fn entries(&self) -> &[(String, Value)] {
+        match self {
+            Value::Map(e) | Value::Struct(e) => e,
+            _ => &[],
+        }
+    }
+
+    pub fn string_list(&self) -> Vec<String> {
+        self.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default()
+    }
+}

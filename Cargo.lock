@@ -65,7 +65,12 @@ dependencies = [
 name = "demesne-parity"
 version = "0.94.0-dev"
 dependencies = [
+ "demesne-emit-go",
+ "demesne-emit-sql",
+ "demesne-emit-ts",
  "demesne-gocompat",
+ "demesne-model",
+ "demesne-runtime",
  "demesne-syntax",
 ]
 

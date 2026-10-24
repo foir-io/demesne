@@ -1,0 +1,45 @@
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+
+vocabulary admin {
+  permission platform:manage implies *
+  permission tenant:manage   implies project:manage, billing:*, invitations:*
+  permission project:manage  implies records:*, content:*
+
+  permission billing:read
+  permission billing:write
+  permission invitations:read
+  permission invitations:write
+  permission records:read
+  permission records:write
+  permission content:read
+  permission content:publish
+}
+
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "user"
+  subject     user_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+  permissions permissions
+}
+
+subject member {
+  anchor     project
+  reach      descendants
+  identifies sub
+  roles      configurable admin
+  binds      admin
+}
+
+object record {
+  table  records
+  scoped tenant > project
+  permission view = @holds(records:read)  @rls maps select
+  permission edit = @holds(records:write) @rls maps update
+}

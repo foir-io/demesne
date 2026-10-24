@@ -15,3 +15,14 @@ pub fn fmt_slice<S: AsRef<str>>(xs: &[S]) -> String {
     let parts: Vec<&str> = xs.iter().map(|x| x.as_ref()).collect();
     format!("[{}]", parts.join(" "))
 }
+
+#[cfg(test)]
+mod json_roundtrip {
+    use crate::json::{marshal_indent, parse};
+
+    #[test]
+    fn parses_what_it_writes() {
+        let src = "{\n  \"a\": [\n    1,\n    \"x\\u003c\\\"\"\n  ],\n  \"b\": {},\n  \"c\": null\n}";
+        assert_eq!(marshal_indent(&parse(src).unwrap(), "", "  "), src);
+    }
+}
