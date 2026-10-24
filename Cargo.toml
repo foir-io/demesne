@@ -13,6 +13,9 @@ homepage = "https://github.com/foir-io/demesne"
 [workspace.dependencies]
 demesne-gocompat = { path = "crates/gocompat", version = "0.94.0-dev" }
 demesne-syntax = { path = "crates/syntax", version = "0.94.0-dev" }
+demesne-runtime = { path = "crates/runtime", version = "0.94.0-dev" }
+demesne-model = { path = "crates/model", version = "0.94.0-dev" }
+demesne-emit-sql = { path = "crates/emit-sql", version = "0.94.0-dev" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

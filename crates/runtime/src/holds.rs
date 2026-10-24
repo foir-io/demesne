@@ -1,0 +1,187 @@
+use crate::{Error, Vocabulary};
+use std::collections::BTreeSet;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HoldsResolver {
+    pub assignments: String,
+    pub kind_col: String,
+    pub kind_val: String,
+    pub subject_col: String,
+    pub scope_cols: Vec<String>,
+    pub revoked_col: String,
+    pub plane: String,
+    pub plane_depth: i64,
+    pub role_col: String,
+    pub roles_table: String,
+    pub roles_id: String,
+    pub key_col: String,
+    pub perms_col: String,
+    pub vocab: Vocabulary,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoleAssignment {
+    pub scope: Vec<String>,
+    pub role_key: String,
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EffectivePerms {
+    perms: BTreeSet<String>,
+}
+
+impl EffectivePerms {
+    pub fn holds(&self, perm: &str) -> bool {
+        self.perms.contains(perm)
+    }
+
+    pub fn permissions(&self) -> Vec<String> {
+        self.perms.iter().cloned().collect()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EffectiveRoles {
+    roles: BTreeSet<String>,
+}
+
+impl EffectiveRoles {
+    pub fn new<S: AsRef<str>>(keys: &[S]) -> Self {
+        EffectiveRoles { roles: keys.iter().map(|k| k.as_ref()).filter(|k| !k.is_empty()).map(String::from).collect() }
+    }
+
+    pub fn holds(&self, role_key: &str) -> bool {
+        self.roles.contains(role_key)
+    }
+
+    pub fn roles(&self) -> Vec<String> {
+        self.roles.iter().cloned().collect()
+    }
+}
+
+impl HoldsResolver {
+    pub fn vocabulary(&self) -> &Vocabulary {
+        &self.vocab
+    }
+
+    fn plane_depth(&self) -> usize {
+        let n = self.scope_cols.len();
+        if self.plane.is_empty() {
+            return n;
+        }
+        if self.plane_depth < 0 {
+            return 0;
+        }
+        (self.plane_depth as usize).min(n)
+    }
+
+    pub fn selected_scope_cols(&self) -> &[String] {
+        &self.scope_cols[..self.plane_depth()]
+    }
+
+    pub fn assignments_sql(&self) -> String {
+        let mut cols: Vec<String> = self.selected_scope_cols().iter().map(|c| format!("ra.{c}")).collect();
+        cols.push(format!("r.{}", self.key_col));
+        if !self.perms_col.is_empty() {
+            cols.push(format!("r.{}", self.perms_col));
+        }
+        let mut conds = Vec::new();
+        if !self.kind_col.is_empty() {
+            conds.push(format!("ra.{} = '{}'", self.kind_col, self.kind_val));
+        }
+        conds.push(format!("ra.{} = $1", self.subject_col));
+        if !self.revoked_col.is_empty() {
+            conds.push(format!("ra.{} IS NULL", self.revoked_col));
+        }
+        for c in &self.scope_cols[self.plane_depth()..] {
+            conds.push(format!("ra.{c} IS NULL"));
+        }
+        format!(
+            "SELECT {} FROM {} ra JOIN {} r ON r.{} = ra.{} WHERE {}",
+            cols.join(", "),
+            self.assignments,
+            self.roles_table,
+            self.roles_id,
+            self.role_col,
+            conds.join(" AND ")
+        )
+    }
+
+    pub fn global_assignments_sql(&self) -> String {
+        if self.scope_cols.is_empty() {
+            return String::new();
+        }
+        let mut cols = vec![format!("ra.{}", self.subject_col), format!("r.{}", self.key_col)];
+        cols.extend(self.scope_cols.iter().map(|c| format!("ra.{c}")));
+        let mut conds = Vec::new();
+        if !self.kind_col.is_empty() {
+            conds.push(format!("ra.{} = '{}'", self.kind_col, self.kind_val));
+        }
+        if !self.revoked_col.is_empty() {
+            conds.push(format!("ra.{} IS NULL", self.revoked_col));
+        }
+        conds.push(format!("ra.{} IS NULL", self.scope_cols[0]));
+        format!(
+            "SELECT {} FROM {} ra JOIN {} r ON r.{} = ra.{} WHERE {} ORDER BY 1, 2",
+            cols.join(", "),
+            self.assignments,
+            self.roles_table,
+            self.roles_id,
+            self.role_col,
+            conds.join(" AND ")
+        )
+    }
+
+    pub fn resolve(&self, assignments: &[RoleAssignment], scope: &[String]) -> Result<EffectivePerms, Error> {
+        let depth = self.plane_depth();
+        let mut eff = EffectivePerms::default();
+        for a in assignments {
+            if !within_plane(&a.scope, depth) {
+                continue;
+            }
+            if !scope_contains(clamp_scope(&a.scope, depth), scope) {
+                continue;
+            }
+            let perms = if !self.perms_col.is_empty() {
+                a.permissions.clone()
+            } else {
+                self.vocab
+                    .preset_permissions(&a.role_key)
+                    .map_err(|e| Error::new(format!("Resolve: assignment role {}: {e}", demesne_gocompat::quote(&a.role_key))))?
+            };
+            let conferred = self.vocab.expand_implications(&perms).map_err(|e| Error::new(format!("Resolve: {e}")))?;
+            eff.perms.extend(conferred);
+        }
+        Ok(eff)
+    }
+}
+
+fn within_plane(scope: &[String], depth: usize) -> bool {
+    scope.iter().skip(depth).all(|s| s.is_empty())
+}
+
+fn clamp_scope(scope: &[String], depth: usize) -> &[String] {
+    if depth < scope.len() { &scope[..depth] } else { scope }
+}
+
+pub fn scope_contains(assignment: &[String], query: &[String]) -> bool {
+    assignment.iter().enumerate().all(|(i, a)| a.is_empty() || query.get(i) == Some(a))
+}
+
+pub fn scope_all_empty(scope: &[String]) -> bool {
+    scope.iter().all(|s| s.is_empty())
+}
+
+pub fn resolve_roles(assignments: &[RoleAssignment], scope: &[String]) -> EffectiveRoles {
+    let mut e = EffectiveRoles::default();
+    for a in assignments {
+        if a.role_key.is_empty() {
+            continue;
+        }
+        if scope_all_empty(&a.scope) || scope_contains(&a.scope, scope) {
+            e.roles.insert(a.role_key.clone());
+        }
+    }
+    e
+}

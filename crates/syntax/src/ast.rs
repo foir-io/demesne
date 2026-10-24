@@ -604,6 +604,14 @@ impl PermNode {
         }
     }
 
+    pub fn nil() -> PermNode {
+        PermNode::Or(Vec::new())
+    }
+
+    pub fn is_nil(&self) -> bool {
+        matches!(self, PermNode::Or(kids) if kids.is_empty())
+    }
+
     pub fn term(&self) -> Option<&Term> {
         match self {
             PermNode::Leaf(t) => Some(t),

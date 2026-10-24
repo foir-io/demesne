@@ -1,0 +1,23 @@
+[package]
+name = "demesne-cli"
+description = "The demesne command line: validate, emit, introspect, scaffold, check, diff and coverage."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "demesne"
+path = "src/main.rs"
+
+[dependencies]
+demesne-gocompat.workspace = true
+demesne-syntax.workspace = true
+demesne-runtime.workspace = true
+demesne-model.workspace = true
+demesne-emit-sql.workspace = true
+
+[lints]
+workspace = true

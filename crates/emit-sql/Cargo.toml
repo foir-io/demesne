@@ -1,0 +1,18 @@
+[package]
+name = "demesne-emit-sql"
+description = "Emits the demesne enforcement floor: RLS policies, the SECURITY DEFINER kernel, triggers and the changelog."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+demesne-gocompat.workspace = true
+demesne-syntax.workspace = true
+demesne-runtime.workspace = true
+demesne-model.workspace = true
+
+[lints]
+workspace = true

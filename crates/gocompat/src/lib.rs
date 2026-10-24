@@ -7,3 +7,11 @@ mod sort;
 
 pub use quote::{is_print, quote};
 pub use sort::sort_slice;
+mod naming;
+
+pub use naming::{go_export, unexport};
+
+pub fn fmt_slice<S: AsRef<str>>(xs: &[S]) -> String {
+    let parts: Vec<&str> = xs.iter().map(|x| x.as_ref()).collect();
+    format!("[{}]", parts.join(" "))
+}
