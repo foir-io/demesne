@@ -1,0 +1,25 @@
+[package]
+name = "demesne-postgres"
+description = "Live-database support for demesne: schema introspection, policy-drift and coverage checks, and the RLS role audit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+demesne-model.workspace = true
+postgres = "0.19.14"
+tokio-postgres-rustls = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+
+[dev-dependencies]
+demesne-gocompat.workspace = true
+demesne-syntax.workspace = true
+demesne-runtime.workspace = true
+demesne-emit-sql.workspace = true
+
+[lints]
+workspace = true

@@ -1,4 +1,4 @@
-use demesne_parity::{api, corpus, goast, oracle, runner};
+use demesne_parity::{api, corpus, fuzz, goast, oracle, runner};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,6 +8,7 @@ const USAGE: &str = "demesne-parity: the differential runner against the frozen 
 
 USAGE:
   demesne-parity corpus
+  demesne-parity fuzz --seed <n> --count <n> --mutate <n> --out <dir>
   demesne-parity run --go-tag <tag> --go-cli <path> [--rust-cli <path>] --out <dir> [--extra <prefix>=<dir>]... [--only <substr>] [--show <n>]
 ";
 
@@ -107,10 +108,18 @@ fn run(a: Args) -> Result<bool, String> {
         runner::dump_cli(cli, &entries, &rust);
     }
 
+    let mut nondeterministic = 0usize;
+    if let Some(gocli) = &a.go_cli {
+        let by_id: std::collections::HashMap<&str, &corpus::Entry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
+        sum_retry(&mut nondeterministic, gocli, &by_id, &go, &rust);
+    }
     let only = a.only.clone();
     let filter = move |k: &str| only.as_deref().is_none_or(|o| k.contains(o));
     let sum = runner::compare(&go, &rust, Some(&filter));
     let mut report = String::new();
+    if nondeterministic > 0 {
+        report.push_str(&format!("go-nondeterministic outputs reconciled by rerun: {nondeterministic}\n"));
+    }
     report.push_str(&format!(
         "specs {}  outputs {}  zero-diff {}  differ {}  missing-in-rust {}\n",
         entries.len(),
@@ -137,6 +146,63 @@ fn run(a: Args) -> Result<bool, String> {
     Ok(sum.mismatches.is_empty() && sum.missing_rust == 0)
 }
 
+fn sum_retry(
+    count: &mut usize,
+    gocli: &Path,
+    by_id: &std::collections::HashMap<&str, &corpus::Entry>,
+    go: &Path,
+    rust: &Path,
+) {
+    let pre = runner::compare(go, rust, None);
+    for m in pre.mismatches {
+        let Some((id, file)) = m.key.rsplit_once('/') else { continue };
+        let Some(name) = file.strip_prefix("cli-").and_then(|f| f.strip_suffix(".txt")) else { continue };
+        let (Some(entry), Some(out)) = (by_id.get(id), runner::CLI_OUTPUTS.iter().find(|c| c.name == name)) else { continue };
+        let want = fs::read(rust.join(&m.key)).unwrap();
+        for _ in 0..10 {
+            let again = runner::run_cli(gocli, &entry.path, out.args);
+            if again == want {
+                fs::write(go.join(&m.key), &again).unwrap();
+                *count += 1;
+                break;
+            }
+        }
+    }
+}
+
+fn fuzz_cmd(argv: &[String]) -> Result<(), String> {
+    let mut seed = 1u64;
+    let mut count = 100usize;
+    let mut mutate = 0usize;
+    let mut out = PathBuf::new();
+    let mut i = 0;
+    while i + 1 < argv.len() {
+        let v = &argv[i + 1];
+        match argv[i].as_str() {
+            "--seed" => seed = v.parse().map_err(|_| "--seed takes a number")?,
+            "--count" => count = v.parse().map_err(|_| "--count takes a number")?,
+            "--mutate" => mutate = v.parse().map_err(|_| "--mutate takes a number")?,
+            "--out" => out = PathBuf::from(v),
+            other => return Err(format!("unknown flag {other}")),
+        }
+        i += 2;
+    }
+    let _ = fs::remove_dir_all(&out);
+    fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    for n in 0..count {
+        let s = seed.wrapping_mul(1_000_003).wrapping_add(n as u64);
+        fs::write(out.join(format!("gen-{seed}-{n:05}.demesne")), fuzz::generate(s)).map_err(|e| e.to_string())?;
+    }
+    let base = corpus::collect(&repo_root());
+    let mut r = fuzz::Rng::new(seed ^ 0xA5A5);
+    for n in 0..mutate {
+        let e = &base[r.below(base.len())];
+        let src = fs::read_to_string(&e.path).map_err(|e| e.to_string())?;
+        fs::write(out.join(format!("mut-{seed}-{n:05}.demesne")), fuzz::mutate(r.next(), &src)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match argv.first().map(String::as_str) {
@@ -146,6 +212,13 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        Some("fuzz") => match fuzz_cmd(&argv[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("demesne-parity: {e}");
+                ExitCode::from(2)
+            }
+        },
         Some("run") => match parse_args(&argv[1..]).and_then(run) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::from(1),

@@ -3,6 +3,7 @@
 pub mod analysis;
 pub mod conditional;
 pub mod pdp;
+pub mod scaffold;
 pub mod schema;
 pub mod surfaces;
 pub mod topology;

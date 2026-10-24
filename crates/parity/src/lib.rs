@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod corpus;
+pub mod fuzz;
 pub mod goast;
 pub mod oracle;
 pub mod runner;
