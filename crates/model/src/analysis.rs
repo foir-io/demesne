@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::quote;
@@ -342,7 +343,7 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// Neither vocabulary exists.
-    fn rolestore_vocab(&self, rs: &RoleStore) -> Result<&Vocabulary, String> {
+    fn rolestore_vocab(&self, rs: &RoleStore) -> Result<&Vocabulary, Error> {
         if let Some(v) = self.vocab_by_name(&rs.name) {
             return Ok(v);
         }
@@ -354,11 +355,11 @@ pub trait SpecExt {
                 return Ok(v);
             }
         }
-        Err(format!(
+        Err(Error::unplaced(format!(
             "HoldsResolver: rolestore {} has no vocabulary (expected a vocabulary named {}, or a `binds admin` subject naming one via `roles`)",
             quote(&rs.name),
             quote(&rs.name)
-        ))
+        )))
     }
 
     /// Returns the rolestore that a `holds` check on `perm` reads.
@@ -366,16 +367,16 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// The spec declares no rolestore. Or it declares several and `perm` belongs to no rolestore-backed vocabulary, to more than one, or to a vocabulary backing several rolestores.
-    fn holds_role_store(&self, perm: &str) -> Result<&RoleStore, String> {
+    fn holds_role_store(&self, perm: &str) -> Result<&RoleStore, Error> {
         let s = self.spec();
         match s.role_stores.len() {
-            0 => return Err("the spec declares no rolestore".into()),
+            0 => return Err(Error::unplaced("the spec declares no rolestore")),
             1 => return Ok(&s.role_stores[0]),
             _ => {}
         }
         let declaring: Vec<&Vocabulary> = s.vocabs.iter().filter(|v| v.permissions.iter().any(|p| p == perm)).collect();
         if declaring.is_empty() {
-            return Err(format!("permission {} is declared by no vocabulary, so it names no rolestore", quote(perm)));
+            return Err(Error::unplaced(format!("permission {} is declared by no vocabulary, so it names no rolestore", quote(perm))));
         }
         let mut owners: Vec<(&Vocabulary, Vec<&RoleStore>)> = Vec::new();
         for v in &declaring {
@@ -386,29 +387,33 @@ pub trait SpecExt {
         }
         match owners.len() {
             0 => {
-                return Err(format!("permission {} belongs to vocabulary {}, which backs no rolestore", quote(perm), quote(&declaring[0].name)));
+                return Err(Error::unplaced(format!(
+                    "permission {} belongs to vocabulary {}, which backs no rolestore",
+                    quote(perm),
+                    quote(&declaring[0].name)
+                )));
             }
             1 => {}
             _ => {
                 let mut names: Vec<&str> = owners.iter().map(|(v, _)| v.name.as_str()).collect();
                 names.sort_unstable();
-                return Err(format!(
+                return Err(Error::unplaced(format!(
                     "permission {} is declared by more than one vocabulary that backs a rolestore ({}), so it names no single rolestore — a permission belongs to exactly one rolestore-backed vocabulary",
                     quote(perm),
                     names.join(", ")
-                ));
+                )));
             }
         }
         let (v, matched) = &owners[0];
         if matched.len() > 1 {
             let mut names: Vec<&str> = matched.iter().map(|rs| rs.name.as_str()).collect();
             names.sort_unstable();
-            return Err(format!(
+            return Err(Error::unplaced(format!(
                 "permission {} belongs to vocabulary {}, which backs more than one rolestore ({})",
                 quote(perm),
                 quote(&v.name),
                 names.join(", ")
-            ));
+            )));
         }
         Ok(matched[0])
     }
@@ -418,7 +423,7 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// The topology has no single root, or a level is unreachable from it.
-    fn claims_contract_entries(&self) -> Result<Vec<ClaimEntry>, String> {
+    fn claims_contract_entries(&self) -> Result<Vec<ClaimEntry>, Error> {
         let chain = topology::non_virtual_chain(self.spec())?;
         let mut by_key: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
         for l in chain {
@@ -443,7 +448,7 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// The topology has no single root, or a level is unreachable from it.
-    fn claims_contract(&self) -> Result<Vec<String>, String> {
+    fn claims_contract(&self) -> Result<Vec<String>, Error> {
         Ok(self.claims_contract_entries()?.into_iter().map(|e| e.key.into_owned()).collect())
     }
 
@@ -452,9 +457,9 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// The anchor is not a level, or it has more than one ancestor path.
-    fn pinned_columns(&self, sub: &Subject) -> Result<(Vec<String>, bool), String> {
+    fn pinned_columns(&self, sub: &Subject) -> Result<(Vec<String>, bool), Error> {
         let path = topology::ancestor_path(self.spec(), sub.anchor())
-            .map_err(|e| format!("line {}: subject {} anchor {}: {e}", sub.pos.line, quote(&sub.name), quote(sub.anchor())))?;
+            .map_err(|e| Error::at(sub.pos.line, format!("subject {} anchor {}: {e}", quote(&sub.name), quote(sub.anchor()))))?;
         let virtual_anchor = path.last().is_some_and(|l| l.is_virtual);
         let cols = path.iter().filter(|l| !l.is_virtual).map(|l| l.claim_key()).collect();
         Ok((cols, virtual_anchor))
@@ -465,11 +470,11 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// The topology has no single root, or a level is unreachable from it.
-    fn free_columns(&self, sub: &Subject) -> Result<Vec<String>, String> {
+    fn free_columns(&self, sub: &Subject) -> Result<Vec<String>, Error> {
         if sub.reach() != "descendants" {
             return Ok(Vec::new());
         }
-        let desc = topology::descendants(self.spec(), sub.anchor()).map_err(|e| format!("subject {}: {e}", quote(&sub.name)))?;
+        let desc = topology::descendants(self.spec(), sub.anchor()).map_err(|e| Error::unplaced(format!("subject {}: {e}", quote(&sub.name))))?;
         Ok(desc.iter().filter(|l| !l.is_virtual).map(|l| l.claim_key()).collect())
     }
 
@@ -491,23 +496,23 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// An unknown subject, an id for a subject without `identifies`, or a scope on an unknown or virtual level.
-    fn build_claims(&self, p: &Principal) -> Result<BTreeMap<String, String>, String> {
+    fn build_claims(&self, p: &Principal) -> Result<BTreeMap<String, String>, Error> {
         let Some(sub) = self.subject_by_name(&p.subject) else {
-            return Err(format!("BuildClaims: no subject {} in the spec", quote(&p.subject)));
+            return Err(Error::unplaced(format!("BuildClaims: no subject {} in the spec", quote(&p.subject))));
         };
         let mut values = BTreeMap::new();
         if !p.id.is_empty() {
             let Some(id) = &sub.identifies else {
-                return Err(format!("BuildClaims: subject {} has no identity key (`identifies`) but an id was supplied", quote(&p.subject)));
+                return Err(Error::unplaced(format!("BuildClaims: subject {} has no identity key (`identifies`) but an id was supplied", quote(&p.subject))));
             };
             values.insert(id.clone(), p.id.clone());
         }
         for (name, val) in &p.scopes {
             let Some(l) = self.level_by_name(name) else {
-                return Err(format!("BuildClaims: subject {} presents a scope for unknown level {}", quote(&p.subject), quote(name)));
+                return Err(Error::unplaced(format!("BuildClaims: subject {} presents a scope for unknown level {}", quote(&p.subject), quote(name))));
             };
             if l.is_virtual {
-                return Err(format!("BuildClaims: level {} is virtual (no scope claim) — it cannot carry a scope id", quote(name)));
+                return Err(Error::unplaced(format!("BuildClaims: level {} is virtual (no scope claim) — it cannot carry a scope id", quote(name))));
             }
             values.insert(l.claim_key(), val.clone());
         }
@@ -519,9 +524,9 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// The contract cannot be built, or `values` holds a key outside it.
-    fn mint_claims(&self, values: &BTreeMap<String, String>) -> Result<String, String> {
+    fn mint_claims(&self, values: &BTreeMap<String, String>) -> Result<String, Error> {
         let contract = self.claims_contract()?;
-        demesne_runtime::mint_claims_values(&contract, values).map_err(|e| e.to_string())
+        demesne_runtime::mint_claims_values(&contract, values).map_err(|e| Error::unplaced(e.to_string()))
     }
 
     /// Mints the claims JSON object that identifies principal `p`.
@@ -529,7 +534,7 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// Any error from [`SpecExt::build_claims`] or [`SpecExt::mint_claims`].
-    fn mint_claims_for(&self, p: &Principal) -> Result<String, String> {
+    fn mint_claims_for(&self, p: &Principal) -> Result<String, Error> {
         let values = self.build_claims(p)?;
         self.mint_claims(&values)
     }
@@ -539,15 +544,15 @@ pub trait SpecExt {
     /// # Errors
     ///
     /// No such object, or the object has a composite primary key.
-    fn point_check_sql(&self, object: &str) -> Result<String, String> {
+    fn point_check_sql(&self, object: &str) -> Result<String, Error> {
         match self.object_by_name(object) {
-            Some(o) if !o.point_checkable() => Err(format!(
+            Some(o) if !o.point_checkable() => Err(Error::unplaced(format!(
                 "PointCheckSQL: object {} has a composite primary key ({}) — no single-column row identity to point-check",
                 quote(object),
                 demesne_gocompat::fmt_slice(&o.pk_cols)
-            )),
+            ))),
             Some(o) => Ok(format!("SELECT EXISTS (SELECT 1 FROM {} WHERE {} = $1)", o.table, o.pk())),
-            None => Err(format!("PointCheckSQL: no object {} in the spec", quote(object))),
+            None => Err(Error::unplaced(format!("PointCheckSQL: no object {} in the spec", quote(object)))),
         }
     }
 

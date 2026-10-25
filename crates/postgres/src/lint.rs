@@ -1,4 +1,4 @@
-use crate::query_error;
+use crate::{Error, query_error};
 use postgres::{Client, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,7 +27,11 @@ pub struct Trap {
 /// # Errors
 ///
 /// A catalog query fails.
-pub fn schema_traps(client: &mut Client, governed: &[String], scope_columns: &[(String, String)]) -> Result<Vec<Trap>, String> {
+pub fn schema_traps(client: &mut Client, governed: &[String], scope_columns: &[(String, String)]) -> Result<Vec<Trap>, Error> {
+    read_traps(client, governed, scope_columns).map_err(Error::query)
+}
+
+fn read_traps(client: &mut Client, governed: &[String], scope_columns: &[(String, String)]) -> Result<Vec<Trap>, String> {
     let mut tx = client.transaction().map_err(|e| query_error(&e))?;
     tx.batch_execute("SET LOCAL search_path = ''").map_err(|e| query_error(&e))?;
     let mut oids = Vec::new();

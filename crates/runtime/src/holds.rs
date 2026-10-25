@@ -158,11 +158,11 @@ impl HoldsResolver {
             let perms: Vec<String> = if self.perms_col.is_empty() {
                 self.vocab
                     .preset_permissions(&a.role_key)
-                    .map_err(|e| Error::new(format!("Resolve: assignment role {}: {e}", demesne_gocompat::quote(&a.role_key))))?
+                    .map_err(|e| Error::vocabulary(format!("Resolve: assignment role {}: {e}", demesne_gocompat::quote(&a.role_key))))?
             } else {
                 a.permissions.clone()
             };
-            let conferred = self.vocab.expand_implications(&perms).map_err(|e| Error::new(format!("Resolve: {e}")))?;
+            let conferred = self.vocab.expand_implications(&perms).map_err(|e| Error::vocabulary(format!("Resolve: {e}")))?;
             eff.perms.extend(conferred);
         }
         Ok(eff)

@@ -1,4 +1,5 @@
 use crate::Sql;
+use crate::error::Error;
 use crate::genfn::{DefinerArm, GenFn, binds_every, grant_edge_exists};
 use crate::rls::{Virtual, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
@@ -258,7 +259,11 @@ impl Sql<'_> {
     /// # Errors
     ///
     /// A permission, grant or closure the compiler cannot express in SQL.
-    pub fn emit_definers(&self) -> R<Vec<GenFn>> {
+    pub fn emit_definers(&self) -> Result<Vec<GenFn>, Error> {
+        self.definer_fns().map_err(Error::unplaced)
+    }
+
+    fn definer_fns(&self) -> R<Vec<GenFn>> {
         let d = Sql { s: self.s, definer_body: true };
         d.emit_definers_inner()
     }

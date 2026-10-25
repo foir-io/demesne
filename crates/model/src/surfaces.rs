@@ -1,5 +1,6 @@
 use crate::analysis::{SpecExt, grant_relation, object_grant_edge};
 use crate::conditional::{ConditionalExt, admission_names};
+use crate::error::Error;
 use crate::vocab::to_runtime;
 use demesne_gocompat::quote;
 use demesne_runtime as rt;
@@ -22,8 +23,12 @@ fn pick_role_store<'a>(spec: &'a Spec, rolestore: &str) -> Option<&'a RoleStore>
     if rolestore.is_empty() { spec.role_stores.first() } else { spec.role_stores.iter().find(|r| r.name == rolestore) }
 }
 
-fn no_store(ctx: &str, rolestore: &str) -> String {
-    if rolestore.is_empty() { format!("{ctx}: the spec declares no rolestore") } else { format!("{ctx}: no rolestore {} in the spec", quote(rolestore)) }
+fn no_store(ctx: &str, rolestore: &str) -> Error {
+    Error::unplaced(if rolestore.is_empty() {
+        format!("{ctx}: the spec declares no rolestore")
+    } else {
+        format!("{ctx}: no rolestore {} in the spec", quote(rolestore))
+    })
 }
 
 pub trait SurfaceExt: SpecExt {
@@ -32,7 +37,7 @@ pub trait SurfaceExt: SpecExt {
     /// # Errors
     ///
     /// No such rolestore, or none backed by a vocabulary.
-    fn holds_resolver(&self, rolestore: &str) -> Result<rt::HoldsResolver, String> {
+    fn holds_resolver(&self, rolestore: &str) -> Result<rt::HoldsResolver, Error> {
         let Some(rs) = pick_role_store(self.spec(), rolestore) else {
             return Err(no_store("HoldsResolver", rolestore));
         };
@@ -60,7 +65,7 @@ pub trait SurfaceExt: SpecExt {
     /// # Errors
     ///
     /// No such rolestore.
-    fn role_assignment_surface(&self, rolestore: &str) -> Result<rt::RoleAssignmentSurface, String> {
+    fn role_assignment_surface(&self, rolestore: &str) -> Result<rt::RoleAssignmentSurface, Error> {
         let Some(rs) = pick_role_store(self.spec(), rolestore) else {
             return Err(no_store("RoleAssignmentSurface", rolestore));
         };
@@ -89,12 +94,12 @@ pub trait SurfaceExt: SpecExt {
     /// # Errors
     ///
     /// No such grant, or a claim grant, which has no edge table to write.
-    fn grant_surface(&self, name: &str) -> Result<rt::GrantSurface, String> {
+    fn grant_surface(&self, name: &str) -> Result<rt::GrantSurface, Error> {
         let Some(g) = self.grant_by_name(name) else {
-            return Err(format!("GrantSurface: no grant {} in the spec", quote(name)));
+            return Err(Error::unplaced(format!("GrantSurface: no grant {} in the spec", quote(name))));
         };
         if g.claim_key.is_some() {
-            return Err(format!("GrantSurface: claim grant {} has no writable edge", quote(name)));
+            return Err(Error::unplaced(format!("GrantSurface: claim grant {} has no writable edge", quote(name))));
         }
         Ok(rt::GrantSurface {
             name: o(g.name.clone()),
@@ -117,12 +122,15 @@ pub trait SurfaceExt: SpecExt {
     /// # Errors
     ///
     /// No such object, or the object has no grant store.
-    fn conditional_resource_access_surface(&self, object: &str) -> Result<rt::ResourceAccessSurface, String> {
+    fn conditional_resource_access_surface(&self, object: &str) -> Result<rt::ResourceAccessSurface, Error> {
         let Some(obj) = self.object_by_name(object) else {
-            return Err(format!("ResourceAccessSurface: no object {} in the spec", quote(object)));
+            return Err(Error::unplaced(format!("ResourceAccessSurface: no object {} in the spec", quote(object))));
         };
         let Some(edge) = object_grant_edge(obj) else {
-            return Err(format!("ResourceAccessSurface: object {} has no grant store (descriptor grants or a `via grant` relation)", quote(object)));
+            return Err(Error::unplaced(format!(
+                "ResourceAccessSurface: object {} has no grant store (descriptor grants or a `via grant` relation)",
+                quote(object)
+            )));
         };
         let schema = self.spec().definer_schema();
         let mut r = rt::ResourceAccessSurface {
@@ -167,8 +175,8 @@ pub trait SurfaceExt: SpecExt {
     /// # Errors
     ///
     /// Any error from [`SurfaceExt::conditional_resource_access_surface`], or an object with readers it cannot name.
-    fn resource_access_surface(&self, object: &str) -> Result<rt::ResourceAccessSurface, String> {
-        self.conditional_resource_access_surface(object)?.require_unconditional(object).map_err(|e| e.to_string())
+    fn resource_access_surface(&self, object: &str) -> Result<rt::ResourceAccessSurface, Error> {
+        self.conditional_resource_access_surface(object)?.require_unconditional(object).map_err(|e| Error::unplaced(e.to_string()))
     }
 
     /// Returns each preset of `rolestore`'s vocabulary with its permissions fully expanded.
@@ -176,15 +184,15 @@ pub trait SurfaceExt: SpecExt {
     /// # Errors
     ///
     /// No such rolestore, no backing vocabulary, or a preset that is cyclic or names an unknown entry.
-    fn expanded_presets(&self, rolestore: &str) -> Result<BTreeMap<String, Vec<String>>, String> {
+    fn expanded_presets(&self, rolestore: &str) -> Result<BTreeMap<String, Vec<String>>, Error> {
         let Some(rs) = pick_role_store(self.spec(), rolestore) else {
             return Err(no_store("ExpandedPresets", rolestore));
         };
-        let v = self.rolestore_vocab(rs).map_err(|e| format!("ExpandedPresets: {e}"))?;
+        let v = self.rolestore_vocab(rs).map_err(|e| Error::unplaced(format!("ExpandedPresets: {e}")))?;
         let rv = to_runtime(v);
         let mut out = BTreeMap::new();
         for p in &v.presets {
-            let perms = rv.preset_permissions(&p.name).map_err(|e| format!("ExpandedPresets: {e}"))?;
+            let perms = rv.preset_permissions(&p.name).map_err(|e| Error::unplaced(format!("ExpandedPresets: {e}")))?;
             out.insert(p.name.clone(), perms);
         }
         Ok(out)

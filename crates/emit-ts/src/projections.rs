@@ -1,3 +1,4 @@
+use crate::error::Error;
 use demesne_gocompat::json::Value;
 use demesne_model::SpecExt;
 use demesne_runtime as rt;
@@ -20,7 +21,7 @@ fn obj(fields: Vec<(&str, Value)>) -> Value {
 /// # Errors
 ///
 /// The topology has no single root, or a level is unreachable from it.
-pub fn claims(sp: &Spec) -> Result<Value, String> {
+pub fn claims(sp: &Spec) -> Result<Value, Error> {
     let session = sp.session();
     let contract = sp.claims_contract()?;
     let entries = sp.claims_contract_entries()?;

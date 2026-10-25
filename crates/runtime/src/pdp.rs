@@ -53,7 +53,7 @@ impl Pdp {
 
 #[must_use]
 pub fn capability_gate_err(object: &str, verb: &str) -> Error {
-    Error::new(format!(
+    Error::capability_gate(format!(
         "{object}.{verb} is a capability (@pdp) verb with no row-level check — resolve held permissions and call Can{}(held) on the {} object",
         go_export(verb),
         go_export(object)

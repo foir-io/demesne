@@ -35,7 +35,7 @@ object note {{
 
 fn check(src: &str) -> (Result<(), String>, Vec<String>) {
     let s = demesne_syntax::parse(src).expect("the test spec parses");
-    (validate(&s), validate_warnings(&s))
+    (validate(&s).map_err(|e| e.to_string()), validate_warnings(&s).iter().map(ToString::to_string).collect())
 }
 
 fn errors(src: &str) -> Vec<String> {

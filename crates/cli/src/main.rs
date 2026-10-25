@@ -37,8 +37,8 @@ fn dsn_arg(args: &[String], i: usize) -> Result<String, String> {
 }
 
 fn introspect(dsn: &str) -> Result<(demesne_model::Schema, demesne_postgres::IntrospectMeta, postgres::Client), String> {
-    let mut client = demesne_postgres::connect(dsn)?;
-    let (sc, meta) = demesne_postgres::introspect(&mut client)?;
+    let mut client = demesne_postgres::connect(dsn).map_err(|e| e.to_string())?;
+    let (sc, meta) = demesne_postgres::introspect(&mut client).map_err(|e| e.to_string())?;
     Ok((sc, meta, client))
 }
 
@@ -63,7 +63,7 @@ fn cmd_scaffold(out: &mut Out, args: &[String]) -> R {
     if interactive {
         return scaffold_interactive(out, &sc);
     }
-    out.print(&demesne_model::scaffold::scaffold(&sc, demesne_model::scaffold::ScaffoldOptions::default())?);
+    out.print(&demesne_model::scaffold::scaffold(&sc, demesne_model::scaffold::ScaffoldOptions::default()).map_err(|e| e.to_string())?);
     Ok(())
 }
 
@@ -83,7 +83,7 @@ fn scaffold_interactive(out: &mut Out, sc: &demesne_model::Schema) -> R {
     let role = ask("RLS connection role", "authenticated");
     let def_schema = ask("definer (function) schema", "auth");
     let tbl_schema = ask("governed-table schema", "public");
-    let body = demesne_model::scaffold::scaffold(sc, demesne_model::scaffold::ScaffoldOptions::default())?;
+    let body = demesne_model::scaffold::scaffold(sc, demesne_model::scaffold::ScaffoldOptions::default()).map_err(|e| e.to_string())?;
     let mut b = String::new();
     if role != "authenticated" {
         writeln!(b, "claims via \"request.jwt.claims\" json role {role}").expect("fmt::Write for String never fails");
@@ -138,13 +138,14 @@ fn cmd_check(out: &mut Out, args: &[String]) -> R {
 
 fn report_schema_traps(out: &mut Out, s: &Spec, client: &mut postgres::Client) -> R {
     let mut sql = String::new();
-    let governed: Vec<String> = match Sql::new(s).write_all_sql(&mut sql).and_then(|()| demesne_emit_sql::objects(&sql)) {
-        Ok(objs) => objs.into_iter().filter_map(|(o, _)| if let demesne_emit_sql::Object::Rls(t) = o { Some(t) } else { None }).collect(),
-        Err(e) => {
-            out.print(&format!("warning: could not look for schema traps, as the spec's SQL does not compile: {e}\n"));
-            return Ok(());
-        }
-    };
+    let governed: Vec<String> =
+        match Sql::new(s).write_all_sql(&mut sql).map_err(|e| e.to_string()).and_then(|()| demesne_emit_sql::objects(&sql).map_err(|e| e.to_string())) {
+            Ok(objs) => objs.into_iter().filter_map(|(o, _)| if let demesne_emit_sql::Object::Rls(t) = o { Some(t) } else { None }).collect(),
+            Err(e) => {
+                out.print(&format!("warning: could not look for schema traps, as the spec's SQL does not compile: {e}\n"));
+                return Ok(());
+            }
+        };
     let schema = s.table_schema();
     let mut scope: Vec<(String, String)> = Vec::new();
     for obj in &s.objects {
@@ -256,14 +257,14 @@ fn cmd_diff(out: &mut Out, args: &[String]) -> R {
     out.warn_spec(&args[0], &s);
     let dsn = dsn_arg(&args, 1)?;
     let mut sql = String::new();
-    Sql::new(&s).write_all_sql(&mut sql)?;
+    Sql::new(&s).write_all_sql(&mut sql).map_err(|e| e.to_string())?;
     let allow: Vec<String> = if allow_path.is_empty() {
         Vec::new()
     } else {
         String::from_utf8_lossy(&OsFiles.read(&allow_path)?).lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
     };
-    let mut client = demesne_postgres::connect(&dsn)?;
-    let d = demesne_postgres::drift(&mut client, &sql, &allow)?;
+    let mut client = demesne_postgres::connect(&dsn).map_err(|e| e.to_string())?;
+    let d = demesne_postgres::drift(&mut client, &sql, &allow).map_err(|e| e.to_string())?;
     for f in &d.findings {
         out.print(&format!("{:<8} {} — {}\n", f.kind.label(), f.object, f.detail));
     }

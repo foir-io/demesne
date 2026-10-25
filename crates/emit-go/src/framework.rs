@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::gofmt::{Elem, kv_block, struct_fields};
 use demesne_emit_sql::Sql;
 use demesne_gocompat::{go_export, quote, unexport};
@@ -7,7 +8,7 @@ use demesne_runtime::{AppObjectSurface, HoldsResolver};
 use demesne_syntax::{Object, Perm, RoleStore, Spec, Vocabulary};
 use std::collections::{HashMap, HashSet};
 
-type R<T> = Result<T, String>;
+type R<T> = Result<T, Error>;
 
 pub fn go_str_slice<S: AsRef<str>>(ss: &[S]) -> String {
     if ss.is_empty() {
@@ -57,7 +58,7 @@ pub fn vocab_caps_tree(perms: &[String]) -> R<(Vec<VocabDomain>, Vec<String>)> {
         let (dexp, fexp) = (go_export(seg0), go_export(rest));
         let key = format!("{dexp}.{fexp}");
         if !seen.insert(key) {
-            return Err(format!("vocab caps: {} collides on {}.{}", quote(p), dexp, fexp));
+            return Err(Error::new(format!("vocab caps: {} collides on {}.{}", quote(p), dexp, fexp)));
         }
         let di = *idx.entry(dexp.clone()).or_insert_with(|| {
             domains.push(VocabDomain { exp: dexp.clone(), fields: Vec::new() });
@@ -220,11 +221,11 @@ pub fn check_accessor_collisions(s: &Spec, objects: &[AppObjectSurface]) -> R<()
     let reserved = framework_reserved_names(s);
     for o in objects {
         if reserved.contains(&go_export(&o.object).to_lowercase()) {
-            return Err(format!(
+            return Err(Error::new(format!(
                 "framework emit: object {} generates the accessor {}, which collides with a generated framework helper of the same name; rename the object (the role-tier accessor is RoleTiers/roleTiers, verb caps is Caps/caps, the reusable check is Check/check)",
                 quote(&o.object),
                 quote(&go_export(&o.object))
-            ));
+            )));
         }
     }
     Ok(())
@@ -246,7 +247,7 @@ pub fn role_tier_fields(s: &Spec, vocab: &Vocabulary) -> R<Vec<(String, String)>
         }
         let exp = go_export(key);
         if !seen_exp.insert(exp.clone()) {
-            return Err(format!("role tier: preset {} collides on field {}", quote(key), exp));
+            return Err(Error::new(format!("role tier: preset {} collides on field {}", quote(key), exp)));
         }
         fields.push((exp, key.to_string()));
         Ok(())

@@ -1,4 +1,4 @@
-use crate::{Surface, emit_rust};
+use crate::{Error, Surface, emit_rust};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -102,12 +102,12 @@ impl Builder {
     /// # Errors
     ///
     /// The spec cannot be read, parsed or validated, or a requested surface cannot be built.
-    pub fn render(&self) -> Result<String, String> {
+    pub fn render(&self) -> Result<String, Error> {
         let shown = self.spec.display();
-        let src = std::fs::read(&self.spec).map_err(|e| format!("{shown}: {e}"))?;
-        let spec = demesne_syntax::parse_bytes(&src).map_err(|e| format!("{shown}: {e}"))?;
-        demesne_emit_sql::validate(&spec).map_err(|e| format!("{shown}: {e}"))?;
-        emit_rust(&spec, &self.wanted).map_err(|e| format!("{shown}:\n{e}"))
+        let src = std::fs::read(&self.spec).map_err(|e| Error::io(format!("{shown}: {e}")))?;
+        let spec = demesne_syntax::parse_bytes(&src).map_err(|e| Error::spec(format!("{shown}: {e}")))?;
+        demesne_emit_sql::validate(&spec).map_err(|e| Error::spec(format!("{shown}: {e}")))?;
+        emit_rust(&spec, &self.wanted).map_err(|e| Error::surface(format!("{shown}:\n{e}")))
     }
 
     /// Renders the surfaces into `OUT_DIR` and tells cargo to rerun when the spec changes.
@@ -116,12 +116,12 @@ impl Builder {
     ///
     /// `OUT_DIR` is unset, rendering fails, or the file cannot be written.
     #[expect(clippy::print_stdout, reason = "build scripts talk to cargo through `cargo:` lines on stdout")]
-    pub fn generate(self) -> Result<PathBuf, String> {
+    pub fn generate(self) -> Result<PathBuf, Error> {
         println!("cargo:rerun-if-changed={}", self.spec.display());
-        let out_dir = std::env::var_os("OUT_DIR").ok_or("OUT_DIR is unset; call this from build.rs")?;
+        let out_dir = std::env::var_os("OUT_DIR").ok_or_else(|| Error::io("OUT_DIR is unset; call this from build.rs"))?;
         let code = self.render()?;
         let path = Path::new(&out_dir).join(&self.file_name);
-        std::fs::write(&path, code).map_err(|e| format!("{}: {e}", path.display()))?;
+        std::fs::write(&path, code).map_err(|e| Error::io(format!("{}: {e}", path.display())))?;
         Ok(path)
     }
 

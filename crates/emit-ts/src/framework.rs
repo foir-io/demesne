@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::{projections, ts_json, ts_str};
 use demesne_emit_go::{check_accessor_collisions, orphan_pdp_verbs, role_tier_fields, row_check_sql, vocab_caps_tree};
 use demesne_emit_sql::Sql;
@@ -9,7 +10,7 @@ use demesne_syntax::{Object, Perm, RoleStore, Spec, Vocabulary};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
-type R<T> = Result<T, String>;
+type R<T> = Result<T, Error>;
 
 struct Check {
     object: String,

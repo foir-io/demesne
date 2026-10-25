@@ -44,14 +44,14 @@ impl Zookie {
     /// Text that is not an unsigned 64-bit decimal integer, including a leading `+`.
     pub fn parse(s: &str) -> Result<Self, Error> {
         if s.starts_with('+') {
-            return Err(Error::new(format!(
+            return Err(Error::consistency(format!(
                 "invalid zookie {}: strconv.ParseUint: parsing {}: invalid syntax",
                 demesne_gocompat::quote(s),
                 demesne_gocompat::quote(s)
             )));
         }
         s.parse::<u64>().map(Zookie::from_xid).map_err(|e| {
-            Error::new(format!(
+            Error::consistency(format!(
                 "invalid zookie {}: strconv.ParseUint: parsing {}: {}",
                 demesne_gocompat::quote(s),
                 demesne_gocompat::quote(s),

@@ -65,7 +65,7 @@ impl Vocabulary {
 
     fn expand_implication(&self, perm: &str, into: &mut BTreeSet<String>, on_stack: &mut HashSet<String>) -> Result<(), Error> {
         if on_stack.contains(perm) {
-            return Err(Error::new(format!(
+            return Err(Error::vocabulary(format!(
                 "vocabulary {}: permission {} is cyclic (a permission cannot imply itself, directly or transitively)",
                 quote(&self.name),
                 quote(perm)
@@ -98,7 +98,7 @@ impl Vocabulary {
             return Ok(matched);
         }
         if !self.has_permission(item) {
-            return Err(Error::new(format!(
+            return Err(Error::vocabulary(format!(
                 "vocabulary {}: permission {} implies {}, which is neither a permission of this vocabulary nor a `<domain>:*` wildcard matching one",
                 quote(&self.name),
                 quote(perm),
@@ -144,14 +144,14 @@ impl Vocabulary {
 
     fn expand_preset(&self, name: &str, into: &mut BTreeSet<String>, on_stack: &mut HashSet<String>) -> Result<(), Error> {
         if on_stack.contains(name) {
-            return Err(Error::new(format!(
+            return Err(Error::vocabulary(format!(
                 "vocabulary {}: preset {} is cyclic (a preset cannot reference itself, directly or transitively)",
                 quote(&self.name),
                 quote(name)
             )));
         }
         let Some(p) = self.preset_by_name(name) else {
-            return Err(Error::new(format!("vocabulary {}: no preset {}", quote(&self.name), quote(name))));
+            return Err(Error::vocabulary(format!("vocabulary {}: no preset {}", quote(&self.name), quote(name))));
         };
         if p.star {
             into.extend(self.permissions.iter().map(std::string::ToString::to_string));
@@ -170,7 +170,7 @@ impl Vocabulary {
             } else if self.preset_by_name(item).is_some() {
                 self.expand_preset(item, into, on_stack)?;
             } else {
-                return Err(Error::new(format!(
+                return Err(Error::vocabulary(format!(
                     "vocabulary {}: preset {} references {}, which is neither a permission nor a preset in this vocabulary",
                     quote(&self.name),
                     quote(name),

@@ -207,6 +207,33 @@ For the binding, `demesne-runtime` gains `build_claims` with `Principal`,
 the PDP and role assignments, and public `plane_depth`, `within_plane`,
 `expand_implications` and `active_predicate`.
 
+### Breaking: the Rust crates return typed errors
+
+Every fallible function in the library crates returned `Result<_, String>`,
+so a caller could only branch on the message. Each crate now returns its own
+error type. Each one displays exactly the text the `String` held, so the CLI's
+output and every message are unchanged.
+
+| Crate | Error | What it tells a caller |
+| -- | -- | -- |
+| `demesne-syntax` | `Error`, `Finding` | where parsing stopped: `line()` and `message()` |
+| `demesne-model` | `Error` | `findings()`: each problem, with its line when it has one |
+| `demesne-emit-sql` | `Error`, `ManifestError` | `findings()` from `validate`, and a manifest or SQL it can't read |
+| `demesne-emit-go`, `demesne-emit-ts` | `Error` | the spec can't be rendered |
+| `demesne-emit-rust` | `Error` | `is_io()`, `is_spec()`, `is_surface()` |
+| `demesne-postgres` | `Error` | `is_connection_string()`, `is_connect()`, `is_query()`, `is_sql()` |
+| `demesne-runtime` | `Error` | `is_claims()`, `is_consistency()`, `is_vocabulary()`, `is_access()`, `is_capability_gate()` |
+| `demesne-gocompat` | `json::ParseError` | malformed JSON |
+
+`validate_warnings` returns `Finding`s. `Structure::Fatal` holds a
+`demesne_model::Error` and `Structure::Errors` a `Vec<Finding>`, and the
+`SpecExt` and `SurfaceExt` methods return `demesne_model::Error`. The
+`demesne-cli` library, which the binary and the WebAssembly build share, keeps
+message errors.
+
+To upgrade, use the accessors where you matched on a message, and call
+`to_string()` where you need the text.
+
 ### Migrations drop what a spec stops emitting
 
 `emit all` writes `CREATE OR REPLACE` for the current surface only. So a

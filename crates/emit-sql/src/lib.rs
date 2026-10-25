@@ -5,6 +5,7 @@ mod asynch;
 mod changelog;
 mod closure;
 mod definers;
+mod error;
 mod genfn;
 mod manifest;
 mod rls;
@@ -14,6 +15,7 @@ mod write_reach;
 pub use asynch::AsyncIndex;
 pub use changelog::{CHANGELOG_CHANNEL, ChangelogTrigger, ObjectChangelogTrigger};
 pub use closure::{ClosureTrigger, GroupTrigger, MaterializedFlat};
+pub use error::{Error, ManifestError};
 pub use genfn::{DefinerArm, GenFn, definers_sql};
 pub use manifest::{Manifest, Object, objects};
 pub use rls::{Policy, RlsResult, scan_definers};
@@ -21,7 +23,8 @@ pub use rls::{Policy, RlsResult, scan_definers};
 use demesne_gocompat::quote;
 use demesne_model::analysis::relation_is_async;
 use demesne_model::{SpecExt, Structure, validate_structure};
-use demesne_syntax::Spec;
+use demesne_syntax::{Finding, Spec};
+use error::refuse_any;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -44,24 +47,24 @@ impl<'a> Sql<'a> {
 ///
 /// # Errors
 ///
-/// Every problem found, joined by newlines, or the first structural error that stops validation.
-pub fn validate(s: &Spec) -> Result<(), String> {
+/// Every problem found, or the first structural error that stops validation.
+pub fn validate(s: &Spec) -> Result<(), Error> {
     let mut errs = match validate_structure(s) {
-        Structure::Fatal(e) => return Err(e),
+        Structure::Fatal(e) => return Err(e.into()),
         Structure::Errors(errs) => errs,
     };
-    errs.extend(validate_definer_closure(s));
-    errs.extend(validate_async_floor_asymmetry(s));
-    errs.extend(validate_shared_table_names(s));
+    errs.extend(validate_definer_closure(s).into_iter().map(Finding::unplaced));
+    errs.extend(validate_async_floor_asymmetry(s).into_iter().map(Finding::unplaced));
+    errs.extend(validate_shared_table_names(s).into_iter().map(Finding::unplaced));
     if errs.is_empty() {
         errs.extend(Sql::new(s).write_reach().errors);
     }
-    if errs.is_empty() { Ok(()) } else { Err(errs.join("\n")) }
+    refuse_any(errs)
 }
 
 /// Returns the warnings a valid spec still earns: a `blind` write term that the select permission cannot reach.
 #[must_use]
-pub fn validate_warnings(s: &Spec) -> Vec<String> {
+pub fn validate_warnings(s: &Spec) -> Vec<Finding> {
     Sql::new(s).write_reach().warnings
 }
 

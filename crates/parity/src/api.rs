@@ -5,7 +5,7 @@ use demesne_syntax::Spec;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-fn st<T>(r: &Result<T, String>) -> String {
+fn st<T, E: std::fmt::Display>(r: &Result<T, E>) -> String {
     match r {
         Ok(_) => "ok".into(),
         Err(e) => format!("error: {e}"),

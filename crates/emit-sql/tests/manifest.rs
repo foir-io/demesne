@@ -75,15 +75,18 @@ fn the_manifest_refuses_what_it_cannot_drop_exactly() {
         ("CREATE OR REPLACE FUNCTION auth.f(OUT p text) AS $$ SELECT '' $$ LANGUAGE sql;", "reads only arguments written as `name type`"),
         ("CREATE OR REPLACE FUNCTION auth.f(p text DEFAULT '') RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;", "reads only arguments written as `name type`"),
     ] {
-        let err = Manifest::from_sql(sql).expect_err(sql);
+        let err = Manifest::from_sql(sql).expect_err(sql).to_string();
         assert!(err.contains(want), "{sql}: {err}");
     }
 }
 
 #[test]
 fn a_manifest_of_another_format_is_refused() {
-    assert_eq!(Manifest::from_json(r#"{"manifest": 2}"#), Err("manifest: format 2 is not one this demesne reads (it reads format 1)".into()));
-    assert_eq!(Manifest::from_json("{}"), Err("manifest: not a demesne manifest (no \"manifest\" format field)".into()));
+    assert_eq!(
+        Manifest::from_json(r#"{"manifest": 2}"#).map_err(|e| e.to_string()),
+        Err("manifest: format 2 is not one this demesne reads (it reads format 1)".into())
+    );
+    assert_eq!(Manifest::from_json("{}").map_err(|e| e.to_string()), Err("manifest: not a demesne manifest (no \"manifest\" format field)".into()));
 }
 
 #[test]

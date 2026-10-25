@@ -71,11 +71,12 @@ pub struct Principal {
 /// An unknown subject or level, an id for a subject with no identity key, or a scope for a virtual level.
 pub fn build_claims(subjects: &[SubjectIdentity], levels: &[LevelClaim], principal: &Principal) -> Result<BTreeMap<String, String>, Error> {
     let p = principal;
-    let sub = subjects.iter().find(|s| s.name == p.subject).ok_or_else(|| Error::new(format!("BuildClaims: no subject {} in the spec", quote(&p.subject))))?;
+    let sub =
+        subjects.iter().find(|s| s.name == p.subject).ok_or_else(|| Error::claims(format!("BuildClaims: no subject {} in the spec", quote(&p.subject))))?;
     let mut values = BTreeMap::new();
     if !p.id.is_empty() {
         if sub.identifies.is_empty() {
-            return Err(Error::new(format!("BuildClaims: subject {} has no identity key (`identifies`) but an id was supplied", quote(&p.subject))));
+            return Err(Error::claims(format!("BuildClaims: subject {} has no identity key (`identifies`) but an id was supplied", quote(&p.subject))));
         }
         values.insert(sub.identifies.to_string(), p.id.clone());
     }
@@ -83,9 +84,9 @@ pub fn build_claims(subjects: &[SubjectIdentity], levels: &[LevelClaim], princip
         let level = levels
             .iter()
             .find(|l| l.name == *name)
-            .ok_or_else(|| Error::new(format!("BuildClaims: subject {} presents a scope for unknown level {}", quote(&p.subject), quote(name))))?;
+            .ok_or_else(|| Error::claims(format!("BuildClaims: subject {} presents a scope for unknown level {}", quote(&p.subject), quote(name))))?;
         if level.is_virtual {
-            return Err(Error::new(format!("BuildClaims: level {} is virtual (no scope claim) — it cannot carry a scope id", quote(name))));
+            return Err(Error::claims(format!("BuildClaims: level {} is virtual (no scope claim) — it cannot carry a scope id", quote(name))));
         }
         values.insert(level.claim_key.to_string(), id.clone());
     }
@@ -114,7 +115,7 @@ pub fn mint_claims_values_with_extra<S: AsRef<str>>(
     let known: HashSet<&str> = contract.iter().map(std::convert::AsRef::as_ref).collect();
     let bad: Vec<&str> = values.keys().map(String::as_str).filter(|k| !known.contains(k)).collect();
     if !bad.is_empty() {
-        return Err(Error::new(format!("MintClaims: key(s) not in the claims contract: [{}]", bad.join(" "))));
+        return Err(Error::claims(format!("MintClaims: key(s) not in the claims contract: [{}]", bad.join(" "))));
     }
     let mut merged: BTreeMap<String, String> = values.clone();
     if let Some(extra) = extra {

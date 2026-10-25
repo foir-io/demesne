@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::schema::Schema;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -113,14 +114,14 @@ fn scoped_object(t: &str, path: &[String]) -> String {
 /// # Errors
 ///
 /// No table is referenced by enough others to be a tenancy container.
-pub fn scaffold(sc: &Schema, opts: ScaffoldOptions) -> Result<String, String> {
+pub fn scaffold(sc: &Schema, opts: ScaffoldOptions) -> Result<String, Error> {
     let threshold = if opts.min_container_refs == 0 { 3 } else { opts.min_container_refs };
     let g = build_graph(sc);
     let level_name = name_containers(&g, threshold);
     if level_name.is_empty() {
-        return Err(format!(
+        return Err(Error::unplaced(format!(
             "scaffold: no tenancy container found (no table referenced by >= {threshold} others via FK) — supply foreign keys, or lower MinContainerRefs"
-        ));
+        )));
     }
     let mut depth = BTreeMap::new();
     let mut parent = BTreeMap::new();

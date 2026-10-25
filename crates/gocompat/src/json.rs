@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
@@ -180,16 +182,30 @@ fn write_object<'a>(out: &mut String, fields: impl Iterator<Item = (&'a str, &'a
 /// # Errors
 ///
 /// Malformed JSON, an integer outside `i64`, or bytes after the document.
-pub fn parse(src: &str) -> Result<Value, String> {
+pub fn parse(src: &str) -> Result<Value, ParseError> {
     let mut p = Parser { b: src.as_bytes(), i: 0 };
     p.ws();
-    let v = p.value()?;
+    let v = p.value().map_err(|message| ParseError { message })?;
     p.ws();
     if p.i != p.b.len() {
-        return Err(format!("json: trailing data at byte {}", p.i));
+        return Err(ParseError { message: format!("json: trailing data at byte {}", p.i) });
     }
     Ok(v)
 }
+
+/// JSON that [`parse`] refuses, with Go's `encoding/json`-style message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError {
+    message: String,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 struct Parser<'a> {
     b: &'a [u8],

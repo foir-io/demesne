@@ -1,4 +1,4 @@
-#![doc = "The demesne command line's pure commands (validate, emit, help, version) over a `Files` source, shared by the native binary and the WASM build."]
+#![doc = "The demesne command line's pure commands (validate, emit, help, version) over a `Files` source, shared by the native binary and the WASM build. Its errors are messages to print; the library crates (`demesne-model`, `demesne-emit-sql`, `demesne-postgres` and the emitters) return typed errors."]
 
 use demesne_emit_sql::{Manifest, Sql, definers_sql};
 use demesne_gocompat::quote;
@@ -160,7 +160,7 @@ fn cmd_validate(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
     need(args, 1, "<spec.demesne>")?;
     let s = load_spec(files, &args[0])?;
     out.warn_spec(&args[0], &s);
-    let rls = Sql::new(&s).emit_rls()?;
+    let rls = Sql::new(&s).emit_rls().map_err(|e| e.to_string())?;
     out.print(&format!(
         "ok: {} objects, {} levels, {} policies, {} reachability grants\n",
         s.objects.len(),
@@ -220,25 +220,25 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
             Ok(())
         }
         "claims" => {
-            out.print(&demesne_emit_go::render_claims_contract_go(&s, "ClaimsContract")?);
+            out.print(&demesne_emit_go::render_claims_contract_go(&s, "ClaimsContract").map_err(|e| e.to_string())?);
             Ok(())
         }
         "pdp" => emit_pdp_report(out, &s),
         "framework" => {
             let pkg = args.get(2).map_or("authz", String::as_str);
-            out.print(&demesne_emit_go::emit_framework(&s, pkg)?);
+            out.print(&demesne_emit_go::emit_framework(&s, pkg).map_err(|e| e.to_string())?);
             Ok(())
         }
         "all" => emit_all_sql(out, &sql),
         "manifest" => {
-            out.print(&sql.manifest()?.to_json());
+            out.print(&sql.manifest().map_err(|e| e.to_string())?.to_json());
             Ok(())
         }
         "migrate" => {
             need(&args, 3, "<spec.demesne> migrate <previous manifest.json>")?;
             let src = files.read(&args[2])?;
             let previous = Manifest::from_json(&String::from_utf8_lossy(&src)).map_err(|e| format!("{}: {e}", args[2]))?;
-            out.print(&sql.migration(&previous)?);
+            out.print(&sql.migration(&previous).map_err(|e| e.to_string())?);
             Ok(())
         }
         other => Err(format!("unknown emit kind {} (rls|definers|enablement|triggers|claims|pdp|framework|all|manifest|migrate)", quote(other))),
@@ -248,7 +248,7 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
 fn emit_profile(out: &mut Out, s: &Spec, profile: &str) -> R {
     match profile {
         "supabase" => {
-            let p = Sql::new(s).emit_supabase_profile()?;
+            let p = Sql::new(s).emit_supabase_profile().map_err(|e| e.to_string())?;
             out.print(&p);
             out.print("\n");
             Ok(())
@@ -258,13 +258,13 @@ fn emit_profile(out: &mut Out, s: &Spec, profile: &str) -> R {
 }
 
 fn emit_definers_sql(out: &mut Out, sql: &Sql) -> R {
-    let defs = sql.emit_definers()?;
+    let defs = sql.emit_definers().map_err(|e| e.to_string())?;
     out.print(&definers_sql(&defs));
     Ok(())
 }
 
 fn emit_rls_sql(out: &mut Out, sql: &Sql) -> R {
-    let res = sql.emit_rls()?;
+    let res = sql.emit_rls().map_err(|e| e.to_string())?;
     if !res.unsupported.is_empty() {
         return Err(format!("spec has uncompilable @rls permissions: {}", res.unsupported.join("; ")));
     }
@@ -273,13 +273,13 @@ fn emit_rls_sql(out: &mut Out, sql: &Sql) -> R {
 }
 
 fn emit_enablement_sql(out: &mut Out, sql: &Sql) -> R {
-    let res = sql.emit_rls()?;
+    let res = sql.emit_rls().map_err(|e| e.to_string())?;
     out.print(&res.enablement_sql());
     Ok(())
 }
 
 fn emit_pdp_report(out: &mut Out, s: &Spec) -> R {
-    let pdps = emit_pdp(s)?;
+    let pdps = emit_pdp(s).map_err(|e| e.to_string())?;
     for (site, p) in &pdps {
         out.print(&format!("# PDP {}: {} governed, {} ungoverned\n", quote(site), p.policy.len(), p.ungoverned.len()));
         for (pr, perm) in p.policy.iter() {
@@ -293,21 +293,21 @@ fn emit_all_sql(out: &mut Out, sql: &Sql) -> R {
     let mut b = String::new();
     let res = sql.write_all_sql(&mut b);
     out.print(&b);
-    res
+    res.map_err(|e| e.to_string())
 }
 
 fn emit_ts(out: &mut Out, s: &Spec, kind: &str) -> R {
     match kind {
         "all" | "projections" => {
-            out.print(&demesne_emit_ts::emit_ts(s)?);
+            out.print(&demesne_emit_ts::emit_ts(s).map_err(|e| e.to_string())?);
             Ok(())
         }
         "claims" => {
-            out.print(&demesne_emit_ts::render_claims_contract_ts(s, "ClaimsContract")?);
+            out.print(&demesne_emit_ts::render_claims_contract_ts(s, "ClaimsContract").map_err(|e| e.to_string())?);
             Ok(())
         }
         "pdp" => {
-            let pdps = emit_pdp(s)?;
+            let pdps = emit_pdp(s).map_err(|e| e.to_string())?;
             for (i, (site, p)) in pdps.iter().enumerate() {
                 if i > 0 {
                     out.print("\n");
@@ -317,7 +317,7 @@ fn emit_ts(out: &mut Out, s: &Spec, kind: &str) -> R {
             Ok(())
         }
         "framework" => {
-            out.print(&demesne_emit_ts::emit_framework_ts(s)?);
+            out.print(&demesne_emit_ts::emit_framework_ts(s).map_err(|e| e.to_string())?);
             Ok(())
         }
         "rls" | "policies" | "definers" | "enablement" | "triggers" => {

@@ -154,7 +154,7 @@ pub fn build_oracle_entry(sp: &Spec) -> Result<Value, String> {
 
 impl OracleEntry {
     fn claims(&mut self, sp: &Spec) -> Result<(), String> {
-        self.proj.push(("claims".into(), projections::claims(sp)?));
+        self.proj.push(("claims".into(), projections::claims(sp).map_err(|e| e.to_string())?));
         let session = sp.session();
         for local in [true, false] {
             let input = || Some(map(vec![("local", Value::Bool(local))]));
@@ -162,7 +162,7 @@ impl OracleEntry {
             self.cases.push(case("claims.setRoleSQL", input(), Value::Str(session.set_role_sql(local))));
             self.cases.push(case("claims.sessionSetupSQL", input(), Value::strings(&session.session_setup_sql(local))));
         }
-        let contract = sp.claims_contract()?;
+        let contract = sp.claims_contract().map_err(|e| e.to_string())?;
         let vals: BTreeMap<String, String> = contract.iter().map(|k| (k.clone(), format!("v_{k}"))).collect();
         let extra: BTreeMap<String, String> = [("role".to_string(), "authenticated".to_string())].into();
         let minted = rt::mint_claims_values_with_extra(&contract, &vals, Some(&extra)).map_err(|e| e.to_string())?;
@@ -186,14 +186,14 @@ impl OracleEntry {
     }
 
     fn role_stores(&mut self, sp: &Spec) -> Result<(), String> {
-        let hr = sp.holds_resolver("")?;
+        let hr = sp.holds_resolver("").map_err(|e| e.to_string())?;
         self.proj.push(("holdsResolver".into(), projections::holds(&hr)));
         self.cases.push(case("holds.assignmentsSQL", None, Value::Str(hr.assignments_sql())));
         self.cases.extend(holds_matrix_cases(&hr, "")?);
         if sp.role_stores.len() >= 2 {
             self.named_holds_resolvers(sp)?;
         }
-        let ra = sp.role_assignment_surface("")?;
+        let ra = sp.role_assignment_surface("").map_err(|e| e.to_string())?;
         self.proj.push(("roleAssignment".into(), projections::role_assign(&ra)));
         let scope = canonical_scope(ra.scope_cols.len());
         let extra = canonical_extra(&ra.extra_cols);
@@ -218,7 +218,7 @@ impl OracleEntry {
     fn named_holds_resolvers(&mut self, sp: &Spec) -> Result<(), String> {
         let mut by_name: Vec<(String, Value)> = Vec::new();
         for (i, rs) in sp.role_stores.iter().enumerate() {
-            let r = sp.holds_resolver(&rs.name)?;
+            let r = sp.holds_resolver(&rs.name).map_err(|e| e.to_string())?;
             by_name.retain(|(k, _)| k != &rs.name);
             by_name.push((rs.name.clone(), projections::holds(&r)));
             if i == 0 {
@@ -234,7 +234,7 @@ impl OracleEntry {
     fn grants(&mut self, sp: &Spec) -> Result<(), String> {
         let mut gm: Vec<(String, Value)> = Vec::new();
         for gd in &sp.grants {
-            let g = sp.grant_surface(&gd.name)?;
+            let g = sp.grant_surface(&gd.name).map_err(|e| e.to_string())?;
             gm.retain(|(k, _)| k != &gd.name);
             gm.push((gd.name.clone(), projections::grant(&g)));
             let extra = canonical_extra(&g.extra_cols);
@@ -260,7 +260,7 @@ impl OracleEntry {
     fn resource_access(&mut self, sp: &Spec) -> Result<(), String> {
         let mut ram: Vec<(String, Value)> = Vec::new();
         for o in sp.objects.iter().filter(|o| object_grant_edge(o).is_some()) {
-            let r = sp.conditional_resource_access_surface(&o.name)?;
+            let r = sp.conditional_resource_access_surface(&o.name).map_err(|e| e.to_string())?;
             ram.retain(|(k, _)| k != &o.name);
             ram.push((o.name.clone(), projections::res_access(&r)));
             self.resource_access_cases(&o.name, &r);

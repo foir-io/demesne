@@ -3,7 +3,7 @@ use demesne_emit_sql::validate;
 fn refusal(name: &str) -> String {
     let path = format!("{}/../../testdata/gaps/{name}", env!("CARGO_MANIFEST_DIR"));
     let s = demesne_syntax::parse(&std::fs::read_to_string(&path).expect("the fixture reads")).expect("the fixture parses");
-    validate(&s).expect_err("the accessors cannot be enumerated")
+    validate(&s).expect_err("the accessors cannot be enumerated").to_string()
 }
 
 #[test]

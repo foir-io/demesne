@@ -75,7 +75,7 @@ impl Parser {
     }
 
     fn err(&self, msg: impl AsRef<str>) -> Error {
-        Error::new(format!("line {}: {}", self.line(), msg.as_ref()))
+        Error::at(self.line(), msg.as_ref())
     }
 
     fn got(&self) -> String {

@@ -1,4 +1,4 @@
-use crate::query_error;
+use crate::{Error, query_error};
 use demesne_emit_sql::{Object, objects};
 use postgres::{Client, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
@@ -65,13 +65,17 @@ pub struct Drift {
 /// # Errors
 ///
 /// The SQL creates an object the manifest does not record, or a catalog query fails.
-pub fn drift(client: &mut Client, sql: &str, allow: &[String]) -> Result<Drift, String> {
-    let objs = objects(sql)?;
+pub fn drift(client: &mut Client, sql: &str, allow: &[String]) -> Result<Drift, Error> {
+    let objs = objects(sql).map_err(|e| Error::sql(e.to_string()))?;
+    compare(client, &objs, allow).map_err(Error::query)
+}
+
+fn compare(client: &mut Client, objs: &[(Object, String)], allow: &[String]) -> Result<Drift, String> {
     let mut tx = client.transaction().map_err(|e| query_error(&e))?;
     tx.batch_execute("SET LOCAL check_function_bodies = off; SELECT set_config('search_path', current_setting('search_path') || ', pg_temp', true)")
         .map_err(|e| query_error(&e))?;
     let mut c = Comparison {
-        objs: &objs,
+        objs,
         live: BTreeMap::new(),
         shadow: BTreeMap::new(),
         governed: BTreeSet::new(),

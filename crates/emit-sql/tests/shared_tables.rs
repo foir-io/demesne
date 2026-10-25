@@ -39,7 +39,7 @@ const BORROWER: &str = r"object reader {
 ";
 
 fn check(src: &str) -> Result<(), String> {
-    validate(&demesne_syntax::parse(src).expect("the test spec parses"))
+    validate(&demesne_syntax::parse(src).expect("the test spec parses")).map_err(|e| e.to_string())
 }
 
 #[test]

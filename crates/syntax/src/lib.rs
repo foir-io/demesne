@@ -6,5 +6,5 @@ mod lexer;
 mod parser;
 
 pub use ast::*;
-pub use error::Error;
+pub use error::{Error, Finding};
 pub use parser::{parse, parse_bytes};

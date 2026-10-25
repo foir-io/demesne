@@ -1,6 +1,7 @@
 use crate::analysis::{SpecExt, contains};
+use crate::error::{Error, refuse_any};
 use demesne_gocompat::quote;
-use demesne_syntax::{ExternalArg, Grant, Object, Perm, Relation, Repr, RoleStore, Spec, Subject, Term};
+use demesne_syntax::{ExternalArg, Finding, Grant, Object, Perm, Relation, Repr, RoleStore, Spec, Subject, Term};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,8 +308,8 @@ fn check_subject_refs(b: &mut Binder, sub: &Subject) {
 ///
 /// # Errors
 ///
-/// Every missing table or column, sorted and joined by newlines.
-pub fn validate_against(s: &Spec, sc: &Schema) -> Result<(), String> {
+/// Every missing table or column, one finding each, in text order.
+pub fn validate_against(s: &Spec, sc: &Schema) -> Result<(), Error> {
     let mut b = Binder { columns: None, sc: Some(sc), errs: Vec::new() };
     for o in &s.objects {
         check_object_refs(s, &mut b, o);
@@ -323,7 +324,7 @@ pub fn validate_against(s: &Spec, sc: &Schema) -> Result<(), String> {
         check_subject_refs(&mut b, sub);
     }
     b.errs.sort();
-    if b.errs.is_empty() { Ok(()) } else { Err(b.errs.join("\n")) }
+    refuse_any(b.errs.into_iter().map(Finding::unplaced).collect(), ())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

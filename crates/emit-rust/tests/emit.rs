@@ -52,6 +52,8 @@ fn the_same_surface_named_twice_is_emitted_once() {
 fn an_unknown_name_is_refused() {
     let s = spec("thing");
     let err = emit_rust(&s, &[Surface::PointCheck("nope".into()), Surface::Vocabulary("nope".into()), Surface::Grant("nope".into())]).expect_err("refused");
+    assert!(err.is_surface() && !err.is_spec() && !err.is_io(), "{err:?}");
+    let err = err.to_string();
     assert_eq!(err.lines().count(), 3, "{err}");
     assert!(err.contains("PointCheckSQL: no object \"nope\" in the spec"), "{err}");
     assert!(err.contains("no vocabulary \"nope\" in the spec"), "{err}");
@@ -69,7 +71,7 @@ fn a_rust_keyword_object_becomes_a_raw_identifier() {
 #[test]
 fn a_permission_without_a_check_layer_has_no_check() {
     let s = spec("thing");
-    let err = emit_rust(&s, &[Surface::Check("note".into(), "view".into())]).expect_err("refused");
+    let err = emit_rust(&s, &[Surface::Check("note".into(), "view".into())]).expect_err("refused").to_string();
     assert!(err.contains("note.view has no @check layer"), "{err}");
 }
 
@@ -80,12 +82,14 @@ fn builder_reports_a_spec_error_with_its_path() {
     let bad = dir.join("bad.demesne");
     std::fs::write(&bad, "object {").expect("write");
     let err = Builder::new(&bad).session().render().expect_err("parse error");
-    assert!(err.starts_with(&bad.display().to_string()), "{err}");
+    assert!(err.is_spec(), "{err:?}");
+    assert!(err.to_string().starts_with(&bad.display().to_string()), "{err}");
     let invalid = dir.join("invalid.demesne");
     std::fs::write(&invalid, SPEC.replace("r#OBJ", "thing").replace("permission view = owner", "permission view = nobody")).expect("write");
     let err = Builder::new(&invalid).session().render().expect_err("validation error");
-    assert!(err.starts_with(&invalid.display().to_string()), "{err}");
+    assert!(err.is_spec(), "{err:?}");
+    assert!(err.to_string().starts_with(&invalid.display().to_string()), "{err}");
     let missing = dir.join("missing.demesne");
-    Builder::new(&missing).render().unwrap_err();
+    assert!(Builder::new(&missing).render().expect_err("no such file").is_io());
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -1,7 +1,7 @@
 use crate::Sql;
 use crate::rls::{Virtual, leaf};
 use demesne_model::SpecExt;
-use demesne_syntax::{Admit, Object, Perm, PermNode, Repr, Spec, Term, ViaObject};
+use demesne_syntax::{Admit, Finding, Object, Perm, PermNode, Repr, Spec, Term, ViaObject};
 use std::collections::BTreeSet;
 
 const DNF_LIMIT: usize = 512;
@@ -252,7 +252,7 @@ enum Escape {
     Requirement,
 }
 
-struct Finding<'a> {
+struct Reach<'a> {
     line: usize,
     obj: &'a Object,
     verb: &'a str,
@@ -263,9 +263,9 @@ struct Finding<'a> {
     blind: bool,
 }
 
-impl Finding<'_> {
-    fn message(&self) -> String {
-        let Finding { line, obj, verb, op, what, sel, escape, blind } = self;
+impl Reach<'_> {
+    fn finding(&self) -> Finding {
+        let Reach { line, obj, verb, op, what, sel, escape, blind } = self;
         let (why, remedy) = match (escape, sel) {
             (Escape::Permission, Some(p)) => {
                 (format!("the select permission {}.{} does not reach", obj.name, p.verb), "reach them in the select permission".to_string())
@@ -286,25 +286,28 @@ impl Finding<'_> {
         };
         let statement = if *op == "update" { "an UPDATE" } else { "a DELETE" };
         let admits = if what.starts_with("its terms ") { "admit" } else { "admits" };
-        format!(
-            "line {line}: permission {}.{verb} maps {op}, and {what} {admits} callers {why}; Postgres applies {statement} only to rows the SELECT policy shows, so for those callers it changes nothing and reports success: {tail}",
-            obj.name
+        Finding::at(
+            *line,
+            format!(
+                "permission {}.{verb} maps {op}, and {what} {admits} callers {why}; Postgres applies {statement} only to rows the SELECT policy shows, so for those callers it changes nothing and reports success: {tail}",
+                obj.name
+            ),
         )
     }
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct WriteReach {
-    pub(crate) errors: Vec<String>,
-    pub(crate) warnings: Vec<String>,
+    pub(crate) errors: Vec<Finding>,
+    pub(crate) warnings: Vec<Finding>,
 }
 
 impl WriteReach {
-    fn report(&mut self, f: &Finding<'_>) {
+    fn report(&mut self, f: &Reach<'_>) {
         if f.blind {
-            self.warnings.push(f.message());
+            self.warnings.push(f.finding());
         } else {
-            self.errors.push(f.message());
+            self.errors.push(f.finding());
         }
     }
 }
@@ -340,8 +343,8 @@ impl<'a> ObjectReach<'a> {
         self.writes.iter().any(|(_, w)| *w == op) || self.admits.iter().any(|(_, w)| *w == op)
     }
 
-    fn finding(&self, line: usize, verb: &'a str, op: &'a str, what: String, escape: Escape, blind: bool) -> Finding<'a> {
-        Finding { line, obj: self.obj, verb, op, what, sel: self.sel, escape, blind }
+    fn finding(&self, line: usize, verb: &'a str, op: &'a str, what: String, escape: Escape, blind: bool) -> Reach<'a> {
+        Reach { line, obj: self.obj, verb, op, what, sel: self.sel, escape, blind }
     }
 }
 
@@ -376,15 +379,15 @@ impl Sql<'_> {
         dnf(&parse(&pred), false)
     }
 
-    fn blind_misuse(&self) -> Vec<String> {
+    fn blind_misuse(&self) -> Vec<Finding> {
         self.s
             .objects
             .iter()
             .flat_map(|o| o.perms.iter().filter(|p| p.blind && write_op(p).is_none()).map(move |pm| (o, pm)))
             .map(|(o, pm)| {
-                format!(
-                    "line {}: permission {}.{} is marked `blind` but does not map update or delete under @rls; only a write can be blind",
-                    pm.pos.line, o.name, pm.verb
+                Finding::at(
+                    pm.pos.line,
+                    format!("permission {}.{} is marked `blind` but does not map update or delete under @rls; only a write can be blind", o.name, pm.verb),
                 )
             })
             .collect()

@@ -3,12 +3,14 @@
 mod connect;
 mod drift;
 mod dsn;
+mod error;
 mod goerr;
 mod lint;
 
 pub use connect::connect;
 pub use drift::{Drift, DriftKind, Finding, drift};
 pub use dsn::parse_config_dump;
+pub use error::Error;
 pub use lint::{Severity, Trap, schema_traps};
 
 use demesne_model::Schema;
@@ -42,7 +44,11 @@ pub fn query_error(e: &postgres::Error) -> String {
 /// # Errors
 ///
 /// A catalog query fails.
-pub fn introspect(client: &mut Client) -> Result<(Schema, IntrospectMeta), String> {
+pub fn introspect(client: &mut Client) -> Result<(Schema, IntrospectMeta), Error> {
+    read_schema(client).map_err(Error::query)
+}
+
+fn read_schema(client: &mut Client) -> Result<(Schema, IntrospectMeta), String> {
     let mut sc = Schema::new();
     let mut meta = IntrospectMeta::default();
     let mut tables = BTreeSet::new();
@@ -85,7 +91,11 @@ pub fn introspect(client: &mut Client) -> Result<(Schema, IntrospectMeta), Strin
 /// # Errors
 ///
 /// The catalog query fails.
-pub fn role_bypasses_rls(client: &mut Client, role: &str) -> Result<(bool, bool), String> {
+pub fn role_bypasses_rls(client: &mut Client, role: &str) -> Result<(bool, bool), Error> {
+    read_role_bypass(client, role).map_err(Error::query)
+}
+
+fn read_role_bypass(client: &mut Client, role: &str) -> Result<(bool, bool), String> {
     let rows = client.query("SELECT rolbypassrls FROM pg_roles WHERE rolname = $1", &[&role]).map_err(|e| query_error(&e))?;
     match rows.first() {
         Some(row) => Ok((true, row.get(0))),
@@ -98,7 +108,11 @@ pub fn role_bypasses_rls(client: &mut Client, role: &str) -> Result<(bool, bool)
 /// # Errors
 ///
 /// The query fails.
-pub fn count_global_assignments(client: &mut Client, query: &str) -> Result<i64, String> {
+pub fn count_global_assignments(client: &mut Client, query: &str) -> Result<i64, Error> {
+    read_global_assignments(client, query).map_err(Error::query)
+}
+
+fn read_global_assignments(client: &mut Client, query: &str) -> Result<i64, String> {
     let row = client.query_one(&format!("SELECT count(*) FROM ({query}) q"), &[]).map_err(|e| query_error(&e))?;
     Ok(row.get(0))
 }

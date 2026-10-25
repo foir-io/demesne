@@ -536,8 +536,12 @@ fn connect_error(cfg: &ConnConfig, details: &str) -> String {
 /// # Errors
 ///
 /// The connection string does not parse, or every host fails to connect, authenticate or meet the TLS mode. The message lists each attempt.
-pub fn connect(conn: &str) -> Result<Client, String> {
-    let cfg = dsn::parse_config(conn).map_err(|e| e.to_string())?;
+pub fn connect(conn: &str) -> Result<Client, crate::Error> {
+    let cfg = dsn::parse_config(conn).map_err(|e| crate::Error::connection_string(e.to_string()))?;
+    connect_with(&cfg).map_err(crate::Error::connect)
+}
+
+fn connect_with(cfg: &ConnConfig) -> Result<Client, String> {
     let mut errors: Vec<String> = Vec::new();
     let mut attempts: Vec<Attempt> = Vec::new();
     for fb in &cfg.fallbacks {
@@ -567,16 +571,16 @@ pub fn connect(conn: &str) -> Result<Client, String> {
         }
     }
     if attempts.is_empty() {
-        return Err(connect_error(&cfg, &format!("hostname resolving error: {}", errors.join("\n"))));
+        return Err(connect_error(cfg, &format!("hostname resolving error: {}", errors.join("\n"))));
     }
     let mut not_preferred: Option<&Attempt> = None;
     for a in &attempts {
-        match attempt(&cfg, a, false) {
+        match attempt(cfg, a, false) {
             Ok(c) => return Ok(c),
             Err(f) => {
                 errors.push(format!("{} ({}): {}", a.address, a.original, f.text));
                 if matches!(f.code.as_deref(), Some("28P01" | "3D000" | "42501")) {
-                    return Err(connect_error(&cfg, &errors.join("\n")));
+                    return Err(connect_error(cfg, &errors.join("\n")));
                 }
                 if f.not_preferred {
                     not_preferred = Some(a);
@@ -585,10 +589,10 @@ pub fn connect(conn: &str) -> Result<Client, String> {
         }
     }
     if let Some(a) = not_preferred {
-        match attempt(&cfg, a, true) {
+        match attempt(cfg, a, true) {
             Ok(c) => return Ok(c),
             Err(f) => errors.push(format!("{} ({}): {}", a.address, a.original, f.text)),
         }
     }
-    Err(connect_error(&cfg, &errors.join("\n")))
+    Err(connect_error(cfg, &errors.join("\n")))
 }

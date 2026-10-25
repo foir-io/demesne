@@ -1,4 +1,5 @@
 use crate::Sql;
+use crate::error::Error;
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_model::analysis::{
     Rels, SpecExt, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
@@ -209,7 +210,7 @@ impl Sql<'_> {
     }
 
     pub(crate) fn virtual_levels(&self) -> R<Virtual> {
-        Ok(topology::chain(self.s)?.into_iter().filter(|l| l.is_virtual).map(|l| l.name.clone()).collect())
+        Ok(topology::chain(self.s).map_err(|e| e.to_string())?.into_iter().filter(|l| l.is_virtual).map(|l| l.name.clone()).collect())
     }
 
     /// Compiles the row-level security policies for every `@rls` permission.
@@ -217,7 +218,11 @@ impl Sql<'_> {
     /// # Errors
     ///
     /// The topology is invalid, or a permission cannot be compiled to a policy predicate.
-    pub fn emit_rls(&self) -> R<RlsResult> {
+    pub fn emit_rls(&self) -> Result<RlsResult, Error> {
+        self.rls_result().map_err(Error::unplaced)
+    }
+
+    fn rls_result(&self) -> R<RlsResult> {
         let virt = self.virtual_levels()?;
         let mut res = RlsResult { table_schema: self.s.table_schema().to_string(), ..Default::default() };
         for obj in &self.s.objects {
@@ -465,7 +470,7 @@ impl Sql<'_> {
     }
 
     pub(crate) fn rls_containment_block(&self, obj: &Object, obj_leaf: &str, inject: &Inject, op: &str) -> R<String> {
-        let paths = topology::ancestor_paths(self.s, obj_leaf)?;
+        let paths = topology::ancestor_paths(self.s, obj_leaf).map_err(|e| e.to_string())?;
         let mut path_preds = Vec::new();
         for path in &paths {
             let cols: Vec<String> = path
@@ -748,7 +753,7 @@ impl Sql<'_> {
         if rs.perms_col.is_none() {
             return Err(format!("@holds({}) on {}: rolestore {} declares no `permissions` column", quote(perm), quote(&obj.name), quote(&rs.name)));
         }
-        let chain = topology::chain(self.s)?;
+        let chain = topology::chain(self.s).map_err(|e| e.to_string())?;
         let plane_depth = self.s.rolestore_plane_depth(rs);
         let mut args = vec![self.id_claim(self.s.admin_identify())];
         let mut i = 0;
@@ -1012,7 +1017,7 @@ impl Sql<'_> {
     /// # Errors
     ///
     /// Any error from [`Sql::emit_rls`].
-    pub fn definer_names(&self) -> R<Vec<String>> {
+    pub fn definer_names(&self) -> Result<Vec<String>, Error> {
         let res = self.emit_rls()?;
         let mut set = BTreeSet::new();
         for p in &res.policies {

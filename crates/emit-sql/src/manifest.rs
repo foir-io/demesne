@@ -1,4 +1,5 @@
 use crate::Sql;
+use crate::error::{Error, ManifestError};
 use crate::genfn::definers_sql;
 use demesne_gocompat::json::{self, Value};
 use demesne_gocompat::quote;
@@ -30,7 +31,7 @@ impl Manifest {
     /// # Errors
     ///
     /// A `CREATE` statement of a kind the manifest does not record, or one it cannot read the identity of.
-    pub fn from_sql(sql: &str) -> Result<Self, String> {
+    pub fn from_sql(sql: &str) -> Result<Self, ManifestError> {
         let mut m = Self::default();
         for (object, _) in objects(sql)? {
             match object {
@@ -50,7 +51,11 @@ impl Manifest {
     /// # Errors
     ///
     /// Text that is not JSON, or JSON that is not a manifest of this format.
-    pub fn from_json(src: &str) -> Result<Self, String> {
+    pub fn from_json(src: &str) -> Result<Self, ManifestError> {
+        Self::read_json(src).map_err(ManifestError::new)
+    }
+
+    fn read_json(src: &str) -> Result<Self, String> {
         let v = json::parse(src).map_err(|e| format!("manifest: {e}"))?;
         match v.get("manifest").and_then(Value::as_i64) {
             Some(FORMAT) => {}
@@ -222,7 +227,11 @@ pub enum Object {
 /// # Errors
 ///
 /// A `CREATE` statement of a kind the manifest does not record, or one it cannot read the identity of.
-pub fn objects(sql: &str) -> Result<Vec<(Object, String)>, String> {
+pub fn objects(sql: &str) -> Result<Vec<(Object, String)>, ManifestError> {
+    read_objects(sql).map_err(ManifestError::new)
+}
+
+fn read_objects(sql: &str) -> Result<Vec<(Object, String)>, String> {
     let mut out = Vec::new();
     for stmt in statements(sql) {
         let words: Vec<&str> = stmt.split_whitespace().collect();
@@ -252,7 +261,7 @@ impl Sql<'_> {
     /// # Errors
     ///
     /// The definers or the policies do not compile, or an `@rls` permission cannot.
-    pub fn write_all_sql(&self, b: &mut String) -> Result<(), String> {
+    pub fn write_all_sql(&self, b: &mut String) -> Result<(), Error> {
         let flats = self.flats_sql();
         if !flats.is_empty() {
             b.push_str(&flats);
@@ -264,7 +273,7 @@ impl Sql<'_> {
         b.push_str(&res.enablement_sql());
         b.push('\n');
         if !res.unsupported.is_empty() {
-            return Err(format!("spec has uncompilable @rls permissions: {}", res.unsupported.join("; ")));
+            return Err(Error::unplaced(format!("spec has uncompilable @rls permissions: {}", res.unsupported.join("; "))));
         }
         b.push_str(&res.policy_sql("authenticated"));
         for part in [self.triggers_sql(), self.changelog_sql(), self.async_sql()] {
@@ -281,10 +290,10 @@ impl Sql<'_> {
     /// # Errors
     ///
     /// The SQL does not compile, or it creates an object the manifest does not record.
-    pub fn manifest(&self) -> Result<Manifest, String> {
+    pub fn manifest(&self) -> Result<Manifest, Error> {
         let mut b = String::new();
         self.write_all_sql(&mut b)?;
-        Manifest::from_sql(&b)
+        Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))
     }
 
     /// Returns a migration from the surface `previous` records to this spec's: the whole SQL, then [`Manifest::drops_since`].
@@ -292,10 +301,10 @@ impl Sql<'_> {
     /// # Errors
     ///
     /// The SQL does not compile, or it creates an object the manifest does not record.
-    pub fn migration(&self, previous: &Manifest) -> Result<String, String> {
+    pub fn migration(&self, previous: &Manifest) -> Result<String, Error> {
         let mut b = String::new();
         self.write_all_sql(&mut b)?;
-        let drops = Manifest::from_sql(&b)?.drops_since(previous);
+        let drops = Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))?.drops_since(previous);
         b.push_str(&drops);
         Ok(b)
     }

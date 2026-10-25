@@ -127,20 +127,20 @@ impl Lexer<'_> {
                 if self.peek_at(1) == b'>' {
                     self.tok(Tok::Arrow, "->", line, 2)
                 } else {
-                    return Err(Error::new(format!("line {line}: unexpected '-' (expected '->')")));
+                    return Err(Error::at(line, "unexpected '-' (expected '->')"));
                 }
             }
             b'<' => {
                 if self.peek_at(1) == b'>' {
                     self.tok(Tok::Ne, "<>", line, 2)
                 } else {
-                    return Err(Error::new(format!("line {line}: unexpected '<' (expected '<>')")));
+                    return Err(Error::at(line, "unexpected '<' (expected '<>')"));
                 }
             }
             b'"' => return self.lex_string(),
             c if is_ident_start(c) => self.lex_run(),
             c => {
-                return Err(Error::new(format!("line {line}: unexpected character {}", quote(&char::from(c).to_string()))));
+                return Err(Error::at(line, format!("unexpected character {}", quote(&char::from(c).to_string()))));
             }
         };
         Ok(t)
@@ -189,7 +189,7 @@ impl Lexer<'_> {
             b.push(c);
             self.pos += 1;
         }
-        Err(Error::new(format!("line {line}: unterminated string")))
+        Err(Error::at(line, "unterminated string"))
     }
 
     fn lex_run(&mut self) -> Token {
@@ -225,7 +225,7 @@ impl Lexer<'_> {
 
 fn string_token(b: Vec<u8>, line: usize) -> Result<Token, Error> {
     let Ok(lit) = String::from_utf8(b) else {
-        return Err(Error::new(format!("line {line}: string literal is not valid UTF-8")));
+        return Err(Error::at(line, "string literal is not valid UTF-8"));
     };
     Ok(Token { kind: Tok::Str, lit, line })
 }

@@ -31,7 +31,7 @@ impl ResourceAccessSurface {
     /// The object admits readers its accessor function cannot list. Use the conditional resource-access surface for such an object instead.
     pub fn require_unconditional(self, object: &str) -> Result<Self, Error> {
         if self.conditional {
-            return Err(Error::new(format!(
+            return Err(Error::access(format!(
                 "ResourceAccessSurface: object {} admits readers its enumeration cannot name ({}), so {} lists only the accessors it can name and never the rest; call ConditionalResourceAccessSurface and decide what those rows mean for this caller",
                 demesne_gocompat::quote(object),
                 self.conditional_by,

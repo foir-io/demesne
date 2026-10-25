@@ -1,4 +1,5 @@
 use crate::Sql;
+use crate::error::Error;
 use demesne_model::SpecExt;
 use demesne_model::analysis::relation_is_async;
 use demesne_model::conditional::accessor_tree_op;
@@ -22,7 +23,11 @@ impl Sql<'_> {
     /// # Errors
     ///
     /// The spec declares no objects, or an object's predicates cannot be compiled.
-    pub fn emit_app_surface(&self) -> Result<AppCheckSurface, String> {
+    pub fn emit_app_surface(&self) -> Result<AppCheckSurface, Error> {
+        self.app_surface().map_err(Error::unplaced)
+    }
+
+    fn app_surface(&self) -> Result<AppCheckSurface, String> {
         if self.s.objects.is_empty() {
             return Err("EmitAppSurface: the spec declares no objects".into());
         }

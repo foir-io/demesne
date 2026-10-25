@@ -73,19 +73,18 @@ pub fn validate(source: &str) -> Option<String> {
 #[must_use]
 pub fn diagnostics(source: &str) -> String {
     let found: Vec<Value> = match demesne_syntax::parse(source) {
-        Err(e) => e.message().lines().map(|m| finding("error", m)).collect(),
+        Err(e) => vec![located("error", e.finding())],
         Ok(spec) => match demesne_emit_sql::validate(&spec) {
-            Err(e) => e.lines().map(|m| finding("error", m)).collect(),
-            Ok(()) => demesne_emit_sql::validate_warnings(&spec).iter().map(|w| finding("warning", w)).collect(),
+            Err(e) => e.findings().iter().map(|f| located("error", f)).collect(),
+            Ok(()) => demesne_emit_sql::validate_warnings(&spec).iter().map(|w| located("warning", w)).collect(),
         },
     };
     json::marshal(&Value::Array(found))
 }
 
-fn finding(severity: &str, text: &str) -> Value {
-    let located = text.strip_prefix("line ").and_then(|rest| rest.split_once(": ")).and_then(|(n, message)| n.parse::<i64>().ok().map(|n| (n, message)));
-    let (line, message) = located.map_or((Value::Null, text), |(n, message)| (Value::Int(n), message));
-    Value::Struct(vec![("severity".into(), Value::str(severity)), ("line".into(), line), ("message".into(), Value::str(message))])
+fn located(severity: &str, f: &demesne_syntax::Finding) -> Value {
+    let line = f.line().map_or(Value::Null, |n| Value::Int(i64::try_from(n).expect("a spec's line count fits in i64")));
+    Value::Struct(vec![("severity".into(), Value::str(severity)), ("line".into(), line), ("message".into(), Value::str(f.message()))])
 }
 
 #[wasm_bindgen]
