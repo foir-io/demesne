@@ -1,20 +1,38 @@
 {
   "name": "demesne",
   "displayName": "Demesne",
-  "description": "Syntax highlighting for Demesne authorization specs (.demesne)",
+  "description": "Syntax highlighting and live validation for Demesne authorization specs (.demesne)",
   "version": "0.1.0",
   "publisher": "eidestudio",
   "license": "Apache-2.0",
   "private": true,
-  "repository": { "type": "git", "url": "https://github.com/foir-io/demesne.git", "directory": "editors/vscode" },
-  "engines": { "vscode": "^1.60.0" },
-  "categories": ["Programming Languages"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/foir-io/demesne.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:demesne"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "demesne",
-        "aliases": ["Demesne", "demesne"],
-        "extensions": [".demesne"],
+        "aliases": [
+          "Demesne",
+          "demesne"
+        ],
+        "extensions": [
+          ".demesne"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -25,5 +43,13 @@
         "path": "./syntaxes/demesne.tmLanguage.json"
       }
     ]
+  },
+  "scripts": {
+    "build:wasm": "../../scripts/build-wasm.sh wasm nodejs",
+    "test": "node --test test/*.test.js",
+    "test:vscode": "node integration/run.mjs"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "3.1.0"
   }
 }

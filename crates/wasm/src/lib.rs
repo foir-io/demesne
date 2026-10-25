@@ -1,6 +1,7 @@
 #![doc = "demesne's compiler as WebAssembly. `run` is the CLI's pure commands over in-memory files, byte-identical to the native binary; `validate` parses and validates one spec."]
 
 use demesne_cli::{Files, LIVE_COMMANDS, Output, run_pure};
+use demesne_gocompat::json::{self, Value};
 use std::collections::BTreeMap;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -65,6 +66,26 @@ pub fn validate(source: &str) -> Option<String> {
         Err(e) => return Some(format!("parse: {e}")),
     };
     demesne_emit_sql::validate(&spec).err().map(|e| format!("validate: {e}"))
+}
+
+/// Returns every problem in `source`, or for a valid spec the warnings it still earns, as a JSON array of `{"severity": "error" | "warning", "line": number | null, "message": string}`. The line is the one a message names with its `line N:` prefix.
+#[wasm_bindgen]
+#[must_use]
+pub fn diagnostics(source: &str) -> String {
+    let found: Vec<Value> = match demesne_syntax::parse(source) {
+        Err(e) => e.message().lines().map(|m| finding("error", m)).collect(),
+        Ok(spec) => match demesne_emit_sql::validate(&spec) {
+            Err(e) => e.lines().map(|m| finding("error", m)).collect(),
+            Ok(()) => demesne_emit_sql::validate_warnings(&spec).iter().map(|w| finding("warning", w)).collect(),
+        },
+    };
+    json::marshal(&Value::Array(found))
+}
+
+fn finding(severity: &str, text: &str) -> Value {
+    let located = text.strip_prefix("line ").and_then(|rest| rest.split_once(": ")).and_then(|(n, message)| n.parse::<i64>().ok().map(|n| (n, message)));
+    let (line, message) = located.map_or((Value::Null, text), |(n, message)| (Value::Int(n), message));
+    Value::Struct(vec![("severity".into(), Value::str(severity)), ("line".into(), line), ("message".into(), Value::str(message))])
 }
 
 #[wasm_bindgen]

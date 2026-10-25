@@ -17,6 +17,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 demesne-cli = { workspace = true, default-features = false }
+demesne-gocompat.workspace = true
 demesne-syntax.workspace = true
 demesne-emit-sql.workspace = true
 wasm-bindgen = "0.2"

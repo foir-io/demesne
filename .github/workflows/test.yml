@@ -159,3 +159,31 @@ jobs:
         run: pnpm --filter @foir/demesne test:browser
       - name: test the packed package (Node, workerd, Chrome)
         run: pnpm --filter @foir/demesne test:packed
+
+  vscode:
+    name: VS Code
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: toolchain
+        run: rustup toolchain install
+        working-directory: .
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: wasm-bindgen@0.2.129
+      - name: compiler wasm
+        run: npm run build:wasm
+      - run: npm ci
+      - name: test
+        run: npm test
+      - name: live validation in VS Code
+        run: xvfb-run -a npm run test:vscode

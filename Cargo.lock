@@ -294,6 +294,7 @@ version = "1.0.0"
 dependencies = [
  "demesne-cli",
  "demesne-emit-sql",
+ "demesne-gocompat",
  "demesne-syntax",
  "wasm-bindgen",
 ]

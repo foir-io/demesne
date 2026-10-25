@@ -108,6 +108,15 @@ For the binding, `demesne-runtime` gains `build_claims` with `Principal`,
 the PDP and role assignments, and public `plane_depth`, `within_plane`,
 `expand_implications` and `active_predicate`.
 
+### VS Code validates specs as you type
+
+The VS Code extension had only a grammar. It now runs the compiler, built to
+WebAssembly from `crates/wasm`, over each open `.demesne` file after a 200 ms
+pause in typing. It underlines every parse and validation error on the line
+it names, in `demesne validate`'s words, and shows a valid spec's warnings,
+such as a `blind` write. The compiler build gains a `diagnostics` export
+returning each finding's severity, line and message as JSON.
+
 ### Breaking: generated Go imports a small runtime, not the engine
 
 The Go framework that `demesne emit <spec> framework <pkg>` writes imported the

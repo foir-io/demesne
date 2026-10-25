@@ -1,0 +1,41 @@
+const vscode = require("vscode");
+const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
+
+const repo = join(__dirname, "../../..");
+
+async function until(probe, what) {
+  for (let i = 0; i < 100; i++) {
+    const got = probe();
+    if (got) return got;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+exports.run = async () => {
+  const bad = readFileSync(join(repo, "testdata/gaps/d37-wider-write.demesne"), "utf8");
+  const doc = await vscode.workspace.openTextDocument({ language: "demesne", content: bad });
+  await vscode.window.showTextDocument(doc);
+  const found = await until(() => {
+    const d = vscode.languages.getDiagnostics(doc.uri);
+    return d.length > 0 && d;
+  }, "diagnostics on the invalid spec");
+  assert.deepEqual(
+    found.map((d) => [d.range.start.line, d.severity, d.source]),
+    [
+      [23, vscode.DiagnosticSeverity.Error, "demesne"],
+      [24, vscode.DiagnosticSeverity.Error, "demesne"],
+    ],
+  );
+
+  const fixed = bad.replace("@rls maps delete", "@rls maps delete blind").replace("@rls maps update", "@rls maps update blind");
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), fixed);
+  await vscode.workspace.applyEdit(edit);
+  await until(
+    () => vscode.languages.getDiagnostics(doc.uri).every((d) => d.severity === vscode.DiagnosticSeverity.Warning) && vscode.languages.getDiagnostics(doc.uri).length === 2,
+    "the edit to turn the errors into warnings",
+  );
+};
