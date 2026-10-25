@@ -631,6 +631,18 @@ pub enum PermNode {
 }
 
 impl PermNode {
+    /// Renders the expression as it is written in a spec, bracketing a union inside `and` or `not`.
+    #[must_use]
+    pub fn display(&self) -> String {
+        let operand = |n: &PermNode| if matches!(n, PermNode::Or(_)) { format!("({})", n.display()) } else { n.display() };
+        match self {
+            PermNode::Leaf(t) => t.display(),
+            PermNode::Not(k) => format!("not {}", operand(k)),
+            PermNode::And(kids) => kids.iter().map(operand).collect::<Vec<_>>().join(" and "),
+            PermNode::Or(kids) => kids.iter().map(PermNode::display).collect::<Vec<_>>().join(" + "),
+        }
+    }
+
     #[must_use]
     pub fn op(&self) -> &'static str {
         match self {

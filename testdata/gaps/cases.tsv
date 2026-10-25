@@ -14,3 +14,5 @@ D15	d15-after.demesne	emit {spec} migrate {gaps}/d15-before.manifest.json	unknow
 QUIRK1	quirk-accessors-schema.demesne	validate {spec}	\(auth\.docs_accessors would under-report\)	\(app_auth\.docs_accessors would under-report\)
 QUIRK1	quirk-structural-schema.demesne	validate {spec}	\(auth\.assets_accessors would under-report\)	\(app_auth\.assets_accessors would under-report\)
 IMPLIED	quirk-implied-schema.demesne	emit {spec} definers	[^_]auth\.member_perm_implied_by\(p_perm\)	app_auth\.member_perm_implied_by\(p_perm\)
+LONE	lone-term-under-not.demesne	emit {spec} rls	OR actor_col = \(current_setting	writes `@self\(actor_col\)` inside `not @self\(actor_col\) and owner`, but a @self, @public or `via grant` term admits its callers on its own
+SCOPED	scoped-absorbed.demesne	emit {spec} rls	AND \(owner_id = \(current_setting	writes `owner \+ @scoped`, which compiles as `owner`

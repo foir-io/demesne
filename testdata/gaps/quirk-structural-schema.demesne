@@ -47,5 +47,5 @@ object asset {
   permission view = owner and not owner @rls maps select
   permission edit = @kind("admin") and @app_scope @rls maps update guard status <> "archived"
   permission create = @session @rls maps insert
-  permission remove = owner + @scoped @rls maps delete
+  permission remove = owner @rls maps delete
 }

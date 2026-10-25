@@ -692,9 +692,111 @@ fn check_perm_polarity(o: &Object, pm: &Perm) -> Option<Finding> {
     None
 }
 
+fn admits_alone(n: &PermNode) -> bool {
+    matches!(n, PermNode::Leaf(t) if !t.grant_ref().is_empty() || matches!(t.builtin(), "self" | "public"))
+}
+
+fn is_scoped(n: &PermNode) -> bool {
+    matches!(n, PermNode::Leaf(t) if t.builtin() == "scoped")
+}
+
+fn alternatives(tree: &PermNode) -> &[PermNode] {
+    match tree {
+        PermNode::Or(kids) => kids,
+        n => std::slice::from_ref(n),
+    }
+}
+
+fn lone_admitters<'a>(n: &'a PermNode, out: &mut Vec<&'a PermNode>) {
+    match n {
+        _ if admits_alone(n) => out.push(n),
+        PermNode::Leaf(_) => {}
+        PermNode::Not(k) => lone_admitters(k, out),
+        PermNode::And(kids) | PermNode::Or(kids) => kids.iter().for_each(|k| lone_admitters(k, out)),
+    }
+}
+
+fn without_lone_admitters(n: &PermNode) -> Option<PermNode> {
+    match n {
+        _ if admits_alone(n) => None,
+        PermNode::Leaf(_) => Some(n.clone()),
+        PermNode::Not(k) => without_lone_admitters(k).map(|k| PermNode::Not(Box::new(k))),
+        PermNode::And(kids) | PermNode::Or(kids) => {
+            let mut rest: Vec<PermNode> = kids.iter().filter_map(without_lone_admitters).collect();
+            match rest.len() {
+                0 => None,
+                1 => rest.pop(),
+                _ if matches!(n, PermNode::And(_)) => Some(PermNode::And(rest)),
+                _ => Some(PermNode::Or(rest)),
+            }
+        }
+    }
+}
+
+fn check_nested_lone_admitters(o: &Object, pm: &Perm) -> Option<Finding> {
+    let alts = alternatives(&pm.tree);
+    let mut nested = Vec::new();
+    let mut inside = None;
+    for alt in alts.iter().filter(|a| !admits_alone(a)) {
+        let before = nested.len();
+        lone_admitters(alt, &mut nested);
+        if inside.is_none() && nested.len() > before {
+            inside = Some(alt);
+        }
+    }
+    let inside = inside?;
+    let mut compiled: Vec<String> = Vec::new();
+    for n in alts.iter().filter_map(|a| if admits_alone(a) { Some(a.clone()) } else { without_lone_admitters(a) }).chain(nested.iter().map(|n| (*n).clone())) {
+        let text = n.display();
+        if !compiled.contains(&text) {
+            compiled.push(text);
+        }
+    }
+    let terms: Vec<String> = nested.iter().map(|n| format!("`{}`", n.display())).collect();
+    Some(Finding::at(
+        pm.pos.line,
+        format!(
+            "permission {}.{} writes {} inside `{}`, but a @self, @public or `via grant` term admits its callers on its own wherever it is written, so the permission compiles as `{}`, wider than it reads: write each such term as its own alternative",
+            o.name,
+            pm.verb,
+            terms.join(", "),
+            inside.display(),
+            compiled.join(" + ")
+        ),
+    ))
+}
+
+fn scoped_union(n: &PermNode) -> Option<&[PermNode]> {
+    match n {
+        PermNode::Leaf(_) => None,
+        PermNode::Or(kids) if kids.iter().any(is_scoped) && kids.iter().any(|k| !is_scoped(k) && !admits_alone(k)) => Some(kids),
+        PermNode::Or(kids) | PermNode::And(kids) => kids.iter().find_map(scoped_union),
+        PermNode::Not(k) => scoped_union(k),
+    }
+}
+
+fn check_absorbed_scoped(o: &Object, pm: &Perm) -> Option<Finding> {
+    let union = scoped_union(&pm.tree)?;
+    let rest: Vec<String> = union.iter().filter(|k| !is_scoped(k)).map(PermNode::display).collect();
+    let ordinary: Vec<String> = union.iter().filter(|k| !is_scoped(k) && !admits_alone(k)).map(|k| format!("`{}`", k.display())).collect();
+    Some(Finding::at(
+        pm.pos.line,
+        format!(
+            "permission {}.{} writes `{}`, which compiles as `{}`: every term is already held to the row's scope, so `@scoped` beside {} adds no one; write `@scoped` alone to admit every caller in scope, or drop it",
+            o.name,
+            pm.verb,
+            PermNode::Or(union.to_vec()).display(),
+            rest.join(" + "),
+            ordinary.join(" and ")
+        ),
+    ))
+}
+
 fn validate_perm(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<Finding> {
     let mut errs = Vec::new();
     errs.extend(check_perm_polarity(o, pm));
+    errs.extend(check_nested_lone_admitters(o, pm));
+    errs.extend(check_absorbed_scoped(o, pm));
     let mut has = HashSet::new();
     for l in &pm.layers {
         if !KNOWN_LAYERS.contains(&l.as_str()) {

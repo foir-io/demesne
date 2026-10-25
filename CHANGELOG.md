@@ -207,6 +207,38 @@ For the binding, `demesne-runtime` gains `build_claims` with `Principal`,
 the PDP and role assignments, and public `plane_depth`, `within_plane`,
 `expand_implications` and `active_predicate`.
 
+### Breaking: a `@self`, `@public` or grant term under `and` or `not` is refused
+
+This is a security fix. A `@self`, `@public` or `via grant` term admits its
+callers on its own wherever it is written, so the compiler ignored any `and` or
+`not` around it, and the policy was wider than the spec read:
+
+- `owner and @self(actor_col)` compiled as `owner + @self(actor_col)`;
+- `not @self(actor_col) and owner` admitted the very callers it reads as
+  excluding.
+
+`validate` now refuses such a term anywhere but the permission's top-level
+union, and shows what the permission compiled to:
+
+```
+line 16: permission billing.view writes `@self(actor_col)` inside `owner and
+@self(actor_col)`, but a @self, @public or `via grant` term admits its callers
+on its own wherever it is written, so the permission compiles as `owner +
+@self(actor_col)`, wider than it reads: …
+```
+
+The Go engine and v0.94.0 compile these forms the same way, so run v1's
+`validate` over specs written for them. No spec in demesne's corpus uses one.
+
+### Breaking: `@scoped` beside an ordinary term is refused
+
+Every ordinary term is already held to the row's scope, so `@scoped` in a
+union with one adds no one: `owner + @scoped` compiled to `owner`, though it
+reads as "the owner, or anyone in scope". `validate` now refuses it and says
+what it compiles to. Write `@scoped` alone to admit every caller in the row's
+scope, or drop it. `@scoped and owner` is accepted, and so are
+`@scoped + @self(…)` and `@scoped + via grant …`, which compile as written.
+
 ### Breaking: the Rust crates return typed errors
 
 Every fallible function in the library crates returned `Result<_, String>`,

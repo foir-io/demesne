@@ -199,15 +199,6 @@ fn implications(s: &Spec) -> Implications<'_> {
     Implications { s, pairs }
 }
 
-fn term_text(n: &PermNode) -> String {
-    match n {
-        PermNode::Leaf(t) => t.display(),
-        PermNode::Not(k) => format!("not {}", term_text(k)),
-        PermNode::And(kids) => kids.iter().map(term_text).collect::<Vec<_>>().join(" and "),
-        PermNode::Or(kids) => kids.iter().map(term_text).collect::<Vec<_>>().join(" + "),
-    }
-}
-
 fn disjunct_node(d: &[(bool, Term)]) -> PermNode {
     let mut lits: Vec<PermNode> =
         d.iter().map(|(neg, t)| if *neg { PermNode::Not(Box::new(PermNode::Leaf(t.clone()))) } else { PermNode::Leaf(t.clone()) }).collect();
@@ -355,7 +346,7 @@ struct WriteTerm<'a> {
 }
 
 fn quoted_terms(trees: &[PermNode]) -> String {
-    let terms: Vec<String> = trees.iter().map(|t| format!("`{}`", term_text(t))).collect();
+    let terms: Vec<String> = trees.iter().map(|t| format!("`{}`", PermNode::display(t))).collect();
     if let [one] = terms.as_slice() { format!("its term {one}") } else { format!("its terms {}", terms.join(", ")) }
 }
 
@@ -484,7 +475,7 @@ impl Sql<'_> {
             let Ok(pred) = self.admit_arm_predicate(r.obj, a, op, cust, virt) else { continue };
             let Some(conjs) = dnf(&parse(&pred), false).and_then(|c| with_requirement(&c, r.requirement(op))) else { continue };
             if let Some(escape) = r.escape(&conjs) {
-                let what = format!("its admit arm `{}`", term_text(&a.tree));
+                let what = format!("its admit arm `{}`", PermNode::display(&a.tree));
                 out.report(&r.finding(a.pos.line, "admit", op, what, escape, false));
             }
         }
