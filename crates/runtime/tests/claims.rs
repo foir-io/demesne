@@ -31,5 +31,8 @@ fn a_principal_the_claims_cannot_carry_is_refused_in_go_s_words() {
     assert_eq!(err(principal("nobody", "x", &[])), r#"BuildClaims: no subject "nobody" in the spec"#);
     assert_eq!(err(principal("svc", "x", &[])), r#"BuildClaims: subject "svc" has no identity key (`identifies`) but an id was supplied"#);
     assert_eq!(err(principal("member", "m1", &[("galaxy", "g")])), r#"BuildClaims: subject "member" presents a scope for unknown level "galaxy""#);
-    assert_eq!(err(principal("member", "m1", &[("platform", "p")])), r#"BuildClaims: level "platform" is virtual (no scope claim) — it cannot carry a scope id"#);
+    assert_eq!(
+        err(principal("member", "m1", &[("platform", "p")])),
+        r#"BuildClaims: level "platform" is virtual (no scope claim) — it cannot carry a scope id"#
+    );
 }

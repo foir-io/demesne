@@ -56,7 +56,7 @@
     "@cloudflare/vitest-pool-workers": "0.12.21",
     "@types/node": "^22.10.2",
     "@vitest/browser": "3.2.7",
-    "esbuild": "0.25.12",
+    "esbuild": "^0.25.0",
     "miniflare": "4.20260310.0",
     "playwright": "1.63.0",
     "typescript": "^5.7.2",
