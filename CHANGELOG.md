@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+
 ### Breaking: a write that the select permission can't see is refused
 
 Postgres applies an UPDATE or DELETE only to rows the SELECT policies show.
@@ -73,127 +74,19 @@ conditional object; read it through `ConditionalResourceAccessSurface` and
 decide what each condition means for the caller. Code that switches on
 `source` meets `holds`, `role`, `public` and `scope`.
 
-### Breaking: `@foir/demesne` runs demesne's Rust runtime, compiled to WebAssembly
+### Breaking: objects that would overwrite each other's SQL on one table are refused
 
-`@foir/demesne` was an 897-line TypeScript runtime written by hand beside the Go
-one, with `goCompat.ts` copying Go's sort and JSON escaping. It now runs
-`crates/runtime`, the same Rust runtime Rust adopters link, compiled to
-WebAssembly. The hand-written runtime and `goCompat.ts` are gone, so there is
-one implementation of every builder.
-
-- **The API is unchanged and still synchronous.** The default entry carries
-  the module's bytes and compiles them on import. Cloudflare Workers forbid
-  that, so the `workerd` export condition imports the `.wasm` file as a module
-  instead.
-- **Tested in each environment:**
-  - the 695 tests pass in Node, inside workerd and in headless Chrome;
-  - a packed tarball is bundled and run in all three;
-  - the example app's live-Postgres round trips pass on top of it.
-- **Size:** the module is 150 KB, everything the default entry loads is 83 KB
-  gzipped, and the package is 153 KB. A budget on every build holds these
-  under 180 KB and 96 KB.
-- **What changes for callers:**
-  - The Go-compatibility helpers `goCmp`, `goSort`, `goEncodeString` and
-    `goJSONStringify` are no longer exported.
-  - Error messages come from the runtime in Go's words, as in
-    `MintClaims: key(s) not in the claims contract: [...]` and
-    `BuildClaims: no subject "x" in the spec`. Each keeps the wording after its
-    prefix.
-  - Permissions and roles sort by UTF-8 bytes, exactly as Go does. The old
-    code compared UTF-16 code units, which differs only for characters beyond
-    the Basic Multilingual Plane.
-
-For the binding, `demesne-runtime` gains `build_claims` with `Principal`,
-`SubjectIdentity` and `LevelClaim`, projection parsers for claims, principals,
-the PDP and role assignments, and public `plane_depth`, `within_plane`,
-`expand_implications` and `active_predicate`.
-
-### VS Code validates specs as you type
-
-The VS Code extension had only a grammar. It now runs the compiler, built to
-WebAssembly from `crates/wasm`, over each open `.demesne` file after a 200 ms
-pause in typing. It underlines every parse and validation error on the line
-it names, in `demesne validate`'s words, and shows a valid spec's warnings,
-such as a `blind` write. The compiler build gains a `diagnostics` export
-returning each finding's severity, line and message as JSON.
-
-### Breaking: generated Go imports a small runtime, not the engine
-
-The Go framework that `demesne emit <spec> framework <pkg>` writes imported the
-whole Go engine, parser and compiler included, though it used only a handful
-of runtime functions. It now imports `github.com/foir-io/demesne/go`, a new
-module that is standard-library only. It carries:
-
-- the querier, with `FromSQL`;
-- decisions and `ComposeCan`;
-- claims minting;
-- the holds resolver with its vocabulary rules.
-
-Each of these is copied from the engine. Apart from the import line, the
-generated code is unchanged. For pgx, `github.com/foir-io/demesne/go/pgx`
-provides `FromPgx`.
-
-- The runtime replays the 392 resolver, scope, assignment-SQL and claims cases
-  in `oracle.json`, and its unit tests also pass against the engine.
-- Every corpus spec's generated framework, 142 packages, compiles against it.
-
-The engine stays at v0.93.x for Go programs that compile specs at runtime or
-call `Spec.EmitFramework`. It is frozen, so fixes from v1.0 on reach Go
-through the CLI and this runtime. The runtime has its own module path, so
-`go get -u` never swaps the engine for it.
-
-### Migrations drop what a spec stops emitting
-
-`emit all` writes `CREATE OR REPLACE` for the current surface only. So a
-definer, policy or trigger that a spec renamed or removed stayed in the
-database, still callable and still answering, and nothing generated could see
-it. Two new emit kinds close this:
-
-- `demesne emit <spec> manifest` prints a JSON record of everything the SQL
-  creates:
-  - functions, by identity signature;
-  - policies, triggers and indexes, each with its table;
-  - tables;
-  - the tables it enables RLS on.
-- `demesne emit <spec> migrate <manifest.json>` prints `emit all`, then drops
-  everything that manifest records and this spec no longer emits:
-  - Each drop names its object exactly: a function by its argument types,
-    since `DROP FUNCTION IF EXISTS f(text)` does nothing on `f(text, text)`.
-  - The order is triggers, policies, indexes, then functions, all after the
-    creates, so no retained object still depends on what is dropped.
-  - A final check re-queries the catalogs and raises if anything it dropped
-    survived, which includes an overload of a dropped function's name. The
-    migration then fails whole.
-  - Tables are not dropped, as they hold data. RLS stays enabled and forced on
-    a table that is no longer governed, so it fails closed. A comment names
-    each.
-
-`Sql::manifest`, `Sql::migration` and `Manifest` are the same in the
-`demesne-emit-sql` API, and `Sql::write_all_sql` is the `emit all` text.
-
-### Breaking: `check` looks for schema traps around the governed tables
-
-`check` validated the spec, bound it to the live schema and checked the RLS
-role. It now also looks for three traps in the live schema that bypass or
-weaken the policies:
-
-- **A view that reads a governed table as its owner.** That is a view without
-  `security_invoker = true`, at any depth of views over views, or a
-  materialized view. If the owner bypasses RLS, every reader sees every row:
-  `check` prints `DANGER` and fails, as it does for a `BYPASSRLS` session role.
-  Otherwise it warns, because the policies judge the owner, not the reader.
-- **A unique index over a nullable topology or scope column without
-  `NULLS NOT DISTINCT`.** Rows where the column is NULL, the shared tier, never
-  conflict. A partial unique index on the other columns `WHERE col IS NULL`
-  counts as covering it.
-- **A policy comparison whose row column is wrapped** in COALESCE, NULLIF,
-  CASE, a cast through text, a function or an operator. The comparison can't
-  use an index on the column, so it runs row by row. This is read from each
-  policy's stored expression tree, so a bare comparison or a definer call isn't
-  flagged, and neither is anything inside a subquery.
-
-demesne's own policies raise none of these. `demesne_postgres::schema_traps`
-is the same check in the Rust API.
+Two objects on one table that both compile a policy for the same operation
+emit two policies with one name (`<table>_select`, say). Each
+`DROP POLICY IF EXISTS` and `CREATE POLICY` pair replaced the one before, so
+Postgres enforced only the last object's predicate, silently. Two objects that
+both `track` one table did the same to their changelog trigger, so only the
+last object's changes were logged. Two objects on one table with an `async`
+relation of the same name shared an async index name, so the last object's
+maintenance functions replaced the others' and filled their indexes from its
+grant table. `validate` now refuses all three and names the objects. A table
+can still carry several objects when only one of them compiles each policy
+and tracks the table, and the rest use `predicate` permissions.
 
 ### Breaking: `diff` compares whole definitions, in both directions
 
@@ -229,19 +122,127 @@ by hand, one per line as their `ORPHAN` line names them. An entry that matches
 nothing live is reported as `STALE`. `demesne_postgres::drift` replaces
 `live_policy_surface` in the Rust API.
 
-### Breaking: objects that would overwrite each other's SQL on one table are refused
+### Breaking: `check` looks for schema traps around the governed tables
 
-Two objects on one table that both compile a policy for the same operation
-emit two policies with one name (`<table>_select`, say). Each
-`DROP POLICY IF EXISTS` and `CREATE POLICY` pair replaced the one before, so
-Postgres enforced only the last object's predicate, silently. Two objects that
-both `track` one table did the same to their changelog trigger, so only the
-last object's changes were logged. Two objects on one table with an `async`
-relation of the same name shared an async index name, so the last object's
-maintenance functions replaced the others' and filled their indexes from its
-grant table. `validate` now refuses all three and names the objects. A table
-can still carry several objects when only one of them compiles each policy
-and tracks the table, and the rest use `predicate` permissions.
+`check` validated the spec, bound it to the live schema and checked the RLS
+role. It now also looks for three traps in the live schema that bypass or
+weaken the policies:
+
+- **A view that reads a governed table as its owner.** That is a view without
+  `security_invoker = true`, at any depth of views over views, or a
+  materialized view. If the owner bypasses RLS, every reader sees every row:
+  `check` prints `DANGER` and fails, as it does for a `BYPASSRLS` session role.
+  Otherwise it warns, because the policies judge the owner, not the reader.
+- **A unique index over a nullable topology or scope column without
+  `NULLS NOT DISTINCT`.** Rows where the column is NULL, the shared tier, never
+  conflict. A partial unique index on the other columns `WHERE col IS NULL`
+  counts as covering it.
+- **A policy comparison whose row column is wrapped** in COALESCE, NULLIF,
+  CASE, a cast through text, a function or an operator. The comparison can't
+  use an index on the column, so it runs row by row. This is read from each
+  policy's stored expression tree, so a bare comparison or a definer call isn't
+  flagged, and neither is anything inside a subquery.
+
+demesne's own policies raise none of these. `demesne_postgres::schema_traps`
+is the same check in the Rust API.
+
+### Breaking: generated Go imports a small runtime, not the engine
+
+The Go framework that `demesne emit <spec> framework <pkg>` writes imported the
+whole Go engine, parser and compiler included, though it used only a handful
+of runtime functions. It now imports `github.com/foir-io/demesne/go`, a new
+module that is standard-library only. It carries:
+
+- the querier, with `FromSQL`;
+- decisions and `ComposeCan`;
+- claims minting;
+- the holds resolver with its vocabulary rules.
+
+Each of these is copied from the engine. Apart from the import line, the
+generated code is unchanged. For pgx, `github.com/foir-io/demesne/go/pgx`
+provides `FromPgx`.
+
+- The runtime replays the 392 resolver, scope, assignment-SQL and claims cases
+  in `oracle.json`, and its unit tests also pass against the engine.
+- Every corpus spec's generated framework, 142 packages, compiles against it.
+
+The engine stays at v0.93.x for Go programs that compile specs at runtime or
+call `Spec.EmitFramework`. It is frozen, so fixes from v1.0 on reach Go
+through the CLI and this runtime. The runtime has its own module path, so
+`go get -u` never swaps the engine for it.
+
+### Breaking: `@foir/demesne` runs demesne's Rust runtime, compiled to WebAssembly
+
+`@foir/demesne` was an 897-line TypeScript runtime written by hand beside the Go
+one, with `goCompat.ts` copying Go's sort and JSON escaping. It now runs
+`crates/runtime`, the same Rust runtime Rust adopters link, compiled to
+WebAssembly. The hand-written runtime and `goCompat.ts` are gone, so there is
+one implementation of every builder.
+
+- **The API is unchanged and still synchronous.** The default entry carries
+  the module's bytes and compiles them on import. Cloudflare Workers forbid
+  that, so the `workerd` export condition imports the `.wasm` file as a module
+  instead.
+- **Tested in each environment:**
+  - the 695 tests pass in Node, inside workerd and in headless Chrome;
+  - a packed tarball is bundled and run in all three;
+  - the example app's live-Postgres round trips pass on top of it.
+- **Size:** the module is 150 KB, everything the default entry loads is 83 KB
+  gzipped, and the package is 153 KB. A budget on every build holds these
+  under 180 KB and 96 KB.
+- **What changes for callers:**
+  - The Go-compatibility helpers `goCmp`, `goSort`, `goEncodeString` and
+    `goJSONStringify` are no longer exported.
+  - Error messages come from the runtime in Go's words, as in
+    `MintClaims: key(s) not in the claims contract: [...]` and
+    `BuildClaims: no subject "x" in the spec`. Each keeps the wording after its
+    prefix.
+  - Permissions and roles sort by UTF-8 bytes, exactly as Go does. The old
+    code compared UTF-16 code units, which differs only for characters beyond
+    the Basic Multilingual Plane.
+
+For the binding, `demesne-runtime` gains `build_claims` with `Principal`,
+`SubjectIdentity` and `LevelClaim`, projection parsers for claims, principals,
+the PDP and role assignments, and public `plane_depth`, `within_plane`,
+`expand_implications` and `active_predicate`.
+
+### Migrations drop what a spec stops emitting
+
+`emit all` writes `CREATE OR REPLACE` for the current surface only. So a
+definer, policy or trigger that a spec renamed or removed stayed in the
+database, still callable and still answering, and nothing generated could see
+it. Two new emit kinds close this:
+
+- `demesne emit <spec> manifest` prints a JSON record of everything the SQL
+  creates:
+  - functions, by identity signature;
+  - policies, triggers and indexes, each with its table;
+  - tables;
+  - the tables it enables RLS on.
+- `demesne emit <spec> migrate <manifest.json>` prints `emit all`, then drops
+  everything that manifest records and this spec no longer emits:
+  - Each drop names its object exactly: a function by its argument types,
+    since `DROP FUNCTION IF EXISTS f(text)` does nothing on `f(text, text)`.
+  - The order is triggers, policies, indexes, then functions, all after the
+    creates, so no retained object still depends on what is dropped.
+  - A final check re-queries the catalogs and raises if anything it dropped
+    survived, which includes an overload of a dropped function's name. The
+    migration then fails whole.
+  - Tables are not dropped, as they hold data. RLS stays enabled and forced on
+    a table that is no longer governed, so it fails closed. A comment names
+    each.
+
+`Sql::manifest`, `Sql::migration` and `Manifest` are the same in the
+`demesne-emit-sql` API, and `Sql::write_all_sql` is the `emit all` text.
+
+### VS Code validates specs as you type
+
+The VS Code extension had only a grammar. It now runs the compiler, built to
+WebAssembly from `crates/wasm`, over each open `.demesne` file after a 200 ms
+pause in typing. It underlines every parse and validation error on the line
+it names, in `demesne validate`'s words, and shows a valid spec's warnings,
+such as a `blind` write. The compiler build gains a `diagnostics` export
+returning each finding's severity, line and message as JSON.
 
 ### Fixes to behaviour carried over from the Go engine
 
