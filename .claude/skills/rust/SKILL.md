@@ -47,6 +47,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 ### 1. Lints are the floor, not the target
 
 - **One lint config.** Lint config lives in `[workspace.lints]` in the root `Cargo.toml`, and every crate sets `[lints] workspace = true`. Don't add lint tables to a single crate's `Cargo.toml`.
+  - **The one exception is a crate exported to JavaScript.** `wasm-bindgen`'s generated glue uses `unsafe`, so that crate can't build under a workspace-wide `forbid(unsafe_code)`. Cargo can't combine `workspace = true` with an override, so the crate's own table repeats every workspace lint it can keep, with `unsafe_code = "deny"`. Its own code still writes no `unsafe`.
 - **Fix the warning, don't silence it.** Lints stay at warn while you work, and CI turns every warning into a failure with `-D warnings`.
 - **Overrides are narrow, and each one gives a reason.** When a lint is wrong for a specific item, put `#[expect(clippy::lint_name, reason = "…")]` on the smallest item that needs it (M-LINT-OVERRIDE-EXPECT).
   - `#[expect]` warns as soon as the lint stops firing, so a stale override shows up by itself.
@@ -66,6 +67,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
   - A poisoned lock is the one routine case: `expect("<lock name> poisoned")`.
   - The message is what the next person reads in a crash report (M-PANIC-MESSAGE).
 - **Library errors.** A published library's public errors follow M-ERRORS-CANONICAL-STRUCTS: a struct, a private kind, `is_xxx()` helpers, `Display` and `std::error::Error`. `thiserror` is a fine way to implement them.
+- **Size an API change from rustdoc, not a grep.** Trait methods, signatures behind a type alias such as `type R<T> = Result<T, String>`, and re-exports don't match a search for `pub fn`. Count the surface with `cargo public-api` or the rustdoc JSON before saying how big a change is.
 - **Binaries.** A binary may use `anyhow` at the top level (M-APP-ERROR). Anything a caller has to branch on must still be a typed error.
 - **Never branch on an error's message text.** Match the type or kind. Messages get reworded, and a string match silently stops matching. It looks like it still handles the case, but it doesn't.
 - **Convert errors with `From` and `?`** (M-FROM-ERROR). Use `map_err` only to add context.
@@ -76,6 +78,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 - **Everything that reaches output has a defined order.** Output includes generated files, SQL, JSON, error lists and CLI stdout.
   - Don't produce output by iterating a `HashMap` or `HashSet`. Use `BTreeMap` or `IndexMap`, or sort with a total order that breaks ties on a unique key.
   - Hash order changes between runs and versions, so goldens flap, diffs grow noisy, and two identical inputs produce different bytes.
+  - When real input can make two entries tie, check whether they collide. Two objects that write the same name are usually a bug to refuse, not an order to pick.
 - **Fast hashers only for trusted keys.** M-FAST-HASHER is fine for keys you control. Keep the default DoS-resistant hasher for anything an outside caller supplies.
 - **Pass the outside world in.** Time, randomness, environment variables, the filesystem and the network go through a handle the caller passes in (M-MOCKABLE-SYSCALLS), so tests control them.
   - If the repo has disallowed `std::env::var` or the clock calls in `clippy.toml`, that's the reason; use the project's wrapper.
@@ -118,6 +121,14 @@ Don't load all of the vendored text. Load only the file for the area you're work
   - Check that suites behind `#[ignore]`, a feature or an env var really ran. A skipped database suite looks exactly like a passing one.
 - **No tautological tests** (M-TAUTOLOGICAL-TESTS). Don't re-assert a constant or mirror the implementation's branches. Assert a property or a behaviour someone can observe.
 - **Snapshot goldens.** Golden outputs are snapshot files, reviewed as diffs (insta). Never regenerate goldens to make a failing test pass without reading the diff and saying why it's right.
+  - **Pin before you refactor.** When a change shouldn't alter output, snapshot the output first, then let the snapshots prove it didn't.
+- **A plant counts only if tests ran.**
+  - Run with `--no-fail-fast`, so every test binary runs, not just the first one that fails.
+  - Treat a run that shows no test results as invalid, not missed.
+  - In zsh an unquoted `$var` is not split into words, so pass argument lists as arrays.
+- **Cover every operator.** In a parser or compiler, each operator the language accepts (`and`, `or`, `not`, nesting, precedence) has a test that fails if the operator is ignored. A pass that flattens a tree can drop an operator and still produce plausible output.
+- **Isolate live tests.** nextest runs each test in its own process, in parallel, so live tests that share a database schema race each other. Give each test its own schema or database.
+- **Test the shipped artifact where it runs.** Package it as users get it (`npm pack`, `cargo package`), install that in a clean project, and run it in every environment it targets. Assert where each run happened, and include a control that must fail, so a harness that silently ran nowhere can't pass.
 - **Where tests live.** Tests of the public surface go under `tests/` (M-INTEGRATION-TESTS). Use `mod tests` for private internals.
 - **Mutation-test correctness-critical code, in CI only, on a throwaway runner or under a memory cap.** For authorization, data-integrity or security code, run `cargo mutants --in-diff` on your change in a CI job, never on a developer's machine. Treat each missed mutant like an uncaught plant.
   - A mutant can turn a loop into one that allocates without bound: `i += 1` becomes `i *= 1` next to a `push`. A few of those running at once exhaust a laptop's memory in seconds, and macOS then panics the kernel. A local run crashed a laptop twice this way.
@@ -141,7 +152,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 - **Declare dependencies once.** Put each dependency in `[workspace.dependencies]` and reference it with `.workspace = true` (M-CARGO-WORKSPACE). Before adding one, check its licence, maintenance and footprint; cargo-deny checks licences and advisories in CI.
 - **Features are additive** (M-FEATURES-ADDITIVE). CI checks each feature on its own.
 - **Don't leak dependency types.** A published crate keeps third-party types out of its public API unless they earn their place (M-DONT-LEAK-TYPES).
-- **`unsafe` is forbidden workspace-wide.** If you think you need it, stop and ask rather than adding an exception.
+- **`unsafe` is forbidden workspace-wide.** If you think you need it, stop and ask rather than adding an exception. The one exception, a crate exported to JavaScript, is in rule 1.
 
 ### 9. Docs, comments and logs
 
@@ -152,7 +163,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 
 ## Before you say it's done
 
-1. Run these, and report what each printed:
+1. Run these after your last edit, and report what each printed. A formatter run followed by one more file fails CI on formatting.
    - `cargo fmt --check`;
    - `cargo clippy --workspace --all-targets -- -D warnings`;
    - `cargo nextest run --workspace --no-tests=fail`, plus the repo's ignored or live suites if you touched their area;
