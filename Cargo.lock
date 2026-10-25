@@ -154,7 +154,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-cli"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-go",
  "demesne-emit-sql",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-emit-go"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-sql",
  "demesne-gocompat",
@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-emit-rust"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-sql",
  "demesne-model",
@@ -190,7 +190,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-emit-sql"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-gocompat",
  "demesne-model",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-emit-ts"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-go",
  "demesne-emit-sql",
@@ -212,11 +212,11 @@ dependencies = [
 
 [[package]]
 name = "demesne-gocompat"
-version = "0.94.0"
+version = "1.0.0"
 
 [[package]]
 name = "demesne-model"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-gocompat",
  "demesne-runtime",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-parity"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-go",
  "demesne-emit-sql",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-postgres"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-sql",
  "demesne-gocompat",
@@ -256,14 +256,14 @@ dependencies = [
 
 [[package]]
 name = "demesne-runtime"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-gocompat",
 ]
 
 [[package]]
 name = "demesne-static-parity"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-rust",
  "demesne-emit-sql",
@@ -274,14 +274,14 @@ dependencies = [
 
 [[package]]
 name = "demesne-syntax"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-gocompat",
 ]
 
 [[package]]
 name = "demesne-wasm"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-cli",
  "demesne-emit-sql",
