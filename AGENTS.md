@@ -29,6 +29,12 @@ CLI and runtime are Rust; the Go engine is frozen at v0.93.x as the full Go libr
   subcommands. Has `replace github.com/foir-io/demesne => ../..`.
 - `pgx/` — module `github.com/foir-io/demesne/pgx`, the pgx adapter (`FromPgx`). A separate
   module so the engine stays standard-library only.
+- `go/` — module `github.com/foir-io/demesne/go`, the Go runtime the generated framework
+  imports from v1.0: the querier, decisions, claims minting and the holds resolver, copied
+  from the engine with no parser or compiler. Standard library only. `go/examples/` holds the
+  generated packages compiled against it; `oracle.json` and unit tests run in its suite.
+- `go/pgx/` — module `github.com/foir-io/demesne/go/pgx`, the pgx adapter for the runtime.
+  `go.work` replaces the untagged runtime version so both build before their first tags.
 - `examples/` — worked `.demesne` specs plus committed generated packages (`examples/authz`,
   `examples/supabaseauthz`) that serve as compile proofs and golden references.
 - `ts/` — a pnpm workspace: `@foir/demesne` (a hand-written zero-dependency TypeScript
@@ -55,10 +61,11 @@ CLI and runtime are Rust; the Go engine is frozen at v0.93.x as the full Go libr
 3. Apply the emitted SQL (RLS policies, the SECURITY DEFINER kernel, FORCE RLS) as a
    migration. Keep `emit <spec> manifest` beside it, and write the next migration with
    `emit <spec> migrate <manifest>`, which also drops what the spec stopped emitting.
-4. In the application, generate the typed framework by calling `Spec.EmitFramework(pkg)` from
-   your own generator, then run its `Can<Verb>` inside a transaction that has run
-   `SessionSetupSQL` and installed `Claims.Mint()`. Adapt your connection with
-   `demesne.FromSQL` (database/sql) or `demesne/pgx.FromPgx` (pgx).
+4. In the application, generate the typed framework with `demesne emit <spec> framework <pkg>`,
+   which imports the runtime `github.com/foir-io/demesne/go`, then run its `Can<Verb>` inside a
+   transaction that has run `SessionSetupSQL` and installed `Claims.Mint()`. Adapt your
+   connection with `demesne.FromSQL` (database/sql) or `demesne/go/pgx.FromPgx` (pgx). On the
+   frozen v0.93.x engine, `Spec.EmitFramework(pkg)` generates the same package against the engine.
 
 ## Conventions
 

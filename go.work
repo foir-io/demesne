@@ -3,5 +3,9 @@ go 1.26.1
 use (
 	.
 	./cmd/demesne
+	./go
+	./go/pgx
 	./pgx
 )
+
+replace github.com/foir-io/demesne/go v1.0.0 => ./go

@@ -963,28 +963,37 @@ The generated package gives you:
 - a reusable `Check(ctx, q, object, verb, id)`;
 - an HTTP `CheckHandler`.
 
-The generated package imports the engine and references `demesne.Querier`
-directly. The engine owns the composition rules, so the typed surface stays a thin
-wrapper. Everything runs under the caller's claims, and the database decides: the
-generated check delegates to the same compiled predicate the RLS policy enforces.
+The generated package imports the Go runtime, `github.com/foir-io/demesne/go`, and
+references `demesne.Querier` directly. The runtime is small and standard-library
+only: the composition rules, the holds resolver and claims minting, with no parser
+or compiler. The typed surface stays a thin wrapper over it. Everything runs under
+the caller's claims, and the database decides: the generated check delegates to
+the same compiled predicate the RLS policy enforces.
 
-Generate it from your own code, not the CLI. Call `Spec.EmitFramework(pkg)` from
-your generator behind a `//go:generate` directive. Don't depend on the CLI binary:
-`cmd/demesne` is a separate nested module with a local `replace`, so
-`go run …/cmd/demesne@v0.59.0` won't resolve for a consumer. The engine API is the
-right seam:
+Generate it with the `demesne` CLI, behind a `//go:generate` directive, and add the
+runtime to your module:
 
 ```go
-//go:generate go run ./internal/gen
-// internal/gen/main.go:
-src, _ := spec.EmitFramework("authz")   // gofmt'd, deterministic
-os.WriteFile("internal/authz/authz.go", []byte(src), 0o644)
+//go:generate sh -c "demesne emit ../../authz.demesne framework authz > authz.go"
 ```
+
+```
+demesne emit authz.demesne framework authz > internal/authz/authz.go   # gofmt'd, deterministic
+go get github.com/foir-io/demesne/go
+```
+
+The output is the same for the same spec and CLI version, so commit it and let CI
+regenerate it to check for drift.
+
+On the v0.93.x Go engine, `Spec.EmitFramework(pkg)` still generates the same
+package importing the engine instead. The engine is frozen there, and fixes from
+v1.0 on reach Go only through the CLI and this runtime. The runtime has its own
+module path, so `go get -u` never swaps the engine for it.
 
 **Wiring a connection.** Adapt your driver to `demesne.Querier`. Use
 `demesne.FromSQL(db)` for `database/sql`, or
-`github.com/foir-io/demesne/pgx`.`FromPgx(pool)` for pgx — a separate module, so
-the engine stays stdlib-pure. Run the generated `Can<Verb>` inside a transaction
+`github.com/foir-io/demesne/go/pgx`.`FromPgx(pool)` for pgx — a separate module, so
+the runtime stays stdlib-pure. Run the generated `Can<Verb>` inside a transaction
 that has already run `SessionSetupSQL` and the `Claims.Mint()` result.
 
 **A few sharp edges.**

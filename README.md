@@ -44,6 +44,8 @@ defs, _   := spec.EmitDefiners()   // the SECURITY DEFINER kernel
 claims, _ := spec.ClaimsContract() // the JWT claims the policies read
 ```
 
+That is the Go engine, frozen at v0.93.x. From v1.0 the compiler is the `demesne` CLI and the Rust crates, and a Go application uses the package `demesne emit <spec> framework` generates, with the standard-library runtime `github.com/foir-io/demesne/go`.
+
 Adopting Demesne on an existing database is a short loop: introspect the schema, scaffold a starter spec, edit it, emit the SQL, apply it as a migration. [GUIDE.md](GUIDE.md) walks through it end to end.
 
 ## The spec language

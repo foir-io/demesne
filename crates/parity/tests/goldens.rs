@@ -42,8 +42,8 @@ fn rust_regenerates_every_committed_golden() {
     }
     let dir = "ts/packages/example-app/generated";
     let goldens: Vec<(String, String)> = vec![
-        ("examples/authz/authz.go".into(), demesne_emit_go::emit_framework(&example, "authz").unwrap()),
-        ("examples/supabaseauthz/authz.go".into(), demesne_emit_go::emit_framework(&supabase, "supabaseauthz").unwrap()),
+        ("go/examples/authz/authz.go".into(), demesne_emit_go::emit_framework(&example, "authz").unwrap()),
+        ("go/examples/supabaseauthz/authz.go".into(), demesne_emit_go::emit_framework(&supabase, "supabaseauthz").unwrap()),
         (format!("{dir}/projection.ts"), demesne_emit_ts::emit_ts(&roundtrip).unwrap()),
         (format!("{dir}/policies.sql"), roundtrip_ddl(&roundtrip, "roundtrip.demesne")),
         (format!("{dir}/supabase/projection.ts"), demesne_emit_ts::emit_ts(&supabase).unwrap()),

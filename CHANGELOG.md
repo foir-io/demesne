@@ -73,6 +73,31 @@ conditional object; read it through `ConditionalResourceAccessSurface` and
 decide what each condition means for the caller. Code that switches on
 `source` meets `holds`, `role`, `public` and `scope`.
 
+### Breaking: generated Go imports a small runtime, not the engine
+
+The Go framework that `demesne emit <spec> framework <pkg>` writes imported the
+whole Go engine, parser and compiler included, though it used only a handful
+of runtime functions. It now imports `github.com/foir-io/demesne/go`, a new
+module that is standard-library only. It carries:
+
+- the querier, with `FromSQL`;
+- decisions and `ComposeCan`;
+- claims minting;
+- the holds resolver with its vocabulary rules.
+
+Each of these is copied from the engine. Apart from the import line, the
+generated code is unchanged. For pgx, `github.com/foir-io/demesne/go/pgx`
+provides `FromPgx`.
+
+- The runtime replays the 392 resolver, scope, assignment-SQL and claims cases
+  in `oracle.json`, and its unit tests also pass against the engine.
+- Every corpus spec's generated framework, 142 packages, compiles against it.
+
+The engine stays at v0.93.x for Go programs that compile specs at runtime or
+call `Spec.EmitFramework`. It is frozen, so fixes from v1.0 on reach Go
+through the CLI and this runtime. The runtime has its own module path, so
+`go get -u` never swaps the engine for it.
+
 ### Migrations drop what a spec stops emitting
 
 `emit all` writes `CREATE OR REPLACE` for the current surface only. So a

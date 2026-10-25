@@ -22,12 +22,18 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test -race ./...
+      - name: runtime module
+        working-directory: go
+        run: go vet ./... && go test -race ./...
+      - name: runtime pgx module
+        working-directory: go/pgx
+        run: go vet ./... && go test -race ./...
 
   lint:
     name: Go Lint
     # Hard cognitive-complexity gate (gocognit min-complexity 30), matching
-    # the consumer repo. Covers both the root engine module and the nested
-    # cmd/demesne module (separate go.mod, so it needs its own invocation).
+    # the consumer repo. Covers the root engine module and each nested module
+    # (separate go.mod files, so each needs its own invocation).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +49,16 @@ jobs:
         with:
           version: v2.11.4
           working-directory: cmd/demesne
+      - name: lint go
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
+        with:
+          version: v2.11.4
+          working-directory: go
+      - name: lint go/pgx
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
+        with:
+          version: v2.11.4
+          working-directory: go/pgx
 
   rust:
     name: Rust
