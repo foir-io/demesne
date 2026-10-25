@@ -1,0 +1,41 @@
+{
+  "manifest": 1,
+  "functions": [
+    "auth.docs_obj_changelog()",
+    "auth.note_acl_grants(text, text, text)",
+    "auth.notes_accessors_conditional(text)"
+  ],
+  "policies": [
+    {
+      "table": "public.docs",
+      "name": "docs_select"
+    },
+    {
+      "table": "public.notes",
+      "name": "notes_select"
+    }
+  ],
+  "triggers": [
+    {
+      "table": "public.docs",
+      "name": "docs_obj_changelog"
+    }
+  ],
+  "indexes": [
+    {
+      "table": "auth._authz_changelog",
+      "name": "_authz_changelog_principal_idx"
+    },
+    {
+      "table": "auth._authz_changelog",
+      "name": "_authz_changelog_seq_idx"
+    }
+  ],
+  "tables": [
+    "auth._authz_changelog"
+  ],
+  "rls": [
+    "public.docs",
+    "public.notes"
+  ]
+}

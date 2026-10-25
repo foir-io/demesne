@@ -10,6 +10,7 @@ pass=0
 fail=0
 while IFS=$'\t' read -r gap spec args old new; do
   [[ -z "$gap" || "$gap" == \#* ]] && continue
+  args="${args//\{gaps\}/$ROOT/testdata/gaps}"
   read -r -a argv <<< "${args//\{spec\}/$ROOT/testdata/gaps/$spec}"
   go_out="$("$GO" "${argv[@]}" 2>&1 || true)"
   rust_out="$("$RUST" "${argv[@]}" 2>&1 || true)"

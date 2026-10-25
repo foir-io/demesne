@@ -1,0 +1,25 @@
+identifiers uuid
+
+topology {
+  level org       col org_ref  claim org
+  level workspace parent org col ws_ref claim ws
+}
+
+vocabulary app { permission self:read }
+
+subject member {
+  anchor workspace
+  reach  self
+  identifies member_ref
+  roles  none
+  binds  owner
+}
+
+object note {
+  table  notes
+  pk     note_pk
+  scoped org > workspace
+  relation owner:   member via owner_ref
+  relation grantee: member via grant note_shares(note_ref, grantee_kind, grantee_ref, perm)
+  permission view = owner + mode visibility = "open" + grantee:read @rls maps select
+}

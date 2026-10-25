@@ -1,6 +1,6 @@
 #![doc = "The demesne command line's pure commands (validate, emit, help, version) over a `Files` source, shared by the native binary and the WASM build."]
 
-use demesne_emit_sql::{Sql, definers_sql};
+use demesne_emit_sql::{Manifest, Sql, definers_sql};
 use demesne_gocompat::quote;
 use demesne_model::{SpecExt, pdp::emit_pdp};
 use demesne_syntax::Spec;
@@ -12,6 +12,9 @@ USAGE:
   demesne validate <spec.demesne>              parse + validate a spec
   demesne emit     <spec.demesne> [kind]       print generated SQL/Go
                                                kind: rls|definers|enablement|triggers|claims|pdp|framework|all (default all)
+                                               manifest: JSON record of every object the SQL creates
+                                               migrate <manifest.json>: all, then exact drops of what that
+                                                            manifest's surface had and this spec no longer emits
                                                --target ts: emit TypeScript (@foir/demesne)
                                                             kind: claims|pdp|projections|framework|all
                                                --profile supabase: emit the Supabase
@@ -222,7 +225,18 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
             Ok(())
         }
         "all" => emit_all_sql(out, &sql),
-        other => Err(format!("unknown emit kind {} (rls|definers|enablement|triggers|claims|pdp|framework|all)", quote(other))),
+        "manifest" => {
+            out.print(&sql.manifest()?.to_json());
+            Ok(())
+        }
+        "migrate" => {
+            need(&args, 3, "<spec.demesne> migrate <previous manifest.json>")?;
+            let src = files.read(&args[2])?;
+            let previous = Manifest::from_json(&String::from_utf8_lossy(&src)).map_err(|e| format!("{}: {e}", args[2]))?;
+            out.print(&sql.migration(&previous)?);
+            Ok(())
+        }
+        other => Err(format!("unknown emit kind {} (rls|definers|enablement|triggers|claims|pdp|framework|all|manifest|migrate)", quote(other))),
     }
 }
 
@@ -271,29 +285,10 @@ fn emit_pdp_report(out: &mut Out, s: &Spec) -> R {
 }
 
 fn emit_all_sql(out: &mut Out, sql: &Sql) -> R {
-    let f = sql.flats_sql();
-    if !f.is_empty() {
-        out.print(&f);
-        out.print("\n");
-    }
-    emit_definers_sql(out, sql)?;
-    out.print("\n");
-    emit_enablement_sql(out, sql)?;
-    out.print("\n");
-    emit_rls_sql(out, sql)?;
-    let t = sql.triggers_sql();
-    if !t.is_empty() {
-        out.print(&format!("\n{t}"));
-    }
-    let c = sql.changelog_sql();
-    if !c.is_empty() {
-        out.print(&format!("\n{c}"));
-    }
-    let a = sql.async_sql();
-    if !a.is_empty() {
-        out.print(&format!("\n{a}"));
-    }
-    Ok(())
+    let mut b = String::new();
+    let res = sql.write_all_sql(&mut b);
+    out.print(&b);
+    res
 }
 
 fn emit_ts(out: &mut Out, s: &Spec, kind: &str) -> R {

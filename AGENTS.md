@@ -50,10 +50,11 @@ CLI and runtime are Rust; the Go engine is frozen at v0.93.x as the full Go libr
 1. Write a `.demesne` spec: topology levels, vocabularies, rolestores, subjects, and objects
    with their relations and permissions.
 2. `demesne validate <spec>` and `demesne emit <spec> <kind>`, where `<kind>` is one of
-   `rls | definers | triggers | claims | pdp | framework | all`. `--target ts` selects the
+   `rls | definers | triggers | claims | pdp | framework | all | manifest | migrate`. `--target ts` selects the
    TypeScript projection; `--profile supabase` emits the Supabase deployment profile.
 3. Apply the emitted SQL (RLS policies, the SECURITY DEFINER kernel, FORCE RLS) as a
-   migration.
+   migration. Keep `emit <spec> manifest` beside it, and write the next migration with
+   `emit <spec> migrate <manifest>`, which also drops what the spec stopped emitting.
 4. In the application, generate the typed framework by calling `Spec.EmitFramework(pkg)` from
    your own generator, then run its `Can<Verb>` inside a transaction that has run
    `SessionSetupSQL` and installed `Claims.Mint()`. Adapt your connection with

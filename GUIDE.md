@@ -50,11 +50,13 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
    `check` fails loudly if the spec references a table or column your database
    doesn't have — a typo, a missing migration, or drift.
 
-4. Emit the generated SQL and apply it as a normal migration:
+4. Emit the generated SQL and apply it as a normal migration, and record what it
+   creates:
 
    ```
-   demesne emit authz.demesne all > 0001_authz.sql   # definers + policies + triggers
-   # review it, then run it in your migration tool
+   demesne emit authz.demesne all      > 0001_authz.sql        # definers + policies + triggers
+   demesne emit authz.demesne manifest > authz.manifest.json   # every object that SQL creates
+   # review it, run it in your migration tool, and commit the manifest beside it
    ```
 
    Demesne owns one layer: the idempotent policies, definers, closure triggers,
@@ -65,6 +67,30 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
    - A non-`FORCE`d table lets the table owner read past the policy.
 
    Tables, columns, indexes, and `GRANT`s stay in your own migrations.
+
+   When the spec changes, write the next migration from the last manifest:
+
+   ```
+   demesne emit authz.demesne migrate authz.manifest.json > 0002_authz.sql
+   demesne emit authz.demesne manifest > authz.manifest.json
+   ```
+
+   `CREATE OR REPLACE` alone never removes anything, so a definer, policy or
+   trigger the spec renamed or removed would stay live and keep answering.
+   `migrate` writes the whole current SQL, then drops each object the manifest
+   records and the spec no longer emits:
+
+   - Each drop names the object exactly. A function is named by its argument
+     types, because `DROP FUNCTION IF EXISTS f(text)` succeeds, doing nothing,
+     when the live function is `f(text, text)`.
+   - It ends by re-querying the catalogs. If anything it dropped is still there,
+     under another signature say, the migration raises and changes nothing.
+   - It never drops a table, since tables hold data. It never disables RLS on a
+     table that is no longer governed, so that table fails closed. A comment
+     names each one for you to act on.
+
+   No manifest yet? Make one from the spec your database was last migrated with:
+   `demesne emit old.demesne manifest`.
 
 5. Verify drift any time:
 

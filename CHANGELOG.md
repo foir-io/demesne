@@ -73,6 +73,35 @@ conditional object; read it through `ConditionalResourceAccessSurface` and
 decide what each condition means for the caller. Code that switches on
 `source` meets `holds`, `role`, `public` and `scope`.
 
+### Migrations drop what a spec stops emitting
+
+`emit all` writes `CREATE OR REPLACE` for the current surface only. So a
+definer, policy or trigger that a spec renamed or removed stayed in the
+database, still callable and still answering, and nothing generated could see
+it. Two new emit kinds close this:
+
+- `demesne emit <spec> manifest` prints a JSON record of everything the SQL
+  creates:
+  - functions, by identity signature;
+  - policies, triggers and indexes, each with its table;
+  - tables;
+  - the tables it enables RLS on.
+- `demesne emit <spec> migrate <manifest.json>` prints `emit all`, then drops
+  everything that manifest records and this spec no longer emits:
+  - Each drop names its object exactly: a function by its argument types,
+    since `DROP FUNCTION IF EXISTS f(text)` does nothing on `f(text, text)`.
+  - The order is triggers, policies, indexes, then functions, all after the
+    creates, so no retained object still depends on what is dropped.
+  - A final check re-queries the catalogs and raises if anything it dropped
+    survived, which includes an overload of a dropped function's name. The
+    migration then fails whole.
+  - Tables are not dropped, as they hold data. RLS stays enabled and forced on
+    a table that is no longer governed, so it fails closed. A comment names
+    each.
+
+`Sql::manifest`, `Sql::migration` and `Manifest` are the same in the
+`demesne-emit-sql` API, and `Sql::write_all_sql` is the `emit all` text.
+
 ### Breaking: objects that would overwrite each other's SQL on one table are refused
 
 Two objects on one table that both compile a policy for the same operation

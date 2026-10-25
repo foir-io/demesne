@@ -10,3 +10,4 @@ D36	d36-session.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id
 D36	d36-within-nullable.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'scope'::text, NULL::text, NULL::text, 'read'::text
 D36	d36-tree-holds.demesne	validate {spec}	term "@holds\(docs:read\)" has no accessor branch	^ok: 2 objects
 NAMES	shared-table-names.demesne	validate {spec}	^ok: 14 objects	each compile a policy named "items_select"; Postgres keeps only the last one created
+D15	d15-after.demesne	emit {spec} migrate {gaps}/d15-before.manifest.json	unknown emit kind "migrate"	DROP FUNCTION IF EXISTS auth\.notes_accessors_conditional\(text\);
