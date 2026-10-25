@@ -259,3 +259,56 @@ fn a_blind_write_breaks_the_composition_arm_implication() {
     assert!(warnings.iter().any(|w| w.contains("its term `grantee:write`")));
     assert!(warnings.iter().any(|w| w.contains("its term `part_of`")));
 }
+
+fn impersonated(edit_suffix: &str) -> String {
+    format!(
+        r#"
+topology {{
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}}
+
+vocabulary admin {{
+  permission content:read
+  preset project_viewer @ project = content:read
+}}
+
+rolestore admin {{
+  assignments role_assignments
+  kind        principal_kind = "admin"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}}
+
+grant impersonation at tenant
+  via edge impersonation_grants(grantee_id, tenant_id)
+
+subject operator {{ anchor platform; reach via grant impersonation; identifies sub; roles none }}
+subject admin    {{ anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }}
+
+object project {{
+  table  projects
+  level  project
+  scoped tenant > project
+  relation admin: admin via role
+  permission edit = @session(admin) @rls maps update{edit_suffix}
+}}
+"#
+    )
+}
+
+#[test]
+fn a_subjects_own_reach_past_select_is_refused() {
+    let errs = errors(&impersonated(""));
+    assert!(errs.iter().any(|e| e.contains("permission project.edit maps update, and a subject's own reach on this object admits callers")), "{errs:#?}");
+}
+
+#[test]
+fn a_blind_write_keeps_its_subjects_own_reach_as_a_warning() {
+    let (res, warnings) = check(&impersonated(" blind"));
+    assert_eq!(res, Ok(()));
+    assert!(warnings.iter().any(|w| w.contains("a subject's own reach on this object") && w.contains("kept as a warning")), "{warnings:#?}");
+}

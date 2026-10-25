@@ -433,7 +433,8 @@ impl Sql<'_> {
             let write = r.writes.iter().find(|(_, w)| *w == op);
             let line = write.map_or(r.obj.pos.line, |(p, _)| p.pos.line);
             let verb = write.map_or("admit", |(p, _)| p.verb.as_str());
-            out.report(&r.finding(line, verb, op, "a subject's own reach on this object".to_string(), escape, false));
+            let blind = write.is_some_and(|(p, _)| p.blind);
+            out.report(&r.finding(line, verb, op, "a subject's own reach on this object".to_string(), escape, blind));
         }
     }
 
