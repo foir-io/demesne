@@ -32,6 +32,6 @@ object resource {
   scoped tenant > project
   relation tenant: tenant via tenant_id
   relation member: staff  via role
-  permission view = member + tenant->owner @rls maps select
+  permission view = member + @holds(resource:write) + tenant->owner @rls maps select
   permission edit = @holds(resource:write) + tenant->owner @rls maps update
 }

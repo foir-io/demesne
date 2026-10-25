@@ -8,6 +8,7 @@ mod definers;
 mod genfn;
 mod rls;
 mod supabase;
+mod write_reach;
 
 pub use asynch::AsyncIndex;
 pub use changelog::{CHANGELOG_CHANNEL, ChangelogTrigger, ObjectChangelogTrigger};
@@ -33,7 +34,9 @@ impl<'a> Sql<'a> {
     }
 }
 
-/// Validates a parsed spec: structure, definer closure and the async floor.
+/// Validates a parsed spec: structure, definer closure, the async floor and write reach.
+///
+/// A write permission must not admit a caller its object's select permission cannot reach, unless it is marked `blind`.
 ///
 /// # Errors
 ///
@@ -45,7 +48,16 @@ pub fn validate(s: &Spec) -> Result<(), String> {
     };
     errs.extend(validate_definer_closure(s));
     errs.extend(validate_async_floor_asymmetry(s));
+    if errs.is_empty() {
+        errs.extend(Sql::new(s).write_reach().errors);
+    }
     if errs.is_empty() { Ok(()) } else { Err(errs.join("\n")) }
+}
+
+/// Returns the warnings a valid spec still earns: a `blind` write term that the select permission cannot reach.
+#[must_use]
+pub fn validate_warnings(s: &Spec) -> Vec<String> {
+    Sql::new(s).write_reach().warnings
 }
 
 fn validate_definer_closure(s: &Spec) -> Vec<String> {

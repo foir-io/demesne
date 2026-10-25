@@ -48,7 +48,7 @@ object asset {
   relation tenant:  tenant via tenant_ref
   relation owner:   member via holder_ref
   relation grantee: member via grant asset_acl(asset_ref, grantee_kind, grantee_ref, perm)
-  permission view    = owner + mode share = "open" + grantee:read   @rls,kernel maps select
+  permission view    = owner + mode share = "open" + grantee:read + grantee:write + grantee:delete   @rls,kernel maps select
   permission edit    = owner + grantee:write   @rls maps update
   permission create  = owner                   @rls maps insert
   permission delete  = owner + grantee:delete  @rls maps delete

@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+### Breaking: a write that the select permission can't see is refused
+
+Postgres applies an UPDATE or DELETE only to rows the SELECT policies show.
+A caller a write permission admits but the select permission doesn't is
+matched against no rows, so the statement changes nothing and reports
+success. `validate` (and every command that loads a spec) now refuses such a
+spec, naming each write term that reaches past select:
+
+```
+line 25: permission note.edit maps update, and its term `grantee:write` admits
+callers the select permission note.view does not reach; Postgres applies an
+UPDATE only to rows the SELECT policy shows, so for those callers it changes
+nothing and reports success: …
+```
+
+The check compares each write disjunct, its object's subjects' own reach, and
+each `admit update`/`admit delete` arm with the select permission, with each
+side's `require` applied. A term passes when select reaches every caller it
+admits:
+
+- the same term in select, or one the vocabulary says it implies
+  (`@holds(records:write)` reaches `@holds(records:read)` when
+  `records:write implies records:read`);
+- a borrowed write verb (`record->edit`), when the borrowed object's own write
+  passes this check against its select;
+- a composition's write arm, when its object's other write terms pass.
+
+Terms that select reaches but its `require` refuses are reported together, once
+per permission. To keep a write that is meant to run without reading, mark the
+permission `blind` (`permission purge = … @rls maps delete blind`): the finding
+becomes a warning on stderr, and the spec validates. `blind` on a permission
+that doesn't map update or delete under `@rls` is refused.
+
+To adopt: reach the writers in the select permission (add the write terms, or
+an implication such as `x:write implies x:read`), or mark deliberate blind
+writes `blind`. The examples were changed this way: `agnostic` and `example`
+reach `grantee:write` and `grantee:delete` in `view`, `manage`, `planes` and
+`canonical/rbac` name the write permission in `view`.
+
+### Validation messages show each term as written
+
+A term in an error message is printed as the spec writes it, with its
+arguments: `@claim("tier", "gold")`, `@kind("member")`, `@session(workspace)`,
+`@app_scope(exclude owner)` and `mode visibility = "open"`, where earlier
+messages printed `@claim`, `@kind`, `@session`, `@app_scope` and nothing for
+a `mode` term.
+
 ## v0.94.0
 
 ### The compiler, CLI and runtime are Rust, and their output is unchanged

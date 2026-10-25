@@ -165,7 +165,7 @@ impl GrantReach {
     }
 }
 
-fn leaf(obj: &Object) -> &str {
+pub(crate) fn leaf(obj: &Object) -> &str {
     obj.scoped.last().map_or("", String::as_str)
 }
 
@@ -277,7 +277,7 @@ impl Sql<'_> {
         Ok(arms)
     }
 
-    fn admit_arm_predicate(&self, obj: &Object, a: &Admit, op: &str, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
+    pub(crate) fn admit_arm_predicate(&self, obj: &Object, a: &Admit, op: &str, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
         let cust_claim = cust.map_or("", demesne_syntax::Subject::identifies);
         let rels = rels_of(obj);
         let obj_leaf = leaf(obj);
@@ -341,6 +341,13 @@ impl Sql<'_> {
             pred = format!("{guard} AND ({pred})");
         }
         Ok(pred)
+    }
+
+    pub(crate) fn structural_branches(&self, obj: &Object, virt: &Virtual, op: &str) -> Vec<String> {
+        let obj_leaf = leaf(obj);
+        let obj_is_global = virt.contains(obj_leaf);
+        let has_staff = self.s.object_references_staff(obj);
+        self.rls_subject_branches(obj, virt, obj_leaf, obj_is_global, has_staff, op).0
     }
 
     fn rls_subject_branches(&self, obj: &Object, virt: &Virtual, obj_leaf: &str, obj_is_global: bool, has_staff: bool, op: &str) -> (Vec<String>, Inject) {

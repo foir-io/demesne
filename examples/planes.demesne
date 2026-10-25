@@ -53,7 +53,7 @@ subject operator {
 object document {
   table  documents
   scoped tenant > project
-  permission view = @holds(content:read)  @rls maps select
+  permission view = @holds(content:read) + @holds(content:write)  @rls maps select
   permission edit = @holds(content:write) @rls maps update
 }
 

@@ -1,0 +1,2 @@
+# gap	spec	args ({spec} is the fixture)	v0.93.1 output matches	this release matches (and v0.93.1 must not)
+D37	d37-wider-write.demesne	validate {spec}	^ok: 1 objects	permission note\.remove maps delete, and its term `grantee:write` admits callers the select permission note\.view does not reach

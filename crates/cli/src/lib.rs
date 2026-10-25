@@ -33,11 +33,18 @@ pub type R = Result<(), String>;
 #[derive(Debug, Default)]
 pub struct Out {
     pub buf: Vec<u8>,
+    pub err: Vec<u8>,
 }
 
 impl Out {
     pub fn print(&mut self, s: &str) {
         self.buf.extend_from_slice(s.as_bytes());
+    }
+
+    pub fn warn_spec(&mut self, path: &str, s: &Spec) {
+        for w in demesne_emit_sql::validate_warnings(s) {
+            self.err.extend_from_slice(format!("warning: {path}: {w}\n").as_bytes());
+        }
     }
 }
 
@@ -77,8 +84,12 @@ pub struct Output {
 #[must_use]
 pub fn finish(out: Out, res: R) -> Output {
     match res {
-        Ok(()) => Output { code: 0, stdout: out.buf, stderr: Vec::new() },
-        Err(e) => Output { code: 1, stdout: out.buf, stderr: format!("demesne: {e}\n").into_bytes() },
+        Ok(()) => Output { code: 0, stdout: out.buf, stderr: out.err },
+        Err(e) => {
+            let mut stderr = out.err;
+            stderr.extend_from_slice(format!("demesne: {e}\n").as_bytes());
+            Output { code: 1, stdout: out.buf, stderr }
+        }
     }
 }
 
@@ -140,6 +151,7 @@ pub fn need(args: &[String], n: usize, what: &str) -> R {
 fn cmd_validate(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
     need(args, 1, "<spec.demesne>")?;
     let s = load_spec(files, &args[0])?;
+    out.warn_spec(&args[0], &s);
     let rls = Sql::new(&s).emit_rls()?;
     out.print(&format!(
         "ok: {} objects, {} levels, {} policies, {} reachability grants\n",
@@ -180,6 +192,7 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
     let (profile, args) = strip_flag(&args, "profile", "");
     need(&args, 1, "<spec.demesne>")?;
     let s = load_spec(files, &args[0])?;
+    out.warn_spec(&args[0], &s);
     let kind = args.get(1).map_or("all", String::as_str);
     if !profile.is_empty() {
         return emit_profile(out, &s, &profile);

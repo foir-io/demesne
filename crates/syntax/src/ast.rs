@@ -1,3 +1,4 @@
+use demesne_gocompat::quote;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -595,6 +596,7 @@ pub struct Perm {
     pub guard: Option<Guard>,
     pub self_check: Option<String>,
     pub predicate_only: bool,
+    pub blind: bool,
     pub pos: Pos,
 }
 
@@ -789,6 +791,24 @@ pub enum Builtin {
 }
 
 impl Builtin {
+    /// Renders the builtin as it is written in a spec, with its arguments.
+    #[must_use]
+    pub fn display(&self) -> String {
+        match self {
+            Builtin::Session(Some(rel)) => format!("@session({rel})"),
+            Builtin::AppScope(rels) if !rels.is_empty() => format!("@app_scope(exclude {})", rels.join(", ")),
+            Builtin::Kind(v) => format!("@kind({})", quote(v)),
+            Builtin::Claim { key, val } => format!("@claim({}, {})", quote(key), quote(val)),
+            Builtin::SelfCol(c) => format!("@self({c})"),
+            Builtin::Within { level, nullable: true } => format!("@within({level} nullable)"),
+            Builtin::Within { level, nullable: false } => format!("@within({level})"),
+            Builtin::Holds(p) => format!("@holds({p})"),
+            Builtin::External { func, .. } => format!("@external({func})"),
+            Builtin::Row { col, val } => format!("@row({col}, {})", quote(val)),
+            Builtin::Session(None) | Builtin::AppScope(_) | Builtin::Other(_) => format!("@{}", self.name()),
+        }
+    }
+
     #[must_use]
     pub fn name(&self) -> &str {
         match self {
@@ -967,22 +987,16 @@ impl Term {
         }
     }
 
+    /// Renders the term as it is written in a spec, with its arguments.
     #[must_use]
     pub fn display(&self) -> String {
         match &self.kind {
             TermKind::Grant(g) => format!("via grant {g}"),
-            TermKind::Builtin(b) => match b {
-                Builtin::SelfCol(c) => format!("@self({c})"),
-                Builtin::Within { level, nullable: true } => format!("@within({level} nullable)"),
-                Builtin::Within { level, nullable: false } => format!("@within({level})"),
-                Builtin::Holds(p) => format!("@holds({p})"),
-                Builtin::External { func, .. } => format!("@external({func})"),
-                Builtin::Row { col, val } => format!("@row({col}, \"{val}\")"),
-                other => format!("@{}", other.name()),
-            },
+            TermKind::Builtin(b) => b.display(),
             TermKind::Ref { ident, walk_verb: Some(v) } => format!("{ident}->{v}"),
             TermKind::Ref { ident, walk_verb: None } => ident.clone(),
-            TermKind::Mode { .. } => String::new(),
+            TermKind::Mode { col, val, scope: None } => format!("mode {col} = {}", quote(val)),
+            TermKind::Mode { col, val, scope: Some(s) } => format!("mode {col} = {} for {s}", quote(val)),
         }
     }
 }
@@ -1005,6 +1019,7 @@ impl Admit {
             guard: None,
             self_check: None,
             predicate_only: false,
+            blind: false,
             pos: self.pos,
         }
     }

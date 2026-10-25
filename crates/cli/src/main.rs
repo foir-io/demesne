@@ -114,6 +114,7 @@ fn scaffold_interactive(out: &mut Out, sc: &demesne_model::Schema) -> R {
 fn cmd_check(out: &mut Out, args: &[String]) -> R {
     need(args, 1, "<spec.demesne>")?;
     let s = load_spec(&OsFiles, &args[0])?;
+    out.warn_spec(&args[0], &s);
     let dsn = dsn_arg(args, 1)?;
     let (sc, _, mut client) = introspect(&dsn)?;
     demesne_model::validate_against(&s, &sc).map_err(|e| format!("spec does not bind to the live schema:\n{e}"))?;
@@ -177,6 +178,7 @@ fn cmd_coverage(out: &mut Out, args: &[String]) -> R {
     let (exit_code, args) = strip_bool_flag(args, "exit-code");
     need(&args, 1, "<spec.demesne>")?;
     let s = load_spec(&OsFiles, &args[0])?;
+    out.warn_spec(&args[0], &s);
     let dsn = dsn_arg(&args, 1)?;
     let (sc, _, _) = introspect(&dsn)?;
     let cov = demesne_model::table_coverage(&s, &sc.tables());
@@ -206,6 +208,7 @@ fn cmd_diff(out: &mut Out, args: &[String]) -> R {
     let (exit_code, args) = strip_bool_flag(args, "exit-code");
     need(&args, 1, "<spec.demesne>")?;
     let s = load_spec(&OsFiles, &args[0])?;
+    out.warn_spec(&args[0], &s);
     let dsn = dsn_arg(&args, 1)?;
     let res = Sql::new(&s).emit_rls()?;
     let gen_set: BTreeSet<String> = res.policies.iter().map(|p| format!("{}.{}", p.table, p.name)).collect();

@@ -847,7 +847,7 @@ impl Parser {
             self.advance();
             layers.push(self.ident()?);
         }
-        let mut pm = Perm { verb, tree, layers, maps: None, guard: None, self_check: None, predicate_only: false, pos };
+        let mut pm = Perm { verb, tree, layers, maps: None, guard: None, self_check: None, predicate_only: false, blind: false, pos };
         if self.accept_kw("maps") {
             match self.peek() {
                 Tok::Ident | Tok::PermKey => pm.maps = Some(self.advance().lit),
@@ -856,6 +856,7 @@ impl Parser {
                 }
             }
         }
+        pm.blind = self.accept_kw("blind");
         if self.accept_kw("predicate") {
             pm.predicate_only = true;
         }
