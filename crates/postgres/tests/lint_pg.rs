@@ -21,6 +21,7 @@ CREATE UNIQUE INDEX docs_meta ON d16.docs (tenant, ws, meta) NULLS NOT DISTINCT;
 CREATE UNIQUE INDEX docs_code ON d16.docs (tenant, ws, (meta ->> 'code'));
 CREATE UNIQUE INDEX docs_code_shared ON d16.docs (tenant, (meta ->> 'code')) WHERE ws IS NULL;
 CREATE UNIQUE INDEX docs_owner_shared ON d16.docs (tenant, owner) WHERE ws IS NULL;
+CREATE UNIQUE INDEX docs_ws_id ON d16.docs (ws, id);
 "#;
 
 const TRAPS: &str = r#"
@@ -32,6 +33,9 @@ CREATE MATERIALIZED VIEW d16.snapshot AS SELECT * FROM d16.docs;
 CREATE UNIQUE INDEX docs_title ON d16.docs (tenant, ws, title);
 CREATE UNIQUE INDEX docs_slug ON d16.docs (tenant, ws, (meta ->> 'slug'));
 CREATE UNIQUE INDEX docs_slug_other ON d16.docs (tenant, (meta ->> 'other')) WHERE ws IS NULL;
+CREATE UNIQUE INDEX docs_tenant_other ON d16.docs (tenant, (meta ->> 'other'));
+CREATE UNIQUE INDEX docs_owner_titled ON d16.docs (owner) WHERE title IS NOT NULL;
+CREATE UNIQUE INDEX docs_ws_owner ON d16.docs (ws, owner);
 CREATE POLICY wrapped ON d16.docs FOR SELECT USING (
   EXISTS (SELECT 1 FROM d16.other o WHERE o."odd{ name)" = 'q')
   OR coalesce(owner, '') = current_setting('app.uid', true)
@@ -69,7 +73,7 @@ fn check_finds_each_schema_trap_around_a_governed_table() {
     assert_eq!(
         traps(&mut db),
         [],
-        "invoker views, NOT NULL or NULLS NOT DISTINCT keys, a mirrored NULL tier, bare comparisons and a definer call are all clean"
+        "invoker views, NOT NULL or NULLS NOT DISTINCT keys, a mirrored NULL tier, a key the primary key already makes unique, bare comparisons and a definer call are all clean"
     );
 
     db.batch_execute(TRAPS).expect("the traps");
@@ -83,7 +87,7 @@ fn check_finds_each_schema_trap_around_a_governed_table() {
             d("materialized view d16.snapshot over governed d16.docs holds the rows read at refresh by its owner postgres, who bypasses row level security"),
             d("view d16.stacked over governed d16.docs reads as its owner postgres, who bypasses row level security"),
             w("unique index d16.docs_slug on d16.docs includes the nullable scope column ws without NULLS NOT DISTINCT"),
-            w("unique index d16.docs_title on d16.docs includes the nullable scope column ws without NULLS NOT DISTINCT"),
+            w("unique index d16.docs_ws_owner on d16.docs includes the nullable scope column ws without NULLS NOT DISTINCT"),
             w("policy ins on d16.docs compares tenant through upper()"),
             w("policy wrapped on d16.docs compares id through a cast through text"),
             w("policy wrapped on d16.docs compares ws through NULLIF"),

@@ -135,8 +135,9 @@ weaken the policies:
   Otherwise it warns, because the policies judge the owner, not the reader.
 - **A unique index over a nullable topology or scope column without
   `NULLS NOT DISTINCT`.** Rows where the column is NULL, the shared tier, never
-  conflict. A partial unique index on the other columns `WHERE col IS NULL`
-  counts as covering it.
+  conflict. Two things count as covering it: a partial unique index on the
+  other columns `WHERE col IS NULL`, or a unique index on some of the other
+  columns alone, such as the primary key in `(project_id, id)`.
 - **A policy comparison whose row column is wrapped** in COALESCE, NULLIF,
   CASE, a cast through text, a function or an operator. The comparison can't
   use an index on the column, so it runs row by row. This is read from each

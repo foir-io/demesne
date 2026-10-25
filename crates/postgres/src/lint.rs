@@ -134,7 +134,9 @@ fn covers_null_tier(indexes: &[UniqueIndex], u: &UniqueIndex, attnum: i16, col: 
     indexes.iter().any(|p| {
         let mut keys = p.keys.clone();
         keys.sort_unstable();
-        keys == rest && p.exprs == u.exprs && p.pred.contains(&format!("({col} IS NULL)"))
+        let mirrors = keys == rest && p.exprs == u.exprs && p.pred.contains(&format!("({col} IS NULL)"));
+        let narrower = p.exprs.is_empty() && p.pred.is_empty() && p.keys.iter().all(|k| rest.contains(k));
+        mirrors || narrower
     })
 }
 
