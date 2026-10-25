@@ -94,7 +94,7 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: clippy (wasm32)
-        run: cargo clippy -p demesne-wasm --target wasm32-unknown-unknown -- -D warnings
+        run: cargo clippy -p demesne-wasm -p demesne-runtime-wasm --target wasm32-unknown-unknown -- -D warnings
       - name: doc
         run: cargo doc --workspace --no-deps
         env:
@@ -136,10 +136,26 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: ts/pnpm-lock.yaml
+      - name: toolchain
+        run: rustup toolchain install
+        working-directory: .
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: wasm-bindgen@0.2.129
+      - name: runtime wasm
+        run: scripts/build-runtime-wasm.sh
+        working-directory: .
       - run: pnpm install --frozen-lockfile
       - name: build
         run: pnpm -r build
       - name: typecheck
         run: pnpm -r typecheck
-      - name: test
+      - name: test (Node)
         run: pnpm -r test
+      - name: test in workerd
+        run: pnpm --filter @foir/demesne test:workerd
+      - name: test in Chrome
+        run: pnpm --filter @foir/demesne test:browser
+      - name: test the packed package (Node, workerd, Chrome)
+        run: pnpm --filter @foir/demesne test:packed

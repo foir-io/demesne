@@ -19,7 +19,9 @@ pub struct GrantSurface {
 }
 
 impl GrantSurface {
-    fn active_predicate(&self, prefix: &str) -> String {
+    /// Returns the condition that a grant row is active: not revoked and not expired, with each column prefixed; `TRUE` when the store has neither column.
+    #[must_use]
+    pub fn active_predicate(&self, prefix: &str) -> String {
         let mut conj = Vec::new();
         if !self.active_col.is_empty() {
             conj.push(format!("{prefix}{} IS NULL", self.active_col));

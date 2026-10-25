@@ -70,7 +70,9 @@ impl HoldsResolver {
         &self.vocab
     }
 
-    fn plane_depth(&self) -> usize {
+    /// Returns how many leading scope columns the plane selects: all of them unless a plane is declared, else its depth clamped to the columns.
+    #[must_use]
+    pub fn plane_depth(&self) -> usize {
         let n = self.scope_cols.len();
         if self.plane.is_empty() {
             return n;
@@ -167,7 +169,9 @@ impl HoldsResolver {
     }
 }
 
-fn within_plane(scope: &[String], depth: usize) -> bool {
+/// Returns whether every scope id past the first `depth` is empty, so an assignment at that scope sits on the plane.
+#[must_use]
+pub fn within_plane(scope: &[String], depth: usize) -> bool {
     scope.iter().skip(depth).all(std::string::String::is_empty)
 }
 

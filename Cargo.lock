@@ -262,6 +262,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "demesne-runtime-wasm"
+version = "1.0.0"
+dependencies = [
+ "demesne-gocompat",
+ "demesne-runtime",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "demesne-static-parity"
 version = "1.0.0"
 dependencies = [

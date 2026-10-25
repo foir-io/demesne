@@ -37,8 +37,10 @@ CLI and runtime are Rust; the Go engine is frozen at v0.93.x as the full Go libr
   `go.work` replaces the untagged runtime version so both build before their first tags.
 - `examples/` — worked `.demesne` specs plus committed generated packages (`examples/authz`,
   `examples/supabaseauthz`) that serve as compile proofs and golden references.
-- `ts/` — a pnpm workspace: `@foir/demesne` (a hand-written zero-dependency TypeScript
-  runtime), the TypeScript emit target, and an example app.
+- `ts/` — a pnpm workspace: `@foir/demesne` (the Rust runtime compiled to WebAssembly by
+  `crates/runtime-wasm`, behind a thin TypeScript API; build it with
+  `scripts/build-runtime-wasm.sh` before the TS tests), the TypeScript emit target, and an
+  example app.
 
 ## Build, test, lint
 

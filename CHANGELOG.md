@@ -73,6 +73,41 @@ conditional object; read it through `ConditionalResourceAccessSurface` and
 decide what each condition means for the caller. Code that switches on
 `source` meets `holds`, `role`, `public` and `scope`.
 
+### Breaking: `@foir/demesne` runs demesne's Rust runtime, compiled to WebAssembly
+
+`@foir/demesne` was an 897-line TypeScript runtime written by hand beside the Go
+one, with `goCompat.ts` copying Go's sort and JSON escaping. It now runs
+`crates/runtime`, the same Rust runtime Rust adopters link, compiled to
+WebAssembly. The hand-written runtime and `goCompat.ts` are gone, so there is
+one implementation of every builder.
+
+- **The API is unchanged and still synchronous.** The default entry carries
+  the module's bytes and compiles them on import. Cloudflare Workers forbid
+  that, so the `workerd` export condition imports the `.wasm` file as a module
+  instead.
+- **Tested in each environment:**
+  - the 695 tests pass in Node, inside workerd and in headless Chrome;
+  - a packed tarball is bundled and run in all three;
+  - the example app's live-Postgres round trips pass on top of it.
+- **Size:** the module is 150 KB, everything the default entry loads is 83 KB
+  gzipped, and the package is 153 KB. A budget on every build holds these
+  under 180 KB and 96 KB.
+- **What changes for callers:**
+  - The Go-compatibility helpers `goCmp`, `goSort`, `goEncodeString` and
+    `goJSONStringify` are no longer exported.
+  - Error messages come from the runtime in Go's words, as in
+    `MintClaims: key(s) not in the claims contract: [...]` and
+    `BuildClaims: no subject "x" in the spec`. Each keeps the wording after its
+    prefix.
+  - Permissions and roles sort by UTF-8 bytes, exactly as Go does. The old
+    code compared UTF-16 code units, which differs only for characters beyond
+    the Basic Multilingual Plane.
+
+For the binding, `demesne-runtime` gains `build_claims` with `Principal`,
+`SubjectIdentity` and `LevelClaim`, projection parsers for claims, principals,
+the PDP and role assignments, and public `plane_depth`, `within_plane`,
+`expand_implications` and `active_predicate`.
+
 ### Breaking: generated Go imports a small runtime, not the engine
 
 The Go framework that `demesne emit <spec> framework <pkg>` writes imported the

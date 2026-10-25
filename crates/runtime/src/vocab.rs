@@ -108,7 +108,12 @@ impl Vocabulary {
         Ok(vec![item.to_string()])
     }
 
-    pub(crate) fn expand_implications(&self, perms: &[String]) -> Result<Vec<String>, Error> {
+    /// Returns `perms` followed by everything each implying permission among them implies.
+    ///
+    /// # Errors
+    ///
+    /// An implication that is cyclic or names neither a permission nor a matching wildcard.
+    pub fn expand_implications(&self, perms: &[String]) -> Result<Vec<String>, Error> {
         if self.implications.is_empty() {
             return Ok(perms.to_vec());
         }

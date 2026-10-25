@@ -1,6 +1,6 @@
 use crate::{
-    AppObjectSurface, GrantSurface, HoldsResolver, Implication, Preset, ResourceAccessSurface, RoleAssignmentSurface, Session, Str, Strs, Vocabulary, owned,
-    owned_list,
+    AppObjectSurface, GrantSurface, HoldsResolver, Implication, LevelClaim, Pdp, Preset, Principal, ResourceAccessSurface, RoleAssignment,
+    RoleAssignmentSurface, Session, Str, Strs, SubjectIdentity, Vocabulary, owned, owned_list,
 };
 use demesne_gocompat::json::Value;
 
@@ -19,6 +19,58 @@ pub fn session(claims: &Value) -> Session {
 
 pub fn contract(claims: &Value) -> Vec<String> {
     claims.get("contract").map(Value::string_list).unwrap_or_default()
+}
+
+#[must_use]
+pub fn subjects(claims: &Value) -> Vec<SubjectIdentity> {
+    claims
+        .get("subjects")
+        .and_then(Value::as_array)
+        .unwrap_or(&[])
+        .iter()
+        .map(|s| SubjectIdentity { name: st(s, "name"), identifies: st(s, "identifies") })
+        .collect()
+}
+
+#[must_use]
+pub fn levels(claims: &Value) -> Vec<LevelClaim> {
+    claims
+        .get("levels")
+        .and_then(Value::as_array)
+        .unwrap_or(&[])
+        .iter()
+        .map(|l| LevelClaim { name: st(l, "name"), claim_key: st(l, "claimKey"), is_virtual: l.get("virtual").and_then(Value::as_bool).unwrap_or(false) })
+        .collect()
+}
+
+#[must_use]
+pub fn principal(v: &Value) -> Principal {
+    let scopes = v.get("scopes").map_or(&[][..], Value::entries).iter().filter_map(|(k, s)| s.as_str().map(|s| (k.clone(), s.to_string()))).collect();
+    Principal { subject: st(v, "subject").into_owned(), id: st(v, "id").into_owned(), scopes }
+}
+
+#[must_use]
+pub fn pdp(v: &Value) -> Pdp {
+    let entries = |k: &str| {
+        let mut e: Vec<(Str, Str)> =
+            v.get(k).map_or(&[][..], Value::entries).iter().filter_map(|(p, perm)| perm.as_str().map(|perm| (owned(p.as_str()), owned(perm)))).collect();
+        e.sort();
+        e
+    };
+    Pdp { emit_site: st(v, "emitSite"), policy: entries("policy").into(), ungoverned: entries("ungoverned").into() }
+}
+
+#[must_use]
+pub fn role_assignments(v: &Value) -> Vec<RoleAssignment> {
+    v.as_array()
+        .unwrap_or(&[])
+        .iter()
+        .map(|a| RoleAssignment {
+            scope: a.get("scope").map(Value::string_list).unwrap_or_default(),
+            role_key: st(a, "roleKey").into_owned(),
+            permissions: a.get("permissions").map(Value::string_list).unwrap_or_default(),
+        })
+        .collect()
 }
 
 #[must_use]

@@ -71,6 +71,12 @@ print_stderr = "warn"
 lto = "thin"
 codegen-units = 1
 
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+strip = true
+
 [profile.dist]
 inherits = "release"
 lto = "thin"
