@@ -32,10 +32,12 @@ fn lookup<'a>(entries: &'a [(Str, Str)], key: &str) -> Option<&'a str> {
 }
 
 impl Pdp {
+    #[must_use]
     pub fn permission(&self, procedure: &str) -> Option<&str> {
         lookup(&self.policy, procedure)
     }
 
+    #[must_use]
     pub fn ungoverned_reason(&self, procedure: &str) -> Option<&str> {
         lookup(&self.ungoverned, procedure)
     }
@@ -49,6 +51,7 @@ impl Pdp {
     }
 }
 
+#[must_use]
 pub fn capability_gate_err(object: &str, verb: &str) -> Error {
     Error::new(format!(
         "{object}.{verb} is a capability (@pdp) verb with no row-level check — resolve held permissions and call Can{}(held) on the {} object",
@@ -57,6 +60,7 @@ pub fn capability_gate_err(object: &str, verb: &str) -> Error {
     ))
 }
 
+#[must_use]
 pub fn compose_can(point_governed: bool, point_allow: bool, pdp: Decision) -> Decision {
     if !point_governed && pdp == Decision::NotGoverned {
         return Decision::NotGoverned;

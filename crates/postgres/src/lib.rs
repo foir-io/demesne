@@ -18,6 +18,7 @@ pub struct IntrospectMeta {
     pub fks: usize,
 }
 
+#[must_use]
 pub fn query_error(e: &postgres::Error) -> String {
     if let Some(db) = e.as_db_error() {
         return format!("{}: {} (SQLSTATE {})", db.severity(), db.message(), db.code().code());
@@ -32,6 +33,11 @@ pub fn query_error(e: &postgres::Error) -> String {
     out
 }
 
+/// Reads the `public` schema's tables, columns, keys and foreign keys.
+///
+/// # Errors
+///
+/// A catalog query fails.
 pub fn introspect(client: &mut Client) -> Result<(Schema, IntrospectMeta), String> {
     let mut sc = Schema::new();
     let mut meta = IntrospectMeta::default();
@@ -70,6 +76,11 @@ pub fn introspect(client: &mut Client) -> Result<(Schema, IntrospectMeta), Strin
     Ok((sc, meta))
 }
 
+/// Returns whether `role` exists and, if it does, whether it bypasses row-level security.
+///
+/// # Errors
+///
+/// The catalog query fails.
 pub fn role_bypasses_rls(client: &mut Client, role: &str) -> Result<(bool, bool), String> {
     let rows = client.query("SELECT rolbypassrls FROM pg_roles WHERE rolname = $1", &[&role]).map_err(|e| query_error(&e))?;
     match rows.first() {
@@ -78,16 +89,24 @@ pub fn role_bypasses_rls(client: &mut Client, role: &str) -> Result<(bool, bool)
     }
 }
 
+/// Counts the rows `query` returns.
+///
+/// # Errors
+///
+/// The query fails.
 pub fn count_global_assignments(client: &mut Client, query: &str) -> Result<i64, String> {
     let row = client.query_one(&format!("SELECT count(*) FROM ({query}) q"), &[]).map_err(|e| query_error(&e))?;
     Ok(row.get(0))
 }
 
+/// Returns `table.policy` for every live policy on the `governed` tables in `public`.
+///
+/// # Errors
+///
+/// The catalog query fails.
 pub fn live_policy_surface(client: &mut Client, governed: &[String]) -> Result<BTreeSet<String>, String> {
     let tset: BTreeSet<&str> = governed.iter().map(String::as_str).collect();
-    let rows = client
-        .query("SELECT tablename::text, policyname::text FROM pg_policies WHERE schemaname = 'public'", &[])
-        .map_err(|e| query_error(&e))?;
+    let rows = client.query("SELECT tablename::text, policyname::text FROM pg_policies WHERE schemaname = 'public'", &[]).map_err(|e| query_error(&e))?;
     let mut out = BTreeSet::new();
     for row in rows {
         let (table, pol): (String, String) = (row.get(0), row.get(1));

@@ -29,7 +29,7 @@ fn validating_specs() -> usize {
 }
 
 fn presets_of(p: &[(&str, &[&str])]) -> BTreeMap<String, Vec<String>> {
-    p.iter().map(|(k, v)| (k.to_string(), v.iter().map(|x| x.to_string()).collect())).collect()
+    p.iter().map(|(k, v)| (k.to_string(), v.iter().map(std::string::ToString::to_string).collect())).collect()
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn every_emitted_table_equals_the_compiled_surface() {
                 ),
                 Item::Pdp(n, p) => ("pdp", pdps.as_ref().and_then(|m| m.get(n)) == Some(p)),
                 Item::Session(x) => ("session", *x == s.session()),
-                Item::ClaimsContract(keys) => ("claims_contract", Ok(keys.iter().map(|k| k.to_string()).collect()) == s.claims_contract()),
+                Item::ClaimsContract(keys) => ("claims_contract", Ok(keys.iter().map(std::string::ToString::to_string).collect()) == s.claims_contract()),
                 Item::ClaimsContractEntries(entries) => ("claims_contract_entries", Ok(entries.to_vec()) == s.claims_contract_entries()),
             };
             *by_kind.entry(kind).or_default() += 1;

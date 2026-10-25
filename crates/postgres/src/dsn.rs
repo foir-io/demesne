@@ -1,13 +1,14 @@
 use crate::goerr::{errno_text, parse_int_error, parse_uint_error};
 use demesne_gocompat::quote;
+use postgres::config::ChannelBinding;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::fmt::Write as _;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use postgres::config::ChannelBinding;
 
 pub(crate) type Settings = BTreeMap<String, String>;
 
@@ -257,7 +258,7 @@ fn env_settings() -> Settings {
 fn merge(sets: &[&Settings]) -> Settings {
     let mut out = Settings::new();
     for s in sets {
-        for (k, v) in s.iter() {
+        for (k, v) in *s {
             out.insert(k.clone(), v.clone());
         }
     }
@@ -292,6 +293,24 @@ fn host_should_escape(c: u8) -> bool {
     )
 }
 
+fn check_percent_escape(s: &str, i: usize, mode: Mode) -> Result<(), String> {
+    let b = s.as_bytes();
+    if i + 2 >= b.len() || !ishex(b[i + 1]) || !ishex(b[i + 2]) {
+        let rest = &b[i..];
+        let cut = &rest[..rest.len().min(3)];
+        return Err(format!("invalid URL escape {}", quote(&String::from_utf8_lossy(cut))));
+    }
+    if mode == Mode::Host && unhex(b[i + 1]) < 8 && &b[i..i + 3] != b"%25" {
+        return Err(format!("invalid URL escape {}", quote(&s[i..i + 3])));
+    }
+    let v = (unhex(b[i + 1]) << 4) | unhex(b[i + 2]);
+    if mode == Mode::Zone && &b[i..i + 3] != b"%25" && v != b' ' && host_should_escape(v) {
+        return Err(format!("invalid URL escape {}", quote(&s[i..i + 3])));
+    }
+    Ok(())
+}
+
+#[expect(clippy::many_single_char_names, reason = "a port of Go's net/url unescape, keeping its names")]
 fn unescape(s: &str, mode: Mode) -> Result<String, String> {
     let b = s.as_bytes();
     let mut n = 0;
@@ -301,32 +320,17 @@ fn unescape(s: &str, mode: Mode) -> Result<String, String> {
         match b[i] {
             b'%' => {
                 n += 1;
-                if i + 2 >= b.len() || !ishex(b[i + 1]) || !ishex(b[i + 2]) {
-                    let rest = &b[i..];
-                    let cut = &rest[..rest.len().min(3)];
-                    return Err(format!("invalid URL escape {}", quote(&String::from_utf8_lossy(cut))));
-                }
-                if mode == Mode::Host && unhex(b[i + 1]) < 8 && &b[i..i + 3] != b"%25" {
-                    return Err(format!("invalid URL escape {}", quote(&s[i..i + 3])));
-                }
-                if mode == Mode::Zone {
-                    let v = (unhex(b[i + 1]) << 4) | unhex(b[i + 2]);
-                    if &b[i..i + 3] != b"%25" && v != b' ' && host_should_escape(v) {
-                        return Err(format!("invalid URL escape {}", quote(&s[i..i + 3])));
-                    }
-                }
+                check_percent_escape(s, i, mode)?;
                 i += 3;
             }
             b'+' => {
                 has_plus = mode == Mode::QueryComponent;
                 i += 1;
             }
-            c => {
-                if (mode == Mode::Host || mode == Mode::Zone) && c < 0x80 && host_should_escape(c) {
-                    return Err(format!("invalid character {} in host name", quote(&s[i..i + 1])));
-                }
-                i += 1;
+            c if (mode == Mode::Host || mode == Mode::Zone) && c < 0x80 && host_should_escape(c) => {
+                return Err(format!("invalid character {} in host name", quote(&s[i..=i])));
             }
+            _ => i += 1,
         }
     }
     if n == 0 && !has_plus {
@@ -364,8 +368,7 @@ fn valid_optional_port(port: &str) -> bool {
 
 fn valid_userinfo(s: &str) -> bool {
     s.chars().all(|r| {
-        r.is_ascii_alphanumeric()
-            || matches!(r, '-' | '.' | '_' | ':' | '~' | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' | '%' | '@')
+        r.is_ascii_alphanumeric() || matches!(r, '-' | '.' | '_' | ':' | '~' | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' | '%' | '@')
     })
 }
 
@@ -476,12 +479,12 @@ fn parse_url(raw: &str) -> Result<Url, String> {
 fn userinfo_escape(s: &str) -> String {
     let mut out = String::new();
     for &c in s.as_bytes() {
-        let keep = c.is_ascii_alphanumeric()
-            || matches!(c, b'-' | b'_' | b'.' | b'~' | b'$' | b'&' | b'+' | b',' | b';' | b'=' | b'!' | b'\'' | b'(' | b')' | b'*');
+        let keep =
+            c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.' | b'~' | b'$' | b'&' | b'+' | b',' | b';' | b'=' | b'!' | b'\'' | b'(' | b')' | b'*');
         if keep {
             out.push(c as char);
         } else {
-            out.push_str(&format!("%{c:02X}"));
+            write!(out, "%{c:02X}").expect("fmt::Write for String never fails");
         }
     }
     out
@@ -493,7 +496,7 @@ fn host_escape(s: &str) -> String {
         if c >= 0x80 || !host_should_escape(c) || c == b'%' {
             out.push(c as char);
         } else {
-            out.push_str(&format!("%{c:02X}"));
+            write!(out, "%{c:02X}").expect("fmt::Write for String never fails");
         }
     }
     out
@@ -521,16 +524,13 @@ fn replace_quoted_password(s: &str) -> String {
     let mut rest = s;
     while let Some(i) = rest.find("password='") {
         let after = &rest[i + "password='".len()..];
-        match after.find('\'') {
-            Some(j) => {
-                out.push_str(&rest[..i]);
-                out.push_str("password=xxxxx");
-                rest = &after[j + 1..];
-            }
-            None => {
-                out.push_str(&rest[..i + 1]);
-                rest = &rest[i + 1..];
-            }
+        if let Some(j) = after.find('\'') {
+            out.push_str(&rest[..i]);
+            out.push_str("password=xxxxx");
+            rest = &after[j + 1..];
+        } else {
+            out.push_str(&rest[..=i]);
+            rest = &rest[i + 1..];
         }
     }
     out + rest
@@ -689,45 +689,14 @@ fn parse_keyword_value_settings(input: &str) -> Result<Settings, String> {
         let Some(eq) = rest.find('=') else { return Err("invalid keyword/value".into()) };
         let mut key = rest[..eq].trim_matches(|c: char| c.is_ascii() && is_go_space(c as u8)).to_string();
         rest = rest[eq + 1..].trim_start_matches(|c: char| c.is_ascii() && is_go_space(c as u8));
-        let b = rest.as_bytes();
-        let val;
-        if b.is_empty() {
-            val = String::new();
-        } else if b[0] != b'\'' {
-            let mut end = 0;
-            while end < b.len() {
-                if is_go_space(b[end]) {
-                    break;
-                }
-                if b[end] == b'\\' {
-                    end += 1;
-                    if end == b.len() {
-                        return Err("invalid backslash".into());
-                    }
-                }
-                end += 1;
-            }
-            val = kv_unescape(&rest[..end]);
-            rest = if end == b.len() { "" } else { &rest[end + 1..] };
+        let (val, next) = if rest.is_empty() {
+            (String::new(), rest)
+        } else if let Some(q) = rest.strip_prefix('\'') {
+            kv_quoted_value(q)?
         } else {
-            let q = &rest[1..];
-            let qb = q.as_bytes();
-            let mut end = 0;
-            while end < qb.len() {
-                if qb[end] == b'\'' {
-                    break;
-                }
-                if qb[end] == b'\\' {
-                    end += 1;
-                }
-                end += 1;
-            }
-            if end >= qb.len() {
-                return Err("unterminated quoted string in connection info string".into());
-            }
-            val = kv_unescape(&q[..end]);
-            rest = &q[end + 1..];
-        }
+            kv_bare_value(rest)?
+        };
+        rest = next;
         if key == "dbname" {
             key = "database".into();
         }
@@ -742,13 +711,44 @@ fn parse_keyword_value_settings(input: &str) -> Result<Settings, String> {
     Ok(s)
 }
 
+fn kv_bare_value(rest: &str) -> Result<(String, &str), String> {
+    let b = rest.as_bytes();
+    let mut end = 0;
+    while end < b.len() && !is_go_space(b[end]) {
+        if b[end] == b'\\' {
+            end += 1;
+            if end == b.len() {
+                return Err("invalid backslash".into());
+            }
+        }
+        end += 1;
+    }
+    let next = if end == b.len() { "" } else { &rest[end + 1..] };
+    Ok((kv_unescape(&rest[..end]), next))
+}
+
+fn kv_quoted_value(q: &str) -> Result<(String, &str), String> {
+    let qb = q.as_bytes();
+    let mut end = 0;
+    while end < qb.len() && qb[end] != b'\'' {
+        if qb[end] == b'\\' {
+            end += 1;
+        }
+        end += 1;
+    }
+    if end >= qb.len() {
+        return Err("unterminated quoted string in connection info string".into());
+    }
+    Ok((kv_unescape(&q[..end]), &q[end + 1..]))
+}
+
 fn read_file(path: &str) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("open {path}: {}", errno_text(&e)))
 }
 
 fn parse_service_settings(path: &str, name: &str) -> Result<Settings, String> {
     let read_err = || format!("failed to read service file: {path}");
-    let text = std::fs::read(path).map_err(|_| read_err())?;
+    let Ok(text) = std::fs::read(path) else { return Err(read_err()) };
     let text = String::from_utf8_lossy(&text);
     let mut services: Vec<(String, Settings)> = Vec::new();
     for line in text.lines() {
@@ -776,7 +776,7 @@ fn parse_port(s: &str) -> Result<u16, String> {
     if port < 1 {
         return Err("outside range".into());
     }
-    Ok(port as u16)
+    Ok(u16::try_from(port).expect("parse_uint_go bounded the port to 16 bits"))
 }
 
 fn parse_uint_go(s: &str, bits: u32) -> Result<u64, String> {
@@ -796,17 +796,16 @@ fn parse_int_go(s: &str, bits: u32) -> Result<i64, String> {
         return Err(parse_int_error(s, "invalid syntax"));
     }
     let neg = s.starts_with('-');
-    let max = if bits == 64 { i64::MAX as i128 } else { (1i128 << (bits - 1)) - 1 };
+    let max = if bits == 64 { i128::from(i64::MAX) } else { (1i128 << (bits - 1)) - 1 };
     let min = -max - 1;
-    let mag: i128 = match digits.parse::<u128>() {
-        Ok(v) if v <= i128::MAX as u128 => v as i128,
-        _ => return Err(parse_int_error(s, "value out of range")),
+    let Some(mag) = digits.parse::<u128>().ok().and_then(|v| i128::try_from(v).ok()) else {
+        return Err(parse_int_error(s, "value out of range"));
     };
     let v = if neg { -mag } else { mag };
     if v > max || v < min {
         return Err(parse_int_error(s, "value out of range"));
     }
-    Ok(v as i64)
+    Ok(i64::try_from(v).expect("checked against the bit width above"))
 }
 
 fn first_pem_block(buf: &[u8]) -> Option<(String, &[u8])> {
@@ -841,7 +840,9 @@ fn load_client_cert(sslcert: &str, sslkey: &str, sslpassword: &str) -> Result<(V
     if certs.is_empty() {
         return Err("unable to load cert: tls: failed to find any PEM data in certificate input".into());
     }
-    let key = PrivateKeyDer::from_pem_slice(block).map_err(|_| "unable to load cert: tls: failed to parse private key".to_string())?;
+    let Ok(key) = PrivateKeyDer::from_pem_slice(block) else {
+        return Err("unable to load cert: tls: failed to parse private key".to_string());
+    };
     let provider = rustls::crypto::ring::default_provider();
     rustls::sign::CertifiedKey::from_der(certs.clone(), key.clone_key(), &provider).map_err(|e| match e {
         rustls::Error::InconsistentKeys(_) => "unable to load cert: tls: private key does not match public key".to_string(),
@@ -851,7 +852,7 @@ fn load_client_cert(sslcert: &str, sslkey: &str, sslpassword: &str) -> Result<(V
 }
 
 fn get<'a>(s: &'a Settings, k: &str) -> &'a str {
-    s.get(k).map(String::as_str).unwrap_or("")
+    s.get(k).map_or("", String::as_str)
 }
 
 fn config_tls(settings: &Settings, host: &str) -> Result<Vec<Option<Arc<TlsPlan>>>, String> {
@@ -895,7 +896,7 @@ fn config_tls(settings: &Settings, host: &str) -> Result<Vec<Option<Arc<TlsPlan>
     if sslcert.is_empty() != sslkey.is_empty() {
         return Err("both \"sslcert\" and \"sslkey\" are required".into());
     }
-    let client = if !sslcert.is_empty() { Some(load_client_cert(sslcert, sslkey, sslpassword)?) } else { None };
+    let client = if sslcert.is_empty() { None } else { Some(load_client_cert(sslcert, sslkey, sslpassword)?) };
     let plan = Arc::new(TlsPlan { verify, roots, client, sni: sslsni == "1" && host.parse::<IpAddr>().is_err(), direct });
     Ok(match sslmode.as_str() {
         "allow" => vec![None, Some(plan)],
@@ -934,6 +935,51 @@ fn find_password(entries: &[[String; 5]], host: &str, port: &str, db: &str, user
     String::new()
 }
 
+fn parse_session_attrs(conn: &str, value: &str) -> Result<SessionAttrs, ParseConfigError> {
+    Ok(match value {
+        "read-write" => SessionAttrs::ReadWrite,
+        "read-only" => SessionAttrs::ReadOnly,
+        "primary" => SessionAttrs::Primary,
+        "standby" => SessionAttrs::Standby,
+        "prefer-standby" => SessionAttrs::PreferStandby,
+        "any" => SessionAttrs::Any,
+        other => return Err(pce(conn, format!("unknown target_session_attrs value: {other}"), None)),
+    })
+}
+
+fn protocol_range(conn: &str, settings: &Settings) -> Result<(&'static str, &'static str), ParseConfigError> {
+    let min_raw = get(settings, "min_protocol_version");
+    let max_raw = get(settings, "max_protocol_version");
+    let (min_v, min_name) = protocol_version(min_raw).map_err(|e| pce(conn, format!("invalid min_protocol_version: {}", quote(min_raw)), Some(e)))?;
+    let (max_v, max_name) = protocol_version(max_raw).map_err(|e| pce(conn, format!("invalid max_protocol_version: {}", quote(max_raw)), Some(e)))?;
+    let min_protocol = if min_name.is_empty() { "3.0" } else { min_name };
+    let max_protocol = if !max_name.is_empty() {
+        max_name
+    } else if min_v > 30 {
+        "latest"
+    } else {
+        "3.0"
+    };
+    if min_v > max_v && !max_raw.is_empty() {
+        return Err(pce(conn, "min_protocol_version cannot be greater than max_protocol_version", None));
+    }
+    Ok((min_protocol, max_protocol))
+}
+
+fn take_pgx_params(conn: &str, runtime_params: &mut Settings) -> Result<(), ParseConfigError> {
+    for key in ["statement_cache_capacity", "description_cache_capacity"] {
+        if let Some(v) = runtime_params.remove(key) {
+            parse_int_go(&v, 32).map_err(|e| pce(conn, format!("cannot parse {key}"), Some(e)))?;
+        }
+    }
+    if let Some(v) = runtime_params.remove("default_query_exec_mode")
+        && !matches!(v.as_str(), "cache_statement" | "cache_describe" | "describe_exec" | "exec" | "simple_protocol")
+    {
+        return Err(pce(conn, "invalid default_query_exec_mode", Some(format!("unknown value {}", quote(&v)))));
+    }
+    Ok(())
+}
+
 fn protocol_version(s: &str) -> Result<(u32, &'static str), String> {
     match s {
         "" => Ok((30, "")),
@@ -965,18 +1011,20 @@ pub(crate) fn parse_config(conn: &str) -> Result<ConnConfig, ParseConfigError> {
             if n < 0 {
                 return Err(pce(conn, "invalid connect_timeout", Some("negative timeout".into())));
             }
-            Some(Duration::from_secs(n as u64))
+            Some(Duration::from_secs(u64::try_from(n).expect("negative timeouts were refused above")))
         }
         None => None,
     };
-    let mut runtime_params: Settings = settings.iter().filter(|(k, _)| !NOT_RUNTIME_PARAMS.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut runtime_params: Settings =
+        settings.iter().filter(|(k, _)| !NOT_RUNTIME_PARAMS.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
     let mut fallbacks = Vec::new();
     let hosts: Vec<&str> = get(&settings, "host").split(',').collect();
     let ports: Vec<&str> = get(&settings, "port").split(',').collect();
     for (i, host) in hosts.iter().enumerate() {
         let port_str = ports.get(i).copied().unwrap_or(ports[0]);
         let port = parse_port(port_str).map_err(|e| pce(conn, "invalid port", Some(e)))?;
-        let tls_plans = if is_absolute_path(host) { vec![None] } else { config_tls(&settings, host).map_err(|e| pce(conn, "failed to configure TLS", Some(e)))? };
+        let tls_plans =
+            if is_absolute_path(host) { vec![None] } else { config_tls(&settings, host).map_err(|e| pce(conn, "failed to configure TLS", Some(e)))? };
         for tls in tls_plans {
             fallbacks.push(Fallback { host: host.to_string(), port, tls });
         }
@@ -991,58 +1039,16 @@ pub(crate) fn parse_config(conn: &str) -> Result<ConnConfig, ParseConfigError> {
         let host = if is_absolute_path(&first.host) { "localhost" } else { first.host.as_str() };
         password = find_password(&entries, host, &first.port.to_string(), &database, &user);
     }
-    let session_attrs = match get(&settings, "target_session_attrs") {
-        "read-write" => SessionAttrs::ReadWrite,
-        "read-only" => SessionAttrs::ReadOnly,
-        "primary" => SessionAttrs::Primary,
-        "standby" => SessionAttrs::Standby,
-        "prefer-standby" => SessionAttrs::PreferStandby,
-        "any" => SessionAttrs::Any,
-        other => return Err(pce(conn, format!("unknown target_session_attrs value: {other}"), None)),
-    };
-    let min_raw = get(&settings, "min_protocol_version");
-    let max_raw = get(&settings, "max_protocol_version");
-    let (min_v, min_name) = protocol_version(min_raw).map_err(|e| pce(conn, format!("invalid min_protocol_version: {}", quote(min_raw)), Some(e)))?;
-    let (max_v, max_name) = protocol_version(max_raw).map_err(|e| pce(conn, format!("invalid max_protocol_version: {}", quote(max_raw)), Some(e)))?;
-    let min_protocol = if min_name.is_empty() { "3.0" } else { min_name };
-    let max_protocol = if !max_name.is_empty() {
-        max_name
-    } else if min_v > 30 {
-        "latest"
-    } else {
-        "3.0"
-    };
-    if min_v > max_v && !max_raw.is_empty() {
-        return Err(pce(conn, "min_protocol_version cannot be greater than max_protocol_version", None));
-    }
+    let session_attrs = parse_session_attrs(conn, get(&settings, "target_session_attrs"))?;
+    let (min_protocol, max_protocol) = protocol_range(conn, &settings)?;
     let channel_binding = match get(&settings, "channel_binding") {
         "" | "prefer" => ChannelBinding::Prefer,
         "disable" => ChannelBinding::Disable,
         "require" => ChannelBinding::Require,
         other => return Err(pce(conn, format!("unknown channel_binding value: {other}"), None)),
     };
-    for key in ["statement_cache_capacity", "description_cache_capacity"] {
-        if let Some(v) = runtime_params.remove(key) {
-            parse_int_go(&v, 32).map_err(|e| pce(conn, format!("cannot parse {key}"), Some(e)))?;
-        }
-    }
-    if let Some(v) = runtime_params.remove("default_query_exec_mode")
-        && !matches!(v.as_str(), "cache_statement" | "cache_describe" | "describe_exec" | "exec" | "simple_protocol")
-    {
-        return Err(pce(conn, "invalid default_query_exec_mode", Some(format!("unknown value {}", quote(&v)))));
-    }
-    Ok(ConnConfig {
-        user,
-        password,
-        database,
-        runtime_params,
-        fallbacks,
-        connect_timeout,
-        session_attrs,
-        channel_binding,
-        min_protocol,
-        max_protocol,
-    })
+    take_pgx_params(conn, &mut runtime_params)?;
+    Ok(ConnConfig { user, password, database, runtime_params, fallbacks, connect_timeout, session_attrs, channel_binding, min_protocol, max_protocol })
 }
 
 pub(crate) fn unix_socket_address(dir: &str, port: u16) -> String {
@@ -1089,13 +1095,14 @@ impl ConnConfig {
             if !o.is_empty() {
                 o.push(' ');
             }
-            o.push_str(&format!("-c {k}={esc}"));
+            write!(o, "-c {k}={esc}").expect("fmt::Write for String never fails");
         }
         (options, app)
     }
 }
 
 #[doc(hidden)]
+#[must_use]
 pub fn parse_config_dump(conn: &str) -> String {
     let cfg = match parse_config(conn) {
         Ok(c) => c,
@@ -1106,7 +1113,7 @@ pub fn parse_config_dump(conn: &str) -> String {
         quote(&cfg.user),
         quote(&cfg.password),
         quote(&cfg.database),
-        cfg.connect_timeout.map(|d| d.as_secs()).unwrap_or(0),
+        cfg.connect_timeout.map_or(0, |d| d.as_secs()),
         cfg.session_attrs,
         match cfg.channel_binding {
             ChannelBinding::Disable => "disable",
@@ -1117,13 +1124,14 @@ pub fn parse_config_dump(conn: &str) -> String {
         cfg.max_protocol
     );
     for (k, v) in &cfg.runtime_params {
-        out.push_str(&format!("runtime {}={}\n", k, quote(v)));
+        writeln!(out, "runtime {}={}", k, quote(v)).expect("fmt::Write for String never fails");
     }
     for f in &cfg.fallbacks {
         match &f.tls {
-            None => out.push_str(&format!("fallback host={} port={} tls=none\n", quote(&f.host), f.port)),
-            Some(p) => out.push_str(&format!(
-                "fallback host={} port={} tls={} sni={} direct={} roots={} client={}\n",
+            None => writeln!(out, "fallback host={} port={} tls=none", quote(&f.host), f.port).expect("fmt::Write for String never fails"),
+            Some(p) => writeln!(
+                out,
+                "fallback host={} port={} tls={} sni={} direct={} roots={} client={}",
                 quote(&f.host),
                 f.port,
                 match p.verify {
@@ -1138,7 +1146,8 @@ pub fn parse_config_dump(conn: &str) -> String {
                     Roots::Pem(c) => format!("pem:{}", c.len()),
                 },
                 p.client.is_some()
-            )),
+            )
+            .expect("fmt::Write for String never fails"),
         }
     }
     out

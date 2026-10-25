@@ -1,11 +1,17 @@
 use crate::Sql;
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
+use std::fmt::Write as _;
 
 const SUPABASE_HOOK_FN: &str = "demesne_access_token_hook";
 const SUPABASE_GUC: &str = "request.jwt.claims";
 
 impl Sql<'_> {
+    /// Emits the Supabase profile: the roles, grants and claim mapping `PostgREST` needs.
+    ///
+    /// # Errors
+    ///
+    /// The spec reads claims from a custom setting, which `PostgREST` never populates, or its claims contract cannot be built.
     pub fn emit_supabase_profile(&self) -> Result<String, String> {
         let session = self.s.session();
         let (setting, cast) = (session.setting.as_ref(), session.cast.as_ref());
@@ -24,25 +30,27 @@ impl Sql<'_> {
         b.push_str("-- Register this function as the \"Custom Access Token\" auth hook (Dashboard -> Auth ->\n");
         b.push_str("-- Hooks, or config.toml [auth.hook.custom_access_token]). It lifts each Demesne\n");
         b.push_str("-- claims-contract key from a user's app_metadata into the JWT, so the generated RLS\n");
-        b.push_str(&format!("-- policies -- which read current_setting('{setting}', true)::{cast} ->> '<key>' -- see them.\n"));
+        writeln!(b, "-- policies -- which read current_setting('{setting}', true)::{cast} ->> '<key>' -- see them.")
+            .expect("fmt::Write for String never fails");
         b.push_str("-- Populate app_metadata with these keys via BuildClaims + the Supabase admin API.\n");
         b.push_str("--\n");
-        b.push_str(&format!("-- The RLS connection role is {} (non-BYPASSRLS -- the moat). service_role (BYPASSRLS)\n", quote(role)));
+        writeln!(b, "-- The RLS connection role is {} (non-BYPASSRLS -- the moat). service_role (BYPASSRLS)", quote(role))
+            .expect("fmt::Write for String never fails");
         b.push_str("-- must be used ONLY for trusted server-side / bootstrap paths, NEVER the request path:\n");
         b.push_str("-- a request-path query under service_role silently bypasses every policy.\n\n");
-        b.push_str(&format!("create or replace function public.{SUPABASE_HOOK_FN}(event jsonb)\n"));
+        writeln!(b, "create or replace function public.{SUPABASE_HOOK_FN}(event jsonb)").expect("fmt::Write for String never fails");
         b.push_str("returns jsonb\nlanguage plpgsql\nstable\nas $$\ndeclare\n  claims jsonb;\n  meta jsonb;\nbegin\n");
         b.push_str("  claims := event->'claims';\n");
         b.push_str("  meta := coalesce(claims->'app_metadata', '{}'::jsonb);\n");
         b.push_str("  -- one lift per Demesne claims-contract key (app_metadata -> top-level claim):\n");
         for k in &keys {
-            b.push_str(&format!("  if meta ? '{k}' then claims := jsonb_set(claims, '{{{k}}}', meta->'{k}'); end if;\n"));
+            writeln!(b, "  if meta ? '{k}' then claims := jsonb_set(claims, '{{{k}}}', meta->'{k}'); end if;").expect("fmt::Write for String never fails");
         }
         b.push_str("  event := jsonb_set(event, '{claims}', claims);\n");
         b.push_str("  return event;\nend;\n$$;\n\n");
-        b.push_str(&format!("grant execute on function public.{SUPABASE_HOOK_FN} to supabase_auth_admin;\n"));
+        writeln!(b, "grant execute on function public.{SUPABASE_HOOK_FN} to supabase_auth_admin;").expect("fmt::Write for String never fails");
         b.push_str("grant usage on schema public to supabase_auth_admin;\n");
-        b.push_str(&format!("revoke execute on function public.{SUPABASE_HOOK_FN} from authenticated, anon, public;\n"));
+        writeln!(b, "revoke execute on function public.{SUPABASE_HOOK_FN} from authenticated, anon, public;").expect("fmt::Write for String never fails");
         Ok(b)
     }
 }

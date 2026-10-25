@@ -32,10 +32,12 @@ pub struct EffectivePerms {
 }
 
 impl EffectivePerms {
+    #[must_use]
     pub fn holds(&self, perm: &str) -> bool {
         self.perms.contains(perm)
     }
 
+    #[must_use]
     pub fn permissions(&self) -> Vec<String> {
         self.perms.iter().cloned().collect()
     }
@@ -48,19 +50,22 @@ pub struct EffectiveRoles {
 
 impl EffectiveRoles {
     pub fn new<S: AsRef<str>>(keys: &[S]) -> Self {
-        EffectiveRoles { roles: keys.iter().map(|k| k.as_ref()).filter(|k| !k.is_empty()).map(String::from).collect() }
+        EffectiveRoles { roles: keys.iter().map(std::convert::AsRef::as_ref).filter(|k| !k.is_empty()).map(String::from).collect() }
     }
 
+    #[must_use]
     pub fn holds(&self, role_key: &str) -> bool {
         self.roles.contains(role_key)
     }
 
+    #[must_use]
     pub fn roles(&self) -> Vec<String> {
         self.roles.iter().cloned().collect()
     }
 }
 
 impl HoldsResolver {
+    #[must_use]
     pub fn vocabulary(&self) -> &Vocabulary {
         &self.vocab
     }
@@ -70,16 +75,15 @@ impl HoldsResolver {
         if self.plane.is_empty() {
             return n;
         }
-        if self.plane_depth < 0 {
-            return 0;
-        }
-        (self.plane_depth as usize).min(n)
+        usize::try_from(self.plane_depth).map_or(0, |d| d.min(n))
     }
 
+    #[must_use]
     pub fn selected_scope_cols(&self) -> &[Str] {
         &self.scope_cols[..self.plane_depth()]
     }
 
+    #[must_use]
     pub fn assignments_sql(&self) -> String {
         let mut cols: Vec<String> = self.selected_scope_cols().iter().map(|c| format!("ra.{c}")).collect();
         cols.push(format!("r.{}", self.key_col));
@@ -108,6 +112,7 @@ impl HoldsResolver {
         )
     }
 
+    #[must_use]
     pub fn global_assignments_sql(&self) -> String {
         if self.scope_cols.is_empty() {
             return String::new();
@@ -133,6 +138,11 @@ impl HoldsResolver {
         )
     }
 
+    /// Resolves the permissions the `assignments` confer at `scope`, with implications expanded.
+    ///
+    /// # Errors
+    ///
+    /// An assignment whose role key names no preset in the vocabulary, or a vocabulary whose presets or implications are cyclic or name unknown permissions.
     pub fn resolve(&self, assignments: &[RoleAssignment], scope: &[String]) -> Result<EffectivePerms, Error> {
         let depth = self.plane_depth();
         let mut eff = EffectivePerms::default();
@@ -143,12 +153,12 @@ impl HoldsResolver {
             if !scope_contains(clamp_scope(&a.scope, depth), scope) {
                 continue;
             }
-            let perms: Vec<String> = if !self.perms_col.is_empty() {
-                a.permissions.clone()
-            } else {
+            let perms: Vec<String> = if self.perms_col.is_empty() {
                 self.vocab
                     .preset_permissions(&a.role_key)
                     .map_err(|e| Error::new(format!("Resolve: assignment role {}: {e}", demesne_gocompat::quote(&a.role_key))))?
+            } else {
+                a.permissions.clone()
             };
             let conferred = self.vocab.expand_implications(&perms).map_err(|e| Error::new(format!("Resolve: {e}")))?;
             eff.perms.extend(conferred);
@@ -158,21 +168,24 @@ impl HoldsResolver {
 }
 
 fn within_plane(scope: &[String], depth: usize) -> bool {
-    scope.iter().skip(depth).all(|s| s.is_empty())
+    scope.iter().skip(depth).all(std::string::String::is_empty)
 }
 
 fn clamp_scope(scope: &[String], depth: usize) -> &[String] {
     if depth < scope.len() { &scope[..depth] } else { scope }
 }
 
+#[must_use]
 pub fn scope_contains(assignment: &[String], query: &[String]) -> bool {
     assignment.iter().enumerate().all(|(i, a)| a.is_empty() || query.get(i) == Some(a))
 }
 
+#[must_use]
 pub fn scope_all_empty(scope: &[String]) -> bool {
-    scope.iter().all(|s| s.is_empty())
+    scope.iter().all(std::string::String::is_empty)
 }
 
+#[must_use]
 pub fn resolve_roles(assignments: &[RoleAssignment], scope: &[String]) -> EffectiveRoles {
     let mut e = EffectiveRoles::default();
     for a in assignments {

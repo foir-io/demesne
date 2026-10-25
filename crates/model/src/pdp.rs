@@ -9,28 +9,23 @@ struct Site {
     ungoverned: BTreeMap<String, String>,
 }
 
+/// Builds the policy decision point for each vocabulary its `procedures` blocks target.
+///
+/// # Errors
+///
+/// Every problem found, joined: an unknown vocabulary or permission, or a procedure mapped twice or both governed and ungoverned.
 pub fn emit_pdp(s: &Spec) -> Result<BTreeMap<String, Pdp>, String> {
     let mut out: BTreeMap<String, Site> = BTreeMap::new();
     let mut errs: Vec<String> = Vec::new();
     for pr in &s.procedures {
         let Some(v) = s.vocab_by_name(&pr.emit_site) else {
-            errs.push(format!(
-                "line {}: procedures block targets unknown vocabulary {} (V10)",
-                pr.pos.line,
-                quote(&pr.emit_site)
-            ));
+            errs.push(format!("line {}: procedures block targets unknown vocabulary {} (V10)", pr.pos.line, quote(&pr.emit_site)));
             continue;
         };
         let p = out.entry(pr.emit_site.clone()).or_insert_with(|| Site { policy: BTreeMap::new(), ungoverned: BTreeMap::new() });
         for e in &pr.entries {
             if !v.permissions.iter().any(|x| x == &e.perm) {
-                errs.push(format!(
-                    "line {}: {} -> {}: permission not in vocabulary {}",
-                    e.pos.line,
-                    e.proc_,
-                    e.perm,
-                    quote(&pr.emit_site)
-                ));
+                errs.push(format!("line {}: {} -> {}: permission not in vocabulary {}", e.pos.line, e.proc_, e.perm, quote(&pr.emit_site)));
             }
             if let Some(prev) = p.policy.get(&e.proc_)
                 && prev != &e.perm
@@ -42,11 +37,7 @@ pub fn emit_pdp(s: &Spec) -> Result<BTreeMap<String, Pdp>, String> {
     }
     for u in &s.ungoverned {
         if s.vocab_by_name(&u.emit_site).is_none() {
-            errs.push(format!(
-                "line {}: ungoverned block targets unknown vocabulary {} (V10)",
-                u.pos.line,
-                quote(&u.emit_site)
-            ));
+            errs.push(format!("line {}: ungoverned block targets unknown vocabulary {} (V10)", u.pos.line, quote(&u.emit_site)));
             continue;
         }
         let p = out.entry(u.emit_site.clone()).or_insert_with(|| Site { policy: BTreeMap::new(), ungoverned: BTreeMap::new() });
@@ -72,6 +63,11 @@ pub fn emit_pdp(s: &Spec) -> Result<BTreeMap<String, Pdp>, String> {
         .collect())
 }
 
+/// Builds each site's map from field to the scope that may set it.
+///
+/// # Errors
+///
+/// Every problem found, joined: a field mapped to two different scopes.
 pub fn emit_field_scopes(s: &Spec) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
     let mut out: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     let mut errs = Vec::new();
@@ -107,6 +103,7 @@ pub struct FieldAccess {
     pub rules: Vec<FieldAccessRule>,
 }
 
+#[must_use]
 pub fn emit_field_access(s: &Spec) -> BTreeMap<String, FieldAccess> {
     let mut out = BTreeMap::new();
     for o in &s.objects {
@@ -118,12 +115,7 @@ pub fn emit_field_access(s: &Spec) -> BTreeMap<String, FieldAccess> {
         let rules = o
             .fields
             .iter()
-            .map(|f| FieldAccessRule {
-                field: f.name.clone(),
-                read: f.read.clone(),
-                write: f.write.clone(),
-                column: f.column.clone().unwrap_or_default(),
-            })
+            .map(|f| FieldAccessRule { field: f.name.clone(), read: f.read.clone(), write: f.write.clone(), column: f.column.clone().unwrap_or_default() })
             .collect();
         out.insert(o.name.clone(), FieldAccess { object: o.name.clone(), principals, rules });
     }

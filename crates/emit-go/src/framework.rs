@@ -4,7 +4,7 @@ use demesne_gocompat::{go_export, quote, unexport};
 use demesne_model::topology;
 use demesne_model::{SpecExt, SurfaceExt};
 use demesne_runtime::{AppObjectSurface, HoldsResolver};
-use demesne_syntax::*;
+use demesne_syntax::{Object, Perm, RoleStore, Spec, Vocabulary};
 use std::collections::{HashMap, HashSet};
 
 type R<T> = Result<T, String>;
@@ -23,16 +23,23 @@ struct Check {
     method: String,
 }
 
+#[derive(Debug)]
 pub struct VocabField {
     pub exp: String,
     pub perm: String,
 }
 
+#[derive(Debug)]
 pub struct VocabDomain {
     pub exp: String,
     pub fields: Vec<VocabField>,
 }
 
+/// Groups dotted permissions into capability domains, returning wildcard permissions it skipped.
+///
+/// # Errors
+///
+/// Two permissions that generate the same accessor name.
 pub fn vocab_caps_tree(perms: &[String]) -> R<(Vec<VocabDomain>, Vec<String>)> {
     let mut domains: Vec<VocabDomain> = Vec::new();
     let mut idx: HashMap<String, usize> = HashMap::new();
@@ -69,6 +76,11 @@ struct Gen<'a> {
     pdp_checks: Vec<Check>,
 }
 
+/// Emits the typed Go framework package for a spec, named `pkg` (default `authz`).
+///
+/// # Errors
+///
+/// The claims contract or app surface cannot be built, or generated names collide.
 pub fn emit_framework(s: &Spec, pkg: &str) -> R<String> {
     let pkg = if pkg.is_empty() { "authz" } else { pkg };
     let contract = s.claims_contract()?;
@@ -134,22 +146,29 @@ pub fn orphan_pdp_verbs(s: &Spec) -> Vec<String> {
         }
     }
     let mut orphan = Vec::new();
-    for o in &s.objects {
-        if !o.point_checkable() {
-            continue;
-        }
-        for pm in &o.perms {
-            if !pm.has_layer("pdp") {
-                continue;
-            }
-            for t in pm.tree.leaves() {
-                if !t.ident().is_empty() && !covered.contains(t.ident()) {
-                    orphan.push(format!("{}.{} (needs {})", o.name, pm.verb, quote(t.ident())));
-                }
+    for o in s.objects.iter().filter(|o| o.point_checkable()) {
+        for (pm, t) in o.perm_terms().filter(|(pm, _)| pm.has_layer("pdp")) {
+            if !t.ident().is_empty() && !covered.contains(t.ident()) {
+                orphan.push(format!("{}.{} (needs {})", o.name, pm.verb, quote(t.ident())));
             }
         }
     }
     orphan
+}
+
+/// Returns the SQL a generated row check runs for permission `pm`, or `None` when it gets no row check.
+///
+/// A `select` permission always checks with the object's check SQL. An `update` permission or an `@check`
+/// permission checks only when the surface compiled SQL for it.
+#[must_use]
+pub fn row_check_sql(o: &AppObjectSurface, pm: &Perm) -> Option<String> {
+    let sql = match pm.maps() {
+        "select" => return Some(o.check_sql()),
+        "update" => o.edit_check_sql.to_string(),
+        _ if pm.has_layer("check") => o.check_verb_sql(&pm.verb).to_string(),
+        _ => return None,
+    };
+    (!sql.is_empty()).then_some(sql)
 }
 
 fn framework_reserved_names(s: &Spec) -> HashSet<String> {
@@ -178,18 +197,7 @@ fn framework_reserved_names(s: &Spec) -> HashSet<String> {
     }
     for rs in &s.role_stores {
         let suffix = if s.role_stores.len() > 1 { go_export(&rs.name) } else { String::new() };
-        for base in [
-            "HoldsResolver",
-            "AssignmentsSQL",
-            "ResolveHeld",
-            "Holds",
-            "ResolveHeldRoles",
-            "HoldsRoles",
-            "RoleTiers",
-            "RoleSet",
-            "Caps",
-            "CapSet",
-        ] {
+        for base in ["HoldsResolver", "AssignmentsSQL", "ResolveHeld", "Holds", "ResolveHeldRoles", "HoldsRoles", "RoleTiers", "RoleSet", "Caps", "CapSet"] {
             add(&format!("{base}{suffix}"));
         }
         if let Ok(v) = s.rolestore_vocab(rs)
@@ -203,6 +211,11 @@ fn framework_reserved_names(s: &Spec) -> HashSet<String> {
     reserved
 }
 
+/// Refuses objects whose generated accessor names collide with the framework's own helpers.
+///
+/// # Errors
+///
+/// The first object whose accessor collides.
 pub fn check_accessor_collisions(s: &Spec, objects: &[AppObjectSurface]) -> R<()> {
     let reserved = framework_reserved_names(s);
     for o in objects {
@@ -217,10 +230,13 @@ pub fn check_accessor_collisions(s: &Spec, objects: &[AppObjectSurface]) -> R<()
     Ok(())
 }
 
+/// Returns the role-tier fields generated for a vocabulary: each preset key and its accessor name.
+///
+/// # Errors
+///
+/// Two presets that generate the same accessor name.
 pub fn role_tier_fields(s: &Spec, vocab: &Vocabulary) -> R<Vec<(String, String)>> {
-    let virt: HashSet<String> = topology::chain(s)
-        .map(|c| c.into_iter().filter(|l| l.is_virtual).map(|l| l.name.clone()).collect())
-        .unwrap_or_default();
+    let virt: HashSet<String> = topology::chain(s).map(|c| c.into_iter().filter(|l| l.is_virtual).map(|l| l.name.clone()).collect()).unwrap_or_default();
     let mut fields = Vec::new();
     let mut seen_key = HashSet::new();
     let mut seen_exp = HashSet::new();
@@ -321,30 +337,15 @@ impl Gen<'_> {
         self.w(&format!("type {recv} struct{{}}\n\n"));
         self.w(&format!("var {exp} = {recv}{{}}\n\n"));
         for pm in &obj.perms {
-            let verb = go_export(&pm.verb);
             if pm.has_layer("pdp") {
                 self.pdp_can(&recv, pm);
                 self.pdp_checks.push(Check { object: o.object.to_string(), verb: pm.verb.clone(), method: String::new() });
-            } else if pm.maps() == "select" {
-                self.row_can(&recv, &exp, &o.object, &pm.verb, &format!("Can{verb}"), &o.check_sql());
-            } else if pm.maps() == "update" {
-                if o.edit_check_sql.is_empty() {
-                    continue;
-                }
-                let sql = o.edit_check_sql.clone();
-                self.row_can(&recv, &exp, &o.object, &pm.verb, &format!("Can{verb}"), &sql);
-            } else if pm.has_layer("check") {
-                let sql = o.check_verb_sql(&pm.verb).to_string();
-                if sql.is_empty() {
-                    continue;
-                }
-                self.row_can(&recv, &exp, &o.object, &pm.verb, &format!("Can{verb}"), &sql);
+            } else if let Some(sql) = row_check_sql(o, pm) {
+                self.row_can(&recv, &exp, &o.object, &pm.verb, &format!("Can{}", go_export(&pm.verb)), &sql);
             }
         }
         let list_sql = if o.flat_list_fn.is_empty() { o.list_resources_sql() } else { o.list_resources_fast_sql() };
-        self.w(&format!(
-            "func ({recv}) ListResources(ctx context.Context, q demesne.Querier, after *string, limit int) ([]string, error) {{\n"
-        ));
+        self.w(&format!("func ({recv}) ListResources(ctx context.Context, q demesne.Querier, after *string, limit int) ([]string, error) {{\n"));
         self.w(&format!("\trows, err := q.QueryContext(ctx, {}, after, limit)\n", quote(&list_sql)));
         self.scan_ids();
         self.w(&format!("func ({recv}) CheckMany(ctx context.Context, q demesne.Querier, ids []string) ([]string, error) {{\n"));
@@ -387,13 +388,9 @@ impl Gen<'_> {
         let r = self.s.holds_resolver(&rs.name)?;
         self.w(&format!("var holdsResolver{suffix} = {}\n\n", resolver_lit(&r)));
         self.w(&format!("const AssignmentsSQL{suffix} = {}\n\n", quote(&r.assignments_sql())));
-        self.w(&format!(
-            "func ResolveHeld{suffix}(assignments []demesne.RoleAssignment, scope []string) (demesne.EffectivePerms, error) {{\n"
-        ));
+        self.w(&format!("func ResolveHeld{suffix}(assignments []demesne.RoleAssignment, scope []string) (demesne.EffectivePerms, error) {{\n"));
         self.w(&format!("\treturn holdsResolver{suffix}.Resolve(assignments, scope)\n}}\n\n"));
-        self.w(&format!(
-            "func Holds{suffix}(ctx context.Context, q demesne.Querier, principalID string, scope []string) (demesne.EffectivePerms, error) {{\n"
-        ));
+        self.w(&format!("func Holds{suffix}(ctx context.Context, q demesne.Querier, principalID string, scope []string) (demesne.EffectivePerms, error) {{\n"));
         self.w(&format!("\trows, err := q.QueryContext(ctx, AssignmentsSQL{suffix}, principalID)\n"));
         self.w("\tif err != nil {\n\t\treturn demesne.EffectivePerms{}, err\n\t}\n\tdefer rows.Close()\n");
         self.w("\tvar assignments []demesne.RoleAssignment\n\tfor rows.Next() {\n");
@@ -433,10 +430,7 @@ impl Gen<'_> {
         }
         let pdp = std::mem::take(&mut self.pdp_checks);
         for c in &pdp {
-            self.w(&format!(
-                "\tcase {}:\n\t\treturn NotGoverned, demesne.CapabilityGateErr(object, verb)\n",
-                quote(&format!("{}.{}", c.object, c.verb))
-            ));
+            self.w(&format!("\tcase {}:\n\t\treturn NotGoverned, demesne.CapabilityGateErr(object, verb)\n", quote(&format!("{}.{}", c.object, c.verb))));
         }
         self.w("\tdefault:\n\t\treturn NotGoverned, nil\n\t}\n}\n\n");
     }
@@ -470,11 +464,7 @@ impl Gen<'_> {
         let elems: Vec<Elem> = domains
             .iter()
             .map(|d| {
-                let inner: Vec<Elem> = d
-                    .fields
-                    .iter()
-                    .map(|f| Elem::Pair { key: f.exp.clone(), value: format!("held.Holds({})", quote(&f.perm)) })
-                    .collect();
+                let inner: Vec<Elem> = d.fields.iter().map(|f| Elem::Pair { key: f.exp.clone(), value: format!("held.Holds({})", quote(&f.perm)) }).collect();
                 Elem::Multi(format!("{}: {}Caps{suffix}{{\n{}\t\t}}", d.exp, d.exp, kv_block("\t\t\t", &inner)))
             })
             .collect();
@@ -485,9 +475,7 @@ impl Gen<'_> {
 
     fn holds_roles(&mut self, rs: &RoleStore, suffix: &str) -> R<()> {
         let r = self.s.holds_resolver(&rs.name)?;
-        self.w(&format!(
-            "func ResolveHeldRoles{suffix}(assignments []demesne.RoleAssignment, scope []string) demesne.EffectiveRoles {{\n"
-        ));
+        self.w(&format!("func ResolveHeldRoles{suffix}(assignments []demesne.RoleAssignment, scope []string) demesne.EffectiveRoles {{\n"));
         self.w("\treturn demesne.ResolveRoles(assignments, scope)\n}\n\n");
         self.w(&format!(
             "func HoldsRoles{suffix}(ctx context.Context, q demesne.Querier, principalID string, scope []string) (demesne.EffectiveRoles, error) {{\n"
@@ -513,8 +501,7 @@ impl Gen<'_> {
         self.w("}\n\n");
         self.w(&format!("func RoleTiers{suffix}(held demesne.EffectiveRoles) {set} {{\n"));
         self.w(&format!("\treturn {set}{{\n"));
-        let elems: Vec<Elem> =
-            fields.iter().map(|(e, k)| Elem::Pair { key: e.clone(), value: format!("held.Holds({})", quote(k)) }).collect();
+        let elems: Vec<Elem> = fields.iter().map(|(e, k)| Elem::Pair { key: e.clone(), value: format!("held.Holds({})", quote(k)) }).collect();
         self.w(&kv_block("\t\t", &elems));
         self.w("\t}\n}\n\n");
         Ok(())
@@ -556,31 +543,18 @@ fn resolver_lit(r: &HoldsResolver) -> String {
 }
 
 fn vocab_lit(v: &demesne_runtime::Vocabulary) -> String {
-    let mut elems = vec![
-        Elem::Pair { key: "Name".into(), value: quote(&v.name) },
-        Elem::Pair { key: "Permissions".into(), value: go_str_slice(&v.permissions) },
-    ];
+    let mut elems =
+        vec![Elem::Pair { key: "Name".into(), value: quote(&v.name) }, Elem::Pair { key: "Permissions".into(), value: go_str_slice(&v.permissions) }];
     if !v.implications.is_empty() {
-        let items: Vec<Elem> = v
-            .implications
-            .iter()
-            .map(|im| Elem::Item(format!("{{Perm: {}, Star: {}, Set: {}}}", quote(&im.perm), im.star, go_str_slice(&im.set))))
-            .collect();
+        let items: Vec<Elem> =
+            v.implications.iter().map(|im| Elem::Item(format!("{{Perm: {}, Star: {}, Set: {}}}", quote(&im.perm), im.star, go_str_slice(&im.set)))).collect();
         elems.push(Elem::Multi(format!("Implications: []*demesne.Implication{{\n{}\t\t}}", kv_block("\t\t\t", &items))));
     }
     if !v.presets.is_empty() {
         let items: Vec<Elem> = v
             .presets
             .iter()
-            .map(|p| {
-                Elem::Item(format!(
-                    "{{Name: {}, Level: {}, Star: {}, Set: {}}}",
-                    quote(&p.name),
-                    quote(&p.level),
-                    p.star,
-                    go_str_slice(&p.set)
-                ))
-            })
+            .map(|p| Elem::Item(format!("{{Name: {}, Level: {}, Star: {}, Set: {}}}", quote(&p.name), quote(&p.level), p.star, go_str_slice(&p.set))))
             .collect();
         elems.push(Elem::Multi(format!("Presets: []*demesne.Preset{{\n{}\t\t}}", kv_block("\t\t\t", &items))));
     }

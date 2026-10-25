@@ -1,4 +1,7 @@
-use crate::*;
+use crate::{
+    AppObjectSurface, GrantSurface, HoldsResolver, Implication, Preset, ResourceAccessSurface, RoleAssignmentSurface, Session, Str, Strs, Vocabulary, owned,
+    owned_list,
+};
 use demesne_gocompat::json::Value;
 
 fn st(v: &Value, k: &str) -> Str {
@@ -9,6 +12,7 @@ fn list(v: &Value, k: &str) -> Strs {
     owned_list(v.get(k).map(Value::string_list).unwrap_or_default())
 }
 
+#[must_use]
 pub fn session(claims: &Value) -> Session {
     Session { setting: st(claims, "setting"), cast: st(claims, "cast"), role: st(claims, "role") }
 }
@@ -17,6 +21,7 @@ pub fn contract(claims: &Value) -> Vec<String> {
     claims.get("contract").map(Value::string_list).unwrap_or_default()
 }
 
+#[must_use]
 pub fn app_object(v: &Value) -> AppObjectSurface {
     AppObjectSurface {
         object: st(v, "object"),
@@ -29,6 +34,7 @@ pub fn app_object(v: &Value) -> AppObjectSurface {
     }
 }
 
+#[must_use]
 pub fn vocabulary(v: &Value) -> Vocabulary {
     let entries = |k: &str| v.get(k).and_then(Value::as_array).unwrap_or(&[]).to_vec();
     Vocabulary {
@@ -67,6 +73,7 @@ pub fn holds_resolver(v: &Value) -> HoldsResolver {
     }
 }
 
+#[must_use]
 pub fn role_assignment(v: &Value) -> RoleAssignmentSurface {
     RoleAssignmentSurface {
         assignments: st(v, "assignments"),
@@ -88,6 +95,7 @@ pub fn role_assignment(v: &Value) -> RoleAssignmentSurface {
     }
 }
 
+#[must_use]
 pub fn grant(v: &Value) -> GrantSurface {
     GrantSurface {
         name: st(v, "name"),

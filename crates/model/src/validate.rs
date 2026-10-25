@@ -1,15 +1,19 @@
-use crate::analysis::*;
+use crate::analysis::{
+    ORDERED_TABLE_OPS, Rels, SpecExt, contains, go_type_name, grant_relation, grant_selector, is_perm_key_lit, mapped_perm, object_grant_edge,
+    object_uses_store_manage, op_to_cmd,
+};
 use crate::conditional::is_row_leaf;
 use crate::schema::{exported_columns, exported_row};
 use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::{fmt_slice, quote};
-use demesne_syntax::*;
+use demesne_syntax::{
+    Grant, GrantUse, Level, Object, Perm, PermNode, PermissionExport, Relation, Repr, Require, Spec, Subject, Term, ViaClosure, ViaGrant, ViaObject, Vocabulary,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 const KNOWN_LAYERS: [&str; 4] = ["rls", "pdp", "kernel", "check"];
-const KNOWN_BUILTINS: [&str; 12] =
-    ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "claim", "row"];
+const KNOWN_BUILTINS: [&str; 12] = ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "claim", "row"];
 const EXPORT_PARAMETER_TYPES: [&str; 12] =
     ["text", "uuid", "smallint", "integer", "bigint", "boolean", "json", "jsonb", "numeric", "timestamptz", "timestamp", "date"];
 
@@ -17,11 +21,13 @@ fn table_op(s: &str) -> bool {
     matches!(s, "select" | "insert" | "update" | "delete")
 }
 
+#[derive(Debug)]
 pub enum Structure {
     Fatal(String),
     Errors(Vec<String>),
 }
 
+#[must_use]
 pub fn validate_structure(s: &Spec) -> Structure {
     let chain = match topology::chain(s) {
         Ok(c) => c,
@@ -99,12 +105,7 @@ fn validate_vocabulary(v: &Vocabulary) -> Vec<String> {
     }
     for r in &v.rank {
         if !preset_names.contains(r.as_str()) {
-            errs.push(format!(
-                "line {}: rank ladder names {} which is not a preset of vocabulary {}",
-                v.pos.line,
-                quote(r),
-                quote(&v.name)
-            ));
+            errs.push(format!("line {}: rank ladder names {} which is not a preset of vocabulary {}", v.pos.line, quote(r), quote(&v.name)));
         }
     }
     errs
@@ -114,19 +115,10 @@ fn check_grants(s: &Spec, levels: &HashSet<&str>) -> Vec<String> {
     let mut errs = Vec::new();
     for g in &s.grants {
         if !levels.contains(g.level.as_str()) {
-            errs.push(format!(
-                "line {}: grant {} confers reach at unknown level {}",
-                g.pos.line,
-                quote(&g.name),
-                quote(&g.level)
-            ));
+            errs.push(format!("line {}: grant {} confers reach at unknown level {}", g.pos.line, quote(&g.name), quote(&g.level)));
         }
         if g.claim_key.is_none() && (g.table.is_none() || g.grantee_col.is_none() || g.level_col.is_none()) {
-            errs.push(format!(
-                "line {}: grant {} must name an edge table, grantee column and level column",
-                g.pos.line,
-                quote(&g.name)
-            ));
+            errs.push(format!("line {}: grant {} must name an edge table, grantee column and level column", g.pos.line, quote(&g.name)));
         }
         let mut seen = HashSet::new();
         for v in &g.verbs {
@@ -164,38 +156,19 @@ fn validate_subject(s: &Spec, sub: &Subject, levels: &HashSet<&str>, vocabs: &Ha
     let line = sub.pos.line;
     let name = quote(&sub.name);
     if !matches!(sub.reach(), "self" | "descendants" | "grant") {
-        errs.push(format!(
-            "line {line}: subject {name} has reach {} — only self|descendants|grant are emittable (V2)",
-            quote(sub.reach())
-        ));
+        errs.push(format!("line {line}: subject {name} has reach {} — only self|descendants|grant are emittable (V2)", quote(sub.reach())));
     }
     if !levels.contains(sub.anchor()) {
         errs.push(format!("line {line}: subject {name} anchors at unknown level {} (V2)", quote(sub.anchor())));
     }
     if sub.reach() == "grant" {
-        if sub.reach_grant().is_empty() {
-            errs.push(format!("line {line}: subject {name} has `reach via grant` but names no grant"));
-        } else {
-            match s.grant_by_name(sub.reach_grant()) {
-                None => errs.push(format!(
-                    "line {line}: subject {name} reaches via unknown grant {}",
-                    quote(sub.reach_grant())
-                )),
-                Some(g) if g.claim_key.is_some() => {
-                    errs.push(format!("line {line}: claim grant {} does not take a reaching subject", quote(&g.name)))
-                }
-                Some(_) => {}
-            }
-        }
+        errs.extend(check_subject_reach_grant(s, sub));
     }
     if !sub.roles().is_empty() && !vocabs.contains(sub.roles()) {
         errs.push(format!("line {line}: subject {name} roles reference unknown vocabulary {}", quote(sub.roles())));
     }
     if !matches!(sub.binds(), "" | "owner" | "admin") {
-        errs.push(format!(
-            "line {line}: subject {name} has unknown binding {} (binds owner|admin)",
-            quote(sub.binds())
-        ));
+        errs.push(format!("line {line}: subject {name} has unknown binding {} (binds owner|admin)", quote(sub.binds())));
     }
     if levels.contains(sub.anchor()) {
         match s.pinned_columns(sub) {
@@ -212,35 +185,45 @@ fn validate_subject(s: &Spec, sub: &Subject, levels: &HashSet<&str>, vocabs: &Ha
     if let Some(m) = &sub.membership
         && (m.table.is_empty() || m.id_col.is_empty() || m.flag_col.is_empty())
     {
-        errs.push(format!(
-            "line {line}: subject {name} membership must name a table, id column and flag column (V9)"
-        ));
+        errs.push(format!("line {line}: subject {name} membership must name a table, id column and flag column (V9)"));
     }
     if sub.transient {
-        if sub.identifies().is_empty() {
-            errs.push(format!(
-                "line {line}: transient subject {name} must name the claim it is identified by (`identifies <claim>`)"
-            ));
-        }
-        if sub.reach() != "self" {
-            errs.push(format!(
-                "line {line}: transient subject {name} must `reach self`: it stands for one request, not a principal with descendants or grants"
-            ));
-        }
-        if !sub.roles_none || !sub.roles().is_empty() {
-            errs.push(format!(
-                "line {line}: transient subject {name} must be `roles none`: a role is held by a standing principal, and a transient subject is a claim on one request"
-            ));
-        }
-        if !sub.binds().is_empty() {
-            errs.push(format!(
-                "line {line}: transient subject {name} cannot bind a plane (`binds {}`): a plane's owner is a standing principal",
-                sub.binds()
-            ));
-        }
-        if sub.membership.is_some() {
-            errs.push(format!("line {line}: transient subject {name} cannot be identified via a membership"));
-        }
+        errs.extend(check_transient_subject(sub));
+    }
+    errs
+}
+
+fn check_subject_reach_grant(s: &Spec, sub: &Subject) -> Option<String> {
+    let (line, name) = (sub.pos.line, quote(&sub.name));
+    if sub.reach_grant().is_empty() {
+        return Some(format!("line {line}: subject {name} has `reach via grant` but names no grant"));
+    }
+    match s.grant_by_name(sub.reach_grant()) {
+        None => Some(format!("line {line}: subject {name} reaches via unknown grant {}", quote(sub.reach_grant()))),
+        Some(g) if g.claim_key.is_some() => Some(format!("line {line}: claim grant {} does not take a reaching subject", quote(&g.name))),
+        Some(_) => None,
+    }
+}
+
+fn check_transient_subject(sub: &Subject) -> Vec<String> {
+    let (line, name) = (sub.pos.line, quote(&sub.name));
+    let mut errs = Vec::new();
+    if sub.identifies().is_empty() {
+        errs.push(format!("line {line}: transient subject {name} must name the claim it is identified by (`identifies <claim>`)"));
+    }
+    if sub.reach() != "self" {
+        errs.push(format!("line {line}: transient subject {name} must `reach self`: it stands for one request, not a principal with descendants or grants"));
+    }
+    if !sub.roles_none || !sub.roles().is_empty() {
+        errs.push(format!(
+            "line {line}: transient subject {name} must be `roles none`: a role is held by a standing principal, and a transient subject is a claim on one request"
+        ));
+    }
+    if !sub.binds().is_empty() {
+        errs.push(format!("line {line}: transient subject {name} cannot bind a plane (`binds {}`): a plane's owner is a standing principal", sub.binds()));
+    }
+    if sub.membership.is_some() {
+        errs.push(format!("line {line}: transient subject {name} cannot be identified via a membership"));
     }
     errs
 }
@@ -264,11 +247,7 @@ fn check_plane_bindings(s: &Spec) -> Vec<String> {
             }
             "admin" => {
                 if !admin_sub.is_empty() {
-                    errs.push(format!(
-                        "subjects {} and {} both `binds admin` — the admin plane must be unambiguous",
-                        quote(admin_sub),
-                        quote(&sub.name)
-                    ));
+                    errs.push(format!("subjects {} and {} both `binds admin` — the admin plane must be unambiguous", quote(admin_sub), quote(&sub.name)));
                 }
                 admin_sub = &sub.name;
             }
@@ -298,12 +277,7 @@ fn check_role_store_planes(s: &Spec, chain: &[&Level]) -> Vec<String> {
         }
         let Some(plane) = &rs.plane else { continue };
         if !known.contains(plane.as_str()) {
-            errs.push(format!(
-                "line {}: rolestore {} declares `plane {}`, which is not a topology level",
-                rs.pos.line,
-                quote(&rs.name),
-                plane
-            ));
+            errs.push(format!("line {}: rolestore {} declares `plane {}`, which is not a topology level", rs.pos.line, quote(&rs.name), plane));
             continue;
         }
         if s.rolestore_plane_depth(rs) < non_virtual && rs.scope_cols.len() < non_virtual {
@@ -324,20 +298,12 @@ fn check_emit_sites(s: &Spec, vocabs: &HashSet<String>) -> Vec<String> {
     let mut errs = Vec::new();
     for pr in &s.procedures {
         if !vocabs.contains(&pr.emit_site) {
-            errs.push(format!(
-                "line {}: procedures block targets unknown vocabulary {} (V10)",
-                pr.pos.line,
-                quote(&pr.emit_site)
-            ));
+            errs.push(format!("line {}: procedures block targets unknown vocabulary {} (V10)", pr.pos.line, quote(&pr.emit_site)));
         }
     }
     for u in &s.ungoverned {
         if !vocabs.contains(&u.emit_site) {
-            errs.push(format!(
-                "line {}: ungoverned block targets unknown vocabulary {} (V10)",
-                u.pos.line,
-                quote(&u.emit_site)
-            ));
+            errs.push(format!("line {}: ungoverned block targets unknown vocabulary {} (V10)", u.pos.line, quote(&u.emit_site)));
         }
     }
     errs
@@ -385,7 +351,7 @@ fn validate_object(s: &Spec, o: &Object, chain: &[&Level]) -> Vec<String> {
 }
 
 fn check_scope_path(s: &Spec, o: &Object, chain: &[&Level]) -> Vec<String> {
-    let leaf_level = o.scoped.last().map(String::as_str).unwrap_or("");
+    let leaf_level = o.scoped.last().map_or("", String::as_str);
     let leaf_is_virtual = s.level_by_name(leaf_level).is_some_and(|l| l.is_virtual);
     if o.scoped.is_empty() {
         return vec![format!("line {}: object {} declares no scoped path (V6)", o.pos.line, quote(&o.name))];
@@ -403,16 +369,10 @@ fn check_scope_path(s: &Spec, o: &Object, chain: &[&Level]) -> Vec<String> {
         return check_scope_wildcards(s, o);
     }
     let Ok(paths) = topology::ancestor_paths(s, leaf_level) else {
-        return vec![format!(
-            "line {}: object {} scoped leaf {} is not a topology level (V6)",
-            o.pos.line,
-            quote(&o.name),
-            quote(leaf_level)
-        )];
+        return vec![format!("line {}: object {} scoped leaf {} is not a topology level (V6)", o.pos.line, quote(&o.name), quote(leaf_level))];
     };
     let in_ancestry: HashSet<&str> = paths.iter().flatten().map(|l| l.name.as_str()).collect();
-    let want: Vec<&str> =
-        chain.iter().filter(|l| in_ancestry.contains(l.name.as_str()) && !l.is_virtual).map(|l| l.name.as_str()).collect();
+    let want: Vec<&str> = chain.iter().filter(|l| in_ancestry.contains(l.name.as_str()) && !l.is_virtual).map(|l| l.name.as_str()).collect();
     let ok = want.len() == o.scoped.len() && want.iter().zip(&o.scoped).all(|(w, s)| w == s);
     if !ok {
         return vec![format!(
@@ -420,7 +380,7 @@ fn check_scope_path(s: &Spec, o: &Object, chain: &[&Level]) -> Vec<String> {
             o.pos.line,
             quote(&o.name),
             fmt_slice(&o.scoped),
-            quote(o.scoped.last().unwrap()),
+            quote(leaf_level),
             fmt_slice(&want)
         )];
     }
@@ -449,7 +409,7 @@ fn check_scope_wildcards(s: &Spec, o: &Object) -> Vec<String> {
             ));
         }
         let mut seen = HashSet::new();
-        for v in o.scope_wildcard_verbs.get(lvl).map(Vec::as_slice).unwrap_or(&[]) {
+        for v in o.scope_wildcard_verbs.get(lvl).map_or(&[][..], Vec::as_slice) {
             if op_to_cmd(v).is_empty() {
                 errs.push(format!(
                     "line {}: object {} wildcard at {} confers unknown verb {} (expected select, insert, update or delete)",
@@ -460,25 +420,14 @@ fn check_scope_wildcards(s: &Spec, o: &Object) -> Vec<String> {
                 ));
             }
             if seen.contains(v) {
-                errs.push(format!(
-                    "line {}: object {} wildcard at {} names verb {} twice",
-                    o.pos.line,
-                    quote(&o.name),
-                    quote(lvl),
-                    quote(v)
-                ));
+                errs.push(format!("line {}: object {} wildcard at {} names verb {} twice", o.pos.line, quote(&o.name), quote(lvl), quote(v)));
             }
             seen.insert(v.clone());
         }
     }
     for lvl in o.scope_wildcard_verbs.keys() {
         if !o.scope_is_wildcard(lvl) {
-            errs.push(format!(
-                "line {}: object {} bounds a wildcard at level {} that it does not declare",
-                o.pos.line,
-                quote(&o.name),
-                quote(lvl)
-            ));
+            errs.push(format!("line {}: object {} bounds a wildcard at level {} that it does not declare", o.pos.line, quote(&o.name), quote(lvl)));
         }
     }
     errs
@@ -488,20 +437,10 @@ fn check_level_entity(o: &Object, chain: &[&Level]) -> Vec<String> {
     let Some(level) = &o.level else { return Vec::new() };
     let mut errs = Vec::new();
     if !chain.iter().any(|l| &l.name == level) {
-        errs.push(format!(
-            "line {}: object {} declares level {} which is not a topology level",
-            o.pos.line,
-            quote(&o.name),
-            quote(level)
-        ));
+        errs.push(format!("line {}: object {} declares level {} which is not a topology level", o.pos.line, quote(&o.name), quote(level)));
     }
     if o.scoped.last() != Some(level) {
-        errs.push(format!(
-            "line {}: object {} level {} must be its deepest scoped level",
-            o.pos.line,
-            quote(&o.name),
-            quote(level)
-        ));
+        errs.push(format!("line {}: object {} level {} must be its deepest scoped level", o.pos.line, quote(&o.name), quote(level)));
     }
     errs
 }
@@ -515,37 +454,14 @@ fn check_object_relations<'a>(s: &Spec, o: &'a Object) -> (Rels<'a>, Vec<String>
         }
         rels.insert(r.name.as_str(), r);
         match &r.repr {
-            Repr::MemberIn(mi) => {
-                if s.level_by_name(&mi.level).is_none() {
-                    errs.push(format!(
-                        "line {}: object {} relation {} via memberin references unknown level {}",
-                        r.pos.line,
-                        quote(&o.name),
-                        quote(&r.name),
-                        quote(&mi.level)
-                    ));
-                }
-            }
-            Repr::Closure(c) => {
-                if let Some(claim) = &c.claim {
-                    let missing = c.missing.as_deref().unwrap_or("");
-                    if missing != "allow" && missing != "deny" {
-                        errs.push(format!(
-                            "object {} relation {}: closure claim {}: missing must be allow or deny, got {}",
-                            quote(&o.name),
-                            quote(&r.name),
-                            quote(claim),
-                            quote(missing)
-                        ));
-                    }
-                } else if c.base.is_none() {
-                    errs.push(format!(
-                        "object {} relation {}: a closure keyed on the owner needs `base <table>(id, parent)`",
-                        quote(&o.name),
-                        quote(&r.name)
-                    ));
-                }
-            }
+            Repr::MemberIn(mi) if s.level_by_name(&mi.level).is_none() => errs.push(format!(
+                "line {}: object {} relation {} via memberin references unknown level {}",
+                r.pos.line,
+                quote(&o.name),
+                quote(&r.name),
+                quote(&mi.level)
+            )),
+            Repr::Closure(c) => errs.extend(check_closure_relation(o, r, c)),
             Repr::Object(vo) => errs.extend(validate_borrow_operation(s, r, vo)),
             Repr::Role => errs.extend(check_via_role(s, o, r)),
             _ => {}
@@ -576,6 +492,19 @@ fn check_object_relations<'a>(s: &Spec, o: &'a Object) -> (Rels<'a>, Vec<String>
         errs.extend(check_transient_relation(s, o, r));
     }
     (rels, errs)
+}
+
+fn check_closure_relation(o: &Object, r: &Relation, c: &ViaClosure) -> Option<String> {
+    let Some(claim) = &c.claim else {
+        return c
+            .base
+            .is_none()
+            .then(|| format!("object {} relation {}: a closure keyed on the owner needs `base <table>(id, parent)`", quote(&o.name), quote(&r.name)));
+    };
+    let missing = c.missing.as_deref().unwrap_or("");
+    (missing != "allow" && missing != "deny").then(|| {
+        format!("object {} relation {}: closure claim {}: missing must be allow or deny, got {}", quote(&o.name), quote(&r.name), quote(claim), quote(missing))
+    })
 }
 
 fn check_transient_relation(s: &Spec, o: &Object, r: &Relation) -> Vec<String> {
@@ -639,7 +568,7 @@ fn check_via_role(s: &Spec, o: &Object, r: &Relation) -> Vec<String> {
     if lvl.is_empty() {
         return Vec::new();
     }
-    if s.preset_level_map().get(lvl).is_none_or(|v| v.is_empty()) {
+    if s.preset_level_map().get(lvl).is_none_or(std::vec::Vec::is_empty) {
         return vec![format!(
             "line {}: object {} relation {} is `via role` at level {}, but no vocabulary declares a preset at that level — the check would compile to an empty key set that can never match",
             r.pos.line,
@@ -668,11 +597,7 @@ fn check_track_changelog(o: &Object) -> Vec<String> {
         )];
     }
     if o.track_visibility && o.mode_changelog_col().is_none() {
-        return vec![format!(
-            "line {}: object {} declares `track visibility` but has no `mode <col>` term",
-            o.pos.line,
-            quote(&o.name)
-        )];
+        return vec![format!("line {}: object {} declares `track visibility` but has no `mode <col>` term", o.pos.line, quote(&o.name))];
     }
     Vec::new()
 }
@@ -697,12 +622,7 @@ fn check_gates(s: &Spec, o: &Object, rels: &Rels) -> Vec<String> {
             continue;
         };
         if r.types.is_empty() {
-            errs.push(format!(
-                "line {}: object {} gate relation {} resolves to no object type",
-                g.pos.line,
-                quote(&o.name),
-                quote(&g.relation)
-            ));
+            errs.push(format!("line {}: object {} gate relation {} resolves to no object type", g.pos.line, quote(&o.name), quote(&g.relation)));
             continue;
         }
         for tname in &r.types {
@@ -744,42 +664,37 @@ pub fn perm_positive(n: &PermNode) -> bool {
 
 pub fn row_term_admitting(n: &PermNode) -> Option<&Term> {
     match n {
-        PermNode::Leaf(t) => {
-            if is_row_leaf(n) {
-                Some(t)
-            } else {
-                None
-            }
-        }
+        PermNode::Leaf(t) => is_row_leaf(n).then_some(t),
         PermNode::Not(k) => {
             if is_row_leaf(k) {
                 return k.term();
             }
             row_term_admitting(k)
         }
-        PermNode::And(kids) => {
-            let mut row_term: Option<&Term> = None;
-            let mut grants = false;
-            for k in kids {
-                if is_row_leaf(k) {
-                    row_term = k.term();
-                } else if let PermNode::Not(inner) = k
-                    && is_row_leaf(inner)
-                {
-                    row_term = inner.term();
-                } else {
-                    if let Some(t) = row_term_admitting(k) {
-                        return Some(t);
-                    }
-                    if perm_positive(k) {
-                        grants = true;
-                    }
-                }
-            }
-            if row_term.is_some() && !grants { row_term } else { None }
-        }
+        PermNode::And(kids) => row_term_admitting_conjunction(kids),
         PermNode::Or(kids) => kids.iter().find_map(row_term_admitting),
     }
+}
+
+fn row_term_admitting_conjunction(kids: &[PermNode]) -> Option<&Term> {
+    let mut row_term: Option<&Term> = None;
+    let mut grants = false;
+    for k in kids {
+        let row_leaf = match k {
+            PermNode::Not(inner) if is_row_leaf(inner) => Some(inner.as_ref()),
+            _ if is_row_leaf(k) => Some(k),
+            _ => None,
+        };
+        if let Some(leaf) = row_leaf {
+            row_term = leaf.term();
+            continue;
+        }
+        if let Some(t) = row_term_admitting(k) {
+            return Some(t);
+        }
+        grants |= perm_positive(k);
+    }
+    if row_term.is_some() && !grants { row_term } else { None }
 }
 
 fn check_perm_polarity(o: &Object, pm: &Perm) -> Option<String> {
@@ -814,13 +729,12 @@ fn validate_perm(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<String> {
     if pm.layers.is_empty() {
         errs.push(format!("line {}: permission {}.{} has no layer tag", pm.pos.line, o.name, pm.verb));
     }
-    let (has_rls, has_kernel, has_pdp, has_check) =
-        (has.contains("rls"), has.contains("kernel"), has.contains("pdp"), has.contains("check"));
+    let (has_rls, has_kernel, has_check) = (has.contains("rls"), has.contains("kernel"), has.contains("check"));
     if pm.guard.is_some() && !has_rls {
         errs.push(format!("line {}: permission {}.{} has a guard but is not @rls", pm.pos.line, o.name, pm.verb));
     }
     errs.extend(check_perm_maps(o, pm, has_rls, has_kernel, has_check));
-    errs.extend(check_perm_terms(s, o, pm, rels, has_rls, has_kernel, has_pdp, has_check));
+    errs.extend(check_perm_terms(s, o, pm, rels));
     errs
 }
 
@@ -868,16 +782,8 @@ fn check_perm_maps(o: &Object, pm: &Perm, has_rls: bool, has_kernel: bool, has_c
     errs
 }
 
-fn check_perm_terms(
-    s: &Spec,
-    o: &Object,
-    pm: &Perm,
-    rels: &Rels,
-    has_rls: bool,
-    has_kernel: bool,
-    has_pdp: bool,
-    has_check: bool,
-) -> Vec<String> {
+fn check_perm_terms(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<String> {
+    let (has_rls, has_kernel, has_pdp, has_check) = (pm.has_layer("rls"), pm.has_layer("kernel"), pm.has_layer("pdp"), pm.has_layer("check"));
     let mut errs = Vec::new();
     let has_pred = has_rls || has_check;
     let at = |what: &str| format!("line {}: permission {}.{} {what}", pm.pos.line, o.name, pm.verb);
@@ -885,11 +791,9 @@ fn check_perm_terms(
         if !t.grant_ref().is_empty() {
             match s.grant_by_name(t.grant_ref()) {
                 None => errs.push(at(&format!("references unknown grant {} (via grant)", quote(t.grant_ref())))),
-                Some(g) if g.claim_key.is_some() => errs.push(format!(
-                    "line {}: claim grant {} is containment reach and cannot be an authority term",
-                    pm.pos.line,
-                    quote(&g.name)
-                )),
+                Some(g) if g.claim_key.is_some() => {
+                    errs.push(format!("line {}: claim grant {} is containment reach and cannot be an authority term", pm.pos.line, quote(&g.name)));
+                }
                 Some(_) => {}
             }
             if !has_pred {
@@ -907,19 +811,13 @@ fn check_perm_terms(
                 errs.push(at("uses @row with an empty column or value — `@row(<column>, \"<value>\")`"));
             }
             if !has_pred {
-                errs.push(at(
-                    "uses @row but compiles no row predicate — a row term is a test of the row and the decision point cannot read it",
-                ));
+                errs.push(at("uses @row but compiles no row predicate — a row term is a test of the row and the decision point cannot read it"));
             }
         } else if !t.builtin().is_empty() {
             errs.extend(check_builtin_term(s, o, pm, t, rels, has_pred, has_pdp));
-        } else if is_grant_selector_term(t.ident(), rels) {
-            let (_, access) = grant_selector(t.ident(), rels).unwrap();
+        } else if let Some((_, access)) = grant_selector(t.ident(), rels) {
             if access.is_empty() {
-                errs.push(at(&format!(
-                    "grant term {} has an empty access class (use grantee:read|write|delete)",
-                    quote(t.ident())
-                )));
+                errs.push(at(&format!("grant term {} has an empty access class (use grantee:read|write|delete)", quote(t.ident()))));
             }
             if !has_pred {
                 errs.push(at(&format!("uses grant term {} but is not @rls (V3/V4)", quote(t.ident()))));
@@ -935,6 +833,7 @@ fn check_perm_terms(
     errs
 }
 
+#[expect(clippy::many_single_char_names, reason = "s, o, t, g and u name the spec, object, term, grant and grant use throughout this crate")]
 fn check_builtin_term(s: &Spec, o: &Object, pm: &Perm, t: &Term, rels: &Rels, has_rls: bool, has_pdp: bool) -> Vec<String> {
     let mut errs = Vec::new();
     let at = |what: &str| format!("line {}: permission {}.{} {what}", pm.pos.line, o.name, pm.verb);
@@ -945,15 +844,13 @@ fn check_builtin_term(s: &Spec, o: &Object, pm: &Perm, t: &Term, rels: &Rels, ha
             t.external_fn()
         )));
     } else if !KNOWN_BUILTINS.contains(&b) {
-        errs.push(at(&format!(
-            "uses unknown builtin @{b} (app_scope|scoped|session|open|store_manage|public|kind|self|within|holds)"
-        )));
+        errs.push(at(&format!("uses unknown builtin @{b} (app_scope|scoped|session|open|store_manage|public|kind|self|within|holds)")));
     }
     for ex in t.exclude_rels() {
         match rels.get(ex.as_str()) {
             None => errs.push(at(&format!("@app_scope(exclude {}) names no relation", quote(ex)))),
             Some(r) if !matches!(r.repr, Repr::Column(_)) => {
-                errs.push(at(&format!("@app_scope(exclude {}) must exclude an owner column relation", quote(ex))))
+                errs.push(at(&format!("@app_scope(exclude {}) must exclude an owner column relation", quote(ex))));
             }
             Some(_) => {}
         }
@@ -965,10 +862,7 @@ fn check_builtin_term(s: &Spec, o: &Object, pm: &Perm, t: &Term, rels: &Rels, ha
         )));
     }
     if b == "public" && pm.maps() != "select" {
-        errs.push(at(&format!(
-            "uses @public but maps to {} — @public is a world-read grant, valid only on select",
-            quote(pm.maps())
-        )));
+        errs.push(at(&format!("uses @public but maps to {} — @public is a world-read grant, valid only on select", quote(pm.maps()))));
     }
     match b {
         "kind" => {
@@ -984,9 +878,7 @@ fn check_builtin_term(s: &Spec, o: &Object, pm: &Perm, t: &Term, rels: &Rels, ha
                 errs.push(at("uses @claim with an empty key or value — `@claim(\"<key>\", \"<value>\")`"));
             }
             if !has_rls {
-                errs.push(at(
-                    "uses @claim but is not @rls — a claim is a row-layer test and the decision point cannot read it",
-                ));
+                errs.push(at("uses @claim but is not @rls — a claim is a row-layer test and the decision point cannot read it"));
             }
         }
         "self" => {
@@ -1113,19 +1005,14 @@ fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<S
         errs.push(at("is not positively gated — a `not` must be combined with `and` with a positive term".into()));
     }
     if let Some(t) = row_term_admitting(&rq.tree) {
-        errs.push(at(format!(
-            "uses {} by itself — a row term only narrows another term: write it inside an `and`",
-            t.display()
-        )));
+        errs.push(at(format!("uses {} by itself — a row term only narrows another term: write it inside an `and`", t.display())));
     }
     for t in rq.tree.leaves() {
         let b = t.builtin();
         if b == "external" {
             let f = t.external_fn();
             match s.external_by_name(f) {
-                None => errs.push(at(format!(
-                    "calls @external({f}) with no `external predicate {f}(...)` declaration (V14)"
-                ))),
+                None => errs.push(at(format!("calls @external({f}) with no `external predicate {f}(...)` declaration (V14)"))),
                 Some(ext) if ext.arg_types.len() != t.external_args().len() => errs.push(at(format!(
                     "calls @external({f}) with {} argument(s); it is declared with {} (V14)",
                     t.external_args().len(),
@@ -1134,10 +1021,7 @@ fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<S
                 Some(_) => {}
             }
         } else if !t.grant_ref().is_empty() || matches!(b, "scoped" | "public" | "open") {
-            errs.push(at(format!(
-                "uses widening term {} — a `require` compiles to a RESTRICTIVE policy, which can only narrow (V13)",
-                t.display()
-            )));
+            errs.push(at(format!("uses widening term {} — a `require` compiles to a RESTRICTIVE policy, which can only narrow (V13)", t.display())));
         } else if !b.is_empty() && !KNOWN_BUILTINS.contains(&b) {
             errs.push(at(format!("has unknown builtin @{b}")));
         } else if b.is_empty() && t.mode_col().is_none() {
@@ -1156,8 +1040,7 @@ fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<S
 
 fn validate_admits(s: &Spec, o: &Object, rels: &Rels) -> Vec<String> {
     let mut errs = Vec::new();
-    let mapped: HashSet<&str> =
-        o.perms.iter().filter(|pm| pm.has_layer("rls") && !pm.predicate_only).map(|pm| pm.maps()).collect();
+    let mapped: HashSet<&str> = o.perms.iter().filter(|pm| pm.has_layer("rls") && !pm.predicate_only).map(demesne_syntax::Perm::maps).collect();
     for a in &o.admits {
         for op in &a.ops {
             if op_to_cmd(op).is_empty() {
@@ -1174,7 +1057,7 @@ fn validate_admits(s: &Spec, o: &Object, rels: &Rels) -> Vec<String> {
         }
         let pm = a.perm("");
         errs.extend(check_perm_polarity(o, &pm));
-        errs.extend(check_perm_terms(s, o, &pm, rels, true, false, false, false));
+        errs.extend(check_perm_terms(s, o, &pm, rels));
     }
     errs
 }
@@ -1182,11 +1065,7 @@ fn validate_admits(s: &Spec, o: &Object, rels: &Rels) -> Vec<String> {
 fn check_field_access(o: &Object) -> Vec<String> {
     if o.field_principals.is_empty() {
         if let Some(f) = o.fields.first() {
-            return vec![format!(
-                "line {}: object {} declares field rules but no `fields {{ ... }}` principal set",
-                f.pos.line,
-                quote(&o.name)
-            )];
+            return vec![format!("line {}: object {} declares field rules but no `fields {{ ... }}` principal set", f.pos.line, quote(&o.name))];
         }
         return Vec::new();
     }
@@ -1194,12 +1073,7 @@ fn check_field_access(o: &Object) -> Vec<String> {
     let mut declared = HashSet::new();
     for p in &o.field_principals {
         if declared.contains(p) {
-            errs.push(format!(
-                "line {}: object {} declares field principal {} more than once",
-                o.pos.line,
-                quote(&o.name),
-                quote(p)
-            ));
+            errs.push(format!("line {}: object {} declares field principal {} more than once", o.pos.line, quote(&o.name), quote(p)));
         }
         declared.insert(p.clone());
     }
@@ -1253,13 +1127,9 @@ fn check_duplicate_maps(s: &Spec) -> Vec<String> {
 
 fn check_externals(s: &Spec) -> Vec<String> {
     let mut used = HashSet::new();
-    for o in &s.objects {
-        for rq in &o.requires {
-            for t in rq.tree.leaves() {
-                if t.builtin() == "external" {
-                    used.insert(t.external_fn().to_string());
-                }
-            }
+    for t in s.objects.iter().flat_map(|o| &o.requires).flat_map(|rq| rq.tree.leaves()) {
+        if t.builtin() == "external" {
+            used.insert(t.external_fn().to_string());
         }
     }
     s.externals
@@ -1282,10 +1152,7 @@ fn validate_grant_stores(s: &Spec) -> Vec<String> {
     for o in &s.objects {
         let Some((rel, g)) = grant_relation(o) else { continue };
         if g.discrim_col.is_some() != g.discrim_val.is_some() {
-            errs.push(format!(
-                "object {} grant relation: a discriminator needs both a column and a value (`where <col> = \"<val>\"`)",
-                quote(&o.name)
-            ));
+            errs.push(format!("object {} grant relation: a discriminator needs both a column and a value (`where <col> = \"<val>\"`)", quote(&o.name)));
         }
         for k in &rel.types {
             if s.subject_by_name(k).is_none_or(|sub| sub.identifies().is_empty()) {
@@ -1319,12 +1186,7 @@ fn validate_grant_stores(s: &Spec) -> Vec<String> {
                 continue;
             };
             if dc != col {
-                errs.push(format!(
-                    "grant relations sharing store {} must discriminate on the SAME column ({} vs {})",
-                    quote(table),
-                    quote(col),
-                    quote(dc)
-                ));
+                errs.push(format!("grant relations sharing store {} must discriminate on the SAME column ({} vs {})", quote(table), quote(col), quote(dc)));
             }
             let dv = g.discrim_val.as_deref().unwrap_or("");
             if let Some(prev) = seen.get(dv) {
@@ -1350,11 +1212,7 @@ fn validate_store_manage(s: &Spec) -> Vec<String> {
         }
         let descs = s.store_descriptors(&o.table);
         if descs.is_empty() {
-            errs.push(format!(
-                "object {} uses @store_manage but no object uses its table {} as a grant store",
-                quote(&o.name),
-                quote(&o.table)
-            ));
+            errs.push(format!("object {} uses @store_manage but no object uses its table {} as a grant store", quote(&o.name), quote(&o.table)));
             continue;
         }
         for d in descs {
@@ -1371,33 +1229,29 @@ fn validate_store_manage(s: &Spec) -> Vec<String> {
     errs
 }
 
+fn dfs<'a>(n: &'a str, edges: &HashMap<&'a str, Vec<&'a str>>, color: &mut HashMap<&'a str, u8>) -> bool {
+    color.insert(n, 1);
+    for &m in edges.get(n).map_or(&[][..], Vec::as_slice) {
+        match color.get(m).copied().unwrap_or(0) {
+            1 => return true,
+            0 if dfs(m, edges, color) => return true,
+            _ => {}
+        }
+    }
+    color.insert(n, 2);
+    false
+}
+
 fn validate_cross_object_acyclic(s: &Spec) -> Vec<String> {
     let mut edges: HashMap<&str, Vec<&str>> = HashMap::new();
     for o in &s.objects {
         for r in &o.relations {
             let Repr::Object(vo) = &r.repr else { continue };
             if s.object_by_name(&vo.object).is_none() {
-                return vec![format!(
-                    "object {} relation {} references unknown object {} (via object)",
-                    quote(&o.name),
-                    quote(&r.name),
-                    quote(&vo.object)
-                )];
+                return vec![format!("object {} relation {} references unknown object {} (via object)", quote(&o.name), quote(&r.name), quote(&vo.object))];
             }
             edges.entry(&o.name).or_default().push(&vo.object);
         }
-    }
-    fn dfs<'a>(n: &'a str, edges: &HashMap<&'a str, Vec<&'a str>>, color: &mut HashMap<&'a str, u8>) -> bool {
-        color.insert(n, 1);
-        for &m in edges.get(n).map(Vec::as_slice).unwrap_or(&[]) {
-            match color.get(m).copied().unwrap_or(0) {
-                1 => return true,
-                0 if dfs(m, edges, color) => return true,
-                _ => {}
-            }
-        }
-        color.insert(n, 2);
-        false
     }
     let mut color: HashMap<&str, u8> = HashMap::new();
     for o in &s.objects {
@@ -1458,12 +1312,7 @@ fn same_grant_emission(a: &Grant, b: &Grant) -> bool {
 fn validate_claim_grant(s: &Spec, g: &Grant) -> Vec<String> {
     let mut errs = Vec::new();
     if s.level_is_virtual(&g.level) {
-        errs.push(format!(
-            "line {}: claim grant {} reaches virtual level {}, which has no column to lift",
-            g.pos.line,
-            quote(&g.name),
-            quote(&g.level)
-        ));
+        errs.push(format!("line {}: claim grant {} reaches virtual level {}, which has no column to lift", g.pos.line, quote(&g.name), quote(&g.level)));
     }
     if g.verbs.is_empty() {
         errs.push(format!("line {}: claim grant {} must name the operations it confers", g.pos.line, quote(&g.name)));
@@ -1507,13 +1356,7 @@ fn validate_grant_scopes(s: &Spec, g: &Grant) -> Vec<String> {
             ));
         }
         if seen_cols.contains(scope.column.as_str()) {
-            errs.push(format!(
-                "line {}: grant {} scope {} reuses column {}",
-                g.pos.line,
-                quote(&g.name),
-                quote(&scope.level),
-                quote(&scope.column)
-            ));
+            errs.push(format!("line {}: grant {} scope {} reuses column {}", g.pos.line, quote(&g.name), quote(&scope.level), quote(&scope.column)));
         }
         seen_cols.insert(&scope.column);
         previous = &scope.level;
@@ -1528,27 +1371,15 @@ fn validate_grant_uses(s: &Spec, o: &Object) -> Vec<String> {
         let g = match s.grant_by_name(&u.grant) {
             Some(g) if g.claim_key.is_none() => g,
             _ => {
-                errs.push(format!(
-                    "line {}: object {} selects the reach of {}, which is not an edge grant",
-                    u.pos.line,
-                    quote(&o.name),
-                    quote(&u.grant)
-                ));
+                errs.push(format!("line {}: object {} selects the reach of {}, which is not an edge grant", u.pos.line, quote(&o.name), quote(&u.grant)));
                 continue;
             }
         };
         errs.extend(validate_grant_use_target(s, o, g, u));
-        let ops: Vec<&str> =
-            if u.ops.is_empty() { ORDERED_TABLE_OPS.to_vec() } else { u.ops.iter().map(String::as_str).collect() };
+        let ops: Vec<&str> = if u.ops.is_empty() { ORDERED_TABLE_OPS.to_vec() } else { u.ops.iter().map(String::as_str).collect() };
         for op in ops {
             if op_to_cmd(op).is_empty() {
-                errs.push(format!(
-                    "line {}: object {} reach {} names unknown operation {}",
-                    u.pos.line,
-                    quote(&o.name),
-                    g.name,
-                    quote(op)
-                ));
+                errs.push(format!("line {}: object {} reach {} names unknown operation {}", u.pos.line, quote(&o.name), g.name, quote(op)));
                 continue;
             }
             if !u.ops.is_empty() && !g.confers(op) {
@@ -1563,13 +1394,7 @@ fn validate_grant_uses(s: &Spec, o: &Object) -> Vec<String> {
             }
             let key = format!("{}:{}", g.name, op);
             if claimed.contains(&key) {
-                errs.push(format!(
-                    "line {}: object {} selects the reach of {} for {} twice",
-                    u.pos.line,
-                    quote(&o.name),
-                    quote(&g.name),
-                    op
-                ));
+                errs.push(format!("line {}: object {} selects the reach of {} for {} twice", u.pos.line, quote(&o.name), quote(&g.name), op));
             }
             claimed.insert(key);
         }
@@ -1589,43 +1414,22 @@ fn validate_grant_use_target(s: &Spec, o: &Object, g: &Grant, u: &GrantUse) -> V
         ));
     }
     if !s.grant_reached_by_subject(&g.name) {
-        errs.push(format!(
-            "line {}: object {} selects the reach of {}, which no subject reaches through",
-            u.pos.line,
-            quote(&o.name),
-            quote(&g.name)
-        ));
+        errs.push(format!("line {}: object {} selects the reach of {}, which no subject reaches through", u.pos.line, quote(&o.name), quote(&g.name)));
     }
     if let Some(via) = &u.via {
         errs.extend(validate_grant_use_via(s, o, g, u, via));
     } else if g.scopes.is_empty() {
-        errs.push(format!(
-            "line {}: object {} reach {}: unscoped and bound need a grant with scope levels",
-            u.pos.line,
-            quote(&o.name),
-            g.name
-        ));
+        errs.push(format!("line {}: object {} reach {}: unscoped and bound need a grant with scope levels", u.pos.line, quote(&o.name), g.name));
     } else if let Some(bound) = &u.bound
         && !g.has_scope(bound)
     {
-        errs.push(format!(
-            "line {}: object {} reach {} bound {}: the level must be one of the grant's scopes",
-            u.pos.line,
-            quote(&o.name),
-            g.name,
-            bound
-        ));
+        errs.push(format!("line {}: object {} reach {} bound {}: the level must be one of the grant's scopes", u.pos.line, quote(&o.name), g.name, bound));
     }
     errs
 }
 
 fn validate_grant_use_via(s: &Spec, o: &Object, g: &Grant, u: &GrantUse, via_name: &str) -> Vec<String> {
-    let via = s.grant_by_name(via_name);
-    let bad = match via {
-        None => true,
-        Some(v) => v.claim_key.is_some() || std::ptr::eq(v, g) || v.level != g.level,
-    };
-    if bad {
+    let Some(via) = s.grant_by_name(via_name).filter(|v| v.claim_key.is_none() && !std::ptr::eq(*v, g) && v.level == g.level) else {
         return vec![format!(
             "line {}: object {} reach {} via {}: the replacement must be another edge grant at {}",
             u.pos.line,
@@ -1634,22 +1438,11 @@ fn validate_grant_use_via(s: &Spec, o: &Object, g: &Grant, u: &GrantUse, via_nam
             via_name,
             quote(&g.level)
         )];
-    }
-    let via = via.unwrap();
+    };
     let ops: Vec<&str> = if u.ops.is_empty() { ORDERED_TABLE_OPS.to_vec() } else { u.ops.iter().map(String::as_str).collect() };
     ops.into_iter()
         .filter(|op| g.confers(op) && !via.confers(op))
-        .map(|op| {
-            format!(
-                "line {}: object {} reach {} via {}: {} does not confer {}",
-                u.pos.line,
-                quote(&o.name),
-                g.name,
-                via_name,
-                quote(via_name),
-                op
-            )
-        })
+        .map(|op| format!("line {}: object {} reach {} via {}: {} does not confer {}", u.pos.line, quote(&o.name), g.name, via_name, quote(via_name), op))
         .collect()
 }
 
@@ -1692,10 +1485,7 @@ fn validate_permission_exports(s: &Spec) -> Vec<String> {
 
 fn validate_permission_export(s: &Spec, obj: &Object, export: &PermissionExport) -> Vec<String> {
     let Some(pm) = mapped_perm(obj, &export.verb) else {
-        return vec![format!(
-            "line {}: export {}.{} needs a permission that maps a table operation under @rls",
-            export.pos.line, obj.name, export.verb
-        )];
+        return vec![format!("line {}: export {}.{} needs a permission that maps a table operation under @rls", export.pos.line, obj.name, export.verb)];
     };
     let mut errs = Vec::new();
     let mut params = HashSet::new();
@@ -1725,12 +1515,7 @@ fn validate_permission_export(s: &Spec, obj: &Object, export: &PermissionExport)
     }
     for column in exported_columns(s, &exported_row(s, obj, pm)) {
         if !params.contains(&column) {
-            errs.push(format!(
-                "line {}: export {} reads row column {}, which no parameter binds",
-                export.pos.line,
-                quote(&export.name),
-                quote(&column)
-            ));
+            errs.push(format!("line {}: export {} reads row column {}, which no parameter binds", export.pos.line, quote(&export.name), quote(&column)));
         }
     }
     errs

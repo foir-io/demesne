@@ -1,6 +1,6 @@
 use demesne_emit_rust::{Builder, Surface, emit_rust, item_path};
 
-const SPEC: &str = r#"
+const SPEC: &str = r"
 topology { level org col org_ref claim org level workspace parent org col ws_ref claim ws }
 vocabulary app { permission self:read }
 subject member { anchor workspace reach self identifies member_ref roles none binds owner }
@@ -18,7 +18,7 @@ object r#OBJ {
   relation owner: member via owner_ref
   permission view = owner @rls maps select
 }
-"#;
+";
 
 fn spec(name: &str) -> demesne_syntax::Spec {
     let src = SPEC.replace("r#OBJ", name);
@@ -38,7 +38,7 @@ fn only_the_named_surfaces_are_emitted() {
     assert_eq!(items(&code), vec![r#"pub const POINT_CHECK_SQL: &str = "SELECT EXISTS (SELECT 1 FROM notes WHERE note_pk = $1)";"#]);
     assert!(!code.contains("thing"), "an unnamed object leaked into the output:\n{code}");
     let none = emit_rust(&s, &[]).expect("emit");
-    assert!(items(&none).is_empty());
+    assert_eq!(items(&none), [] as [&str; 0]);
 }
 
 #[test]
@@ -86,6 +86,6 @@ fn builder_reports_a_spec_error_with_its_path() {
     let err = Builder::new(&invalid).session().render().expect_err("validation error");
     assert!(err.starts_with(&invalid.display().to_string()), "{err}");
     let missing = dir.join("missing.demesne");
-    assert!(Builder::new(&missing).render().is_err());
+    Builder::new(&missing).render().unwrap_err();
     let _ = std::fs::remove_dir_all(&dir);
 }

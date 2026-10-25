@@ -1,24 +1,24 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug)]
 pub struct Entry {
     pub id: String,
     pub path: PathBuf,
 }
 
 fn specs_in(dir: &Path) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = fs::read_dir(dir)
-        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
-        .unwrap_or_default();
+    let mut out: Vec<PathBuf> = fs::read_dir(dir).map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect()).unwrap_or_default();
     out.retain(|p| p.extension().is_some_and(|e| e == "demesne"));
     out.sort();
     out
 }
 
 fn stem(p: &Path) -> String {
-    p.file_stem().unwrap().to_string_lossy().into_owned()
+    p.file_stem().expect("a .demesne file has a stem").to_string_lossy().into_owned()
 }
 
+#[must_use]
 pub fn collect(root: &Path) -> Vec<Entry> {
     let mut out = Vec::new();
     for p in specs_in(&root.join("examples")) {

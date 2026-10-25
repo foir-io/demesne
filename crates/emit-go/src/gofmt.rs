@@ -1,4 +1,4 @@
-pub enum Elem {
+pub(crate) enum Elem {
     Pair { key: String, value: String },
     Multi(String),
     Item(String),
@@ -11,7 +11,7 @@ fn pad(key: &str, width: usize) -> String {
     s
 }
 
-pub fn struct_fields(indent: &str, fields: &[(String, String)]) -> String {
+pub(crate) fn struct_fields(indent: &str, fields: &[(String, String)]) -> String {
     let width = fields.iter().map(|(n, _)| n.chars().count()).max().unwrap_or(0);
     let mut b = String::new();
     for (n, t) in fields {
@@ -23,6 +23,7 @@ pub fn struct_fields(indent: &str, fields: &[(String, String)]) -> String {
     b
 }
 
+#[expect(clippy::cast_precision_loss, reason = "go/printer takes this ratio in float64; line sizes and counts are far below 2^52")]
 fn section_breaks(elems: &[Elem]) -> Vec<bool> {
     let mut out = vec![false; elems.len()];
     let mut size = 0usize;
@@ -55,7 +56,7 @@ fn section_breaks(elems: &[Elem]) -> Vec<bool> {
     out
 }
 
-pub fn kv_block(indent: &str, elems: &[Elem]) -> String {
+pub(crate) fn kv_block(indent: &str, elems: &[Elem]) -> String {
     let breaks = section_breaks(elems);
     let aligned = elems.len() > 1;
     let mut b = String::new();
@@ -74,32 +75,20 @@ pub fn kv_block(indent: &str, elems: &[Elem]) -> String {
             .max()
             .unwrap_or(0);
         for e in &elems[i..j] {
-            match e {
-                Elem::Pair { key, value } => {
-                    b.push_str(indent);
-                    let k = format!("{key}:");
-                    if aligned {
-                        b.push_str(&pad(&k, width));
-                    } else {
-                        b.push_str(&k);
-                        b.push(' ');
-                    }
-                    b.push_str(value);
-                    b.push_str(",\n");
-                }
-                Elem::Multi(text) => {
-                    b.push_str(indent);
-                    b.push_str(text);
-                    b.push_str(",\n");
-                }
-                Elem::Item(text) => {
-                    b.push_str(indent);
-                    b.push_str(text);
-                    b.push_str(",\n");
-                }
-            }
+            b.push_str(&kv_line(indent, e, aligned, width));
         }
         i = j;
     }
     b
+}
+
+fn kv_line(indent: &str, e: &Elem, aligned: bool, width: usize) -> String {
+    match e {
+        Elem::Pair { key, value } => {
+            let k = format!("{key}:");
+            let key_col = if aligned { pad(&k, width) } else { format!("{k} ") };
+            format!("{indent}{key_col}{value},\n")
+        }
+        Elem::Multi(text) | Elem::Item(text) => format!("{indent}{text},\n"),
+    }
 }

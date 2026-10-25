@@ -1,11 +1,17 @@
 use crate::Sql;
 use demesne_gocompat::{fmt_slice, quote, sort_slice};
-use demesne_model::analysis::*;
+use demesne_model::analysis::{
+    Rels, SpecExt, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
+};
 use demesne_model::topology;
-use demesne_syntax::*;
+use demesne_syntax::{
+    Admit, ArgSrc, Grant, Guard, GuardOp, Level, Membership, Object, Perm, PermNode, Relation, Repr, Require, Subject, Term, ViaClosure, ViaColumn,
+    ViaComposition, ViaGrant, ViaGroup, ViaObject,
+};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fmt::Write as _;
 
-pub type Virtual = HashSet<String>;
+pub(crate) type Virtual = HashSet<String>;
 type Inject = BTreeMap<String, Vec<String>>;
 type R<T> = Result<T, String>;
 
@@ -37,30 +43,32 @@ impl RlsResult {
         set.into_iter().map(String::from).collect()
     }
 
+    #[must_use]
     pub fn enablement_sql(&self) -> String {
         let sch = self.schema();
         let mut b = String::new();
         for t in self.governed_tables() {
-            b.push_str(&format!("ALTER TABLE {sch}.{t} ENABLE ROW LEVEL SECURITY;\n"));
-            b.push_str(&format!("ALTER TABLE {sch}.{t} FORCE ROW LEVEL SECURITY;\n"));
+            writeln!(b, "ALTER TABLE {sch}.{t} ENABLE ROW LEVEL SECURITY;").expect("fmt::Write for String never fails");
+            writeln!(b, "ALTER TABLE {sch}.{t} FORCE ROW LEVEL SECURITY;").expect("fmt::Write for String never fails");
         }
         b
     }
 
+    #[must_use]
     pub fn policy_sql(&self, role: &str) -> String {
         let mut pols = self.policies.clone();
-        sort_slice(&mut pols, |a, b| if a.table != b.table { a.table < b.table } else { a.name < b.name });
+        sort_slice(&mut pols, |a, b| if a.table == b.table { a.name < b.name } else { a.table < b.table });
         let sch = self.schema();
         let mut b = String::new();
         for p in &pols {
             let kind = if p.restrictive { " AS RESTRICTIVE" } else { "" };
-            b.push_str(&format!("DROP POLICY IF EXISTS {} ON {}.{};\n", p.name, sch, p.table));
-            b.push_str(&format!("CREATE POLICY {} ON {}.{}{} FOR {} TO {}", p.name, sch, p.table, kind, p.cmd, role));
+            writeln!(b, "DROP POLICY IF EXISTS {} ON {}.{};", p.name, sch, p.table).expect("fmt::Write for String never fails");
+            write!(b, "CREATE POLICY {} ON {}.{}{} FOR {} TO {}", p.name, sch, p.table, kind, p.cmd, role).expect("fmt::Write for String never fails");
             if !p.using.is_empty() {
-                b.push_str(&format!("\n    USING ({})", p.using));
+                write!(b, "\n    USING ({})", p.using).expect("fmt::Write for String never fails");
             }
             if !p.check.is_empty() {
-                b.push_str(&format!("\n    WITH CHECK ({})", p.check));
+                write!(b, "\n    WITH CHECK ({})", p.check).expect("fmt::Write for String never fails");
             }
             b.push_str(";\n\n");
         }
@@ -69,14 +77,7 @@ impl RlsResult {
 }
 
 fn op_policy(obj: &Object, op: &str, name: String, pred: &str, restrictive: bool) -> Policy {
-    let mut pol = Policy {
-        object: obj.name.clone(),
-        table: obj.table.clone(),
-        name,
-        cmd: op_to_cmd(op).to_string(),
-        restrictive,
-        ..Default::default()
-    };
+    let mut pol = Policy { object: obj.name.clone(), table: obj.table.clone(), name, cmd: op_to_cmd(op).to_string(), restrictive, ..Default::default() };
     match op {
         "select" | "delete" => pol.using = pred.to_string(),
         "insert" => pol.check = pred.to_string(),
@@ -89,6 +90,7 @@ fn op_policy(obj: &Object, op: &str, name: String, pred: &str, restrictive: bool
     pol
 }
 
+#[must_use]
 pub fn scan_definers(sql: &str, schema: &str) -> Vec<String> {
     let mut out = Vec::new();
     let marker = format!("{schema}.");
@@ -109,7 +111,7 @@ pub fn scan_definers(sql: &str, schema: &str) -> Vec<String> {
     out
 }
 
-pub fn guard_sql(g: &Guard) -> String {
+pub(crate) fn guard_sql(g: &Guard) -> String {
     match g.op {
         GuardOp::Ne => format!("({} IS NULL OR {} <> '{}')", g.col, g.col, g.val),
         GuardOp::Eq => format!("{} = '{}'", g.col, g.val),
@@ -122,17 +124,17 @@ fn req_claim(cust_claim: &str, obj: &Object, what: &str) -> R<()> {
             "object {}: {} references the owner axis, but no owner subject (a subject `binds owner` at level {}) resolves a claim — refusing to emit an empty-claim predicate",
             quote(&obj.name),
             what,
-            quote(obj.scoped.last().map(String::as_str).unwrap_or(""))
+            quote(obj.scoped.last().map_or("", String::as_str))
         ));
     }
     Ok(())
 }
 
-pub fn membership_fn(m: &Membership) -> &str {
+pub(crate) fn membership_fn(m: &Membership) -> &str {
     &m.flag_col
 }
 
-pub fn platform_role_fn(anchor: &str) -> String {
+pub(crate) fn platform_role_fn(anchor: &str) -> String {
     format!("has_{anchor}_role")
 }
 
@@ -148,11 +150,27 @@ pub(crate) fn owner_col_present_pub(vc: &ViaColumn) -> String {
     owner_col_present(vc)
 }
 
-fn leaf(obj: &Object) -> &str {
-    obj.scoped.last().map(String::as_str).unwrap_or("")
+#[derive(Debug)]
+enum GrantReach {
+    Contained { level: String, predicate: String },
+    Top(String),
 }
 
-impl<'a> Sql<'a> {
+impl GrantReach {
+    fn place(self, top: &mut Vec<String>, inject: &mut Inject) {
+        match self {
+            Self::Contained { level, predicate } => inject.entry(level).or_default().push(predicate),
+            Self::Top(predicate) => top.push(predicate),
+        }
+    }
+}
+
+fn leaf(obj: &Object) -> &str {
+    obj.scoped.last().map_or("", String::as_str)
+}
+
+impl Sql<'_> {
+    #[must_use]
     pub fn claim(&self, key: &str) -> String {
         let (setting, cast) = match &self.s.claims {
             Some(c) => (c.setting.as_str(), c.cast.as_str()),
@@ -161,14 +179,17 @@ impl<'a> Sql<'a> {
         format!("(current_setting('{setting}', true)::{cast} ->> '{key}')")
     }
 
+    #[must_use]
     pub fn id_claim(&self, key: &str) -> String {
         self.claim(key) + &self.s.id_cast()
     }
 
+    #[must_use]
     pub fn id_claim_set(&self, key: &str) -> String {
         format!("ARRAY(SELECT e{} FROM jsonb_array_elements_text({}::jsonb) e)", self.s.id_cast(), self.claim(key))
     }
 
+    #[must_use]
     pub fn session_claim(&self, key: &str) -> String {
         let (setting, cast) = match &self.s.claims {
             Some(c) => (c.setting.as_str(), c.cast.as_str()),
@@ -177,52 +198,56 @@ impl<'a> Sql<'a> {
         format!("(NULLIF(current_setting('{setting}', true), '')::{cast} ->> '{key}')") + &self.s.id_cast()
     }
 
-    pub fn virtual_levels(&self) -> R<Virtual> {
+    pub(crate) fn virtual_levels(&self) -> R<Virtual> {
         Ok(topology::chain(self.s)?.into_iter().filter(|l| l.is_virtual).map(|l| l.name.clone()).collect())
     }
 
+    /// Compiles the row-level security policies for every `@rls` permission.
+    ///
+    /// # Errors
+    ///
+    /// The topology is invalid, or a permission cannot be compiled to a policy predicate.
     pub fn emit_rls(&self) -> R<RlsResult> {
         let virt = self.virtual_levels()?;
         let mut res = RlsResult { table_schema: self.s.table_schema().to_string(), ..Default::default() };
         for obj in &self.s.objects {
             let cust = self.s.owner_subject(leaf(obj));
-            for pm in &obj.perms {
-                if !pm.has_layer("rls") || pm.predicate_only {
-                    continue;
-                }
-                let pred = match self.admission_predicate(obj, pm, cust, &virt) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        res.unsupported.push(format!("{}.{}: {}", obj.name, pm.verb, e));
-                        continue;
-                    }
-                };
-                let op = pm.maps();
-                if op_to_cmd(op).is_empty() {
-                    res.unsupported.push(format!("{}.{}: @rls permission has no table-op maps", obj.name, pm.verb));
-                    continue;
-                }
-                res.policies.push(op_policy(obj, op, format!("{}_{}", obj.table, op), &pred, false));
-                match self.perm_require_sql(obj, pm, cust) {
-                    Err(e) => res.unsupported.push(format!("{}.{}: {}", obj.name, pm.verb, e)),
-                    Ok(req) if !req.is_empty() => {
-                        res.policies.push(op_policy(obj, op, format!("{}_{}_require", obj.table, op), &req, true))
-                    }
-                    Ok(_) => {}
-                }
+            for pm in obj.perms.iter().filter(|pm| pm.has_layer("rls") && !pm.predicate_only) {
+                self.rls_perm_policies(&mut res, obj, pm, cust, &virt);
             }
         }
         Ok(res)
     }
 
-    pub fn edit_point_check_sql(&self, o: &Object) -> R<String> {
+    fn rls_perm_policies(&self, res: &mut RlsResult, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) {
+        let pred = match self.admission_predicate(obj, pm, cust, virt) {
+            Ok(p) => p,
+            Err(e) => {
+                res.unsupported.push(format!("{}.{}: {}", obj.name, pm.verb, e));
+                return;
+            }
+        };
+        let op = pm.maps();
+        if op_to_cmd(op).is_empty() {
+            res.unsupported.push(format!("{}.{}: @rls permission has no table-op maps", obj.name, pm.verb));
+            return;
+        }
+        res.policies.push(op_policy(obj, op, format!("{}_{}", obj.table, op), &pred, false));
+        match self.perm_require_sql(obj, pm, cust) {
+            Err(e) => res.unsupported.push(format!("{}.{}: {}", obj.name, pm.verb, e)),
+            Ok(req) if !req.is_empty() => res.policies.push(op_policy(obj, op, format!("{}_{}_require", obj.table, op), &req, true)),
+            Ok(_) => {}
+        }
+    }
+
+    pub(crate) fn edit_point_check_sql(&self, o: &Object) -> R<String> {
         match o.perms.iter().find(|pm| pm.has_layer("rls") && pm.maps() == "update") {
             Some(upd) => self.perm_point_check_sql(o, upd),
             None => Ok(String::new()),
         }
     }
 
-    pub fn perm_point_check_sql(&self, o: &Object, pm: &Perm) -> R<String> {
+    pub(crate) fn perm_point_check_sql(&self, o: &Object, pm: &Perm) -> R<String> {
         let virt = self.virtual_levels()?;
         let cust = self.s.owner_subject(leaf(o));
         let pred = self.admission_with_require(o, pm, cust, &virt)?;
@@ -232,7 +257,7 @@ impl<'a> Sql<'a> {
         Ok(format!("SELECT EXISTS (SELECT 1 FROM {} WHERE {} = $1 AND ({}))", o.table, o.pk(), pred))
     }
 
-    pub fn admission_predicate(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
+    pub(crate) fn admission_predicate(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
         let pred = self.rls_predicate(obj, pm, cust, virt)?;
         let arms = self.admit_arms(obj, pm.maps(), cust, virt)?;
         if arms.is_empty() {
@@ -253,11 +278,10 @@ impl<'a> Sql<'a> {
     }
 
     fn admit_arm_predicate(&self, obj: &Object, a: &Admit, op: &str, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
-        let cust_claim = cust.map(|c| c.identifies()).unwrap_or("");
+        let cust_claim = cust.map_or("", demesne_syntax::Subject::identifies);
         let rels = rels_of(obj);
         let obj_leaf = leaf(obj);
-        let (_, inject) =
-            self.rls_subject_branches(obj, virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op);
+        let (_, inject) = self.rls_subject_branches(obj, virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op);
         let perm = a.perm(op);
         let terms = self.node_frags(obj, &perm, &a.tree, &rels, cust_claim)?;
         if terms.is_empty() {
@@ -270,7 +294,7 @@ impl<'a> Sql<'a> {
         Ok(format!("{} AND ({})", block, terms.join(" OR ")))
     }
 
-    pub fn admission_with_require(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
+    pub(crate) fn admission_with_require(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
         let pred = self.admission_predicate(obj, pm, cust, virt)?;
         let req = self.perm_require_sql(obj, pm, cust)?;
         if req.is_empty() {
@@ -279,8 +303,8 @@ impl<'a> Sql<'a> {
         Ok(format!("({pred}) AND ({req})"))
     }
 
-    pub fn rls_predicate(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
-        let cust_claim = cust.map(|c| c.identifies()).unwrap_or("");
+    pub(crate) fn rls_predicate(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
+        let cust_claim = cust.map_or("", demesne_syntax::Subject::identifies);
         let rels = rels_of(obj);
         let obj_leaf = leaf(obj);
         let obj_is_global = virt.contains(obj_leaf);
@@ -290,10 +314,10 @@ impl<'a> Sql<'a> {
         let block_terms = self.node_frags(obj, pm, &pm.tree, &rels, cust_claim)?;
         let mut block = self.rls_containment_block(obj, obj_leaf, &inject, pm.maps())?;
         if !block_terms.is_empty() {
-            if !block.is_empty() {
-                block = format!("{} AND ({})", block, block_terms.join(" OR "));
-            } else {
+            if block.is_empty() {
                 block = block_terms.join(" OR ");
+            } else {
+                block = format!("{} AND ({})", block, block_terms.join(" OR "));
             }
         }
         let containment_bearing = scoped_grant || !block_terms.is_empty();
@@ -319,15 +343,7 @@ impl<'a> Sql<'a> {
         Ok(pred)
     }
 
-    fn rls_subject_branches(
-        &self,
-        obj: &Object,
-        virt: &Virtual,
-        obj_leaf: &str,
-        obj_is_global: bool,
-        has_staff: bool,
-        op: &str,
-    ) -> (Vec<String>, Inject) {
+    fn rls_subject_branches(&self, obj: &Object, virt: &Virtual, obj_leaf: &str, obj_is_global: bool, has_staff: bool, op: &str) -> (Vec<String>, Inject) {
         let mut top = Vec::new();
         let mut inject = Inject::new();
         let schema = self.s.definer_schema();
@@ -335,20 +351,25 @@ impl<'a> Sql<'a> {
             if let Some(m) = &sub.membership
                 && virt.contains(sub.anchor())
             {
-                let f = format!("{}.{}({})", schema, membership_fn(m), self.id_claim(sub.identifies()));
-                if obj.is_level_entity() || obj_is_global {
-                    top.push(f);
-                } else {
-                    top.push(format!("({} AND {} IS NULL)", f, self.claim(&self.s.claim_key_for_level(obj_leaf))));
-                }
+                top.push(self.membership_branch(obj, sub, m, obj_leaf, obj_is_global));
             } else if self.s.is_platform_role_subject(sub) && (has_staff || (obj_is_global && sub.anchor() == obj_leaf)) {
                 top.push(format!("{}.{}({})", schema, platform_role_fn(sub.anchor()), self.id_claim(sub.identifies())));
-            } else if sub.reach() == "grant" {
-                self.rls_apply_grant_reach(obj, sub, obj_leaf, obj_is_global, &mut top, &mut inject, op);
+            } else if sub.reach() == "grant"
+                && let Some(reach) = self.grant_reach_for_subject(obj, sub, obj_leaf, obj_is_global, op)
+            {
+                reach.place(&mut top, &mut inject);
             }
         }
         self.rls_apply_claim_reach(obj, obj_is_global, &mut inject, op);
         (top, inject)
+    }
+
+    fn membership_branch(&self, obj: &Object, sub: &Subject, m: &Membership, obj_leaf: &str, obj_is_global: bool) -> String {
+        let f = format!("{}.{}({})", self.s.definer_schema(), membership_fn(m), self.id_claim(sub.identifies()));
+        if obj.is_level_entity() || obj_is_global {
+            return f;
+        }
+        format!("({} AND {} IS NULL)", f, self.claim(&self.s.claim_key_for_level(obj_leaf)))
     }
 
     fn rls_apply_claim_reach(&self, obj: &Object, obj_is_global: bool, inject: &mut Inject, op: &str) {
@@ -363,29 +384,20 @@ impl<'a> Sql<'a> {
         }
     }
 
-    fn rls_apply_grant_reach(
-        &self,
-        obj: &Object,
-        sub: &Subject,
-        obj_leaf: &str,
-        obj_is_global: bool,
-        top: &mut Vec<String>,
-        inject: &mut Inject,
-        op: &str,
-    ) {
-        let Some(g) = self.s.grant_by_name(sub.reach_grant()) else { return };
+    fn grant_reach_for_subject(&self, obj: &Object, sub: &Subject, obj_leaf: &str, obj_is_global: bool, op: &str) -> Option<GrantReach> {
+        let g = self.s.grant_by_name(sub.reach_grant())?;
         if !contains(&obj.scoped, &g.level) || !g.confers(op) || g.table() == obj.table {
-            return;
+            return None;
         }
-        let Some(reach) = self.grant_reach_predicate(obj, g, sub.identifies(), op) else { return };
-        if self.grant_reach_is_contained(obj, sub, g, obj_leaf, obj_is_global) {
-            inject.entry(g.level.clone()).or_default().push(reach);
+        let predicate = self.grant_reach_predicate(obj, g, sub.identifies(), op)?;
+        Some(if Self::grant_reach_is_contained(obj, sub, g, obj_leaf, obj_is_global) {
+            GrantReach::Contained { level: g.level.clone(), predicate }
         } else {
-            top.push(reach);
-        }
+            GrantReach::Top(predicate)
+        })
     }
 
-    fn grant_reach_is_contained(&self, obj: &Object, sub: &Subject, g: &Grant, obj_leaf: &str, obj_is_global: bool) -> bool {
+    fn grant_reach_is_contained(obj: &Object, sub: &Subject, g: &Grant, obj_leaf: &str, obj_is_global: bool) -> bool {
         if obj.is_level_entity() || obj_is_global {
             return false;
         }
@@ -435,42 +447,42 @@ impl<'a> Sql<'a> {
         Ok((top, scoped_grant))
     }
 
-    pub fn rls_containment_block(&self, obj: &Object, obj_leaf: &str, inject: &Inject, op: &str) -> R<String> {
+    pub(crate) fn rls_containment_block(&self, obj: &Object, obj_leaf: &str, inject: &Inject, op: &str) -> R<String> {
         let paths = topology::ancestor_paths(self.s, obj_leaf)?;
         let mut path_preds = Vec::new();
         for path in &paths {
-            let mut cols = Vec::new();
-            for lvl in path {
-                if lvl.is_virtual || (obj.is_level_entity() && lvl.name == obj.level()) {
-                    continue;
-                }
-                let col = self.s.scope_col(obj, &lvl.name);
-                let mut col_pred = format!("{} = {}", col, self.id_claim(&lvl.claim_key()));
-                if obj.scope_is_wildcard_for(&lvl.name, op) {
-                    col_pred = format!("({col} IS NULL OR {col_pred})");
-                } else if obj.scope_is_wildcard(&lvl.name) {
-                    col_pred = format!("{} IS NOT DISTINCT FROM {}", col, self.id_claim(&lvl.claim_key()));
-                }
-                if let Some(reaches) = inject.get(&lvl.name).filter(|r| !r.is_empty()) {
-                    col_pred = format!("({} OR {})", col_pred, reaches.join(" OR "));
-                }
-                cols.push(col_pred);
-            }
+            let cols: Vec<String> = path
+                .iter()
+                .filter(|lvl| !(lvl.is_virtual || (obj.is_level_entity() && lvl.name == obj.level())))
+                .map(|lvl| self.containment_col_pred(obj, lvl, inject, op))
+                .collect();
             path_preds.push(cols.join(" AND "));
         }
-        if path_preds.len() == 1 {
-            return Ok(path_preds.pop().unwrap());
+        if path_preds.len() == 1
+            && let Some(only) = path_preds.pop()
+        {
+            return Ok(only);
         }
         Ok(path_preds.iter().map(|p| format!("({p})")).collect::<Vec<_>>().join(" OR "))
     }
 
+    fn containment_col_pred(&self, obj: &Object, lvl: &Level, inject: &Inject, op: &str) -> String {
+        let col = self.s.scope_col(obj, &lvl.name);
+        let mut col_pred = format!("{} = {}", col, self.id_claim(&lvl.claim_key()));
+        if obj.scope_is_wildcard_for(&lvl.name, op) {
+            col_pred = format!("({col} IS NULL OR {col_pred})");
+        } else if obj.scope_is_wildcard(&lvl.name) {
+            col_pred = format!("{} IS NOT DISTINCT FROM {}", col, self.id_claim(&lvl.claim_key()));
+        }
+        if let Some(reaches) = inject.get(&lvl.name).filter(|r| !r.is_empty()) {
+            col_pred = format!("({} OR {})", col_pred, reaches.join(" OR "));
+        }
+        col_pred
+    }
+
     fn grant_ref_reach(&self, obj: &Object, grant_name: &str, op: &str) -> R<String> {
         let Some(g) = self.s.grant_by_name(grant_name) else {
-            return Err(format!(
-                "object {}: permission references unknown grant {} (via grant)",
-                quote(&obj.name),
-                quote(grant_name)
-            ));
+            return Err(format!("object {}: permission references unknown grant {} (via grant)", quote(&obj.name), quote(grant_name)));
         };
         if !contains(&obj.scoped, &g.level) {
             return Err(format!(
@@ -481,13 +493,8 @@ impl<'a> Sql<'a> {
                 fmt_slice(&obj.scoped)
             ));
         }
-        let claim = self
-            .s
-            .subjects
-            .iter()
-            .find(|sub| sub.reach() == "grant" && sub.reach_grant() == grant_name)
-            .map(|sub| sub.identifies())
-            .unwrap_or("");
+        let claim =
+            self.s.subjects.iter().find(|sub| sub.reach() == "grant" && sub.reach_grant() == grant_name).map_or("", demesne_syntax::Subject::identifies);
         if claim.is_empty() {
             return Err(format!(
                 "object {}: grant {} has no reaching subject (a `subject … reach via grant {}`) to supply a claim",
@@ -505,8 +512,8 @@ impl<'a> Sql<'a> {
         let member = |f: String| format!("{} IN (SELECT {}.{}({}))", col, schema, f, self.id_claim(claim));
         match obj.grant_use(&g.name, op) {
             None => Some(member(format!("{}_reach_set", g.definer_base()))),
-            Some(u) if u.via.is_some() => {
-                let via = self.s.grant_by_name(u.via.as_deref().unwrap())?;
+            Some(demesne_syntax::GrantUse { via: Some(via_name), .. }) => {
+                let via = self.s.grant_by_name(via_name)?;
                 if !via.confers(op) {
                     return None;
                 }
@@ -530,27 +537,21 @@ impl<'a> Sql<'a> {
         format!("{} = '{}'", self.claim(g.claim_key()), g.claim_value().replace('\'', "''"))
     }
 
-    pub fn object_verb_predicate(&self, obj: &Object, verb: &str, virt: &Virtual) -> R<String> {
+    pub(crate) fn object_verb_predicate(&self, obj: &Object, verb: &str, virt: &Virtual) -> R<String> {
         self.object_verb_predicate_for(obj, verb, "", virt)
     }
 
-    pub fn object_verb_predicate_for(&self, obj: &Object, verb: &str, op: &str, virt: &Virtual) -> R<String> {
-        for pm in &obj.perms {
-            if pm.verb == verb && pm.has_layer("rls") {
-                let cust = self.s.owner_subject(leaf(obj));
-                if !op.is_empty() {
-                    let mut borrowed = pm.clone();
-                    borrowed.maps = Some(op.to_string());
-                    return self.perm_predicate(obj, &borrowed, cust, virt);
-                }
-                return self.perm_predicate(obj, pm, cust, virt);
-            }
+    pub(crate) fn object_verb_predicate_for(&self, obj: &Object, verb: &str, op: &str, virt: &Virtual) -> R<String> {
+        let Some(pm) = obj.perms.iter().find(|pm| pm.verb == verb && pm.has_layer("rls")) else {
+            return Err(format!("object {} has no @rls permission {} for a cross-object reference", quote(&obj.name), quote(verb)));
+        };
+        let cust = self.s.owner_subject(leaf(obj));
+        if op.is_empty() {
+            return self.perm_predicate(obj, pm, cust, virt);
         }
-        Err(format!(
-            "object {} has no @rls permission {} for a cross-object reference",
-            quote(&obj.name),
-            quote(verb)
-        ))
+        let mut borrowed = pm.clone();
+        borrowed.maps = Some(op.to_string());
+        self.perm_predicate(obj, &borrowed, cust, virt)
     }
 
     fn arg_src_sql(&self, a: &ArgSrc) -> String {
@@ -576,11 +577,7 @@ impl<'a> Sql<'a> {
         }
         match rels.get(t.ident()) {
             Some(r) => match &r.repr {
-                Repr::Role => !r
-                    .types
-                    .first()
-                    .and_then(|t| self.s.subject_by_name(t))
-                    .is_some_and(|st| self.s.is_platform_role_subject(st)),
+                Repr::Role => !r.types.first().and_then(|t| self.s.subject_by_name(t)).is_some_and(|st| self.s.is_platform_role_subject(st)),
                 Repr::MemberIn(_) => true,
                 _ => false,
             },
@@ -603,7 +600,7 @@ impl<'a> Sql<'a> {
             .collect())
     }
 
-    pub fn node_frags(&self, obj: &Object, pm: &Perm, n: &PermNode, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
+    pub(crate) fn node_frags(&self, obj: &Object, pm: &Perm, n: &PermNode, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
         self.node_frags_mode(obj, pm, n, rels, cust_claim, false)
     }
 
@@ -624,14 +621,8 @@ impl<'a> Sql<'a> {
                 Ok(out)
             }
             PermNode::And(kids) => {
-                let mut parts = Vec::new();
-                for k in kids {
-                    let kf = self.node_frags_mode(obj, pm, k, rels, cust_claim, require)?;
-                    if kf.is_empty() {
-                        continue;
-                    }
-                    parts.push(format!("({})", kf.join(" OR ")));
-                }
+                let frags = kids.iter().map(|k| self.node_frags_mode(obj, pm, k, rels, cust_claim, require)).collect::<R<Vec<_>>>()?;
+                let parts: Vec<String> = frags.iter().filter(|kf| !kf.is_empty()).map(|kf| format!("({})", kf.join(" OR "))).collect();
                 if parts.is_empty() {
                     return Ok(Vec::new());
                 }
@@ -677,8 +668,7 @@ impl<'a> Sql<'a> {
             return Err(format!("role-walk parent {} must be a column relation", quote(t.ident())));
         };
         let level = &parent.types[0];
-        let path = topology::ancestor_path(self.s, level)
-            .map_err(|e| format!("role-walk {}->{}: {e}", quote(t.ident()), t.walk_verb()))?;
+        let path = topology::ancestor_path(self.s, level).map_err(|e| format!("role-walk {}->{}: {e}", quote(t.ident()), t.walk_verb()))?;
         let non_virtual: Vec<&Level> = path.into_iter().filter(|l| !l.is_virtual).collect();
         let mut args = vec![self.id_claim(self.s.admin_identify())];
         for (i, lvl) in non_virtual.iter().enumerate() {
@@ -695,13 +685,7 @@ impl<'a> Sql<'a> {
         let schema = self.s.definer_schema();
         if member {
             let name = format!("{}_memberin_{}", self.s.admin_name(), level);
-            return Ok(format!(
-                "{}.{}({}, {})",
-                schema,
-                name,
-                self.id_claim(self.s.admin_identify()),
-                self.id_claim(&self.s.claim_key_for_level(level))
-            ));
+            return Ok(format!("{}.{}({}, {})", schema, name, self.id_claim(self.s.admin_identify()), self.id_claim(&self.s.claim_key_for_level(level))));
         }
         let path = topology::ancestor_path(self.s, level).map_err(|e| format!("memberin {level} reachedby: {e}"))?;
         let mut args = vec![self.id_claim(self.s.admin_identify())];
@@ -727,11 +711,7 @@ impl<'a> Sql<'a> {
             "within" => {
                 let col = self.s.scope_col(obj, t.within_level());
                 let claim = self.id_claim(&self.s.claim_key_for_level(t.within_level()));
-                if t.within_nullable() {
-                    Ok(vec![format!("({col} IS NULL OR {col} = {claim})")])
-                } else {
-                    Ok(vec![format!("{col} = {claim}")])
-                }
+                if t.within_nullable() { Ok(vec![format!("({col} IS NULL OR {col} = {claim})")]) } else { Ok(vec![format!("{col} = {claim}")]) }
             }
             "holds" => self.rls_emit_holds(obj, t),
             "" => {
@@ -749,12 +729,7 @@ impl<'a> Sql<'a> {
         let perm = t.holds_perm();
         let rs = self.s.holds_role_store(perm).map_err(|e| format!("@holds({}) on {}: {e}", quote(perm), quote(&obj.name)))?;
         if rs.perms_col.is_none() {
-            return Err(format!(
-                "@holds({}) on {}: rolestore {} declares no `permissions` column",
-                quote(perm),
-                quote(&obj.name),
-                quote(&rs.name)
-            ));
+            return Err(format!("@holds({}) on {}: rolestore {} declares no `permissions` column", quote(perm), quote(&obj.name), quote(&rs.name)));
         }
         let chain = topology::chain(self.s)?;
         let plane_depth = self.s.rolestore_plane_depth(rs);
@@ -799,13 +774,9 @@ impl<'a> Sql<'a> {
     fn rls_emit_store_manage(&self, obj: &Object) -> R<Vec<String>> {
         let descs = self.s.store_descriptors(&obj.table);
         let Some(first) = descs.first() else {
-            return Err(format!(
-                "@store_manage on {}: no object uses table {} as a grant store",
-                quote(&obj.name),
-                quote(&obj.table)
-            ));
+            return Err(format!("@store_manage on {}: no object uses table {} as a grant store", quote(&obj.name), quote(&obj.table)));
         };
-        let g = object_grant_edge(first).unwrap();
+        let g = object_grant_edge(first).expect("a store descriptor is an object with a grant edge on this table");
         let Some(d) = &g.discrim_col else {
             return Err(format!(
                 "@store_manage on {}: store {} is not discriminated (a single-kind store uses `via object <kind>->edit`)",
@@ -824,6 +795,19 @@ impl<'a> Sql<'a> {
         }
         let role_frag = self.emit_term(obj, pm, &term_ref(t.session_rel()), rels, cust_claim)?;
         Ok(vec![format!("{} AND {}", me, role_frag[0])])
+    }
+
+    fn rls_closure_frag(&self, obj: &Object, c: &ViaClosure, ident: &str, cust_claim: &str) -> R<Vec<String>> {
+        let schema = self.s.definer_schema();
+        let Some(claim) = &c.claim else {
+            req_claim(cust_claim, obj, &format!("closure relation {ident}"))?;
+            return Ok(vec![format!("{}.{}_reachable({}, {})", schema, c.closure, self.id_claim(cust_claim), c.col)]);
+        };
+        let call = format!("{}.{}_reachable({}, {})", schema, c.closure, self.id_claim(claim), c.col);
+        if c.missing.as_deref() == Some("allow") {
+            return Ok(vec![format!("({} IS NULL OR {})", self.claim(claim), call)]);
+        }
+        Ok(vec![call])
     }
 
     fn rls_emit_relation(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
@@ -854,17 +838,7 @@ impl<'a> Sql<'a> {
                 let call = format!("{}.{}_composition_{}({}, '{}')", schema, obj.name, r.name, pk, access);
                 Ok(vec![self.probed(&composition_probe(obj, vc), call)])
             }
-            Repr::Closure(c) => {
-                if let Some(claim) = &c.claim {
-                    let mut call = format!("{}.{}_reachable({}, {})", schema, c.closure, self.id_claim(claim), c.col);
-                    if c.missing.as_deref() == Some("allow") {
-                        call = format!("({} IS NULL OR {})", self.claim(claim), call);
-                    }
-                    return Ok(vec![call]);
-                }
-                req_claim(cust_claim, obj, &format!("closure relation {}", t.ident()))?;
-                Ok(vec![format!("{}.{}_reachable({}, {})", schema, c.closure, self.id_claim(cust_claim), c.col)])
-            }
+            Repr::Closure(c) => self.rls_closure_frag(obj, c, t.ident(), cust_claim),
             Repr::Group(g) => {
                 req_claim(cust_claim, obj, &format!("group relation {}", t.ident()))?;
                 if g.materialized {
@@ -886,7 +860,7 @@ impl<'a> Sql<'a> {
                 Ok(vec![self.probed(&self.object_probe(obj, vo), call)])
             }
             Repr::Grant(vg) => self.emit_grant_frags(obj, r, vg, access_for(pm.maps()), cust_claim),
-            Repr::Role => self.rls_emit_role(obj, r),
+            Repr::Role => Ok(self.rls_emit_role(obj, r)),
         }
     }
 
@@ -900,36 +874,19 @@ impl<'a> Sql<'a> {
     fn object_probe(&self, obj: &Object, vo: &ViaObject) -> String {
         match self.s.object_by_name(&vo.object) {
             None => String::new(),
-            Some(other) => format!(
-                "EXISTS (SELECT 1 FROM {} hop WHERE hop.{} = {}.{})",
-                other.table,
-                other.pk(),
-                obj.table,
-                vo.col
-            ),
+            Some(other) => format!("EXISTS (SELECT 1 FROM {} hop WHERE hop.{} = {}.{})", other.table, other.pk(), obj.table, vo.col),
         }
     }
 
-    fn rls_emit_role(&self, obj: &Object, r: &Relation) -> R<Vec<String>> {
+    fn rls_emit_role(&self, obj: &Object, r: &Relation) -> Vec<String> {
         if let Some(st) = self.s.subject_by_name(&r.types[0])
             && self.s.is_platform_role_subject(st)
         {
-            return Ok(vec![format!(
-                "{}.{}({})",
-                self.s.definer_schema(),
-                platform_role_fn(st.anchor()),
-                self.id_claim(st.identifies())
-            )]);
+            return vec![format!("{}.{}({})", self.s.definer_schema(), platform_role_fn(st.anchor()), self.id_claim(st.identifies()))];
         }
         let cols: Vec<String> = obj.scoped.iter().map(|l| self.s.scope_col(obj, l)).collect();
         let f = format!("{}_has_{}_role", self.s.admin_name(), obj.name);
-        Ok(vec![format!(
-            "{}.{}({}, {})",
-            self.s.definer_schema(),
-            f,
-            self.id_claim(self.s.admin_identify()),
-            cols.join(", ")
-        )])
+        vec![format!("{}.{}({}, {})", self.s.definer_schema(), f, self.id_claim(self.s.admin_identify()), cols.join(", "))]
     }
 
     fn emit_grant_frags(&self, obj: &Object, r: &Relation, vg: &ViaGrant, access: &str, cust_claim: &str) -> R<Vec<String>> {
@@ -937,20 +894,10 @@ impl<'a> Sql<'a> {
         for i in 0..r.types.len() {
             let (name, _, _, claim) = self.s.grant_rel_binding(obj, vg, r, i);
             if claim.is_empty() {
-                return Err(format!(
-                    "grant relation {} kind {}: no subject resolves a claim",
-                    quote(&r.name),
-                    quote(&r.types[i])
-                ));
+                return Err(format!("grant relation {} kind {}: no subject resolves a claim", quote(&r.name), quote(&r.types[i])));
             }
-            let mut frag = format!(
-                "{}.{}({}, {}, '{}')",
-                self.s.definer_schema(),
-                name,
-                self.id_claim(&claim),
-                format_args!("{}.{}", obj.table, obj.pk()),
-                access
-            );
+            let mut frag =
+                format!("{}.{}({}, {}, '{}')", self.s.definer_schema(), name, self.id_claim(&claim), format_args!("{}.{}", obj.table, obj.pk()), access);
             if !cust_claim.is_empty() && claim != cust_claim {
                 frag = format!("({} AND {} IS NULL)", frag, self.claim(cust_claim));
             }
@@ -959,6 +906,7 @@ impl<'a> Sql<'a> {
         Ok(frags)
     }
 
+    #[must_use]
     pub fn group_flat_name(&self, obj: &Object, r: &Relation, g: &ViaGroup) -> String {
         if !g.materialized {
             return String::new();
@@ -974,11 +922,7 @@ impl<'a> Sql<'a> {
             ));
         };
         if ext.arg_types.len() != t.external_args().len() {
-            return Err(format!(
-                "@external({f}): declared with {} argument(s), called with {}",
-                ext.arg_types.len(),
-                t.external_args().len()
-            ));
+            return Err(format!("@external({f}): declared with {} argument(s), called with {}", ext.arg_types.len(), t.external_args().len()));
         }
         let args: Vec<String> = t
             .external_args()
@@ -999,9 +943,7 @@ impl<'a> Sql<'a> {
     fn require_leaf_frags(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
         let b = t.builtin();
         if b == "external" {
-            let frag = self
-                .external_call_sql(t)
-                .map_err(|e| format!("object {} require {}: {e}", quote(&obj.name), quote(&pm.verb)))?;
+            let frag = self.external_call_sql(t).map_err(|e| format!("object {} require {}: {e}", quote(&obj.name), quote(&pm.verb)))?;
             return Ok(vec![frag]);
         }
         if b == "self" {
@@ -1019,7 +961,7 @@ impl<'a> Sql<'a> {
     }
 
     fn require_predicate(&self, obj: &Object, pm: &Perm, rq: &Require, cust: Option<&Subject>) -> R<String> {
-        let cust_claim = cust.map(|c| c.identifies()).unwrap_or("");
+        let cust_claim = cust.map_or("", demesne_syntax::Subject::identifies);
         let rels = rels_of(obj);
         let frags = self.node_frags_mode(obj, pm, &rq.tree, &rels, cust_claim, true)?;
         if frags.is_empty() {
@@ -1032,14 +974,14 @@ impl<'a> Sql<'a> {
         Ok(frags.join(" OR "))
     }
 
-    pub fn perm_require_sql(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>) -> R<String> {
+    pub(crate) fn perm_require_sql(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>) -> R<String> {
         match obj.require_for(&pm.verb) {
             None => Ok(String::new()),
             Some(rq) => self.require_predicate(obj, pm, rq, cust),
         }
     }
 
-    pub fn perm_predicate(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
+    pub(crate) fn perm_predicate(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {
         let pred = self.rls_predicate(obj, pm, cust, virt)?;
         let req = self.perm_require_sql(obj, pm, cust)?;
         if req.is_empty() {
@@ -1048,6 +990,11 @@ impl<'a> Sql<'a> {
         Ok(format!("({pred}) AND ({req})"))
     }
 
+    /// Returns the sorted names of every definer function the compiled policies call.
+    ///
+    /// # Errors
+    ///
+    /// Any error from [`Sql::emit_rls`].
     pub fn definer_names(&self) -> R<Vec<String>> {
         let res = self.emit_rls()?;
         let mut set = BTreeSet::new();

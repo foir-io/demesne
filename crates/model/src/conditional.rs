@@ -1,5 +1,5 @@
 use crate::analysis::{Rels, SpecExt, rels_of};
-use demesne_syntax::*;
+use demesne_syntax::{Object, PermNode, Relation, Repr, Term, ViaColumn};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConditionalAdmission {
@@ -20,22 +20,27 @@ pub fn accessor_tree_op(n: &PermNode) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn is_row_leaf(n: &PermNode) -> bool {
     matches!(n, PermNode::Leaf(t) if t.builtin() == "row")
 }
 
+#[must_use]
 pub fn is_claim_leaf(n: &PermNode) -> bool {
     matches!(n, PermNode::Leaf(t) if t.builtin() == "claim")
 }
 
+#[must_use]
 pub fn claim_neutral_accessor_leaf(n: &PermNode) -> bool {
     matches!(n, PermNode::Leaf(t) if matches!(t.builtin(), "kind" | "app_scope" | "session" | "within" | "scoped" | "holds" | "claim" | "row"))
 }
 
+#[must_use]
 pub fn narrowing_accessor_leaf(n: &PermNode) -> bool {
     claim_neutral_accessor_leaf(n) || matches!(n, PermNode::Leaf(t) if t.mode_col().is_some())
 }
 
+#[must_use]
 pub fn not_kid(n: &PermNode) -> Option<&PermNode> {
     match n {
         PermNode::Not(k) => Some(k),
@@ -43,15 +48,15 @@ pub fn not_kid(n: &PermNode) -> Option<&PermNode> {
     }
 }
 
+#[must_use]
 pub fn is_composition_leaf(n: &PermNode, rels: &Rels) -> bool {
     match n {
-        PermNode::Leaf(t) if !t.ident().is_empty() => {
-            rels.get(t.ident()).is_some_and(|r| matches!(r.repr, Repr::Composition(_)))
-        }
+        PermNode::Leaf(t) if !t.ident().is_empty() => rels.get(t.ident()).is_some_and(|r| matches!(r.repr, Repr::Composition(_))),
         _ => false,
     }
 }
 
+#[must_use]
 pub fn admission_names(adms: &[ConditionalAdmission]) -> String {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -87,8 +92,8 @@ pub trait ConditionalExt: SpecExt {
     }
 
     fn transient_admission(&self, r: Option<&Relation>) -> Option<ConditionalAdmission> {
-        let vc = self.transient_column(r)?;
-        let r = r.unwrap();
+        let r = r?;
+        let vc = self.transient_column(Some(r))?;
         let mut conds = vec![format!("{} IS NOT NULL", vc.column)];
         if let Some(d) = &vc.discrim_col {
             conds.push(format!("{} = '{}'", d, vc.discrim_val.as_deref().unwrap_or("")));
@@ -120,16 +125,7 @@ pub trait ConditionalExt: SpecExt {
             });
         }
         if t.builtin() == "app_scope" {
-            let mut conds = Vec::new();
-            for ex in t.exclude_rels() {
-                let Some(r) = rels.get(ex.as_str()) else { continue };
-                let Repr::Column(vc) = &r.repr else { continue };
-                match &vc.discrim_col {
-                    Some(d) => conds.push(format!("{} IS DISTINCT FROM '{}'", d, vc.discrim_val.as_deref().unwrap_or(""))),
-                    None => conds.push(format!("{} IS NULL", vc.column)),
-                }
-            }
-            return Some(ConditionalAdmission { source: "app_scope".into(), row_cond: conds.join(" AND "), ..Default::default() });
+            return Some(ConditionalAdmission { source: "app_scope".into(), row_cond: app_scope_exclusions(t, rels), ..Default::default() });
         }
         if !t.ident().is_empty() {
             return self.transient_admission(rels.get(t.ident()).copied());
@@ -152,31 +148,12 @@ pub trait ConditionalExt: SpecExt {
         let mut admit: Option<ConditionalAdmission> = None;
         let mut conds: Vec<String> = Vec::new();
         for k in kids {
-            if let Some(inner) = not_kid(k) {
-                if is_row_leaf(inner) {
-                    let t = inner.term().unwrap();
-                    conds.push(format!("({} = '{}') IS NOT TRUE", t.row_col(), t.row_val()));
-                    continue;
-                }
-                if narrowing_accessor_leaf(inner) || self.is_conditional_leaf(inner, rels) {
-                    continue;
-                }
-            }
-            let PermNode::Leaf(t) = k else { return None };
-            if is_row_leaf(k) {
-                conds.push(format!("{} = '{}'", t.row_col(), t.row_val()));
-                continue;
-            }
-            if let Some(a) = self.conditional_term(t, rels) {
-                if admit.is_none() {
-                    admit = Some(a);
-                } else if !a.row_cond.is_empty() {
-                    conds.push(a.row_cond);
-                }
-                continue;
-            }
-            if !narrowing_accessor_leaf(k) {
-                return None;
+            match conjunction_kid(self, k, rels) {
+                ConjunctionKid::Unenumerable => return None,
+                ConjunctionKid::Narrowing => {}
+                ConjunctionKid::RowCond(c) => conds.push(c),
+                ConjunctionKid::Admission(a) if admit.is_none() => admit = Some(a),
+                ConjunctionKid::Admission(a) => conds.extend((!a.row_cond.is_empty()).then_some(a.row_cond)),
             }
         }
         let mut admit = admit?;
@@ -200,22 +177,56 @@ pub trait ConditionalExt: SpecExt {
         match n {
             PermNode::Leaf(t) => self.conditional_term(t, rels).into_iter().collect(),
             PermNode::Not(_) => Vec::new(),
-            PermNode::And(kids) => {
-                if let Some(a) = self.conditional_conjunction(n, rels) {
-                    return vec![a];
-                }
-                let mut out = Vec::new();
-                for k in kids {
-                    if narrowing_accessor_leaf(k) {
-                        continue;
-                    }
-                    out.extend(self.adding_conditional_terms(k, rels));
-                }
-                out
-            }
+            PermNode::And(kids) => match self.conditional_conjunction(n, rels) {
+                Some(a) => vec![a],
+                None => kids.iter().filter(|k| !narrowing_accessor_leaf(k)).flat_map(|k| self.adding_conditional_terms(k, rels)).collect(),
+            },
             PermNode::Or(kids) => kids.iter().flat_map(|k| self.adding_conditional_terms(k, rels)).collect(),
         }
     }
 }
 
 impl<T: SpecExt + ?Sized> ConditionalExt for T {}
+
+fn app_scope_exclusions(t: &Term, rels: &Rels) -> String {
+    let conds: Vec<String> = t
+        .exclude_rels()
+        .iter()
+        .filter_map(|ex| rels.get(ex.as_str()))
+        .filter_map(|r| match &r.repr {
+            Repr::Column(vc) => Some(vc),
+            _ => None,
+        })
+        .map(|vc| match &vc.discrim_col {
+            Some(d) => format!("{} IS DISTINCT FROM '{}'", d, vc.discrim_val.as_deref().unwrap_or("")),
+            None => format!("{} IS NULL", vc.column),
+        })
+        .collect();
+    conds.join(" AND ")
+}
+
+enum ConjunctionKid {
+    RowCond(String),
+    Admission(ConditionalAdmission),
+    Narrowing,
+    Unenumerable,
+}
+
+fn conjunction_kid<S: ConditionalExt + ?Sized>(s: &S, k: &PermNode, rels: &Rels) -> ConjunctionKid {
+    if let Some(inner) = not_kid(k) {
+        if let Some(t) = inner.term().filter(|_| is_row_leaf(inner)) {
+            return ConjunctionKid::RowCond(format!("({} = '{}') IS NOT TRUE", t.row_col(), t.row_val()));
+        }
+        if narrowing_accessor_leaf(inner) || s.is_conditional_leaf(inner, rels) {
+            return ConjunctionKid::Narrowing;
+        }
+    }
+    let PermNode::Leaf(t) = k else { return ConjunctionKid::Unenumerable };
+    if is_row_leaf(k) {
+        return ConjunctionKid::RowCond(format!("{} = '{}'", t.row_col(), t.row_val()));
+    }
+    if let Some(a) = s.conditional_term(t, rels) {
+        return ConjunctionKid::Admission(a);
+    }
+    if narrowing_accessor_leaf(k) { ConjunctionKid::Narrowing } else { ConjunctionKid::Unenumerable }
+}

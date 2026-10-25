@@ -1,5 +1,6 @@
 use crate::{Error, SqlArg, Str, Strs};
 use std::borrow::Cow;
+use std::fmt::Write as _;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResourceAccessSurface {
@@ -23,6 +24,11 @@ pub struct ResourceAccessSurface {
 }
 
 impl ResourceAccessSurface {
+    /// Returns the surface when its enumeration names every reader of `object`.
+    ///
+    /// # Errors
+    ///
+    /// The object admits readers its accessor function cannot list. Use the conditional resource-access surface for such an object instead.
     pub fn require_unconditional(self, object: &str) -> Result<Self, Error> {
         if self.conditional {
             return Err(Error::new(format!(
@@ -35,18 +41,22 @@ impl ResourceAccessSurface {
         Ok(self)
     }
 
+    #[must_use]
     pub fn is_read_mode(&self, mode: &str) -> bool {
         self.read_modes.iter().any(|m| m == mode)
     }
 
+    #[must_use]
     pub fn grant_kind_allowed(&self, kind: &str) -> bool {
         self.grant_kinds.iter().any(|k| k == kind)
     }
 
+    #[must_use]
     pub fn mode_sql(&self) -> String {
         format!("SELECT {} FROM {} WHERE {} = $1", self.mode_col, self.table, self.pk)
     }
 
+    #[must_use]
     pub fn set_visibility_sql(&self) -> String {
         format!("UPDATE {} SET {} = $1 WHERE {} = $2", self.table, self.mode_col, self.pk)
     }
@@ -58,15 +68,9 @@ impl ResourceAccessSurface {
         Some(v.to_string())
     }
 
-    pub fn grant_insert(
-        &self,
-        scope: &[String],
-        resource_id: &str,
-        kind: &str,
-        principal_id: &str,
-        access: &str,
-    ) -> (String, Vec<SqlArg>) {
-        let mut cols: Vec<&str> = self.scope_cols.iter().map(|c| c.as_ref()).collect();
+    #[must_use]
+    pub fn grant_insert(&self, scope: &[String], resource_id: &str, kind: &str, principal_id: &str, access: &str) -> (String, Vec<SqlArg>) {
+        let mut cols: Vec<&str> = self.scope_cols.iter().map(std::convert::AsRef::as_ref).collect();
         let mut args: Vec<SqlArg> = scope.iter().enumerate().map(|(i, v)| self.scope_arg(i, v)).collect();
         if !self.discrim_col.is_empty() {
             cols.push(&self.discrim_col);
@@ -90,6 +94,7 @@ impl ResourceAccessSurface {
         (sql, args)
     }
 
+    #[must_use]
     pub fn revoke_delete(&self, resource_id: &str, kind: &str, principal_id: &str, access: &str) -> (String, Vec<SqlArg>) {
         let mut conds = Vec::new();
         let mut args: Vec<SqlArg> = Vec::new();
@@ -109,17 +114,17 @@ impl ResourceAccessSurface {
         (format!("DELETE FROM {} WHERE {}", self.acl_table, conds.join(" AND ")), args)
     }
 
+    #[must_use]
     pub fn list_grants_sql(&self) -> String {
-        let mut sql = format!(
-            "SELECT {}, {}, {}, created_at FROM {} WHERE {} = $1",
-            self.kind_col, self.principal_col, self.access_col, self.acl_table, self.record_col
-        );
+        let mut sql =
+            format!("SELECT {}, {}, {}, created_at FROM {} WHERE {} = $1", self.kind_col, self.principal_col, self.access_col, self.acl_table, self.record_col);
         if !self.discrim_col.is_empty() {
-            sql.push_str(&format!(" AND {} = $2", self.discrim_col));
+            write!(sql, " AND {} = $2", self.discrim_col).expect("fmt::Write for String never fails");
         }
         sql + " ORDER BY created_at"
     }
 
+    #[must_use]
     pub fn list_grants_args(&self, resource_id: &str) -> Vec<SqlArg> {
         if !self.discrim_col.is_empty() {
             return vec![Some(resource_id.to_string()), Some(self.discrim_val.to_string())];
@@ -127,20 +132,20 @@ impl ResourceAccessSurface {
         vec![Some(resource_id.to_string())]
     }
 
+    #[must_use]
     pub fn is_conditional(&self) -> bool {
         self.conditional
     }
 
+    #[must_use]
     pub fn conditional_by(&self) -> &str {
         &self.conditional_by
     }
 
+    #[must_use]
     pub fn accessors_sql(&self) -> String {
         if self.conditional {
-            return format!(
-                "SELECT source, principal_kind, principal_id, access, via_claim_key, via_claim_value FROM {}($1)",
-                self.accessor_fn
-            );
+            return format!("SELECT source, principal_kind, principal_id, access, via_claim_key, via_claim_value FROM {}($1)", self.accessor_fn);
         }
         format!("SELECT source, principal_kind, principal_id, access FROM {}($1)", self.accessor_fn)
     }

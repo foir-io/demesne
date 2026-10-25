@@ -7,7 +7,7 @@ fn s(x: &str) -> Value {
 }
 
 fn args(a: &[SqlArg]) -> Value {
-    Value::Array(a.iter().map(|x| x.as_ref().map(Value::str).unwrap_or(Value::Null)).collect())
+    Value::Array(a.iter().map(|x| x.as_ref().map_or(Value::Null, Value::str)).collect())
 }
 
 fn stmt((sql, a): (String, Vec<SqlArg>)) -> Value {
@@ -34,16 +34,16 @@ fn run_case(proj: &Value, c: &Value) -> Value {
     let local = || i.get("local").and_then(Value::as_bool).unwrap_or(false);
     let app = || {
         let name = text(i, "object");
-        let objs = field(proj, "appSurface").as_array().unwrap();
-        projection::app_object(objs.iter().find(|o| text(o, "object") == name).unwrap())
+        let objs = field(proj, "appSurface").as_array().expect("appSurface is an array");
+        projection::app_object(objs.iter().find(|o| text(o, "object") == name).expect("the case names an object on the app surface"))
     };
     let holds = || match i.get("resolver").and_then(Value::as_str) {
         Some(r) => projection::holds_resolver(field(field(proj, "holdsResolvers"), r)),
         None => projection::holds_resolver(field(proj, "holdsResolver")),
     };
-    let ra = || projection::role_assignment(field(proj, "roleAssignment"));
-    let grant = || projection::grant(field(field(proj, "grants"), &text(i, "grant")));
-    let acc = || projection::resource_access(field(field(proj, "resourceAccess"), &text(i, "object")));
+    if let Some(v) = writer_case(proj, &kind, i) {
+        return v;
+    }
     match kind.as_str() {
         "claims.claimsSetSQL" => Value::Str(session().claims_set_sql(local())),
         "claims.setRoleSQL" => Value::Str(session().set_role_sql(local())),
@@ -51,7 +51,7 @@ fn run_case(proj: &Value, c: &Value) -> Value {
         "claims.mintWithExtra" => {
             let contract = projection::contract(field(proj, "claims"));
             let extra = str_map(i.get("extra"));
-            Value::Str(rt::mint_claims_values_with_extra(&contract, &str_map(i.get("values")), Some(&extra)).unwrap())
+            Value::Str(rt::mint_claims_values_with_extra(&contract, &str_map(i.get("values")), Some(&extra)).expect("the oracle mints only valid claims"))
         }
         "appSurface.checkSQL" => Value::Str(app().check_sql()),
         "appSurface.checkManySQL" => Value::Str(app().check_many_sql()),
@@ -59,13 +59,11 @@ fn run_case(proj: &Value, c: &Value) -> Value {
         "appSurface.checkEditSQL" => s(app().check_edit_sql()),
         "appSurface.listResourcesFastSQL" => Value::Str(app().list_resources_fast_sql()),
         "holds.assignmentsSQL" => Value::Str(holds().assignments_sql()),
-        "holds.scopeContains" => {
-            Value::Bool(rt::scope_contains(&field(i, "assignment").string_list(), &field(i, "query").string_list()))
-        }
+        "holds.scopeContains" => Value::Bool(rt::scope_contains(&field(i, "assignment").string_list(), &field(i, "query").string_list())),
         "holds.resolve" => {
             let asg: Vec<RoleAssignment> = field(i, "assignments")
                 .as_array()
-                .unwrap()
+                .expect("assignments is an array")
                 .iter()
                 .map(|a| RoleAssignment {
                     scope: field(a, "scope").string_list(),
@@ -73,8 +71,17 @@ fn run_case(proj: &Value, c: &Value) -> Value {
                     permissions: field(a, "permissions").string_list(),
                 })
                 .collect();
-            Value::strings(&holds().resolve(&asg, &field(i, "scope").string_list()).unwrap().permissions())
+            Value::strings(&holds().resolve(&asg, &field(i, "scope").string_list()).expect("the oracle resolves only valid scopes").permissions())
         }
+        other => panic!("oracle: unknown case kind {other:?}"),
+    }
+}
+
+fn writer_case(proj: &Value, kind: &str, i: &Value) -> Option<Value> {
+    let ra = || projection::role_assignment(field(proj, "roleAssignment"));
+    let grant = || projection::grant(field(field(proj, "grants"), &text(i, "grant")));
+    let acc = || projection::resource_access(field(field(proj, "resourceAccess"), &text(i, "object")));
+    Some(match kind {
         "roleAssignment.revokeSQL" => Value::Str(ra().revoke_sql()),
         "roleAssignment.listForRoleSQL" => Value::Str(ra().list_for_role_sql()),
         "roleAssignment.listForPrincipalSQL" => Value::Str(ra().list_for_principal_sql()),
@@ -104,18 +111,12 @@ fn run_case(proj: &Value, c: &Value) -> Value {
         "resourceAccess.listGrantsSQL" => Value::Str(acc().list_grants_sql()),
         "resourceAccess.accessorsSQL" => Value::Str(acc().accessors_sql()),
         "resourceAccess.listGrantsArgs" => args(&acc().list_grants_args("rec1")),
-        "resourceAccess.grantInsert" => stmt(acc().grant_insert(
-            &field(i, "scope").string_list(),
-            &text(i, "resourceID"),
-            &text(i, "kind"),
-            &text(i, "principalID"),
-            &text(i, "access"),
-        )),
-        "resourceAccess.revokeDelete" => {
-            stmt(acc().revoke_delete(&text(i, "resourceID"), &text(i, "kind"), &text(i, "principalID"), &text(i, "access")))
+        "resourceAccess.grantInsert" => {
+            stmt(acc().grant_insert(&field(i, "scope").string_list(), &text(i, "resourceID"), &text(i, "kind"), &text(i, "principalID"), &text(i, "access")))
         }
-        other => panic!("oracle: unknown case kind {other:?}"),
-    }
+        "resourceAccess.revokeDelete" => stmt(acc().revoke_delete(&text(i, "resourceID"), &text(i, "kind"), &text(i, "principalID"), &text(i, "access"))),
+        _ => return None,
+    })
 }
 
 #[test]

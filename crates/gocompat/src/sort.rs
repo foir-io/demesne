@@ -1,3 +1,11 @@
+#![expect(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::many_single_char_names,
+    reason = "a line-for-line port of Go's pdqsort, which works in signed int with Go's names, so the tie order stays exactly Go's"
+)]
+
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Hint {
     Unknown,
@@ -20,7 +28,7 @@ impl<T, F: FnMut(&T, &T) -> bool> Data<'_, T, F> {
 }
 
 fn bits_len(x: usize) -> usize {
-    (usize::BITS - x.leading_zeros()) as usize
+    x.bit_width() as usize
 }
 
 pub fn sort_slice<T, F: FnMut(&T, &T) -> bool>(v: &mut [T], less: F) {
@@ -196,20 +204,14 @@ fn partial_insertion_sort<T, F: FnMut(&T, &T) -> bool>(d: &mut Data<T, F>, a: is
         d.swap(i as usize, (i - 1) as usize);
         if i - a >= 2 {
             let mut j = i - 1;
-            while j >= 1 {
-                if !d.less(j as usize, (j - 1) as usize) {
-                    break;
-                }
+            while j >= 1 && d.less(j as usize, (j - 1) as usize) {
                 d.swap(j as usize, (j - 1) as usize);
                 j -= 1;
             }
         }
         if b - i >= 2 {
             let mut j = i + 1;
-            while j < b {
-                if !d.less(j as usize, (j - 1) as usize) {
-                    break;
-                }
+            while j < b && d.less(j as usize, (j - 1) as usize) {
                 d.swap(j as usize, (j - 1) as usize);
                 j += 1;
             }

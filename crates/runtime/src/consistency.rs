@@ -16,6 +16,7 @@ pub enum Consistency {
 }
 
 impl Consistency {
+    #[must_use]
     pub fn level(&self) -> ConsistencyLevel {
         match self {
             Consistency::MinimizeLatency => ConsistencyLevel::MinimizeLatency,
@@ -31,19 +32,35 @@ pub struct Zookie {
 }
 
 impl Zookie {
+    #[must_use]
     pub fn from_xid(xid: u64) -> Self {
         Zookie { xid }
     }
 
+    /// Parses a zookie from its decimal transaction-id form.
+    ///
+    /// # Errors
+    ///
+    /// Text that is not an unsigned 64-bit decimal integer, including a leading `+`.
     pub fn parse(s: &str) -> Result<Self, Error> {
         if s.starts_with('+') {
-            return Err(Error::new(format!("invalid zookie {}: strconv.ParseUint: parsing {}: invalid syntax", demesne_gocompat::quote(s), demesne_gocompat::quote(s))));
+            return Err(Error::new(format!(
+                "invalid zookie {}: strconv.ParseUint: parsing {}: invalid syntax",
+                demesne_gocompat::quote(s),
+                demesne_gocompat::quote(s)
+            )));
         }
         s.parse::<u64>().map(Zookie::from_xid).map_err(|e| {
-            Error::new(format!("invalid zookie {}: strconv.ParseUint: parsing {}: {}", demesne_gocompat::quote(s), demesne_gocompat::quote(s), go_parse_error(&e)))
+            Error::new(format!(
+                "invalid zookie {}: strconv.ParseUint: parsing {}: {}",
+                demesne_gocompat::quote(s),
+                demesne_gocompat::quote(s),
+                go_parse_error(&e)
+            ))
         })
     }
 
+    #[must_use]
     pub fn reflects(&self, writer: Zookie) -> bool {
         self.xid > writer.xid
     }
@@ -62,6 +79,7 @@ impl fmt::Display for Zookie {
     }
 }
 
+#[must_use]
 pub fn zookie_now_sql() -> &'static str {
     "SELECT pg_current_xact_id()::text"
 }
@@ -96,11 +114,13 @@ pub struct Affordance {
 }
 
 impl Affordance {
+    #[must_use]
     pub fn render(&self) -> bool {
         self.hint == AffordanceHint::Likely
     }
 }
 
+#[must_use]
 pub fn compose_affordance(allowed: bool, as_of: Zookie, c: Consistency) -> Affordance {
     let hint = if allowed { AffordanceHint::Likely } else { AffordanceHint::Unlikely };
     if let Consistency::AtLeastAsFresh(z) = c {

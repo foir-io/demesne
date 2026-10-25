@@ -15,15 +15,10 @@ mod vocab;
 pub use access::ResourceAccessSurface;
 pub use app_surface::{AppCheck, AppCheckSurface, AppObjectSurface};
 pub use claims::{ClaimEntry, Session, mint_claims_values, mint_claims_values_with_extra};
-pub use consistency::{
-    Affordance, AffordanceHint, AffordanceSource, Consistency, ConsistencyLevel, Freshness, Zookie, compose_affordance,
-    zookie_now_sql,
-};
+pub use consistency::{Affordance, AffordanceHint, AffordanceSource, Consistency, ConsistencyLevel, Freshness, Zookie, compose_affordance, zookie_now_sql};
 pub use error::Error;
 pub use grant::GrantSurface;
-pub use holds::{
-    EffectivePerms, EffectiveRoles, HoldsResolver, RoleAssignment, resolve_roles, scope_all_empty, scope_contains,
-};
+pub use holds::{EffectivePerms, EffectiveRoles, HoldsResolver, RoleAssignment, resolve_roles, scope_all_empty, scope_contains};
 pub use pdp::{Decision, Pdp, capability_gate_err, compose_can};
 pub use role_assignment::{RoleAssignmentSurface, touch_on_conflict};
 pub use vocab::{DelegationCap, Implication, Preset, Vocabulary};

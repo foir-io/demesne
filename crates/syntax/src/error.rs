@@ -10,6 +10,7 @@ impl Error {
         Error { message: message.into() }
     }
 
+    #[must_use]
     pub fn message(&self) -> &str {
         &self.message
     }

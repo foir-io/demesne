@@ -2,11 +2,12 @@ use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::quote;
 use demesne_runtime::{ClaimEntry, Session};
-use demesne_syntax::*;
+use demesne_syntax::{Grant, Level, Object, Perm, PermNode, Pos, Relation, Repr, RoleStore, Spec, Subject, Term, TermKind, ViaGrant, Vocabulary};
 use std::collections::{BTreeMap, HashMap};
 
 pub const ORDERED_TABLE_OPS: [&str; 4] = ["select", "insert", "update", "delete"];
 
+#[must_use]
 pub fn op_to_cmd(op: &str) -> &'static str {
     match op {
         "select" => "SELECT",
@@ -17,6 +18,7 @@ pub fn op_to_cmd(op: &str) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn access_for(op: &str) -> &'static str {
     match op {
         "select" => "read",
@@ -25,14 +27,17 @@ pub fn access_for(op: &str) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn contains(ss: &[String], want: &str) -> bool {
     ss.iter().any(|s| s == want)
 }
 
+#[must_use]
 pub fn is_perm_key_lit(s: &str) -> bool {
     s.contains(':')
 }
 
+#[must_use]
 pub fn go_type_name(r: &Repr) -> &'static str {
     match r {
         Repr::Column(_) => "demesne.ViaColumn",
@@ -55,6 +60,7 @@ pub enum CostClass {
 }
 
 impl CostClass {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             CostClass::Inline => "inline",
@@ -64,6 +70,7 @@ impl CostClass {
     }
 }
 
+#[must_use]
 pub fn cost_class(r: &Relation) -> CostClass {
     match r.repr {
         Repr::Column(_) => CostClass::Inline,
@@ -74,6 +81,7 @@ pub fn cost_class(r: &Relation) -> CostClass {
 
 pub type Rels<'a> = HashMap<&'a str, &'a Relation>;
 
+#[must_use]
 pub fn rels_of(o: &Object) -> Rels<'_> {
     let mut m = HashMap::new();
     for r in &o.relations {
@@ -82,6 +90,7 @@ pub fn rels_of(o: &Object) -> Rels<'_> {
     m
 }
 
+#[must_use]
 pub fn grant_relation(o: &Object) -> Option<(&Relation, &ViaGrant)> {
     o.relations.iter().find_map(|r| match &r.repr {
         Repr::Grant(vg) => Some((r, vg)),
@@ -89,24 +98,27 @@ pub fn grant_relation(o: &Object) -> Option<(&Relation, &ViaGrant)> {
     })
 }
 
+#[must_use]
 pub fn object_grant_edge(o: &Object) -> Option<&ViaGrant> {
     grant_relation(o).map(|(_, vg)| vg)
 }
 
+#[must_use]
 pub fn object_uses_store_manage(o: &Object) -> bool {
     o.perms.iter().any(|pm| pm.tree.leaves().iter().any(|t| t.builtin() == "store_manage"))
 }
 
+#[must_use]
 pub fn object_select_perm(o: &Object) -> Option<&Perm> {
     o.perms.iter().find(|pm| pm.maps() == "select")
 }
 
+#[must_use]
 pub fn mapped_perm<'a>(o: &'a Object, verb: &str) -> Option<&'a Perm> {
-    o.perms
-        .iter()
-        .find(|pm| pm.verb == verb && pm.has_layer("rls") && !pm.predicate_only && !op_to_cmd(pm.maps()).is_empty())
+    o.perms.iter().find(|pm| pm.verb == verb && pm.has_layer("rls") && !pm.predicate_only && !op_to_cmd(pm.maps()).is_empty())
 }
 
+#[must_use]
 pub fn grant_selector<'a>(ident: &'a str, rels: &Rels) -> Option<(&'a str, &'a str)> {
     let i = ident.find(':')?;
     let (rel_name, access) = (&ident[..i], &ident[i + 1..]);
@@ -117,33 +129,29 @@ pub fn grant_selector<'a>(ident: &'a str, rels: &Rels) -> Option<(&'a str, &'a s
     }
 }
 
+#[must_use]
 pub fn is_grant_selector_term(ident: &str, rels: &Rels) -> bool {
     grant_selector(ident, rels).is_some()
 }
 
+#[must_use]
 pub fn grant_rel_definer_base(o: &Object, vg: &ViaGrant) -> String {
-    if vg.discrim_col.is_some() {
-        format!("{}_grants_{}", vg.table, o.name)
-    } else {
-        format!("{}_grants", vg.table)
-    }
+    if vg.discrim_col.is_some() { format!("{}_grants_{}", vg.table, o.name) } else { format!("{}_grants", vg.table) }
 }
 
+#[must_use]
 pub fn store_manage_name(table: &str) -> String {
     format!("{table}_manage")
 }
 
+#[must_use]
 pub fn relation_is_async(r: &Relation) -> bool {
     matches!(&r.repr, Repr::Grant(g) if g.is_async)
 }
 
+#[must_use]
 pub fn without_composition(o: &Object) -> Object {
-    let comp: Vec<&str> = o
-        .relations
-        .iter()
-        .filter(|r| matches!(r.repr, Repr::Composition(_)))
-        .map(|r| r.name.as_str())
-        .collect();
+    let comp: Vec<&str> = o.relations.iter().filter(|r| matches!(r.repr, Repr::Composition(_))).map(|r| r.name.as_str()).collect();
     let mut cp = o.clone();
     cp.relations = o.relations.iter().filter(|r| !matches!(r.repr, Repr::Composition(_))).cloned().collect();
     cp.perms = o
@@ -184,22 +192,26 @@ fn prune_comp_leaves(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
     }
 }
 
+#[must_use]
 pub fn term_ref(ident: &str) -> Term {
     Term { kind: TermKind::Ref { ident: ident.to_string(), walk_verb: None }, pos: Pos::default() }
 }
 
+#[derive(Debug)]
 pub struct Principal {
     pub subject: String,
     pub id: String,
     pub scopes: BTreeMap<String, String>,
 }
 
+#[derive(Debug)]
 pub enum ReachGrantRef<'a> {
     Level(&'a Grant),
     Row(&'a ViaGrant),
 }
 
 impl ReachGrantRef<'_> {
+    #[must_use]
     pub fn edge_table(&self) -> &str {
         match self {
             ReachGrantRef::Level(g) => g.table(),
@@ -207,6 +219,7 @@ impl ReachGrantRef<'_> {
         }
     }
 
+    #[must_use]
     pub fn grantee_column(&self) -> &str {
         match self {
             ReachGrantRef::Level(g) => g.grantee_col(),
@@ -214,6 +227,7 @@ impl ReachGrantRef<'_> {
         }
     }
 
+    #[must_use]
     pub fn granularity(&self) -> &'static str {
         match self {
             ReachGrantRef::Level(_) => "level",
@@ -258,11 +272,11 @@ pub trait SpecExt {
     }
 
     fn admin_identify(&self) -> &str {
-        self.spec().subjects.iter().find(|s| s.binds() == "admin").map(|s| s.identifies()).unwrap_or("sub")
+        self.spec().subjects.iter().find(|s| s.binds() == "admin").map_or("sub", demesne_syntax::Subject::identifies)
     }
 
     fn admin_name(&self) -> &str {
-        self.spec().subjects.iter().find(|s| s.binds() == "admin").map(|s| s.name.as_str()).unwrap_or("admin")
+        self.spec().subjects.iter().find(|s| s.binds() == "admin").map_or("admin", |s| s.name.as_str())
     }
 
     fn scope_col(&self, obj: &Object, lvl: &str) -> String {
@@ -283,20 +297,14 @@ pub trait SpecExt {
     }
 
     fn is_platform_role_subject(&self, sub: &Subject) -> bool {
-        !sub.roles().is_empty()
-            && !sub.roles_none
-            && sub.membership.is_none()
-            && sub.reach() != "grant"
-            && self.level_is_virtual(sub.anchor())
+        !sub.roles().is_empty() && !sub.roles_none && sub.membership.is_none() && sub.reach() != "grant" && self.level_is_virtual(sub.anchor())
     }
 
     fn preset_level_map(&self) -> HashMap<String, Vec<String>> {
         let mut out: HashMap<String, Vec<String>> = HashMap::new();
-        for v in &self.spec().vocabs {
-            for p in &v.presets {
-                if let Some(level) = &p.level {
-                    out.entry(level.clone()).or_default().push(p.name.clone());
-                }
+        for p in self.spec().vocabs.iter().flat_map(|v| &v.presets) {
+            if let Some(level) = &p.level {
+                out.entry(level.clone()).or_default().push(p.name.clone());
             }
         }
         out
@@ -322,21 +330,18 @@ pub trait SpecExt {
     }
 
     fn holds_perm_fn(&self, rs: &RoleStore) -> String {
-        if self.is_default_role_store(rs) {
-            format!("{}_has_perm", self.admin_name())
-        } else {
-            format!("{}_has_perm", rs.name)
-        }
+        if self.is_default_role_store(rs) { format!("{}_has_perm", self.admin_name()) } else { format!("{}_has_perm", rs.name) }
     }
 
     fn perm_implied_by_fn(&self, rs: &RoleStore) -> String {
-        if self.is_default_role_store(rs) {
-            format!("{}_perm_implied_by", self.admin_name())
-        } else {
-            format!("{}_perm_implied_by", rs.name)
-        }
+        if self.is_default_role_store(rs) { format!("{}_perm_implied_by", self.admin_name()) } else { format!("{}_perm_implied_by", rs.name) }
     }
 
+    /// Returns the vocabulary backing rolestore `rs`: the vocabulary of the same name, else the one a `binds admin` subject names in `roles`.
+    ///
+    /// # Errors
+    ///
+    /// Neither vocabulary exists.
     fn rolestore_vocab(&self, rs: &RoleStore) -> Result<&Vocabulary, String> {
         if let Some(v) = self.vocab_by_name(&rs.name) {
             return Ok(v);
@@ -356,6 +361,11 @@ pub trait SpecExt {
         ))
     }
 
+    /// Returns the rolestore that a `holds` check on `perm` reads.
+    ///
+    /// # Errors
+    ///
+    /// The spec declares no rolestore. Or it declares several and `perm` belongs to no rolestore-backed vocabulary, to more than one, or to a vocabulary backing several rolestores.
     fn holds_role_store(&self, perm: &str) -> Result<&RoleStore, String> {
         let s = self.spec();
         match s.role_stores.len() {
@@ -369,27 +379,19 @@ pub trait SpecExt {
         }
         let mut owners: Vec<(&Vocabulary, Vec<&RoleStore>)> = Vec::new();
         for v in &declaring {
-            let matched: Vec<&RoleStore> = s
-                .role_stores
-                .iter()
-                .filter(|rs| self.rolestore_vocab(rs).is_ok_and(|rv| std::ptr::eq(rv, *v)))
-                .collect();
+            let matched: Vec<&RoleStore> = s.role_stores.iter().filter(|rs| self.rolestore_vocab(rs).is_ok_and(|rv| std::ptr::eq(rv, *v))).collect();
             if !matched.is_empty() {
                 owners.push((v, matched));
             }
         }
         match owners.len() {
             0 => {
-                return Err(format!(
-                    "permission {} belongs to vocabulary {}, which backs no rolestore",
-                    quote(perm),
-                    quote(&declaring[0].name)
-                ));
+                return Err(format!("permission {} belongs to vocabulary {}, which backs no rolestore", quote(perm), quote(&declaring[0].name)));
             }
             1 => {}
             _ => {
                 let mut names: Vec<&str> = owners.iter().map(|(v, _)| v.name.as_str()).collect();
-                names.sort();
+                names.sort_unstable();
                 return Err(format!(
                     "permission {} is declared by more than one vocabulary that backs a rolestore ({}), so it names no single rolestore — a permission belongs to exactly one rolestore-backed vocabulary",
                     quote(perm),
@@ -400,7 +402,7 @@ pub trait SpecExt {
         let (v, matched) = &owners[0];
         if matched.len() > 1 {
             let mut names: Vec<&str> = matched.iter().map(|rs| rs.name.as_str()).collect();
-            names.sort();
+            names.sort_unstable();
             return Err(format!(
                 "permission {} belongs to vocabulary {}, which backs more than one rolestore ({})",
                 quote(perm),
@@ -411,11 +413,16 @@ pub trait SpecExt {
         Ok(matched[0])
     }
 
+    /// Returns every claim key a session may carry, sorted, with the level or subjects that use it.
+    ///
+    /// # Errors
+    ///
+    /// The topology has no single root, or a level is unreachable from it.
     fn claims_contract_entries(&self) -> Result<Vec<ClaimEntry>, String> {
         let chain = topology::non_virtual_chain(self.spec())?;
         let mut by_key: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
         for l in chain {
-            by_key.entry(l.claim_key()).or_default().0 = l.name.clone();
+            by_key.entry(l.claim_key()).or_default().0.clone_from(&l.name);
         }
         for sub in &self.spec().subjects {
             if let Some(id) = &sub.identifies {
@@ -426,28 +433,38 @@ pub trait SpecExt {
             .into_iter()
             .map(|(key, (level, mut subjects))| {
                 subjects.sort();
-                ClaimEntry {
-                    key: demesne_runtime::owned(key),
-                    level: demesne_runtime::owned(level),
-                    subjects: demesne_runtime::owned_list(subjects),
-                }
+                ClaimEntry { key: demesne_runtime::owned(key), level: demesne_runtime::owned(level), subjects: demesne_runtime::owned_list(subjects) }
             })
             .collect())
     }
 
+    /// Returns every claim key a session may carry, sorted.
+    ///
+    /// # Errors
+    ///
+    /// The topology has no single root, or a level is unreachable from it.
     fn claims_contract(&self) -> Result<Vec<String>, String> {
         Ok(self.claims_contract_entries()?.into_iter().map(|e| e.key.into_owned()).collect())
     }
 
+    /// Returns the scope claim keys a subject's anchor pins, and whether the anchor is virtual.
+    ///
+    /// # Errors
+    ///
+    /// The anchor is not a level, or it has more than one ancestor path.
     fn pinned_columns(&self, sub: &Subject) -> Result<(Vec<String>, bool), String> {
-        let path = topology::ancestor_path(self.spec(), sub.anchor()).map_err(|e| {
-            format!("line {}: subject {} anchor {}: {e}", sub.pos.line, quote(&sub.name), quote(sub.anchor()))
-        })?;
+        let path = topology::ancestor_path(self.spec(), sub.anchor())
+            .map_err(|e| format!("line {}: subject {} anchor {}: {e}", sub.pos.line, quote(&sub.name), quote(sub.anchor())))?;
         let virtual_anchor = path.last().is_some_and(|l| l.is_virtual);
         let cols = path.iter().filter(|l| !l.is_virtual).map(|l| l.claim_key()).collect();
         Ok((cols, virtual_anchor))
     }
 
+    /// Returns the scope claim keys below a `reach descendants` subject's anchor; other reaches have none.
+    ///
+    /// # Errors
+    ///
+    /// The topology has no single root, or a level is unreachable from it.
     fn free_columns(&self, sub: &Subject) -> Result<Vec<String>, String> {
         if sub.reach() != "descendants" {
             return Ok(Vec::new());
@@ -469,6 +486,11 @@ pub trait SpecExt {
         out
     }
 
+    /// Builds the claim values that identify principal `p`: its subject's identity key and its scope ids.
+    ///
+    /// # Errors
+    ///
+    /// An unknown subject, an id for a subject without `identifies`, or a scope on an unknown or virtual level.
     fn build_claims(&self, p: &Principal) -> Result<BTreeMap<String, String>, String> {
         let Some(sub) = self.subject_by_name(&p.subject) else {
             return Err(format!("BuildClaims: no subject {} in the spec", quote(&p.subject)));
@@ -476,42 +498,47 @@ pub trait SpecExt {
         let mut values = BTreeMap::new();
         if !p.id.is_empty() {
             let Some(id) = &sub.identifies else {
-                return Err(format!(
-                    "BuildClaims: subject {} has no identity key (`identifies`) but an id was supplied",
-                    quote(&p.subject)
-                ));
+                return Err(format!("BuildClaims: subject {} has no identity key (`identifies`) but an id was supplied", quote(&p.subject)));
             };
             values.insert(id.clone(), p.id.clone());
         }
         for (name, val) in &p.scopes {
             let Some(l) = self.level_by_name(name) else {
-                return Err(format!(
-                    "BuildClaims: subject {} presents a scope for unknown level {}",
-                    quote(&p.subject),
-                    quote(name)
-                ));
+                return Err(format!("BuildClaims: subject {} presents a scope for unknown level {}", quote(&p.subject), quote(name)));
             };
             if l.is_virtual {
-                return Err(format!(
-                    "BuildClaims: level {} is virtual (no scope claim) — it cannot carry a scope id",
-                    quote(name)
-                ));
+                return Err(format!("BuildClaims: level {} is virtual (no scope claim) — it cannot carry a scope id", quote(name)));
             }
             values.insert(l.claim_key(), val.clone());
         }
         Ok(values)
     }
 
+    /// Mints a claims JSON object from `values`, checked against this spec's claims contract.
+    ///
+    /// # Errors
+    ///
+    /// The contract cannot be built, or `values` holds a key outside it.
     fn mint_claims(&self, values: &BTreeMap<String, String>) -> Result<String, String> {
         let contract = self.claims_contract()?;
         demesne_runtime::mint_claims_values(&contract, values).map_err(|e| e.to_string())
     }
 
+    /// Mints the claims JSON object that identifies principal `p`.
+    ///
+    /// # Errors
+    ///
+    /// Any error from [`SpecExt::build_claims`] or [`SpecExt::mint_claims`].
     fn mint_claims_for(&self, p: &Principal) -> Result<String, String> {
         let values = self.build_claims(p)?;
         self.mint_claims(&values)
     }
 
+    /// Returns the SQL that asks whether one row of `object`, keyed by `$1`, is visible.
+    ///
+    /// # Errors
+    ///
+    /// No such object, or the object has a composite primary key.
     fn point_check_sql(&self, object: &str) -> Result<String, String> {
         match self.object_by_name(object) {
             Some(o) if !o.point_checkable() => Err(format!(
@@ -593,11 +620,9 @@ pub trait SpecExt {
 
     fn async_surface_tokens(&self) -> Vec<String> {
         let mut toks = Vec::new();
-        for o in &self.spec().objects {
-            for r in &o.relations {
-                if relation_is_async(r) {
-                    toks.push(self.async_index_base(&o.table, &r.name));
-                }
+        for (o, r) in self.spec().relations() {
+            if relation_is_async(r) {
+                toks.push(self.async_index_base(&o.table, &r.name));
             }
         }
         toks
@@ -621,10 +646,9 @@ pub trait SpecExt {
     }
 
     fn object_references_staff(&self, obj: &Object) -> bool {
-        obj.relations.iter().any(|r| {
-            matches!(r.repr, Repr::Role)
-                && r.types.first().and_then(|t| self.subject_by_name(t)).is_some_and(|st| self.is_platform_role_subject(st))
-        })
+        obj.relations
+            .iter()
+            .any(|r| matches!(r.repr, Repr::Role) && r.types.first().and_then(|t| self.subject_by_name(t)).is_some_and(|st| self.is_platform_role_subject(st)))
     }
 
     fn select_uses_app_scope(&self, obj: &Object) -> bool {
@@ -657,10 +681,7 @@ pub trait SpecExt {
         if o.relations.iter().any(|r| matches!(r.repr, Repr::Grant(_) | Repr::Edge(_) | Repr::Composition(_))) {
             return true;
         }
-        self.spec()
-            .objects
-            .iter()
-            .any(|other| other.relations.iter().any(|r| matches!(&r.repr, Repr::Object(vo) if vo.object == o.name)))
+        self.spec().objects.iter().any(|other| other.relations.iter().any(|r| matches!(&r.repr, Repr::Object(vo) if vo.object == o.name)))
     }
 
     fn runtime_vocab(&self, v: &Vocabulary) -> demesne_runtime::Vocabulary {

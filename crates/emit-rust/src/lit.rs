@@ -1,5 +1,6 @@
 use demesne_runtime as rt;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 fn s(v: &str) -> String {
     format!("::std::borrow::Cow::Borrowed({v:?})")
@@ -35,7 +36,7 @@ impl Fields {
         let mut out = format!("{} {{\n", self.ty);
         for (name, value) in self.fields {
             let value = value.replace('\n', "\n    ");
-            out.push_str(&format!("    {name}: {value},\n"));
+            writeln!(out, "    {name}: {value},").expect("fmt::Write for String never fails");
         }
         out.push('}');
         out
@@ -48,7 +49,7 @@ fn list(items: Vec<String>) -> String {
     }
     let mut out = String::from("::std::borrow::Cow::Borrowed(&[\n");
     for i in items {
-        out.push_str(&format!("    {},\n", i.replace('\n', "\n    ")));
+        writeln!(out, "    {},", i.replace('\n', "\n    ")).expect("fmt::Write for String never fails");
     }
     out.push_str("])");
     out
@@ -208,7 +209,7 @@ pub(crate) fn claim_entries(entries: &[rt::ClaimEntry]) -> String {
     }
     let mut out = String::from("&[\n");
     for i in items {
-        out.push_str(&format!("    {},\n", i.replace('\n', "\n    ")));
+        writeln!(out, "    {},", i.replace('\n', "\n    ")).expect("fmt::Write for String never fails");
     }
     out.push(']');
     out
@@ -220,7 +221,7 @@ pub(crate) fn presets(p: &BTreeMap<String, Vec<String>>) -> String {
     }
     let mut out = String::from("&[\n");
     for (name, set) in p {
-        out.push_str(&format!("    ({name:?}, {}),\n", str_slice(set)));
+        writeln!(out, "    ({name:?}, {}),", str_slice(set)).expect("fmt::Write for String never fails");
     }
     out.push(']');
     out

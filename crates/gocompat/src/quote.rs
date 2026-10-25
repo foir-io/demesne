@@ -2,6 +2,7 @@ use crate::isprint::{IS_NOT_PRINT16, IS_NOT_PRINT32, IS_PRINT16, IS_PRINT32};
 
 const LOWERHEX: &[u8; 16] = b"0123456789abcdef";
 
+#[expect(clippy::many_single_char_names, reason = "a port of Go's strconv bsearch16, keeping its names")]
 fn bsearch16(s: &[u16], v: u16) -> (usize, bool) {
     let (mut i, mut j) = (0usize, s.len());
     while i < j {
@@ -15,6 +16,7 @@ fn bsearch16(s: &[u16], v: u16) -> (usize, bool) {
     (i, i < s.len() && s[i] == v)
 }
 
+#[expect(clippy::many_single_char_names, reason = "a port of Go's strconv bsearch32, keeping its names")]
 fn bsearch32(s: &[u32], v: u32) -> (usize, bool) {
     let (mut i, mut j) = (0usize, s.len());
     while i < j {
@@ -28,7 +30,8 @@ fn bsearch32(s: &[u32], v: u32) -> (usize, bool) {
     (i, i < s.len() && s[i] == v)
 }
 
-pub fn is_print(r: char) -> bool {
+#[must_use]
+fn is_print(r: char) -> bool {
     let r = r as u32;
     if r <= 0xFF {
         if (0x20..=0x7E).contains(&r) {
@@ -40,7 +43,7 @@ pub fn is_print(r: char) -> bool {
         return false;
     }
     if r < 1 << 16 {
-        let rr = r as u16;
+        let rr = u16::try_from(r).expect("r < 1 << 16 in this branch");
         let (i, _) = bsearch16(IS_PRINT16, rr);
         if i >= IS_PRINT16.len() || rr < IS_PRINT16[i & !1] || IS_PRINT16[i | 1] < rr {
             return false;
@@ -55,10 +58,11 @@ pub fn is_print(r: char) -> bool {
     if r >= 0x20000 {
         return true;
     }
-    let (_, found) = bsearch16(IS_NOT_PRINT32, (r - 0x10000) as u16);
+    let (_, found) = bsearch16(IS_NOT_PRINT32, u16::try_from(r - 0x10000).expect("0x10000 <= r < 0x20000 here"));
     !found
 }
 
+#[must_use]
 pub fn quote(s: &str) -> String {
     let mut buf = String::with_capacity(s.len() + 2);
     buf.push('"');

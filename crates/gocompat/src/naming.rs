@@ -9,11 +9,14 @@ fn upper_first_byte(p: &str) -> String {
         out
     } else {
         let mut chars = p.chars();
-        let first = chars.next().unwrap();
-        first.to_uppercase().chain(chars).collect()
+        match chars.next() {
+            Some(first) => first.to_uppercase().chain(chars).collect(),
+            None => String::new(),
+        }
     }
 }
 
+#[must_use]
 pub fn go_export(s: &str) -> String {
     s.split(['_', '-', ':', '.'])
         .filter(|p| !p.is_empty())
@@ -24,6 +27,7 @@ pub fn go_export(s: &str) -> String {
         .collect()
 }
 
+#[must_use]
 pub fn unexport(s: &str) -> String {
     let r: Vec<char> = go_export(s).chars().collect();
     if r.is_empty() {

@@ -41,6 +41,7 @@ impl Out {
     }
 }
 
+#[must_use]
 pub fn build_version() -> &'static str {
     match option_env!("DEMESNE_VERSION") {
         Some(v) => v,
@@ -49,9 +50,15 @@ pub fn build_version() -> &'static str {
 }
 
 pub trait Files {
+    /// Reads the whole file at `path`.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be read. The message matches the Go CLI's.
     fn read(&self, path: &str) -> Result<Vec<u8>, String>;
 }
 
+#[derive(Debug)]
 pub struct OsFiles;
 
 impl Files for OsFiles {
@@ -67,6 +74,7 @@ pub struct Output {
     pub stderr: Vec<u8>,
 }
 
+#[must_use]
 pub fn finish(out: Out, res: R) -> Output {
     match res {
         Ok(()) => Output { code: 0, stdout: out.buf, stderr: Vec::new() },
@@ -95,6 +103,7 @@ pub fn run_pure(args: &[String], files: &dyn Files) -> Option<Output> {
     Some(finish(out, res))
 }
 
+#[must_use]
 pub fn go_read_error(path: &str, e: &io::Error) -> String {
     match e.kind() {
         io::ErrorKind::NotFound => format!("open {path}: no such file or directory"),
@@ -104,6 +113,11 @@ pub fn go_read_error(path: &str, e: &io::Error) -> String {
     }
 }
 
+/// Reads, parses and validates the spec at `path`.
+///
+/// # Errors
+///
+/// The file cannot be read, or the spec does not parse or validate.
 pub fn load_spec(files: &dyn Files, path: &str) -> Result<Spec, String> {
     let src = files.read(path)?;
     let s = demesne_syntax::parse_bytes(&src).map_err(|e| format!("parse {path}: {e}"))?;
@@ -111,6 +125,11 @@ pub fn load_spec(files: &dyn Files, path: &str) -> Result<Spec, String> {
     Ok(s)
 }
 
+/// Checks a command received at least `n` arguments.
+///
+/// # Errors
+///
+/// Fewer than `n` arguments; the message names the missing `what`.
 pub fn need(args: &[String], n: usize, what: &str) -> R {
     if args.len() < n {
         return Err(format!("missing argument: {what}"));
@@ -132,6 +151,7 @@ fn cmd_validate(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
     Ok(())
 }
 
+#[must_use]
 pub fn strip_flag(args: &[String], name: &str, def: &str) -> (String, Vec<String>) {
     let mut val = def.to_string();
     let pfx = format!("--{name}=");
@@ -142,7 +162,7 @@ pub fn strip_flag(args: &[String], name: &str, def: &str) -> (String, Vec<String
         let a = &args[i];
         if *a == flag {
             if i + 1 < args.len() {
-                val = args[i + 1].clone();
+                val.clone_from(&args[i + 1]);
                 i += 1;
             }
         } else if let Some(v) = a.strip_prefix(&pfx) {
@@ -160,7 +180,7 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
     let (profile, args) = strip_flag(&args, "profile", "");
     need(&args, 1, "<spec.demesne>")?;
     let s = load_spec(files, &args[0])?;
-    let kind = args.get(1).map(String::as_str).unwrap_or("all");
+    let kind = args.get(1).map_or("all", String::as_str);
     if !profile.is_empty() {
         return emit_profile(out, &s, &profile);
     }
@@ -184,15 +204,12 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
         }
         "pdp" => emit_pdp_report(out, &s),
         "framework" => {
-            let pkg = args.get(2).map(String::as_str).unwrap_or("authz");
+            let pkg = args.get(2).map_or("authz", String::as_str);
             out.print(&demesne_emit_go::emit_framework(&s, pkg)?);
             Ok(())
         }
         "all" => emit_all_sql(out, &sql),
-        other => Err(format!(
-            "unknown emit kind {} (rls|definers|enablement|triggers|claims|pdp|framework|all)",
-            quote(other)
-        )),
+        other => Err(format!("unknown emit kind {} (rls|definers|enablement|triggers|claims|pdp|framework|all)", quote(other))),
     }
 }
 
@@ -290,10 +307,9 @@ fn emit_ts(out: &mut Out, s: &Spec, kind: &str) -> R {
             out.print(&demesne_emit_ts::emit_framework_ts(s)?);
             Ok(())
         }
-        "rls" | "policies" | "definers" | "enablement" | "triggers" => Err(format!(
-            "emit kind {} is language-neutral SQL/DDL — it has no TypeScript target; emit it without --target ts",
-            quote(kind)
-        )),
+        "rls" | "policies" | "definers" | "enablement" | "triggers" => {
+            Err(format!("emit kind {} is language-neutral SQL/DDL — it has no TypeScript target; emit it without --target ts", quote(kind)))
+        }
         other => Err(format!("unknown emit kind {} for --target ts (claims|pdp|projections|framework|all)", quote(other))),
     }
 }

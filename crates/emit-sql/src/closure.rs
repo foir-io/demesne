@@ -2,8 +2,9 @@ use crate::Sql;
 use crate::genfn::GenFn;
 use demesne_gocompat::sort_slice;
 use demesne_model::SpecExt;
-use demesne_syntax::*;
+use demesne_syntax::Repr;
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
 fn or_default<'a>(s: &'a str, d: &'a str) -> &'a str {
     if s.is_empty() { d } else { s }
@@ -26,9 +27,10 @@ impl ClosureTrigger {
         format!("{}.{}_maintain", or_default(&self.schema, "auth"), self.closure)
     }
 
+    #[must_use]
     pub fn function_sql(&self) -> String {
         format!(
-            r#"CREATE OR REPLACE FUNCTION {f}()
+            r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -63,7 +65,7 @@ BEGIN
   END IF;
   RETURN NULL;
 END;
-$$;"#,
+$$;",
             f = self.fn_name(),
             clo = self.closure,
             anc = self.ancestor,
@@ -73,17 +75,15 @@ $$;"#,
         )
     }
 
+    #[must_use]
     pub fn trigger_sql(&self) -> String {
         let ts = or_default(&self.table_schema, "public");
         let mut b = String::new();
         for op in ["INSERT", "UPDATE", "DELETE"] {
             let name = format!("{}_maintain_{}", self.closure, op[..3].to_lowercase());
-            b.push_str(&format!("DROP TRIGGER IF EXISTS {name} ON {ts}.{};\n", self.base));
-            b.push_str(&format!(
-                "CREATE TRIGGER {name} AFTER {op} ON {ts}.{} FOR EACH ROW EXECUTE FUNCTION {}();\n",
-                self.base,
-                self.fn_name()
-            ));
+            writeln!(b, "DROP TRIGGER IF EXISTS {name} ON {ts}.{};", self.base).expect("fmt::Write for String never fails");
+            writeln!(b, "CREATE TRIGGER {name} AFTER {op} ON {ts}.{} FOR EACH ROW EXECUTE FUNCTION {}();", self.base, self.fn_name())
+                .expect("fmt::Write for String never fails");
         }
         b
     }
@@ -106,9 +106,10 @@ impl GroupTrigger {
         format!("{}.{}_rebuild", or_default(&self.schema, "auth"), self.closure)
     }
 
+    #[must_use]
     pub fn function_sql(&self) -> String {
         format!(
-            r#"CREATE OR REPLACE FUNCTION {f}()
+            r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -144,7 +145,7 @@ BEGIN
   SELECT grp, mem FROM tc ON CONFLICT DO NOTHING;
   RETURN NULL;
 END;
-$$;"#,
+$$;",
             f = self.fn_name(),
             clo = self.closure,
             gc = self.group_col,
@@ -155,6 +156,7 @@ $$;"#,
         )
     }
 
+    #[must_use]
     pub fn trigger_sql(&self) -> String {
         let ts = or_default(&self.table_schema, "public");
         let name = format!("{}_rebuild", self.closure);
@@ -202,6 +204,7 @@ impl MaterializedFlat {
         format!("{}.{}_reconcile", self.schema(), self.flat)
     }
 
+    #[must_use]
     pub fn table_sql(&self) -> String {
         format!(
             "CREATE TABLE IF NOT EXISTS {q} (resource_id {t} NOT NULL, principal_kind text NOT NULL, principal_id {t} NOT NULL);\nCREATE INDEX IF NOT EXISTS {f}_res_idx ON {q} (resource_id);\nCREATE INDEX IF NOT EXISTS {f}_prin_idx ON {q} (principal_id);\n",
@@ -211,9 +214,10 @@ impl MaterializedFlat {
         )
     }
 
+    #[must_use]
     pub fn function_sql(&self) -> String {
         format!(
-            r#"CREATE OR REPLACE FUNCTION {f}()
+            r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -232,7 +236,7 @@ BEGIN
   FROM {ts}.{ot} o JOIN {ts}.{clo} c ON c.{gc} = o.{col};
   RETURN NULL;
 END;
-$$;"#,
+$$;",
             f = self.fn_name(),
             q = self.q_flat(),
             pk = self.obj_pk,
@@ -246,9 +250,10 @@ $$;"#,
         )
     }
 
+    #[must_use]
     pub fn reconcile_sql(&self) -> String {
         format!(
-            r#"CREATE OR REPLACE FUNCTION {f}()
+            r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -278,7 +283,7 @@ BEGIN
   END IF;
   RETURN v_missing + v_stale;
 END;
-$$;"#,
+$$;",
             f = self.reconcile_fn(),
             s = self.schema(),
             q = self.q_flat(),
@@ -293,6 +298,7 @@ $$;"#,
         )
     }
 
+    #[must_use]
     pub fn member_definer(&self) -> GenFn {
         GenFn {
             schema: self.schema().into(),
@@ -304,10 +310,12 @@ $$;"#,
         }
     }
 
+    #[must_use]
     pub fn has_reverse(&self) -> bool {
         !self.claim_expr.is_empty()
     }
 
+    #[must_use]
     pub fn resources_definer(&self) -> GenFn {
         GenFn {
             schema: self.schema().into(),
@@ -330,6 +338,7 @@ $$;"#,
         }
     }
 
+    #[must_use]
     pub fn indexes_sql(&self) -> String {
         format!(
             "CREATE INDEX IF NOT EXISTS {ot}_{col}_l1_idx ON {ts}.{ot} ({col});\nCREATE INDEX IF NOT EXISTS {clo}_{mc}_l2_idx ON {ts}.{clo} ({mc});\n",
@@ -341,94 +350,93 @@ $$;"#,
         )
     }
 
+    #[must_use]
     pub fn trigger_sql(&self) -> String {
         let mut b = String::new();
         for tbl in [&self.obj_table, &self.closure] {
             let name = format!("{}_rebuild_{}", self.flat, tbl);
-            b.push_str(&format!("DROP TRIGGER IF EXISTS {name} ON {}.{tbl};\n", self.table_schema()));
-            b.push_str(&format!(
-                "CREATE TRIGGER {name} AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON {}.{tbl} FOR EACH STATEMENT EXECUTE FUNCTION {}();\n",
+            writeln!(b, "DROP TRIGGER IF EXISTS {name} ON {}.{tbl};", self.table_schema()).expect("fmt::Write for String never fails");
+            writeln!(
+                b,
+                "CREATE TRIGGER {name} AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON {}.{tbl} FOR EACH STATEMENT EXECUTE FUNCTION {}();",
                 self.table_schema(),
                 self.fn_name()
-            ));
+            )
+            .expect("fmt::Write for String never fails");
         }
         b
     }
 }
 
 impl Sql<'_> {
+    #[must_use]
     pub fn emit_triggers(&self) -> Vec<ClosureTrigger> {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
-        for obj in &self.s.objects {
-            for r in &obj.relations {
-                let Repr::Closure(c) = &r.repr else { continue };
-                let Some(base) = &c.base else { continue };
-                if !seen.insert(c.closure.clone()) {
-                    continue;
-                }
-                out.push(ClosureTrigger {
-                    schema: self.s.definer_schema().into(),
-                    table_schema: self.s.table_schema().into(),
-                    closure: c.closure.clone(),
-                    ancestor: c.ancestor_col.clone(),
-                    descendant: c.descendant_col.clone(),
-                    base: base.clone(),
-                    base_id: c.base_id.clone().unwrap_or_default(),
-                    base_parent: c.base_parent.clone().unwrap_or_default(),
-                });
+        for (_, r) in self.s.relations() {
+            let Repr::Closure(c) = &r.repr else { continue };
+            let Some(base) = &c.base else { continue };
+            if !seen.insert(c.closure.clone()) {
+                continue;
             }
+            out.push(ClosureTrigger {
+                schema: self.s.definer_schema().into(),
+                table_schema: self.s.table_schema().into(),
+                closure: c.closure.clone(),
+                ancestor: c.ancestor_col.clone(),
+                descendant: c.descendant_col.clone(),
+                base: base.clone(),
+                base_id: c.base_id.clone().unwrap_or_default(),
+                base_parent: c.base_parent.clone().unwrap_or_default(),
+            });
         }
         sort_slice(&mut out, |a, b| a.closure < b.closure);
         out
     }
 
+    #[must_use]
     pub fn emit_group_triggers(&self) -> Vec<GroupTrigger> {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
-        for obj in &self.s.objects {
-            for r in &obj.relations {
-                match &r.repr {
-                    Repr::Group(g) => {
-                        if !seen.insert(g.closure.clone()) {
-                            continue;
-                        }
-                        out.push(GroupTrigger {
-                            schema: self.s.definer_schema().into(),
-                            table_schema: self.s.table_schema().into(),
-                            closure: g.closure.clone(),
-                            group_col: g.group_col.clone(),
-                            member_col: g.member_col.clone(),
-                            edge: g.edge.clone(),
-                            edge_member: g.edge_member.clone(),
-                            edge_group: g.edge_group.clone(),
-                        });
-                    }
-                    Repr::Grant(g) => {
-                        let Some(clo) = &g.group_closure else { continue };
-                        if !seen.insert(clo.clone()) {
-                            continue;
-                        }
-                        let o = |v: &Option<String>| v.clone().unwrap_or_default();
-                        out.push(GroupTrigger {
-                            schema: self.s.definer_schema().into(),
-                            table_schema: self.s.table_schema().into(),
-                            closure: clo.clone(),
-                            group_col: o(&g.group_group_col),
-                            member_col: o(&g.group_member_col),
-                            edge: o(&g.group_edge),
-                            edge_member: o(&g.group_edge_member),
-                            edge_group: o(&g.group_edge_group),
-                        });
-                    }
-                    _ => {}
-                }
+        for (_, r) in self.s.relations() {
+            if let Some(t) = self.group_trigger(&r.repr)
+                && seen.insert(t.closure.clone())
+            {
+                out.push(t);
             }
         }
         sort_slice(&mut out, |a, b| a.closure < b.closure);
         out
     }
 
+    fn group_trigger(&self, repr: &Repr) -> Option<GroupTrigger> {
+        let o = |v: &Option<String>| v.clone().unwrap_or_default();
+        match repr {
+            Repr::Group(g) => Some(GroupTrigger {
+                schema: self.s.definer_schema().into(),
+                table_schema: self.s.table_schema().into(),
+                closure: g.closure.clone(),
+                group_col: g.group_col.clone(),
+                member_col: g.member_col.clone(),
+                edge: g.edge.clone(),
+                edge_member: g.edge_member.clone(),
+                edge_group: g.edge_group.clone(),
+            }),
+            Repr::Grant(g) => Some(GroupTrigger {
+                schema: self.s.definer_schema().into(),
+                table_schema: self.s.table_schema().into(),
+                closure: g.group_closure.clone()?,
+                group_col: o(&g.group_group_col),
+                member_col: o(&g.group_member_col),
+                edge: o(&g.group_edge),
+                edge_member: o(&g.group_edge_member),
+                edge_group: o(&g.group_edge_group),
+            }),
+            _ => None,
+        }
+    }
+
+    #[must_use]
     pub fn triggers_sql(&self) -> String {
         let trigs = self.emit_triggers();
         let groups = self.emit_group_triggers();
@@ -453,20 +461,16 @@ impl Sql<'_> {
         b
     }
 
+    #[must_use]
     pub fn emit_materialized_flats(&self) -> Vec<MaterializedFlat> {
         let mut out = Vec::new();
         for obj in &self.s.objects {
-            let claim_expr = obj
-                .scoped
-                .last()
-                .and_then(|l| self.s.owner_subject(l))
-                .map(|cust| self.id_claim(cust.identifies()))
-                .unwrap_or_default();
-            for r in &obj.relations {
-                let Repr::Group(g) = &r.repr else { continue };
-                if !g.materialized {
-                    continue;
-                }
+            let claim_expr = obj.scoped.last().and_then(|l| self.s.owner_subject(l)).map(|cust| self.id_claim(cust.identifies())).unwrap_or_default();
+            let materialized = obj.relations.iter().filter_map(|r| match &r.repr {
+                Repr::Group(g) if g.materialized => Some((r, g)),
+                _ => None,
+            });
+            for (r, g) in materialized {
                 out.push(MaterializedFlat {
                     schema: self.s.definer_schema().into(),
                     table_schema: self.s.table_schema().into(),
@@ -486,6 +490,7 @@ impl Sql<'_> {
         out
     }
 
+    #[must_use]
     pub fn flats_sql(&self) -> String {
         let flats = self.emit_materialized_flats();
         if flats.is_empty() {

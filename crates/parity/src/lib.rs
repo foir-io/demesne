@@ -11,6 +11,11 @@ pub mod runner;
 use demesne_gocompat::json::{self, Value};
 use std::path::Path;
 
+/// Builds the oracle manifest for the specs listed, in order, in `dir/ORDER`.
+///
+/// # Errors
+///
+/// A file cannot be read, or a spec cannot be parsed or its entry built.
 pub fn oracle_manifest(dir: &Path) -> Result<String, String> {
     let order = std::fs::read_to_string(dir.join("ORDER")).map_err(|e| e.to_string())?;
     let mut entries = Vec::new();

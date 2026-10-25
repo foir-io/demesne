@@ -1,11 +1,13 @@
 use crate::corpus::Entry;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[derive(Debug)]
 pub struct CliOutput {
     pub name: &'static str,
     pub args: &'static [&'static str],
@@ -29,12 +31,10 @@ pub const CLI_OUTPUTS: &[CliOutput] = &[
     CliOutput { name: "supabase", args: &["emit", "--profile", "supabase", "{spec}"] },
 ];
 
+#[must_use]
 pub fn run_cli(bin: &Path, spec: &Path, args: &[&str]) -> Vec<u8> {
-    let argv: Vec<String> = args
-        .iter()
-        .map(|a| if *a == "{spec}" { spec.to_string_lossy().into_owned() } else { a.to_string() })
-        .collect();
-    let out = Command::new(bin).args(&argv).env_remove("DATABASE_URL").output();
+    let cli_args: Vec<String> = args.iter().map(|a| if *a == "{spec}" { spec.to_string_lossy().into_owned() } else { a.to_string() }).collect();
+    let out = Command::new(bin).args(&cli_args).env_remove("DATABASE_URL").output();
     let mut rec = Vec::new();
     match out {
         Ok(o) => {
@@ -48,39 +48,69 @@ pub fn run_cli(bin: &Path, spec: &Path, args: &[&str]) -> Vec<u8> {
     rec
 }
 
-pub fn parallel<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
+/// Runs `f` over `items` on every core and returns the first error any call reports.
+///
+/// # Errors
+///
+/// The first error `f` returned; the remaining items are skipped once one fails.
+///
+/// # Panics
+///
+/// When `f` panics; the panic is raised again once every worker has stopped.
+pub fn parallel<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<(), String> + Sync) -> Result<(), String> {
     let next = AtomicUsize::new(0);
-    let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let failed: Mutex<Option<String>> = Mutex::new(None);
+    let n = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
     std::thread::scope(|scope| {
         for _ in 0..n {
-            scope.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    if i >= items.len() {
-                        break;
-                    }
-                    f(&items[i]);
-                }
-            });
+            scope.spawn(|| drain(items, &next, &failed, &f));
         }
     });
+    match failed.into_inner().expect("parallel error slot poisoned") {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
-pub fn dump_cli(bin: &Path, entries: &[Entry], out: &Path) {
+fn drain<T>(items: &[T], next: &AtomicUsize, failed: &Mutex<Option<String>>, f: &impl Fn(&T) -> Result<(), String>) {
+    loop {
+        let i = next.fetch_add(1, Ordering::Relaxed);
+        if i >= items.len() || failed.lock().expect("parallel error slot poisoned").is_some() {
+            return;
+        }
+        if let Err(e) = f(&items[i]) {
+            failed.lock().expect("parallel error slot poisoned").get_or_insert(e);
+        }
+    }
+}
+
+/// Runs every CLI invocation in [`CLI_OUTPUTS`] over every entry and writes each record under `out`.
+///
+/// # Errors
+///
+/// A directory or record under `out` that cannot be written.
+pub fn dump_cli(bin: &Path, entries: &[Entry], out: &Path) -> Result<(), String> {
     let jobs: Vec<(&Entry, &CliOutput)> = entries.iter().flat_map(|e| CLI_OUTPUTS.iter().map(move |c| (e, c))).collect();
     parallel(&jobs, |(e, c)| {
         let dir = out.join(&e.id);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(format!("cli-{}.txt", c.name)), run_cli(bin, &e.path, c.args)).unwrap();
-    });
+        fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+        let path = dir.join(format!("cli-{}.txt", c.name));
+        fs::write(&path, run_cli(bin, &e.path, c.args)).map_err(|err| format!("{}: {err}", path.display()))
+    })
 }
 
-pub fn write_list(entries: &[Entry], path: &Path) {
+/// Writes the entry list the Go dump reads: each id and its spec's canonical path.
+///
+/// # Errors
+///
+/// A spec path that cannot be canonicalised, or a list file that cannot be written.
+pub fn write_list(entries: &[Entry], path: &Path) -> Result<(), String> {
     let mut s = String::new();
     for e in entries {
-        s.push_str(&format!("{}\t{}\n", e.id, fs::canonicalize(&e.path).unwrap().display()));
+        let full = fs::canonicalize(&e.path).map_err(|err| format!("{}: {err}", e.path.display()))?;
+        writeln!(s, "{}\t{}", e.id, full.display()).expect("fmt::Write for String never fails");
     }
-    fs::write(path, s).unwrap();
+    fs::write(path, s).map_err(|err| format!("{}: {err}", path.display()))
 }
 
 fn files_under(dir: &Path) -> BTreeMap<String, PathBuf> {
@@ -93,7 +123,7 @@ fn files_under(dir: &Path) -> BTreeMap<String, PathBuf> {
             if p.is_dir() {
                 stack.push(p);
             } else {
-                let rel = p.strip_prefix(dir).unwrap().to_string_lossy().replace('\\', "/");
+                let rel = p.strip_prefix(dir).expect("the walk only visits paths under its root").to_string_lossy().replace('\\', "/");
                 out.insert(rel, p);
             }
         }
@@ -101,11 +131,13 @@ fn files_under(dir: &Path) -> BTreeMap<String, PathBuf> {
     out
 }
 
+#[derive(Debug)]
 pub struct Mismatch {
     pub key: String,
     pub detail: String,
 }
 
+#[derive(Debug)]
 pub struct Summary {
     pub outputs: usize,
     pub identical: usize,
@@ -121,18 +153,22 @@ fn first_difference(a: &[u8], b: &[u8]) -> String {
         let x = al.get(i).copied();
         let y = bl.get(i).copied();
         if x != y {
-            let show = |l: Option<&[u8]>| l.map(|l| String::from_utf8_lossy(l).into_owned()).unwrap_or_else(|| "<eof>".into());
+            let show = |l: Option<&[u8]>| l.map_or_else(|| "<eof>".into(), |l| String::from_utf8_lossy(l).into_owned());
             return format!("line {}:\n    go:   {}\n    rust: {}", i + 1, show(x), show(y));
         }
     }
     "identical".into()
 }
 
-pub fn compare(go: &Path, rust: &Path, only: Option<&dyn Fn(&str) -> bool>) -> Summary {
+/// Compares every output under `go` with the same path under `rust`, byte for byte.
+///
+/// # Errors
+///
+/// An output file that exists but cannot be read.
+pub fn compare(go: &Path, rust: &Path, only: Option<&dyn Fn(&str) -> bool>) -> Result<Summary, String> {
     let g = files_under(go);
     let r = files_under(rust);
     let mut sum = Summary { outputs: 0, identical: 0, missing_rust: 0, mismatches: Vec::new(), by_output: BTreeMap::new() };
-    let mismatches = Mutex::new(Vec::new());
     for (key, gp) in &g {
         if let Some(f) = only
             && !f(key)
@@ -147,15 +183,14 @@ pub fn compare(go: &Path, rust: &Path, only: Option<&dyn Fn(&str) -> bool>) -> S
             sum.missing_rust += 1;
             continue;
         };
-        let a = fs::read(gp).unwrap();
-        let b = fs::read(rp).unwrap();
+        let a = fs::read(gp).map_err(|err| format!("{}: {err}", gp.display()))?;
+        let b = fs::read(rp).map_err(|err| format!("{}: {err}", rp.display()))?;
         if a == b {
             sum.identical += 1;
             slot.1 += 1;
         } else {
-            mismatches.lock().unwrap().push(Mismatch { key: key.clone(), detail: first_difference(&a, &b) });
+            sum.mismatches.push(Mismatch { key: key.clone(), detail: first_difference(&a, &b) });
         }
     }
-    sum.mismatches = mismatches.into_inner().unwrap();
-    sum
+    Ok(sum)
 }

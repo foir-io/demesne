@@ -1,5 +1,6 @@
 use crate::{SqlArg, Str, Strs};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoleAssignmentSurface {
@@ -30,16 +31,17 @@ pub fn touch_on_conflict<S: AsRef<str>>(bare_key: &[S], nullable_key: &[S], sets
 impl RoleAssignmentSurface {
     fn assignment_cols(&self) -> Vec<&str> {
         let mut cols: Vec<&str> = vec![&self.pk, &self.kind_col, &self.subject_col, &self.role_col];
-        cols.extend(self.scope_cols.iter().map(|c| c.as_ref()));
+        cols.extend(self.scope_cols.iter().map(std::convert::AsRef::as_ref));
         for c in [&self.granted_at_col, &self.granted_by_col, &self.revoked_col, &self.revoked_by_col] {
             if !c.is_empty() {
                 cols.push(c);
             }
         }
-        cols.extend(self.extra_cols.iter().map(|c| c.as_ref()));
+        cols.extend(self.extra_cols.iter().map(std::convert::AsRef::as_ref));
         cols
     }
 
+    #[must_use]
     pub fn assign_insert(
         &self,
         assignment_id: &str,
@@ -52,6 +54,7 @@ impl RoleAssignmentSurface {
         self.assign_sql(false, assignment_id, subject_id, role_id, scope, granted_by, extra)
     }
 
+    #[must_use]
     pub fn assign_touch_insert(
         &self,
         assignment_id: &str,
@@ -64,6 +67,7 @@ impl RoleAssignmentSurface {
         self.assign_sql(true, assignment_id, subject_id, role_id, scope, granted_by, extra)
     }
 
+    #[expect(clippy::too_many_arguments, reason = "the private body behind assign_insert and assign_touch_insert; the extra parameter is the touch switch")]
     fn assign_sql(
         &self,
         touch: bool,
@@ -75,8 +79,7 @@ impl RoleAssignmentSurface {
         extra: &BTreeMap<String, String>,
     ) -> (String, Vec<SqlArg>) {
         let mut cols: Vec<&str> = vec![&self.pk, &self.kind_col, &self.subject_col, &self.role_col];
-        let mut args: Vec<SqlArg> =
-            vec![Some(assignment_id.into()), Some(self.kind_val.to_string()), Some(subject_id.into()), Some(role_id.into())];
+        let mut args: Vec<SqlArg> = vec![Some(assignment_id.into()), Some(self.kind_val.to_string()), Some(subject_id.into()), Some(role_id.into())];
         for (i, c) in self.scope_cols.iter().enumerate() {
             cols.push(c);
             args.push(scope.get(i).cloned());
@@ -104,8 +107,8 @@ impl RoleAssignmentSurface {
 
     fn touch_clause(&self) -> String {
         let bare: Vec<&str> = vec![&self.kind_col, &self.subject_col, &self.role_col];
-        let mut nullable: Vec<&str> = self.scope_cols.iter().map(|c| c.as_ref()).collect();
-        nullable.extend(self.extra_cols.iter().map(|c| c.as_ref()));
+        let mut nullable: Vec<&str> = self.scope_cols.iter().map(std::convert::AsRef::as_ref).collect();
+        nullable.extend(self.extra_cols.iter().map(std::convert::AsRef::as_ref));
         let mut sets = Vec::new();
         if !self.revoked_col.is_empty() {
             sets.push(format!("{} = NULL", self.revoked_col));
@@ -122,22 +125,25 @@ impl RoleAssignmentSurface {
         touch_on_conflict(&bare, &nullable, &sets)
     }
 
+    #[must_use]
     pub fn revoke_sql(&self) -> String {
         let mut set = format!("{} = now()", self.revoked_col);
         if !self.revoked_by_col.is_empty() {
-            set.push_str(&format!(", {} = $2", self.revoked_by_col));
+            write!(set, ", {} = $2", self.revoked_by_col).expect("fmt::Write for String never fails");
         }
         format!("UPDATE {} SET {} WHERE {} = $1 AND {} IS NULL", self.assignments, set, self.pk, self.revoked_col)
     }
 
+    #[must_use]
     pub fn list_for_role_sql(&self) -> String {
         let mut sql = format!("SELECT {} FROM {} WHERE {} = $1", self.assignment_cols().join(", "), self.assignments, self.role_col);
         if !self.granted_at_col.is_empty() {
-            sql.push_str(&format!(" ORDER BY {} DESC", self.granted_at_col));
+            write!(sql, " ORDER BY {} DESC", self.granted_at_col).expect("fmt::Write for String never fails");
         }
         sql
     }
 
+    #[must_use]
     pub fn list_for_principal_sql(&self) -> String {
         let mut cols = vec![format!("a.{}", self.pk), format!("a.{}", self.subject_col), format!("a.{}", self.role_col)];
         for c in [&self.granted_at_col, &self.granted_by_col] {

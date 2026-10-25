@@ -13,7 +13,10 @@ fn args(a: &[&str]) -> Vec<String> {
 #[test]
 fn run_matches_the_native_cli_on_a_pure_command() {
     let o = run_native(&args(&["validate", "spec.demesne"]), files("spec.demesne"));
-    assert_eq!((o.code, String::from_utf8_lossy(&o.stdout).as_ref(), o.stderr.as_slice()), (0, "ok: 2 objects, 3 levels, 6 policies, 1 reachability grants\n", &b""[..]));
+    assert_eq!(
+        (o.code, String::from_utf8_lossy(&o.stdout).as_ref(), o.stderr.as_slice()),
+        (0, "ok: 2 objects, 3 levels, 6 policies, 1 reachability grants\n", &b""[..])
+    );
 }
 
 #[test]

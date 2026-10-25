@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefinerArm {
     pub value: String,
@@ -19,30 +20,30 @@ pub struct GenFn {
 }
 
 impl GenFn {
+    #[must_use]
     pub fn schema(&self) -> &str {
         if self.schema.is_empty() { "auth" } else { &self.schema }
     }
 
+    #[must_use]
     pub fn table_schema(&self) -> &str {
         if self.table_schema.is_empty() { "public" } else { &self.table_schema }
     }
 
+    #[must_use]
     pub fn arg_types(&self) -> String {
         if self.sig.trim().is_empty() {
             return String::new();
         }
-        self.sig
-            .split(',')
-            .map(|p| p.split_whitespace().last().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join(", ")
+        self.sig.split(',').map(|p| p.split_whitespace().last().unwrap_or("")).collect::<Vec<_>>().join(", ")
     }
 
+    #[must_use]
     pub fn create_sql(&self) -> String {
         let returns = if self.returns.is_empty() { "boolean" } else { &self.returns };
         let (mut lang, mut body) = ("sql", format!("  SELECT {};", self.body));
         if self.raw_body {
-            body = self.body.clone();
+            body.clone_from(&self.body);
         }
         if !self.arms.is_empty() {
             lang = "plpgsql";
@@ -65,12 +66,13 @@ impl GenFn {
     fn arms_body(&self) -> String {
         let mut b = String::from("#variable_conflict use_column\nBEGIN\n");
         for a in &self.arms {
-            b.push_str(&format!("  IF {} = '{}' THEN\n    RETURN {};\n  END IF;\n", self.arm_param, a.value, a.body));
+            write!(b, "  IF {} = '{}' THEN\n    RETURN {};\n  END IF;\n", self.arm_param, a.value, a.body).expect("fmt::Write for String never fails");
         }
         b.push_str("  RETURN false;\nEND");
         b
     }
 
+    #[must_use]
     pub fn text(&self) -> String {
         if self.arms.is_empty() {
             return self.body.clone();
@@ -79,11 +81,11 @@ impl GenFn {
     }
 }
 
-pub fn sig_args(sig: &str) -> Vec<&str> {
+pub(crate) fn sig_args(sig: &str) -> Vec<&str> {
     sig.split(',').filter_map(|p| p.split_whitespace().next()).collect()
 }
 
-pub fn binds_every(sig: &str, conjuncts: &[&[String]]) -> bool {
+pub(crate) fn binds_every(sig: &str, conjuncts: &[&[String]]) -> bool {
     sig_args(sig).iter().all(|arg| conjuncts.iter().all(|conj| binds_arg(conj, arg)))
 }
 
@@ -92,6 +94,7 @@ fn binds_arg(conj: &[String], arg: &str) -> bool {
     conj.iter().any(|c| c.ends_with(&suffix))
 }
 
+#[must_use]
 pub fn definers_sql(defs: &[GenFn]) -> String {
     let mut b = String::new();
     for d in defs {
@@ -101,6 +104,6 @@ pub fn definers_sql(defs: &[GenFn]) -> String {
     b
 }
 
-pub fn grant_edge_exists(edge: &str, conjuncts: &[String]) -> String {
+pub(crate) fn grant_edge_exists(edge: &str, conjuncts: &[String]) -> String {
     format!("EXISTS (SELECT 1 FROM {} WHERE {})", edge, conjuncts.join(" AND "))
 }
