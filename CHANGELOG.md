@@ -41,6 +41,38 @@ writes `blind`. The examples were changed this way: `agnostic` and `example`
 reach `grantee:write` and `grantee:delete` in `view`, `manage`, `planes` and
 `canonical/rbac` name the write permission in `view`.
 
+### Breaking: the accessor listing names every reader its select admits
+
+`<table>_accessors` used to leave out a select disjunct it couldn't reverse,
+so the listing under-reported who can read a row. Every disjunct that admits
+callers is now in it:
+
+- **Principals, as rows of `<table>_accessors`:**
+  - `@holds(p)`: each assignee whose role grants `p` at the row's scope,
+    source `holds`;
+  - a role relation, and `@session(role)`: each holder of a role for the
+    object's level, source `role`.
+- **Conditions, as rows of `<table>_accessors_conditional`** (the object's
+  listing becomes conditional, as it did for `@claim`, `mode` and
+  `@app_scope`):
+  - `@kind("k")`: source `claim`, claim key `kind`, value `k`;
+  - `@self(col)`: source `claim`, the identity claim, value the row's `col`;
+  - `@session` and `@within(level)`: source `claim`, the level's scope claim,
+    value the row's scope column;
+  - `@within(level nullable)`: that row, plus one with source `scope` for a
+    row whose scope column is NULL (every caller in the row's scope);
+  - `@public`: source `public` (every caller).
+
+A select written as a tree (`and`, `not`) that holds one of the principal
+terms used to be refused as unenumerable; it now enumerates them.
+
+What adopters see: an object whose select names `@kind`, `@self`, `@session`,
+`@within` or `@public` now has `<table>_accessors_conditional` in place of
+`<table>_accessors`, and `ResourceAccessSurface` refuses it, as it refuses any
+conditional object; read it through `ConditionalResourceAccessSurface` and
+decide what each condition means for the caller. Code that switches on
+`source` meets `holds`, `role`, `public` and `scope`.
+
 ### Validation messages show each term as written
 
 A term in an error message is printed as the spec writes it, with its

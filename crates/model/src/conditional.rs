@@ -133,9 +133,50 @@ pub trait ConditionalExt: SpecExt {
         None
     }
 
-    fn is_conditional_leaf(&self, n: &PermNode, rels: &Rels) -> bool {
+    /// Returns the conditional rows a term contributes where it widens a union of readers.
+    ///
+    /// Beyond what [`ConditionalExt::conditional_term`] names, a union lists `@public`, `@kind`, `@self`,
+    /// `@session` and `@within` as conditions: none names a principal, but each admits callers.
+    fn union_admissions(&self, obj: &Object, t: &Term, rels: &Rels) -> Vec<ConditionalAdmission> {
+        if let Some(a) = self.conditional_term(t, rels) {
+            return vec![a];
+        }
+        let claim = |claim_key: String, claim_val: &str, claim_val_col: String| ConditionalAdmission {
+            source: "claim".into(),
+            claim_key,
+            claim_val: claim_val.into(),
+            claim_val_col,
+            ..Default::default()
+        };
+        match t.builtin() {
+            "public" => vec![ConditionalAdmission { source: "public".into(), ..Default::default() }],
+            "kind" => vec![claim("kind".into(), t.kind_val(), String::new())],
+            "self" => vec![claim(self.admin_identify().into(), "", t.self_col().into())],
+            "session" if t.session_rel().is_empty() => self.level_admissions(obj, obj.scoped.last().map_or("", String::as_str), false),
+            "within" => self.level_admissions(obj, t.within_level(), t.within_nullable()),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Returns the rows for a term that admits callers whose scope claim at `level` matches the row.
+    fn level_admissions(&self, obj: &Object, level: &str, nullable: bool) -> Vec<ConditionalAdmission> {
+        let col = self.scope_col(obj, level);
+        let matched = ConditionalAdmission {
+            source: "claim".into(),
+            claim_key: self.claim_key_for_level(level),
+            claim_val_col: col.clone(),
+            row_cond: if nullable { format!("{col} IS NOT NULL") } else { String::new() },
+            ..Default::default()
+        };
+        if !nullable {
+            return vec![matched];
+        }
+        vec![matched, ConditionalAdmission { source: "scope".into(), row_cond: format!("{col} IS NULL"), ..Default::default() }]
+    }
+
+    fn is_conditional_leaf(&self, obj: &Object, n: &PermNode, rels: &Rels) -> bool {
         match n {
-            PermNode::Leaf(t) => self.conditional_term(t, rels).is_some(),
+            PermNode::Leaf(t) => !self.union_admissions(obj, t, rels).is_empty(),
             _ => false,
         }
     }
@@ -168,20 +209,20 @@ pub trait ConditionalExt: SpecExt {
         let Some(sel) = crate::analysis::object_select_perm(obj) else { return Vec::new() };
         let rels = rels_of(obj);
         if !accessor_tree_op(&sel.tree).is_empty() {
-            return self.adding_conditional_terms(&sel.tree, &rels);
+            return self.adding_conditional_terms(obj, &sel.tree, &rels);
         }
-        sel.tree.leaves().iter().filter_map(|t| self.conditional_term(t, &rels)).collect()
+        sel.tree.leaves().iter().flat_map(|t| self.union_admissions(obj, t, &rels)).collect()
     }
 
-    fn adding_conditional_terms(&self, n: &PermNode, rels: &Rels) -> Vec<ConditionalAdmission> {
+    fn adding_conditional_terms(&self, obj: &Object, n: &PermNode, rels: &Rels) -> Vec<ConditionalAdmission> {
         match n {
-            PermNode::Leaf(t) => self.conditional_term(t, rels).into_iter().collect(),
+            PermNode::Leaf(t) => self.union_admissions(obj, t, rels),
             PermNode::Not(_) => Vec::new(),
             PermNode::And(kids) => match self.conditional_conjunction(n, rels) {
                 Some(a) => vec![a],
-                None => kids.iter().filter(|k| !narrowing_accessor_leaf(k)).flat_map(|k| self.adding_conditional_terms(k, rels)).collect(),
+                None => kids.iter().filter(|k| !narrowing_accessor_leaf(k)).flat_map(|k| self.adding_conditional_terms(obj, k, rels)).collect(),
             },
-            PermNode::Or(kids) => kids.iter().flat_map(|k| self.adding_conditional_terms(k, rels)).collect(),
+            PermNode::Or(kids) => kids.iter().flat_map(|k| self.adding_conditional_terms(obj, k, rels)).collect(),
         }
     }
 }
@@ -217,7 +258,7 @@ fn conjunction_kid<S: ConditionalExt + ?Sized>(s: &S, k: &PermNode, rels: &Rels)
         if let Some(t) = inner.term().filter(|_| is_row_leaf(inner)) {
             return ConjunctionKid::RowCond(format!("({} = '{}') IS NOT TRUE", t.row_col(), t.row_val()));
         }
-        if narrowing_accessor_leaf(inner) || s.is_conditional_leaf(inner, rels) {
+        if narrowing_accessor_leaf(inner) || inner.term().is_some_and(|t| s.conditional_term(t, rels).is_some()) {
             return ConjunctionKid::Narrowing;
         }
     }

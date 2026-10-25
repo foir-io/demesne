@@ -988,6 +988,7 @@ impl Sql<'_> {
             branches.push(rb);
         }
         if !composed_tree {
+            branches.extend(Self::sel_leaves(sel).into_iter().filter_map(|t| self.reach_accessor_branch(obj, t, &rels)));
             branches.extend(self.def_group_accessor_branches(obj, sel, &rels));
             branches.extend(Self::def_closure_accessor_branches(obj, sel, &rels));
             branches.extend(self.def_object_accessor_branches(obj, sel, &rels));
@@ -1143,6 +1144,9 @@ impl Sql<'_> {
                 quote(&t.display())
             ));
         }
+        if let Some(branch) = self.reach_accessor_branch(obj, t, rels) {
+            return Ok(branch);
+        }
         if t.ident().is_empty() {
             return Err(format!("term {} has no accessor branch (only owner/grant/group/closure/object relation leaves enumerate)", quote(&t.display())));
         }
@@ -1186,7 +1190,9 @@ impl Sql<'_> {
             PermNode::Or(kids) => {
                 let parts = kids
                     .iter()
-                    .filter(|k| !(self.s.is_conditional_leaf(k, rels) || self.s.conditional_conjunction(k, rels).is_some() || is_composition_leaf(k, rels)))
+                    .filter(|k| {
+                        !(self.s.is_conditional_leaf(obj, k, rels) || self.s.conditional_conjunction(k, rels).is_some() || is_composition_leaf(k, rels))
+                    })
                     .map(|k| self.accessor_tree_sql(obj, k, rels).map(|sql| format!("({sql})")))
                     .collect::<R<Vec<String>>>()?;
                 if parts.is_empty() {
@@ -1235,6 +1241,61 @@ impl Sql<'_> {
             return Ok(base);
         }
         Ok(format!("SELECT a.* FROM ({}) a(source, principal_kind, principal_id, access)\n    WHERE {}", base, filters.join("\n      AND ")))
+    }
+
+    fn reach_accessor_branch(&self, obj: &Object, t: &Term, rels: &Rels) -> Option<String> {
+        match t.builtin() {
+            "holds" => self.holds_accessor_branch(obj, t.holds_perm()),
+            "session" if !t.session_rel().is_empty() => self.role_relation_branch(obj, rels.get(t.session_rel())?),
+            "" if t.walk_verb().is_empty() => rels.get(t.ident()).filter(|r| matches!(r.repr, Repr::Role)).and_then(|r| self.role_relation_branch(obj, r)),
+            _ => None,
+        }
+    }
+
+    fn role_relation_branch(&self, obj: &Object, r: &Relation) -> Option<String> {
+        let rs = self.s.default_role_store()?;
+        let level = match r.types.first().and_then(|t| self.s.subject_by_name(t)) {
+            Some(st) if self.s.is_platform_role_subject(st) => st.anchor(),
+            _ => leaf(obj),
+        };
+        let preset_levels = self.s.preset_level_map();
+        let presets = preset_levels.get(level).filter(|p| !p.is_empty())?;
+        Some(self.role_enum_sql(obj, rs, level, Some(presets), "role", "read"))
+    }
+
+    fn holds_accessor_branch(&self, obj: &Object, perm: &str) -> Option<String> {
+        let rs = self.s.holds_role_store(perm).ok()?;
+        let perms_col = rs.perms_col.as_deref()?;
+        let chain = topology::chain(self.s).unwrap_or_default();
+        let plane_depth = self.s.rolestore_plane_depth(rs);
+        let mut on = kind_cond(rs, "ra.");
+        for (i, (l, col)) in chain.iter().filter(|l| !l.is_virtual).zip(&rs.scope_cols).enumerate() {
+            if i < plane_depth && contains(&obj.scoped, &l.name) {
+                on.push(format!("(ra.{col} IS NULL OR ra.{col} = e.{})", self.s.scope_col(obj, &l.name)));
+            } else {
+                on.push(format!("ra.{col} IS NULL"));
+            }
+        }
+        on.extend(revoked_cond(rs, "ra."));
+        let held = match self.s.rolestore_vocab(rs) {
+            Ok(v) if !v.implications.is_empty() => {
+                format!("ro.{perms_col}::text[] && {}.{}('{perm}')", self.s.definer_schema(), self.s.perm_implied_by_fn(rs))
+            }
+            _ => format!("'{perm}' = ANY(ro.{perms_col})"),
+        };
+        Some(format!(
+            "SELECT 'holds'::text AS source, '{}'::text AS principal_kind, ra.{} AS principal_id, 'read'::text AS access\n    FROM {} e JOIN {} ra ON {}\n    JOIN {} ro ON ro.{} = ra.{}\n    WHERE e.{} = p_id AND {}",
+            or(rs.kind_val.as_deref()),
+            or(rs.subject_col.as_deref()),
+            obj.table,
+            or(rs.assignments.as_deref()),
+            on.join(" AND "),
+            or(rs.roles_table.as_deref()),
+            or(rs.roles_id.as_deref()),
+            or(rs.role_col.as_deref()),
+            obj.pk(),
+            held
+        ))
     }
 
     fn role_accessor_branch(&self, obj: &Object, admin_excl: &str) -> Option<String> {

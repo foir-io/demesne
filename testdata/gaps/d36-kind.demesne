@@ -1,0 +1,45 @@
+
+topology {
+  level org       virtual
+  level tenant    parent org
+  level workspace parent tenant
+}
+vocabulary staff {
+  permission docs:read
+  permission docs:write
+  preset viewer @ workspace = docs:read
+  preset owner  @ tenant    = *
+  rank owner > viewer
+}
+rolestore staff {
+  assignments role_grants
+  kind        grantee_kind = "staff"
+  subject     grantee_id
+  scope       tenant_id workspace_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+  permissions permissions
+}
+grant support at workspace
+  via edge support_grants(holder_id, workspace_id)
+  confers select
+subject staff  { anchor tenant; reach descendants; identifies sub; roles configurable staff; binds admin }
+subject member { anchor workspace; reach self; identifies member_id; roles none; binds owner }
+object workspace {
+  table  workspaces
+  level  workspace
+  scoped tenant > workspace
+  relation tenant:  tenant via tenant_id
+  relation staffer: staff via role
+  permission view = staffer + @session @rls maps select
+}
+object doc {
+  table  docs
+  scoped tenant > workspace
+  relation tenant:  tenant via tenant_id
+  relation owner:   member via owner_id
+  relation editor:  staff via role
+  relation ws:      workspace via object workspace->view on workspace_id
+  relation grantee: member via grant doc_acl(doc_id, principal_kind, principal_id, access)
+  permission view = owner + @kind("member") + grantee:read @rls maps select
+}
