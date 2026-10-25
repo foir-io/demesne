@@ -51,7 +51,12 @@ CLI and runtime are Rust; the Go engine is frozen at v0.93.x as the full Go libr
 - pgx: `cd pgx && go test ./...`
 - TypeScript: `cd ts && pnpm install && pnpm -r test`
 - Golden examples are regenerated with `UPDATE_ORACLE=1 go test -run <ArtifactTest> .`
-- The live-Postgres round-trip is gated on `$SUPABASE_DB_URL` and skips without it.
+- Every CLI output of the examples, the corpus fixtures and the gap specs is pinned by insta
+  snapshots in `crates/parity/tests/snapshots/`: the examples in full, the rest as a checksum
+  manifest. After an intended output change, run
+  `INSTA_UPDATE=always cargo test -p demesne-parity --test pinned_output` and read the whole
+  diff before committing it.
+- The live-Postgres round-trip needs `$SUPABASE_DB_URL` and fails without it.
 
 ## The workflow: spec to enforcement
 

@@ -1,0 +1,42 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.folder_closure_maintain()",
+    "auth.folder_closure_reachable(text, text)"
+  ],
+  "policies": [
+    {
+      "table": "public.documents",
+      "name": "documents_select"
+    }
+  ],
+  "triggers": [
+    {
+      "table": "public.folders",
+      "name": "folder_closure_maintain_del"
+    },
+    {
+      "table": "public.folders",
+      "name": "folder_closure_maintain_ins"
+    },
+    {
+      "table": "public.folders",
+      "name": "folder_closure_maintain_upd"
+    }
+  ],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.documents"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

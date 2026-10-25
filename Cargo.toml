@@ -23,6 +23,8 @@ demesne-emit-go = { path = "crates/emit-go", version = "1.0.0" }
 demesne-emit-rust = { path = "crates/emit-rust", version = "1.0.0" }
 demesne-emit-ts = { path = "crates/emit-ts", version = "1.0.0" }
 demesne-postgres = { path = "crates/postgres", version = "1.0.0" }
+insta = { version = "1.49.0", default-features = false }
+sha2 = "0.11.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

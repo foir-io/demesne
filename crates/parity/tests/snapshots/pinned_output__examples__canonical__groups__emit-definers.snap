@@ -1,0 +1,20 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+CREATE OR REPLACE FUNCTION auth.group_closure_member(p_group text, p_member text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM group_closure WHERE grp = p_group AND mem = p_member);
+$$;
+
+
+--- stderr ---
+
+--- end ---

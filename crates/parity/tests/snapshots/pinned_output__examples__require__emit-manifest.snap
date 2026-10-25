@@ -1,0 +1,44 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.admin_has_perm(text, text, text, text)"
+  ],
+  "policies": [
+    {
+      "table": "public.invitations",
+      "name": "invitations_insert"
+    },
+    {
+      "table": "public.invitations",
+      "name": "invitations_insert_require"
+    },
+    {
+      "table": "public.invitations",
+      "name": "invitations_select"
+    },
+    {
+      "table": "public.invitations",
+      "name": "invitations_update"
+    },
+    {
+      "table": "public.invitations",
+      "name": "invitations_update_require"
+    }
+  ],
+  "triggers": [],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.invitations"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

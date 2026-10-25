@@ -21,6 +21,11 @@ demesne-emit-go.workspace = true
 demesne-emit-ts.workspace = true
 demesne-postgres.workspace = true
 
+[dev-dependencies]
+demesne-cli.workspace = true
+insta.workspace = true
+sha2.workspace = true
+
 [lints]
 workspace = true
 

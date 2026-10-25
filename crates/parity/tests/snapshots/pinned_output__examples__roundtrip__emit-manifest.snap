@@ -1,0 +1,29 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.note_acl_grants(text, text, text)",
+    "auth.notes_accessors_conditional(text)"
+  ],
+  "policies": [
+    {
+      "table": "public.notes",
+      "name": "notes_select"
+    }
+  ],
+  "triggers": [],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.notes"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

@@ -1,0 +1,115 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.approvals_reach(text, text)",
+    "auth.approvals_reach_in_folder(text, text, text, text)",
+    "auth.approvals_reach_in_space(text, text, text)",
+    "auth.approvals_reach_set(text)",
+    "auth.approvals_reach_unscoped(text, text)",
+    "auth.approvals_reach_unscoped_set(text)",
+    "auth.catalog_can_bound(text)",
+    "auth.catalog_can_bound_for_select(text)",
+    "auth.folder_write_allowed(text, text, text)",
+    "auth.paths_reach(text, text)",
+    "auth.paths_reach_set(text)",
+    "auth.paths_reachable(text, text)",
+    "auth.paths_up_reach(text, text)",
+    "auth.paths_up_reach_set(text)"
+  ],
+  "policies": [
+    {
+      "table": "public.allowances",
+      "name": "allowances_delete"
+    },
+    {
+      "table": "public.allowances",
+      "name": "allowances_insert"
+    },
+    {
+      "table": "public.allowances",
+      "name": "allowances_select"
+    },
+    {
+      "table": "public.allowances",
+      "name": "allowances_update"
+    },
+    {
+      "table": "public.assets",
+      "name": "assets_insert"
+    },
+    {
+      "table": "public.assets",
+      "name": "assets_select"
+    },
+    {
+      "table": "public.assets",
+      "name": "assets_update"
+    },
+    {
+      "table": "public.blueprints",
+      "name": "blueprints_select"
+    },
+    {
+      "table": "public.blueprints",
+      "name": "blueprints_update"
+    },
+    {
+      "table": "public.entries",
+      "name": "entries_select"
+    },
+    {
+      "table": "public.entries",
+      "name": "entries_update"
+    },
+    {
+      "table": "public.folders",
+      "name": "folders_delete"
+    },
+    {
+      "table": "public.folders",
+      "name": "folders_insert"
+    },
+    {
+      "table": "public.folders",
+      "name": "folders_select"
+    },
+    {
+      "table": "public.folders",
+      "name": "folders_update"
+    },
+    {
+      "table": "public.ledgers",
+      "name": "ledgers_select"
+    },
+    {
+      "table": "public.spaces",
+      "name": "spaces_select"
+    },
+    {
+      "table": "public.spaces",
+      "name": "spaces_update"
+    }
+  ],
+  "triggers": [],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.allowances",
+    "public.assets",
+    "public.blueprints",
+    "public.entries",
+    "public.folders",
+    "public.ledgers",
+    "public.spaces"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

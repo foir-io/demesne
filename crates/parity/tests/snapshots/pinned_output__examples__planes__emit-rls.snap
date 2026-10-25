@@ -1,0 +1,32 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+DROP POLICY IF EXISTS documents_select ON public.documents;
+CREATE POLICY documents_select ON public.documents FOR SELECT TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.operator_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:read') OR auth.operator_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:write'))));
+
+DROP POLICY IF EXISTS documents_update ON public.documents;
+CREATE POLICY documents_update ON public.documents FOR UPDATE TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.operator_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:write'))))
+    WITH CHECK ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.operator_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:write'))));
+
+DROP POLICY IF EXISTS tenants_delete ON public.tenants;
+CREATE POLICY tenants_delete ON public.tenants FOR DELETE TO authenticated
+    USING ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')));
+
+DROP POLICY IF EXISTS tenants_select ON public.tenants;
+CREATE POLICY tenants_select ON public.tenants FOR SELECT TO authenticated
+    USING ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')));
+
+DROP POLICY IF EXISTS tenants_update ON public.tenants;
+CREATE POLICY tenants_update ON public.tenants FOR UPDATE TO authenticated
+    USING ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')))
+    WITH CHECK ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')));
+
+
+--- stderr ---
+
+--- end ---

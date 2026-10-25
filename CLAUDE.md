@@ -21,6 +21,9 @@ and the spec-to-enforcement workflow; this file is the short version of what mat
   modules.
 - Keep every suite green and `golangci-lint` clean. Regenerate golden examples with
   `UPDATE_ORACLE=1`; never hand-edit a generated file.
+- Every CLI output is pinned by snapshots in `crates/parity/tests/snapshots/`. After an intended
+  output change, run `INSTA_UPDATE=always cargo test -p demesne-parity --test pinned_output`
+  and read the whole diff before committing it.
 
 ## Fast commands
 

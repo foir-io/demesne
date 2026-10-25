@@ -1,0 +1,161 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+CREATE OR REPLACE FUNCTION auth.approvals_reach(user_id text, check_estate_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR space_id = (NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'space_id')) AND (folder_id IS NULL OR (NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id') IS NULL OR folder_id = (NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.approvals_reach_set(user_id text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT estate_id FROM approvals WHERE holder_id = user_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR space_id = (NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'space_id')) AND (folder_id IS NULL OR (NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id') IS NULL OR folder_id = (NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id'));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.approvals_reach_unscoped(user_id text, check_estate_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND space_id IS NULL AND folder_id IS NULL);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.approvals_reach_unscoped_set(user_id text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT estate_id FROM approvals WHERE holder_id = user_id AND ended_at IS NULL AND expires_at > now() AND space_id IS NULL AND folder_id IS NULL;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.approvals_reach_in_space(user_id text, check_estate_id text, check_space_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR check_space_id = '' OR space_id = check_space_id));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.approvals_reach_in_folder(user_id text, check_estate_id text, check_space_id text, check_folder_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR check_space_id = '' OR space_id = check_space_id) AND (folder_id IS NULL OR check_folder_id = '' OR folder_id = check_folder_id));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_reach(user_id text, check_folder_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = user_id AND descendant_id = check_folder_id);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_reach_set(user_id text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT descendant_id FROM paths WHERE ancestor_id = user_id;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_up_reach(user_id text, check_folder_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM paths WHERE descendant_id = user_id AND ancestor_id = check_folder_id);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_up_reach_set(user_id text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT ancestor_id FROM paths WHERE descendant_id = user_id;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_reachable(p_ancestor text, p_descendant text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.catalog_can_bound_for_select(p_catalog_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM catalogs WHERE catalogs.id = p_catalog_id AND (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((folder_id IS NULL OR folder_id = (current_setting('request.jwt.claims', true)::json ->> 'folder_id')) OR folder_id IN (SELECT auth.paths_up_reach_set((current_setting('request.jwt.claims', true)::json ->> 'folder_id'))) OR (current_setting('request.jwt.claims', true)::json ->> 'view_mode') = 'all') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.catalog_can_bound(p_catalog_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM catalogs WHERE catalogs.id = p_catalog_id AND (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.folder_write_allowed(check_folder_id text, row_estate_id text, row_space_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id))))) FROM (SELECT check_folder_id AS id, row_estate_id AS estate_id, row_space_id AS space_id) AS folders;
+$$;
+
+
+--- stderr ---
+
+--- end ---
