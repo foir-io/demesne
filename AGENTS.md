@@ -74,6 +74,9 @@ CLI and runtime are Rust; the Go engine is frozen at v0.93.x as the full Go libr
 - **Rust:** load the `rust` skill (`.claude/skills/rust/SKILL.md`) before writing or reviewing Rust.
   It holds the house rules on lints, panics, errors, determinism and tests, built on Microsoft's
   Pragmatic Rust Guidelines (vendored under `references/`).
+- **This repository is public.** Never commit an adopter's spec, schema, generated output or
+  data, not even as a test fixture. Write fixtures from scratch; an adopter's spec stays in the
+  adopter's own repository.
 - **No comments.** Code carries no explanatory comments. The only comments are functional
   directives and the `// Code generated … DO NOT EDIT.` marker on generated files. If a
   comment seems necessary, make the code clearer instead; keep one only for a firm, concrete

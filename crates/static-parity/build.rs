@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 fn corpus(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for dir in ["examples", "testdata/corpus/fixtures", "testdata/corpus/foir", "testdata/parity/oracle"] {
+    for dir in ["examples", "testdata/corpus/fixtures", "testdata/parity/oracle"] {
         let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
         for e in rd.flatten() {
             let p = e.path();

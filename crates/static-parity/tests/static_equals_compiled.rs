@@ -11,7 +11,7 @@ fn root() -> PathBuf {
 
 fn validating_specs() -> usize {
     let mut n = 0;
-    for dir in ["examples", "testdata/corpus/fixtures", "testdata/corpus/foir", "testdata/parity/oracle"] {
+    for dir in ["examples", "testdata/corpus/fixtures", "testdata/parity/oracle"] {
         for e in std::fs::read_dir(root().join(dir)).expect("corpus dir").flatten() {
             let p = e.path();
             if p.extension().is_none_or(|x| x != "demesne") {

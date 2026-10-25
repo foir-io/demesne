@@ -27,9 +27,6 @@ pub fn collect(root: &Path) -> Vec<Entry> {
     for p in specs_in(&root.join("examples/canonical")) {
         out.push(Entry { id: format!("examples/canonical/{}", stem(&p)), path: p });
     }
-    for p in specs_in(&root.join("testdata/corpus/foir")) {
-        out.push(Entry { id: format!("foir/{}", stem(&p)), path: p });
-    }
     for p in specs_in(&root.join("testdata/corpus/fixtures")) {
         out.push(Entry { id: format!("fixtures/{}", stem(&p)), path: p });
     }

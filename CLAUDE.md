@@ -7,6 +7,9 @@ and the spec-to-enforcement workflow; this file is the short version of what mat
 
 - **Load the `rust` skill (`.claude/skills/rust/`) before writing or reviewing Rust.** It holds the
   house rules on lints, panics, errors, determinism and tests.
+- **This repository is public.** Never commit an adopter's spec, schema, generated output or
+  data, not even as a test fixture. Write fixtures from scratch; an adopter's spec stays in the
+  adopter's own repository.
 - **No comments in code.** Strip them. Only `// Code generated … DO NOT EDIT.` and functional
   directives survive. A comment belongs only when there is a firm, concrete reason; if it is a
   maybe, remove it and make the code clearer. Rustdoc on a published crate's public items is API

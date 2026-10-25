@@ -299,7 +299,7 @@ support and the CLI. Every output is byte-identical to v0.93.1: the SQL
 (definers, policies, enablement, triggers, closure, changelog, async, require
 and the Supabase profile), the emitted Go and TypeScript, both framework
 modules, `oracle.json` and the claims contract. That was checked over every
-example, every spec the Go test suites parse, Fóir's spec and 10,800 fuzzed
+example, every spec the Go test suites parse and 10,800 fuzzed
 specs, and the runtime passes `oracle.json`.
 
 The Go engine stays at v0.93.x. It is the full Go library for anyone who uses
