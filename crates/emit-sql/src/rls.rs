@@ -1,5 +1,5 @@
 use crate::Sql;
-use demesne_gocompat::{fmt_slice, quote, sort_slice};
+use demesne_gocompat::{fmt_slice, quote};
 use demesne_model::analysis::{
     Rels, SpecExt, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
 };
@@ -57,7 +57,17 @@ impl RlsResult {
     #[must_use]
     pub fn policy_sql(&self, role: &str) -> String {
         let mut pols = self.policies.clone();
-        sort_slice(&mut pols, |a, b| if a.table == b.table { a.name < b.name } else { a.table < b.table });
+        pols.sort_by(|a, b| {
+            (&a.table, &a.name, &a.object, &a.cmd, a.restrictive, &a.using, &a.check).cmp(&(
+                &b.table,
+                &b.name,
+                &b.object,
+                &b.cmd,
+                b.restrictive,
+                &b.using,
+                &b.check,
+            ))
+        });
         let sch = self.schema();
         let mut b = String::new();
         for p in &pols {

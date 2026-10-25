@@ -1,0 +1,138 @@
+topology {
+  level org       col org_ref  claim org
+  level workspace parent org col ws_ref claim ws
+}
+
+subject member {
+  anchor workspace
+  reach  self
+  identifies member_ref
+  roles  none
+  binds  owner
+}
+
+object kilo {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object alpha {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object mike {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object bravo {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object lima {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object charlie {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object nov {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object delta {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object oscar {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object echo {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object papa {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object fox {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object quebec {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}
+
+object golf {
+  table  items
+  pk     item_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner + mode visibility = "open" @rls maps select
+  track visibility
+}

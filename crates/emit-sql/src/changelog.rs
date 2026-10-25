@@ -1,5 +1,4 @@
 use crate::Sql;
-use demesne_gocompat::sort_slice;
 use demesne_model::SpecExt;
 use demesne_syntax::Repr;
 use std::collections::HashSet;
@@ -205,7 +204,7 @@ impl Sql<'_> {
                 discrim_col: g.discrim_col.clone().unwrap_or_default(),
             });
         }
-        sort_slice(&mut out, |a, b| a.table < b.table);
+        out.sort_by(|a, b| a.table.cmp(&b.table));
         out
     }
 
@@ -238,7 +237,7 @@ impl Sql<'_> {
             }
             out.push(t);
         }
-        sort_slice(&mut out, |a, b| a.table < b.table);
+        out.sort_by(|a, b| (&a.table, &a.rel).cmp(&(&b.table, &b.rel)));
         out
     }
 

@@ -1,5 +1,5 @@
 use crate::analysis::{SpecExt, contains};
-use demesne_gocompat::{quote, sort_slice};
+use demesne_gocompat::quote;
 use demesne_syntax::{ExternalArg, Grant, Object, Perm, Relation, Repr, RoleStore, Spec, Subject, Term};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -322,7 +322,7 @@ pub fn validate_against(s: &Spec, sc: &Schema) -> Result<(), String> {
     for sub in &s.subjects {
         check_subject_refs(&mut b, sub);
     }
-    sort_slice(&mut b.errs, |a, c| a < c);
+    b.errs.sort();
     if b.errs.is_empty() { Ok(()) } else { Err(b.errs.join("\n")) }
 }
 

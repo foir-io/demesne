@@ -1,5 +1,4 @@
 use crate::Sql;
-use demesne_gocompat::sort_slice;
 use demesne_model::SpecExt;
 use demesne_syntax::Repr;
 
@@ -193,7 +192,20 @@ impl Sql<'_> {
                 id_type: self.s.id_type().into(),
             });
         }
-        sort_slice(&mut out, |a, b| a.base < b.base);
+        out.sort_by(|a, b| {
+            let key = |x: &AsyncIndex| {
+                (
+                    x.base.clone(),
+                    x.grant_table.clone(),
+                    x.record_col.clone(),
+                    x.kind_col.clone(),
+                    x.principal_col.clone(),
+                    x.discrim_col.clone(),
+                    x.discrim_val.clone(),
+                )
+            };
+            key(a).cmp(&key(b))
+        });
         out
     }
 

@@ -73,6 +73,29 @@ conditional object; read it through `ConditionalResourceAccessSurface` and
 decide what each condition means for the caller. Code that switches on
 `source` meets `holds`, `role`, `public` and `scope`.
 
+### Breaking: objects that would overwrite each other's SQL on one table are refused
+
+Two objects on one table that both compile a policy for the same operation
+emit two policies with one name (`<table>_select`, say). Each
+`DROP POLICY IF EXISTS` and `CREATE POLICY` pair replaced the one before, so
+Postgres enforced only the last object's predicate, silently. Two objects that
+both `track` one table did the same to their changelog trigger, so only the
+last object's changes were logged. Two objects on one table with an `async`
+relation of the same name shared an async index name, so the last object's
+maintenance functions replaced the others' and filled their indexes from its
+grant table. `validate` now refuses all three and names the objects. A table
+can still carry several objects when only one of them compiles each policy
+and tracks the table, and the rest use `predicate` permissions.
+
+### Output order no longer depends on Go's sort
+
+Lists in the output (policies, triggers, async indexes, field grants and
+scaffold levels) are ordered by an explicit total order, each with a
+tie-breaker on a unique key, instead of by a reproduction of Go's unstable
+`sort.Slice`. The order differed only when two entries tied, and every tie a
+valid spec could reach was one of the overwrites above, so no valid spec's
+output changes. `demesne-gocompat` no longer carries the sort.
+
 ### Validation messages show each term as written
 
 A term in an error message is printed as the spec writes it, with its
