@@ -1,13 +1,15 @@
-#![doc = "Live-database support for demesne: introspection into a `Schema`, the drift `diff` reports, the global-assignment audit and the RLS role check."]
+#![doc = "Live-database support for demesne: introspection into a `Schema`, the drift `diff` reports, the schema traps, the global-assignment audit and the RLS role check."]
 
 mod connect;
 mod drift;
 mod dsn;
 mod goerr;
+mod lint;
 
 pub use connect::connect;
 pub use drift::{Drift, DriftKind, Finding, drift};
 pub use dsn::parse_config_dump;
+pub use lint::{Severity, Trap, schema_traps};
 
 use demesne_model::Schema;
 use postgres::Client;

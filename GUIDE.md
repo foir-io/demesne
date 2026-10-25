@@ -50,6 +50,21 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
    `check` fails loudly if the spec references a table or column your database
    doesn't have — a typo, a missing migration, or drift.
 
+   It also looks for schema traps around the tables the spec governs:
+
+   - A view over a governed table without `security_invoker = true` reads as
+     its owner, at any depth of views over views, and so does a materialized
+     view. If the owner bypasses RLS, every reader sees every row, so `check`
+     fails. Otherwise it warns, because the policies judge the owner, not the
+     reader.
+   - A unique index over a nullable topology or scope column, without
+     `NULLS NOT DISTINCT`, lets rows where that column is NULL repeat. That is
+     the shared tier. A partial unique index on the other columns, `WHERE col IS
+     NULL`, covers it instead.
+   - A policy that compares a row column through COALESCE, NULLIF, CASE, a
+     cast, a function or an operator can't use an index on the column, so it
+     runs row by row.
+
 4. Emit the generated SQL and apply it as a normal migration, and record what it
    creates:
 
@@ -134,7 +149,7 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 | `demesne emit <spec> [rls\|definers\|triggers\|claims\|pdp\|all]` | no | print the generated SQL/Go |
 | `demesne introspect <dsn>` | yes | summarise the live schema |
 | `demesne scaffold [-i] <dsn>` | yes | generate a starter spec from the schema (`-i`: interactive — asks for the RLS role + definer/table schemas, lists ungoverned tables as TODO stubs) |
-| `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, AND verify the RLS role is not `BYPASSRLS` |
+| `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, verify the RLS role is not `BYPASSRLS`, and look for schema traps |
 | `demesne diff <spec> <dsn>` | yes | generated-vs-live drift both ways: policies, definers, triggers, orphans |
 | `demesne coverage <spec> <dsn>` | yes | list live tables with NO governing object (ungoverned → no RLS) — the drift/gap check |
 
@@ -680,7 +695,8 @@ usually a superuser or carries `BYPASSRLS` — so a default view reads the base
 table with RLS switched off, and anything granted `SELECT` on it reads across
 every tenant. Under `security_invoker` the view is exactly as reachable as the
 table it wraps, and a SECURITY DEFINER function still sees every row, because
-inside one the querying role is the function's owner.
+inside one the querying role is the function's owner. `demesne check` finds the
+views that miss it.
 
 A spec can declare more than one rolestore, and `@holds` resolves to **the
 rolestore whose vocabulary declares the permission** — not to whichever

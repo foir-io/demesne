@@ -133,6 +133,51 @@ fn cmd_check(out: &mut Out, args: &[String]) -> R {
         Ok((true, false)) => out.print(&format!("ok: the RLS connection role {} is not BYPASSRLS\n", quote(&role))),
     }
     report_global_assignments(out, &s, &mut client);
+    report_schema_traps(out, &s, &mut client)
+}
+
+fn report_schema_traps(out: &mut Out, s: &Spec, client: &mut postgres::Client) -> R {
+    let mut sql = String::new();
+    let governed: Vec<String> = match Sql::new(s).write_all_sql(&mut sql).and_then(|()| demesne_emit_sql::objects(&sql)) {
+        Ok(objs) => objs.into_iter().filter_map(|(o, _)| if let demesne_emit_sql::Object::Rls(t) = o { Some(t) } else { None }).collect(),
+        Err(e) => {
+            out.print(&format!("warning: could not look for schema traps, as the spec's SQL does not compile: {e}\n"));
+            return Ok(());
+        }
+    };
+    let schema = s.table_schema();
+    let mut scope: Vec<(String, String)> = Vec::new();
+    for obj in &s.objects {
+        for lvl in obj.scoped.iter().filter(|l| !s.level_is_virtual(l)) {
+            scope.push((format!("{schema}.{}", obj.table), s.scope_col(obj, lvl)));
+        }
+    }
+    for rs in &s.role_stores {
+        if let Some(t) = &rs.assignments {
+            scope.extend(rs.scope_cols.iter().map(|c| (format!("{schema}.{t}"), c.clone())));
+        }
+    }
+    let traps = match demesne_postgres::schema_traps(client, &governed, &scope) {
+        Ok(t) => t,
+        Err(e) => {
+            out.print(&format!("warning: could not look for schema traps: {e}\n"));
+            return Ok(());
+        }
+    };
+    if traps.is_empty() {
+        out.print("ok: no schema traps: views over governed tables read as their caller, unique indexes constrain NULL scope rows, and policies compare bare columns\n");
+    }
+    for t in &traps {
+        let label = match t.severity {
+            demesne_postgres::Severity::Danger => "DANGER",
+            demesne_postgres::Severity::Warning => "warning",
+        };
+        out.print(&format!("{label}: {}\n", t.message));
+    }
+    let dangers = traps.iter().filter(|t| t.severity == demesne_postgres::Severity::Danger).count();
+    if dangers > 0 {
+        return Err(format!("{dangers} schema trap(s) let rows past the policies"));
+    }
     Ok(())
 }
 

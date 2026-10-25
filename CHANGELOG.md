@@ -102,6 +102,30 @@ it. Two new emit kinds close this:
 `Sql::manifest`, `Sql::migration` and `Manifest` are the same in the
 `demesne-emit-sql` API, and `Sql::write_all_sql` is the `emit all` text.
 
+### Breaking: `check` looks for schema traps around the governed tables
+
+`check` validated the spec, bound it to the live schema and checked the RLS
+role. It now also looks for three traps in the live schema that bypass or
+weaken the policies:
+
+- **A view that reads a governed table as its owner.** That is a view without
+  `security_invoker = true`, at any depth of views over views, or a
+  materialized view. If the owner bypasses RLS, every reader sees every row:
+  `check` prints `DANGER` and fails, as it does for a `BYPASSRLS` session role.
+  Otherwise it warns, because the policies judge the owner, not the reader.
+- **A unique index over a nullable topology or scope column without
+  `NULLS NOT DISTINCT`.** Rows where the column is NULL, the shared tier, never
+  conflict. A partial unique index on the other columns `WHERE col IS NULL`
+  counts as covering it.
+- **A policy comparison whose row column is wrapped** in COALESCE, NULLIF,
+  CASE, a cast through text, a function or an operator. The comparison can't
+  use an index on the column, so it runs row by row. This is read from each
+  policy's stored expression tree, so a bare comparison or a definer call isn't
+  flagged, and neither is anything inside a subquery.
+
+demesne's own policies raise none of these. `demesne_postgres::schema_traps`
+is the same check in the Rust API.
+
 ### Breaking: `diff` compares whole definitions, in both directions
 
 `diff` compared only policy names, and only on tables in `public`. A live

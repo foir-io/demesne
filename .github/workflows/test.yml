@@ -96,7 +96,7 @@ jobs:
           -c 'CREATE ROLE authenticated NOLOGIN'
           -c 'CREATE ROLE service_role NOLOGIN'
       - name: live Postgres suites
-        run: cargo nextest run -p demesne-postgres --run-ignored only --no-tests=fail
+        run: cargo nextest run -p demesne-postgres -p demesne-cli --run-ignored only --no-tests=fail
       - name: wasm32 build
         run: cargo build -p demesne-wasm --target wasm32-unknown-unknown --release
       - name: features

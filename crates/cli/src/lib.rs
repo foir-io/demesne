@@ -22,7 +22,9 @@ USAGE:
                                                framework [pkg]: typed Go app package (default pkg \"authz\")
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
   demesne scaffold   [-i] <dsn>                generate a STARTER spec from the schema (-i: interactive)
-  demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role
+  demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role,
+                                               and look for schema traps (owner-rights views, NULL-blind unique
+                                               scope indexes, policy comparisons that can't use an index)
   demesne diff     <spec.demesne> <dsn> [--exit-code] [--allow <file>]
                                                generated-vs-live drift, both ways: policies, definers, triggers
                                                and orphans; --exit-code fails (exit 1) on any drift (CI guard);
