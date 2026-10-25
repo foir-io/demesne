@@ -1,0 +1,87 @@
+name: mutants
+
+on:
+  pull_request:
+    paths:
+      - 'crates/emit-sql/src/**'
+      - 'crates/model/src/**'
+      - 'crates/runtime/src/**'
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    # Mutation testing runs only here, on a throwaway runner: a runaway mutant
+    # can exhaust a developer machine's memory.
+    name: Mutants (${{ matrix.shard }}/16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CARGO_TERM_COLOR: always
+      DEMESNE_PG_URL: postgres://postgres@localhost:5432/demesne_test?sslmode=disable
+      SUPABASE_DB_URL: postgres://postgres@localhost:5432/demesne_supabase?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.149
+      - name: live Postgres databases
+        run: >-
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1
+          -c 'CREATE DATABASE demesne_test'
+          -c 'CREATE DATABASE demesne_supabase'
+          -c 'CREATE ROLE anon NOLOGIN'
+          -c 'CREATE ROLE authenticated NOLOGIN'
+          -c 'CREATE ROLE service_role NOLOGIN'
+      - name: the change under test
+        run: git diff "origin/${{ github.base_ref }}...HEAD" -- crates/emit-sql/src crates/model/src crates/runtime/src > mutants.diff
+      - name: mutants
+        run: >-
+          cargo mutants --no-shuffle -vV --in-place
+          --in-diff mutants.diff
+          --shard ${{ matrix.shard }}/16
+          --test-tool nextest
+          --test-package demesne-model,demesne-emit-sql,demesne-runtime,demesne-parity,demesne-postgres
+          -- --run-ignored all
+      - name: missed mutants
+        if: always()
+        run: |
+          {
+            echo "### Shard ${{ matrix.shard }}/16"
+            for f in caught missed timeout unviable; do
+              echo "- $f: $(wc -l < "mutants.out/$f.txt" 2>/dev/null || echo 0)"
+            done
+            if [ -s mutants.out/missed.txt ]; then
+              echo
+              echo '```'
+              cat mutants.out/missed.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-${{ matrix.shard }}
+          path: mutants.out

@@ -57,6 +57,9 @@ CLI and runtime are Rust; the Go engine is frozen at v0.93.x as the full Go libr
   `INSTA_UPDATE=always cargo test -p demesne-parity --test pinned_output` and read the whole
   diff before committing it.
 - The live-Postgres round-trip needs `$SUPABASE_DB_URL` and fails without it.
+- Mutation tests run only in CI (`.github/workflows/mutants.yml`), on pull requests that touch the
+  `emit-sql`, `model` or `runtime` sources. Never run `cargo mutants` on a developer machine: a
+  runaway mutant can exhaust its memory.
 
 ## The workflow: spec to enforcement
 
