@@ -38,4 +38,5 @@ exports.run = async () => {
     () => vscode.languages.getDiagnostics(doc.uri).every((d) => d.severity === vscode.DiagnosticSeverity.Warning) && vscode.languages.getDiagnostics(doc.uri).length === 2,
     "the edit to turn the errors into warnings",
   );
+  console.log(`demesne live validation: ${found.length} errors on lines ${found.map((d) => d.range.start.line + 1).join(", ")}, then ${vscode.languages.getDiagnostics(doc.uri).length} warnings after the edit`);
 };
