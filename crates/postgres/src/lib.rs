@@ -1,10 +1,12 @@
-#![doc = "Live-database support for demesne: introspection into a `Schema`, the policy surface `diff` compares, the global-assignment audit and the RLS role check."]
+#![doc = "Live-database support for demesne: introspection into a `Schema`, the drift `diff` reports, the global-assignment audit and the RLS role check."]
 
 mod connect;
+mod drift;
 mod dsn;
 mod goerr;
 
 pub use connect::connect;
+pub use drift::{Drift, DriftKind, Finding, drift};
 pub use dsn::parse_config_dump;
 
 use demesne_model::Schema;
@@ -97,22 +99,4 @@ pub fn role_bypasses_rls(client: &mut Client, role: &str) -> Result<(bool, bool)
 pub fn count_global_assignments(client: &mut Client, query: &str) -> Result<i64, String> {
     let row = client.query_one(&format!("SELECT count(*) FROM ({query}) q"), &[]).map_err(|e| query_error(&e))?;
     Ok(row.get(0))
-}
-
-/// Returns `table.policy` for every live policy on the `governed` tables in `public`.
-///
-/// # Errors
-///
-/// The catalog query fails.
-pub fn live_policy_surface(client: &mut Client, governed: &[String]) -> Result<BTreeSet<String>, String> {
-    let tset: BTreeSet<&str> = governed.iter().map(String::as_str).collect();
-    let rows = client.query("SELECT tablename::text, policyname::text FROM pg_policies WHERE schemaname = 'public'", &[]).map_err(|e| query_error(&e))?;
-    let mut out = BTreeSet::new();
-    for row in rows {
-        let (table, pol): (String, String) = (row.get(0), row.get(1));
-        if tset.contains(table.as_str()) {
-            out.insert(format!("{table}.{pol}"));
-        }
-    }
-    Ok(out)
 }

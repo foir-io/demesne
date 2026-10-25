@@ -148,7 +148,7 @@ This section follows the spec through two phases. At build time the CLI introspe
                                                  never emits weaker SQL than you wrote)
   $ demesne check       --dsn $DATABASE_URL      ValidateAgainst: every table/column exists
   $ demesne emit        app.demesne              → definers.sql + policies.sql + PDP + claims
-  $ demesne diff        --dsn $DATABASE_URL      generated == live pg_policies?  (the oracle)
+  $ demesne diff        app.demesne $DATABASE_URL  generated == live, both ways?  (the oracle)
 
   emit produces:
      auth.<fn>(…)  SECURITY DEFINER         the trusted EXISTS kernel (compiler owns 100%)
@@ -186,7 +186,7 @@ This section follows the spec through two phases. At build time the CLI introspe
 A few details the diagram leans on:
 
 - The validation steps run V1 through V11, a numbered set of semantic checks. The emitter is bounded: it never emits SQL weaker than what you wrote.
-- `demesne diff` is the oracle that compares the generated output against the live database. It proves the policies in Postgres match what the compiler emitted, byte for byte.
+- `demesne diff` is the oracle that compares the generated output against the live database, in both directions. Each generated policy, definer and trigger is created as a temporary copy so Postgres prints both sides in its own form. It proves the live objects match what the compiler emitted, definition for definition, and that nothing ungenerated is live where the spec governs.
 - The app role is a non-`BYPASSRLS` role. System and bootstrap paths use a separate `BYPASSRLS` pool. The only way to read a governed table on the request path is through the policy.
 
 ---

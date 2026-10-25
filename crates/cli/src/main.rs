@@ -1,4 +1,4 @@
-use demesne_cli::{OsFiles, Out, R, finish, load_spec, need, run_pure};
+use demesne_cli::{Files, OsFiles, Out, R, finish, load_spec, need, run_pure, strip_flag};
 use demesne_emit_sql::Sql;
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
@@ -204,34 +204,34 @@ fn cmd_coverage(out: &mut Out, args: &[String]) -> R {
 }
 
 fn cmd_diff(out: &mut Out, args: &[String]) -> R {
-    use std::collections::BTreeSet;
     let (exit_code, args) = strip_bool_flag(args, "exit-code");
+    let (allow_path, args) = strip_flag(&args, "allow", "");
     need(&args, 1, "<spec.demesne>")?;
     let s = load_spec(&OsFiles, &args[0])?;
     out.warn_spec(&args[0], &s);
     let dsn = dsn_arg(&args, 1)?;
-    let res = Sql::new(&s).emit_rls()?;
-    let gen_set: BTreeSet<String> = res.policies.iter().map(|p| format!("{}.{}", p.table, p.name)).collect();
-    let governed: Vec<String> = res.policies.iter().map(|p| p.table.clone()).collect::<BTreeSet<_>>().into_iter().collect();
+    let mut sql = String::new();
+    Sql::new(&s).write_all_sql(&mut sql)?;
+    let allow: Vec<String> = if allow_path.is_empty() {
+        Vec::new()
+    } else {
+        String::from_utf8_lossy(&OsFiles.read(&allow_path)?).lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
+    };
     let mut client = demesne_postgres::connect(&dsn)?;
-    let live = demesne_postgres::live_policy_surface(&mut client, &governed)?;
-    let missing: Vec<&String> = gen_set.iter().filter(|k| !live.contains(*k)).collect();
-    let orphan: Vec<&String> = live.iter().filter(|k| !gen_set.contains(*k)).collect();
-    for m in &missing {
-        out.print(&format!("MISSING  {m} — generated but not present live (apply it)\n"));
+    let d = demesne_postgres::drift(&mut client, &sql, &allow)?;
+    for f in &d.findings {
+        out.print(&format!("{:<8} {} — {}\n", f.kind.label(), f.object, f.detail));
     }
-    for o in &orphan {
-        out.print(&format!("ORPHAN   {o} — live on a governed table but not generated (remove it, or model it)\n"));
+    if d.findings.is_empty() {
+        out.print(&format!("in sync: {} policies, {} functions and {} triggers match the spec, with no orphans\n", d.policies, d.functions, d.triggers));
     }
-    if missing.is_empty() && orphan.is_empty() {
-        out.print(&format!("in sync: {} generated policies all present, no orphans across {} governed tables\n", gen_set.len(), governed.len()));
-    }
-    if exit_code && missing.len() + orphan.len() > 0 {
-        return Err(format!(
-            "policy drift: {} generated-but-missing, {} orphan — the live database is not the spec's; the spec must be the only source of policy",
-            missing.len(),
-            orphan.len()
-        ));
+    if exit_code && !d.findings.is_empty() {
+        let mut counts: std::collections::BTreeMap<demesne_postgres::DriftKind, usize> = std::collections::BTreeMap::new();
+        for f in &d.findings {
+            *counts.entry(f.kind).or_default() += 1;
+        }
+        let summary: Vec<String> = counts.iter().map(|(k, n)| format!("{n} {}", k.label().to_lowercase())).collect();
+        return Err(format!("drift: {} — the live database is not the spec's; the spec must be the only source of policy", summary.join(", ")));
     }
     Ok(())
 }

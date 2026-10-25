@@ -102,6 +102,40 @@ it. Two new emit kinds close this:
 `Sql::manifest`, `Sql::migration` and `Manifest` are the same in the
 `demesne-emit-sql` API, and `Sql::write_all_sql` is the `emit all` text.
 
+### Breaking: `diff` compares whole definitions, in both directions
+
+`diff` compared only policy names, and only on tables in `public`. A live
+policy with the right name and any predicate passed, even `USING (true)`. A
+hand-edited or superseded definer passed too, because definers weren't
+compared at all. Now `diff` compares the spec's whole SQL with the live
+database:
+
+- Policies: command, roles, permissive or restrictive, `USING` and
+  `WITH CHECK`.
+- Definers and other generated functions: their whole definition, through
+  `pg_get_functiondef`.
+- Triggers: their whole definition, through `pg_get_triggerdef`.
+- Orphans: a policy on a governed table, a function in a definer schema, or a
+  trigger calling one, that the spec doesn't generate. After a `migrate`, this
+  is the live-to-generated check that nothing was left behind.
+
+Postgres stores expressions in its own form, so each generated object is
+created as a temporary copy beside the live one and both are read back as
+Postgres prints them. The transaction is then rolled back. `diff` needs the
+`TEMP` privilege and a primary database, and it takes no lock on a live table.
+
+Each line names its object's kind, as in `MISSING  policy notes_select on
+public.notes`, where the old line read `MISSING  notes.notes_select`. There are
+two new kinds:
+
+- `CHANGED`: a live definition differs from the generated one.
+- `INVALID`: a generated statement doesn't compile against the live database.
+
+`--allow <file>` lists orphans to leave unreported, such as definers written
+by hand, one per line as their `ORPHAN` line names them. An entry that matches
+nothing live is reported as `STALE`. `demesne_postgres::drift` replaces
+`live_policy_surface` in the Rust API.
+
 ### Breaking: objects that would overwrite each other's SQL on one table are refused
 
 Two objects on one table that both compile a policy for the same operation

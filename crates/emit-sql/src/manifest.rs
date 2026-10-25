@@ -32,30 +32,15 @@ impl Manifest {
     /// A `CREATE` statement of a kind the manifest does not record, or one it cannot read the identity of.
     pub fn from_sql(sql: &str) -> Result<Self, String> {
         let mut m = Self::default();
-        for stmt in statements(sql) {
-            let words: Vec<&str> = stmt.split_whitespace().collect();
-            match words.as_slice() {
-                ["CREATE", "OR", "REPLACE", "FUNCTION", ..] | ["CREATE", "FUNCTION", ..] => {
-                    m.functions.insert(function_signature(&stmt)?);
-                }
-                ["CREATE", "POLICY", name, "ON", table, ..] => {
-                    m.policies.insert(((*table).to_string(), (*name).to_string()));
-                }
-                ["CREATE", "OR", "REPLACE", "TRIGGER", name, rest @ ..] | ["CREATE", "TRIGGER", name, rest @ ..] => {
-                    m.triggers.insert((target(rest, &stmt)?, (*name).to_string()));
-                }
-                ["CREATE", "UNIQUE", "INDEX", rest @ ..] | ["CREATE", "INDEX", rest @ ..] => {
-                    m.indexes.insert(index_entry(rest, &stmt)?);
-                }
-                ["CREATE", "TABLE", rest @ ..] => {
-                    m.tables.insert(table_name(rest, &stmt)?);
-                }
-                ["ALTER", "TABLE", table, "ENABLE", "ROW", "LEVEL", "SECURITY"] => {
-                    m.rls.insert((*table).to_string());
-                }
-                ["CREATE", ..] => return Err(format!("the manifest does not record this kind of object: {}", first_line(&stmt))),
-                _ => {}
-            }
+        for (object, _) in objects(sql)? {
+            match object {
+                Object::Function(sig) => m.functions.insert(sig),
+                Object::Policy { table, name } => m.policies.insert((table, name)),
+                Object::Trigger { table, name } => m.triggers.insert((table, name)),
+                Object::Index { table, name } => m.indexes.insert((table, name)),
+                Object::Table(t) => m.tables.insert(t),
+                Object::Rls(t) => m.rls.insert(t),
+            };
         }
         Ok(m)
     }
@@ -198,6 +183,67 @@ impl Manifest {
             arms.join("\n    UNION ALL\n    ")
         )
     }
+}
+
+/// One object a script creates, by the identity a [`Manifest`] records it under.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Object {
+    /// A function, by identity signature, such as `auth.notes_accessors(text)`.
+    Function(String),
+    /// A policy on a table.
+    Policy {
+        /// The table, as the script names it.
+        table: String,
+        /// The policy's name.
+        name: String,
+    },
+    /// A trigger on a table.
+    Trigger {
+        /// The table, as the script names it.
+        table: String,
+        /// The trigger's name.
+        name: String,
+    },
+    /// An index on a table.
+    Index {
+        /// The table, as the script names it.
+        table: String,
+        /// The index's name.
+        name: String,
+    },
+    /// A table the script creates.
+    Table(String),
+    /// A table the script enables row level security on.
+    Rls(String),
+}
+
+/// Returns each statement of `sql` that creates an object or enables row level security, with that object, in script order.
+///
+/// # Errors
+///
+/// A `CREATE` statement of a kind the manifest does not record, or one it cannot read the identity of.
+pub fn objects(sql: &str) -> Result<Vec<(Object, String)>, String> {
+    let mut out = Vec::new();
+    for stmt in statements(sql) {
+        let words: Vec<&str> = stmt.split_whitespace().collect();
+        let object = match words.as_slice() {
+            ["CREATE", "OR", "REPLACE", "FUNCTION", ..] | ["CREATE", "FUNCTION", ..] => Object::Function(function_signature(&stmt)?),
+            ["CREATE", "POLICY", name, "ON", table, ..] => Object::Policy { table: (*table).to_string(), name: (*name).to_string() },
+            ["CREATE", "OR", "REPLACE", "TRIGGER", name, rest @ ..] | ["CREATE", "TRIGGER", name, rest @ ..] => {
+                Object::Trigger { table: target(rest, &stmt)?, name: (*name).to_string() }
+            }
+            ["CREATE", "UNIQUE", "INDEX", rest @ ..] | ["CREATE", "INDEX", rest @ ..] => {
+                let (table, name) = index_entry(rest, &stmt)?;
+                Object::Index { table, name }
+            }
+            ["CREATE", "TABLE", rest @ ..] => Object::Table(table_name(rest, &stmt)?),
+            ["ALTER", "TABLE", table, "ENABLE", "ROW", "LEVEL", "SECURITY"] => Object::Rls((*table).to_string()),
+            ["CREATE", ..] => return Err(format!("the manifest does not record this kind of object: {}", first_line(&stmt))),
+            _ => continue,
+        };
+        out.push((object, stmt));
+    }
+    Ok(out)
 }
 
 impl Sql<'_> {

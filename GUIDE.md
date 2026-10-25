@@ -98,10 +98,31 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
    demesne diff authz.demesne "$DATABASE_URL"
    ```
 
-   `diff` reports two kinds of drift: a generated policy that's missing from the
-   live database, and an orphan policy that's live on a governed table but not
-   generated. A permissive orphan is an open path; a missing `_require` policy is
-   a floor that has quietly stopped being enforced.
+   `diff` compares the spec's SQL with the live database in both directions:
+
+   - `MISSING`: a generated policy, definer, trigger or governed table that isn't
+     live.
+   - `CHANGED`: a live policy whose command, roles, permissive or restrictive
+     kind, `USING` or `WITH CHECK` differs from the generated one, or a definer
+     or trigger whose definition differs.
+   - `INVALID`: a generated statement that doesn't compile against the live
+     database, for example one calling a function that isn't there.
+   - `ORPHAN`: a policy live on a governed table, a function live in a definer
+     schema, or a trigger calling one, that the spec doesn't generate.
+
+   A permissive orphan is an open path. A missing or changed `_require` policy
+   is a floor that has quietly stopped being enforced.
+
+   Postgres stores a policy's expression in its own form, so `diff` creates each
+   generated object as a temporary copy, reads both sides back as Postgres
+   prints them, and rolls back. It needs the `TEMP` privilege and a primary, not
+   a hot standby, and it takes no lock on your tables.
+
+   For definers you write by hand in a definer schema, list each one in a file,
+   one per line, exactly as its `ORPHAN` line names it (`function
+   auth.my_helper(text)`), and pass `--allow <file>`. An entry that matches
+   nothing live is reported as `STALE`, so the list can't outlive what it
+   excuses. `--exit-code` fails on any of these.
 
 ---
 
@@ -114,7 +135,7 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 | `demesne introspect <dsn>` | yes | summarise the live schema |
 | `demesne scaffold [-i] <dsn>` | yes | generate a starter spec from the schema (`-i`: interactive — asks for the RLS role + definer/table schemas, lists ungoverned tables as TODO stubs) |
 | `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, AND verify the RLS role is not `BYPASSRLS` |
-| `demesne diff <spec> <dsn>` | yes | generated-vs-live policy drift (on governed tables) |
+| `demesne diff <spec> <dsn>` | yes | generated-vs-live drift both ways: policies, definers, triggers, orphans |
 | `demesne coverage <spec> <dsn>` | yes | list live tables with NO governing object (ungoverned → no RLS) — the drift/gap check |
 
 `<dsn>` defaults to `$DATABASE_URL`. The engine package never touches a database;
