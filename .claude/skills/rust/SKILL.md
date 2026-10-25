@@ -119,7 +119,10 @@ Don't load all of the vendored text. Load only the file for the area you're work
 - **No tautological tests** (M-TAUTOLOGICAL-TESTS). Don't re-assert a constant or mirror the implementation's branches. Assert a property or a behaviour someone can observe.
 - **Snapshot goldens.** Golden outputs are snapshot files, reviewed as diffs (insta). Never regenerate goldens to make a failing test pass without reading the diff and saying why it's right.
 - **Where tests live.** Tests of the public surface go under `tests/` (M-INTEGRATION-TESTS). Use `mod tests` for private internals.
-- **Mutation-test correctness-critical code.** For authorization, data-integrity or security code, run `cargo mutants --in-diff` on your change. Treat each missed mutant like an uncaught plant.
+- **Mutation-test correctness-critical code, in CI only.** For authorization, data-integrity or security code, run `cargo mutants --in-diff` on your change in a CI job, never on a developer's machine. Treat each missed mutant like an uncaught plant.
+  - A mutant can turn a loop into one that allocates without bound: `i += 1` becomes `i *= 1` next to a `push`. A few of those running at once exhaust a laptop's memory in seconds, and macOS then panics the kernel. A local run crashed a laptop twice this way.
+  - macOS can't cap a process's memory, so a shorter `--timeout` or fewer jobs doesn't make a local run safe.
+  - Locally, prove tests with plants instead. If the repo has no mutants job in CI, say so and ask before adding one; don't fall back to running it locally.
 
 ### 7. Async
 
