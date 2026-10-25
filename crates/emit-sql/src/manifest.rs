@@ -192,6 +192,7 @@ impl Manifest {
 
 /// One object a script creates, by the identity a [`Manifest`] records it under.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Object {
     /// A function, by identity signature, such as `auth.notes_accessors(text)`.
     Function(String),

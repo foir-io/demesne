@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum Surface {
     Vocabulary(String),
     HoldsResolver(String),

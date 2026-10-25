@@ -169,11 +169,7 @@ fn report_schema_traps(out: &mut Out, s: &Spec, client: &mut postgres::Client) -
         out.print("ok: no schema traps: views over governed tables read as their caller, unique indexes constrain NULL scope rows, and policies compare bare columns\n");
     }
     for t in &traps {
-        let label = match t.severity {
-            demesne_postgres::Severity::Danger => "DANGER",
-            demesne_postgres::Severity::Warning => "warning",
-        };
-        out.print(&format!("{label}: {}\n", t.message));
+        out.print(&format!("{}: {}\n", t.severity, t.message));
     }
     let dangers = traps.iter().filter(|t| t.severity == demesne_postgres::Severity::Danger).count();
     if dangers > 0 {

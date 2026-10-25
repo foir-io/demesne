@@ -234,6 +234,25 @@ message errors.
 To upgrade, use the accessors where you matched on a message, and call
 `to_string()` where you need the text.
 
+### Breaking: ten public enums can grow without a major version
+
+These enums are `#[non_exhaustive]`, so a match on one outside its crate needs
+a `_` arm:
+
+- `demesne_postgres::DriftKind` and `Severity`, which also displays as
+  `DANGER` or `warning`;
+- `demesne_emit_sql::Object`;
+- `demesne_emit_rust::Surface`;
+- `demesne_model::analysis::CostClass`;
+- `demesne_runtime::Consistency`, `ConsistencyLevel`, `AffordanceHint`,
+  `Freshness` and `AffordanceSource`.
+
+The rest stay exhaustive, so adding a variant to one is a major version:
+`demesne_runtime::Decision`, because code that authorizes must handle every
+outcome rather than fall into a `_` arm; the syntax tree's enums, because a
+grammar addition changes what every consumer of the tree must handle; and
+`Structure`, `ReachGrantRef` and `gocompat::json::Value`.
+
 ### Migrations drop what a spec stops emitting
 
 `emit all` writes `CREATE OR REPLACE` for the current surface only. So a

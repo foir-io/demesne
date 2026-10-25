@@ -1,14 +1,25 @@
 use crate::{Error, query_error};
 use postgres::{Client, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 /// How serious a schema trap is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Severity {
     /// Rows reach readers that the policies would refuse.
     Danger,
     /// Tenancy or performance is weakened, though no policy is bypassed.
     Warning,
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Severity::Danger => "DANGER",
+            Severity::Warning => "warning",
+        })
+    }
 }
 
 /// One trap in the live schema around the tables a spec governs.

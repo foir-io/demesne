@@ -2,6 +2,7 @@ use crate::Error;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConsistencyLevel {
     MinimizeLatency,
     AtLeastAsFresh,
@@ -9,6 +10,7 @@ pub enum ConsistencyLevel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Consistency {
     MinimizeLatency,
     AtLeastAsFresh(Zookie),
@@ -85,6 +87,7 @@ pub fn zookie_now_sql() -> &'static str {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AffordanceHint {
     Unknown,
     Likely,
@@ -92,6 +95,7 @@ pub enum AffordanceHint {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Freshness {
     Unknown,
     Stale,
@@ -100,6 +104,7 @@ pub enum Freshness {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AffordanceSource {
     AsyncIndex,
     Floor,

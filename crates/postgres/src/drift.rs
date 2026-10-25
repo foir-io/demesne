@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// How a live object differs from the spec's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum DriftKind {
     /// The spec creates it and the database has no such object.
     Missing,

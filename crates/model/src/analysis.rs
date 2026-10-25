@@ -54,6 +54,7 @@ pub fn go_type_name(r: &Repr) -> &'static str {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CostClass {
     Inline,
     Definer,

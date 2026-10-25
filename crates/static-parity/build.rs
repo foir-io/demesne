@@ -66,6 +66,7 @@ fn registry_item(spec: &Spec, m: &str, w: &Surface) -> String {
         Surface::Session => format!("Item::Session(&{path})"),
         Surface::ClaimsContract => format!("Item::ClaimsContract({path})"),
         Surface::ClaimsContractEntries => format!("Item::ClaimsContractEntries({path})"),
+        other => unreachable!("candidates() yields only the surfaces above, not {other:?}"),
     }
 }
 
