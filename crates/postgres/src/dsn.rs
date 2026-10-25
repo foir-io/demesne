@@ -372,7 +372,11 @@ fn valid_userinfo(s: &str) -> bool {
     })
 }
 
-fn parse_host(host: &str) -> Result<String, String> {
+fn parse_host(hosts: &str) -> Result<String, String> {
+    Ok(hosts.split(',').map(parse_one_host).collect::<Result<Vec<_>, _>>()?.join(","))
+}
+
+fn parse_one_host(host: &str) -> Result<String, String> {
     if let Some(open) = host.rfind('[') {
         if open > 0 {
             return Err("invalid IP-literal".into());
@@ -636,20 +640,17 @@ fn parse_url_settings(conn: &str) -> Result<Settings, String> {
         }
         if is_ip_only(h) {
             hosts.push(h.trim_matches(['[', ']']).to_string());
+            ports.push(String::new());
             continue;
         }
         let (hh, pp) = split_host_port(h).map_err(|e| format!("failed to split host:port in '{h}', err: {e}"))?;
-        if !hh.is_empty() {
-            hosts.push(hh);
-        }
-        if !pp.is_empty() {
-            ports.push(pp);
-        }
+        hosts.push(hh);
+        ports.push(pp);
     }
-    if !hosts.is_empty() {
+    if hosts.iter().any(|h| !h.is_empty()) {
         s.insert("host".into(), hosts.join(","));
     }
-    if !ports.is_empty() {
+    if ports.iter().any(|p| !p.is_empty()) {
         s.insert("port".into(), ports.join(","));
     }
     let database = u.path.trim_start_matches('/');
@@ -1001,9 +1002,11 @@ pub(crate) fn parse_config(conn: &str) -> Result<ConnConfig, ParseConfigError> {
         parse_keyword_value_settings(conn).map_err(|e| pce(conn, "failed to parse as keyword/value", Some(e)))?
     };
     let mut settings = merge(&[&defaults, &env, &conn_settings]);
+    let mut base = merge(&[&defaults, &env]);
     if let Some(service) = settings.get("service").cloned() {
         let svc = parse_service_settings(get(&settings, "servicefile"), &service).map_err(|e| pce(conn, "failed to read service", Some(e)))?;
         settings = merge(&[&defaults, &env, &svc, &conn_settings]);
+        base = merge(&[&defaults, &env, &svc]);
     }
     let connect_timeout = match settings.get("connect_timeout") {
         Some(v) => {
@@ -1021,7 +1024,11 @@ pub(crate) fn parse_config(conn: &str) -> Result<ConnConfig, ParseConfigError> {
     let hosts: Vec<&str> = get(&settings, "host").split(',').collect();
     let ports: Vec<&str> = get(&settings, "port").split(',').collect();
     for (i, host) in hosts.iter().enumerate() {
-        let port_str = ports.get(i).copied().unwrap_or(ports[0]);
+        let host = if host.is_empty() { get(&base, "host") } else { host };
+        let port_str = match ports.get(i).copied().unwrap_or(ports[0]) {
+            "" => get(&base, "port"),
+            p => p,
+        };
         let port = parse_port(port_str).map_err(|e| pce(conn, "invalid port", Some(e)))?;
         let tls_plans =
             if is_absolute_path(host) { vec![None] } else { config_tls(&settings, host).map_err(|e| pce(conn, "failed to configure TLS", Some(e)))? };

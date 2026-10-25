@@ -174,6 +174,34 @@ grant table. `validate` now refuses all three and names the objects. A table
 can still carry several objects when only one of them compiles each policy
 and tracks the table, and the rest use `predicate` permissions.
 
+### Fixes to behaviour carried over from the Go engine
+
+- **Permission implications under a custom definer schema.** A rolestore
+  whose vocabulary has `implies` emitted a holds definer that called
+  `auth.<rolestore>_perm_implied_by`, while the function itself was created
+  in the declared definer schema. Without an `auth` schema the call failed;
+  with one, it could reach another spec's function. It now calls the function
+  the SQL creates. A new test re-emits every corpus spec under a custom
+  definer schema and checks every call to a generated function names it.
+- **Accessor refusals name the real definer schema.** The two refusals for a
+  select permission whose readers can't be listed named
+  `auth.<table>_accessors` whatever the definer schema was.
+- **Breaking: multi-host URLs follow libpq.** Each host keeps its own port. A
+  host without one takes the default port (`PGPORT`, or 5432), and an empty
+  host takes the default host. Two cases change:
+  - A URL whose last host had no port, such as `postgres://h1:5432,h2/db`,
+    was refused. It now connects.
+  - A host without a port borrowed the first port given. So
+    `postgres://h1,h2,h3:5009/db` put all three hosts on 5009, and now puts
+    only `h3` there.
+
+  IPv6 hosts can be listed too. A single `port=` in keyword/value form still
+  serves every host.
+- **A `min_protocol_version` the server can't meet is refused by name.** The
+  message read `server protocol version too low: %!w(<nil>)`.
+- The example app's Supabase golden is labelled `supabase.demesne`, not
+  `roundtrip.demesne`.
+
 ### Output order no longer depends on Go's sort
 
 Lists in the output (policies, triggers, async indexes, field grants and

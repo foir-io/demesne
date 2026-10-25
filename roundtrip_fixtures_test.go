@@ -107,7 +107,7 @@ func TestSupabase_Fixtures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmitTS: %v", err)
 	}
-	ddl, err := roundtripDDL(s, "roundtrip.demesne")
+	ddl, err := roundtripDDL(s, "supabase.demesne")
 	if err != nil {
 		t.Fatalf("roundtripDDL: %v", err)
 	}

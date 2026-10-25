@@ -497,7 +497,7 @@ impl Sql<'_> {
             && !vocab.implications.is_empty()
         {
             let f = self.perm_implied_by_definer(rs, vocab)?;
-            implied_by = format!("{}.{}", f.schema(), f.name);
+            implied_by = format!("{}.{}", self.s.definer_schema(), f.name);
             defs.fns.push(f);
         }
         defs.fns.push(self.holds_perm_definer(&name, rs, &implied_by));
@@ -614,7 +614,13 @@ impl Sql<'_> {
             }
             let (ok, reason) = self.accessor_coverage(obj);
             if !ok {
-                return Err(format!("object {}: cannot soundly enumerate accessors (auth.{} would under-report) — {}", quote(&obj.name), name, reason));
+                return Err(format!(
+                    "object {}: cannot soundly enumerate accessors ({}.{} would under-report) — {}",
+                    quote(&obj.name),
+                    self.s.definer_schema(),
+                    name,
+                    reason
+                ));
             }
             defs.named.insert(name);
             defs.fns.extend(self.accessor_definers(obj, &cond));
@@ -700,8 +706,9 @@ impl Sql<'_> {
             let (cov, reason) = structural_accessor_coverage(obj);
             if !cov {
                 return Err(format!(
-                    "object {}: cannot soundly enumerate structural accessors (auth.{} would under-report) — {}",
+                    "object {}: cannot soundly enumerate structural accessors ({}.{} would under-report) — {}",
                     quote(&obj.name),
+                    self.s.definer_schema(),
                     name,
                     reason
                 ));

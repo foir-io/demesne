@@ -47,7 +47,7 @@ fn rust_regenerates_every_committed_golden() {
         (format!("{dir}/projection.ts"), demesne_emit_ts::emit_ts(&roundtrip).unwrap()),
         (format!("{dir}/policies.sql"), roundtrip_ddl(&roundtrip, "roundtrip.demesne")),
         (format!("{dir}/supabase/projection.ts"), demesne_emit_ts::emit_ts(&supabase).unwrap()),
-        (format!("{dir}/supabase/policies.sql"), roundtrip_ddl(&supabase, "roundtrip.demesne")),
+        (format!("{dir}/supabase/policies.sql"), roundtrip_ddl(&supabase, "supabase.demesne")),
         (format!("{dir}/supabase/hook.sql"), hook),
         (format!("{dir}/require/projection.ts"), demesne_emit_ts::emit_ts(&require).unwrap()),
         (format!("{dir}/require/policies.sql"), roundtrip_ddl(&require, "require.demesne")),

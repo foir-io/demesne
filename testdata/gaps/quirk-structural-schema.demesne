@@ -1,0 +1,51 @@
+definers schema "app_auth"
+
+topology {
+  level team
+  level space parent team
+  level workspace parent space col workspace_ref
+}
+
+vocabulary staff {
+  permission content:read
+  permission docs:share
+  permission docs:manage
+  preset team_role0 @ team = *
+  preset space_role1 @ space = *
+  preset workspace_role2 @ workspace = content:read
+  preset team_role3 @ team = content:read
+  rank team_role0 > space_role1 > workspace_role2 > team_role3
+}
+vocabulary member {
+  permission self:read
+  permission self:write
+}
+
+rolestore staff {
+  assignments role_assignments
+  kind principal_kind = "staff"
+  subject principal_id
+  scope team_id space_id workspace_ref
+  rolejoin role_id roles id key
+  revoked revoked_at
+  pk assignment_id
+  column note
+}
+
+grant support at workspace
+  via edge support_grants(grantee_id, workspace_ref)
+grant overview at team via claim view_mode = "all" confers select
+
+subject admin { anchor team; reach descendants; identifies sub; roles configurable staff; binds admin }
+subject customer { anchor workspace; reach self; identifies customer_id; roles configurable member; binds owner }
+
+object asset {
+  table assets
+  level workspace
+  scoped team > space > workspace
+  relation owner: customer via owner_id
+  permission view = owner and not owner @rls maps select
+  permission edit = @kind("admin") and @app_scope @rls maps update guard status <> "archived"
+  permission create = @session @rls maps insert
+  permission remove = owner + @scoped @rls maps delete
+}

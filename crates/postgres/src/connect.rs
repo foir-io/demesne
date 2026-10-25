@@ -428,7 +428,10 @@ fn attempt(cfg: &ConnConfig, a: &Attempt, ignore_not_preferred: bool) -> Result<
     if cfg.min_protocol != "3.0" {
         let v: i64 = first_cell(&mut client, "show server_version_num").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
         if v < FIRST_PROTOCOL_3_2_SERVER {
-            return Err(Failure::plain("server protocol version too low: %!w(<nil>)"));
+            return Err(Failure::plain(format!(
+                "server protocol version too low: min_protocol_version is {}, but the server speaks only protocol 3.0",
+                cfg.min_protocol
+            )));
         }
     }
     validate(&mut client, cfg.session_attrs, ignore_not_preferred)?;

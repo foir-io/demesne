@@ -11,3 +11,6 @@ D36	d36-within-nullable.demesne	emit {spec} definers	FUNCTION auth\.docs_accesso
 D36	d36-tree-holds.demesne	validate {spec}	term "@holds\(docs:read\)" has no accessor branch	^ok: 2 objects
 NAMES	shared-table-names.demesne	validate {spec}	^ok: 14 objects	each compile a policy named "items_select"; Postgres keeps only the last one created
 D15	d15-after.demesne	emit {spec} migrate {gaps}/d15-before.manifest.json	unknown emit kind "migrate"	DROP FUNCTION IF EXISTS auth\.notes_accessors_conditional\(text\);
+QUIRK1	quirk-accessors-schema.demesne	validate {spec}	\(auth\.docs_accessors would under-report\)	\(app_auth\.docs_accessors would under-report\)
+QUIRK1	quirk-structural-schema.demesne	validate {spec}	\(auth\.assets_accessors would under-report\)	\(app_auth\.assets_accessors would under-report\)
+IMPLIED	quirk-implied-schema.demesne	emit {spec} definers	[^_]auth\.member_perm_implied_by\(p_perm\)	app_auth\.member_perm_implied_by\(p_perm\)
