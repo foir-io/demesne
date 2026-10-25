@@ -5,9 +5,12 @@ and the spec-to-enforcement workflow; this file is the short version of what mat
 
 ## Hard rules
 
+- **Load the `rust` skill (`.claude/skills/rust/`) before writing or reviewing Rust.** It holds the
+  house rules on lints, panics, errors, determinism and tests.
 - **No comments in code.** Strip them. Only `// Code generated … DO NOT EDIT.` and functional
   directives survive. A comment belongs only when there is a firm, concrete reason; if it is a
-  maybe, remove it and make the code clearer.
+  maybe, remove it and make the code clearer. Rustdoc on a published crate's public items is API
+  documentation, not a comment: document them, with `# Errors` and `# Panics` where they apply.
 - The compiler, CLI and runtime are the Rust workspace under `crates/`. The Go engine (`/`)
   is frozen at v0.93.x: it is the full Go library, maintained on `release/v0.93`, and the
   reference `scripts/parity` diffs the Rust build against. It stays standard-library only;

@@ -18,5 +18,6 @@ go.work.sum
 # VS Code extension build artifact
 *.vsix
 
-.claude/
+.claude/*
+!.claude/skills/
 target/

@@ -1,0 +1,161 @@
+---
+name: rust
+description: How Rust is written, tested and reviewed in this repo. These are house rules on lints, panics, errors, determinism, types, async and tests, built on Microsoft's Pragmatic Rust Guidelines, which are vendored by section. Use this skill whenever you write, change, review, refactor or port Rust code, or touch Cargo.toml, lint config, error types, tests or CI for a Rust crate. That includes small edits and fixes that look mechanical, because most of the rules here are about the details that make a change correct.
+---
+
+# Rust in this repo
+
+The code follows two layers of guidance:
+- **The house rules below.** They cover the judgement calls the compiler and clippy can't check.
+- **Microsoft's Pragmatic Rust Guidelines.** They are vendored under `references/pragmatic-rust/` (MIT). Each guideline has a stable ID such as `M-PANIC-ON-BUG`.
+
+Workspace lints and CI enforce everything that can be enforced mechanically. So this skill is mostly about what a lint can't see:
+- whether an error is the right kind;
+- whether an order is deterministic;
+- whether a test can actually fail;
+- whether a port carries the old language's habits forward.
+
+**Precedence:**
+1. The repo's `CLAUDE.md` / `AGENTS.md`, which hold repo-specific rules (release process, parity constraints, crate boundaries).
+2. These house rules.
+3. The Pragmatic Rust Guidelines.
+4. The upstream [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/checklist.html).
+
+When a house rule departs from a guideline, it says why.
+
+## Find the guideline you need
+
+Don't load all of the vendored text. Load only the file for the area you're working in. `references/pragmatic-rust/README.md` maps every ID to its file.
+
+| Working on | Read |
+|---|---|
+| Panics, invariants, `unsafe` | `correctness.md` |
+| A public API, error types, builders, traits versus generics | `libraries-ux.md` |
+| Testability, statics, newtypes, printing versus logging | `libraries-resilience.md` |
+| Types crossing crates, `Send`, I/O parameters | `libraries-interoperability.md` |
+| Cargo features, building on every platform | `libraries-building.md` |
+| A binary's `main`, its allocator, target-cpu | `application.md` |
+| Hot paths, allocation, async future size | `performance.md` |
+| Workspace layout, editions, MSRV | `project.md` |
+| Doc comments | `documentation.md` |
+| Naming, lint overrides, logging, Debug and Display | `universal.md` |
+| Porting code, writing tests, re-exports, crate docs | `ai.md`: it lists the mistakes agents make most often in Rust |
+| Macros, FFI, WASM boundaries | `macros.md`, `ffi.md` |
+
+## House rules
+
+### 1. Lints are the floor, not the target
+
+- **One lint config.** Lint config lives in `[workspace.lints]` in the root `Cargo.toml`, and every crate sets `[lints] workspace = true`. Don't add lint tables to a single crate's `Cargo.toml`.
+- **Fix the warning, don't silence it.** Lints stay at warn while you work, and CI turns every warning into a failure with `-D warnings`.
+- **Overrides are narrow, and each one gives a reason.** When a lint is wrong for a specific item, put `#[expect(clippy::lint_name, reason = "…")]` on the smallest item that needs it (M-LINT-OVERRIDE-EXPECT).
+  - `#[expect]` warns as soon as the lint stops firing, so a stale override shows up by itself.
+  - `#[allow]` hides that, so keep `#[allow]` for generated code.
+  - Never add a workspace-wide `allow` to get a change through.
+- **Crates whose job is printing** (a CLI, a test harness) take one crate-level `#![expect(clippy::print_stdout, reason = "…")]`. Library code logs instead (M-LOG-NOT-PRINT).
+- **No complexity score.** Clippy's own docs say `cognitive_complexity` doesn't measure how hard code is to understand. The structural limits are `too_many_lines`, `excessive_nesting` and `too_many_arguments`.
+  - When one fires, restructure along a real seam: a type, a phase, or a helper with a name a reader would search for.
+  - Cutting a function at an arbitrary line to get under the threshold makes the code worse and only hides the warning.
+  - If there's no honest seam, use `#[expect]` and say why.
+
+### 2. Panics and errors
+
+- **Pick the failure mode by its cause.** Input, I/O, the network and the environment fail with a `Result`. A detected programming bug, meaning an invariant your own code should have upheld, panics (M-PANIC-ON-BUG). Don't invent an error variant for a bug no caller could act on.
+- **No `unwrap()` outside tests.**
+  - Use `expect` with a message that names the invariant: `expect("validated specs always have a table for every term")`, not `expect("failed to get table")`.
+  - A poisoned lock is the one routine case: `expect("<lock name> poisoned")`.
+  - The message is what the next person reads in a crash report (M-PANIC-MESSAGE).
+- **Library errors.** A published library's public errors follow M-ERRORS-CANONICAL-STRUCTS: a struct, a private kind, `is_xxx()` helpers, `Display` and `std::error::Error`. `thiserror` is a fine way to implement them.
+- **Binaries.** A binary may use `anyhow` at the top level (M-APP-ERROR). Anything a caller has to branch on must still be a typed error.
+- **Never branch on an error's message text.** Match the type or kind. Messages get reworded, and a string match silently stops matching. It looks like it still handles the case, but it doesn't.
+- **Convert errors with `From` and `?`** (M-FROM-ERROR). Use `map_err` only to add context.
+- **Don't drop a `Result` silently.** `let _ = …` and `.ok()` on a `Result` need a comment saying why dropping it is correct.
+
+### 3. Determinism
+
+- **Everything that reaches output has a defined order.** Output includes generated files, SQL, JSON, error lists and CLI stdout.
+  - Don't produce output by iterating a `HashMap` or `HashSet`. Use `BTreeMap` or `IndexMap`, or sort with a total order that breaks ties on a unique key.
+  - Hash order changes between runs and versions, so goldens flap, diffs grow noisy, and two identical inputs produce different bytes.
+- **Fast hashers only for trusted keys.** M-FAST-HASHER is fine for keys you control. Keep the default DoS-resistant hasher for anything an outside caller supplies.
+- **Pass the outside world in.** Time, randomness, environment variables, the filesystem and the network go through a handle the caller passes in (M-MOCKABLE-SYSCALLS), so tests control them.
+  - If the repo has disallowed `std::env::var` or the clock calls in `clippy.toml`, that's the reason; use the project's wrapper.
+- **No global mutable state** (M-AVOID-STATICS). A `static` is fine as a cache whose value can't change correctness, such as a compiled regex. A process-wide registry that callers add to at startup is not fine: it's hidden coupling, and tests can't isolate it.
+
+### 4. Make the compiler carry the rule
+
+- **Make invalid states unrepresentable.**
+  - Use enums instead of string tags and boolean flags.
+  - Give each newtype a constructor that checks its invariant (M-STRONG-TYPES-GUARD).
+  - Use typestate when an operation is only valid in some states.
+- **Match exhaustively on your own enums.** A `_ =>` arm on an enum you own hides the next variant someone adds. Security-relevant crates deny `clippy::wildcard_enum_match_arm` for exactly this reason.
+- **Prefer a check the compiler runs.** A crate boundary, a private constructor or a type the compiler checks beats a grep guard, a code-review convention, or a comment saying "don't call this from X". If you find yourself writing such a comment, look for the type that would make it unnecessary.
+
+### 5. Porting from another language
+
+- **Keep the domain, drop the old language's habits** (M-RUST-SHAPED). Port the logic, not the old language's idioms:
+  - error strings, nil checks and sentinel values;
+  - an interface for everything;
+  - registries populated at init;
+  - stringly typed options;
+  - goroutine-per-thing concurrency.
+- **Contain byte-identical compatibility.** When output has to match the old implementation exactly, put the shims in one clearly named compat module or crate, and keep everything else idiomatic. Then the shims can be deleted in one place once parity is no longer required.
+- **Flag old bugs; don't silently copy or fix them.** When the old code has a bug or a non-best-practice pattern, record it where the repo records debt (its debt register or ticket).
+  - A silent fix breaks parity without anyone noticing.
+  - A silent copy carries the debt forward.
+  - Either way, the reviewer loses the decision.
+
+### 6. Tests that can fail
+
+- **Break the code before claiming coverage.** Before saying a test covers a behaviour:
+  1. break the code it guards (a plant);
+  2. run the test and watch it fail;
+  3. revert.
+
+  A plant that doesn't compile proves nothing; count it as unviable, not caught. If a plant isn't caught, there are two possible causes: the test is blind, or the code is dead. Find out which.
+- **Count what ran.**
+  - Run nextest with `--no-tests=fail`.
+  - Report how many tests actually ran.
+  - Check that suites behind `#[ignore]`, a feature or an env var really ran. A skipped database suite looks exactly like a passing one.
+- **No tautological tests** (M-TAUTOLOGICAL-TESTS). Don't re-assert a constant or mirror the implementation's branches. Assert a property or a behaviour someone can observe.
+- **Snapshot goldens.** Golden outputs are snapshot files, reviewed as diffs (insta). Never regenerate goldens to make a failing test pass without reading the diff and saying why it's right.
+- **Where tests live.** Tests of the public surface go under `tests/` (M-INTEGRATION-TESTS). Use `mod tests` for private internals.
+- **Mutation-test correctness-critical code.** For authorization, data-integrity or security code, run `cargo mutants --in-diff` on your change. Treat each missed mutant like an uncaught plant.
+
+### 7. Async
+
+- **No std lock guard across `.await`.** Never hold a `std::sync::Mutex` or `RwLock` guard across an `.await`. Restructure, or use an async-aware lock if one is genuinely needed.
+- **Spawn through the project.** Spawn through the project's helper if it has one, so the task keeps its tracing span and shutdown waits for it. Don't drop a `JoinHandle` without deciding what happens when the task fails.
+- **Long CPU-bound work yields.** It calls `yield_now().await` at intervals or moves to `spawn_blocking` (M-YIELD-POINTS).
+- **Futures and public types are `Send`** (M-TYPES-SEND).
+- **Every network call has a timeout.**
+
+### 8. Dependencies, features, unsafe
+
+- **Declare dependencies once.** Put each dependency in `[workspace.dependencies]` and reference it with `.workspace = true` (M-CARGO-WORKSPACE). Before adding one, check its licence, maintenance and footprint; cargo-deny checks licences and advisories in CI.
+- **Features are additive** (M-FEATURES-ADDITIVE). CI checks each feature on its own.
+- **Don't leak dependency types.** A published crate keeps third-party types out of its public API unless they earn their place (M-DONT-LEAK-TYPES).
+- **`unsafe` is forbidden workspace-wide.** If you think you need it, stop and ask rather than adding an exception.
+
+### 9. Docs, comments and logs
+
+- **Public items are documented with the canonical sections:** `# Errors`, `# Panics`, `# Examples` (M-CANONICAL-DOCS). The first sentence is one line, about 15 words (M-FIRST-DOC-SENTENCE).
+- **Comments explain the invariant or the reason, not the history.** Leave out ticket numbers and the story of how the design was reached, in both code and crate docs (M-NO-META-DESIGN-DOCUMENTATION). That history belongs in the commit message and the ticket.
+- **Name magic values.** A magic value becomes a named constant, with a comment on why it has that value and what breaks if it changes (M-DOCUMENTED-MAGIC).
+- **Log structured events.** Logs are `tracing` events with named fields (M-LOG-STRUCTURED). Never log secrets, tokens or personal data, and redact before the event, not after.
+
+## Before you say it's done
+
+1. Run these, and report what each printed:
+   - `cargo fmt --check`;
+   - `cargo clippy --workspace --all-targets -- -D warnings`;
+   - `cargo nextest run --workspace --no-tests=fail`, plus the repo's ignored or live suites if you touched their area;
+   - `cargo deny check` if dependencies changed.
+2. Report test counts and which suites ran. Name anything you skipped and why.
+3. Check that each new `#[expect]` has a reason a reviewer would accept.
+4. Record any quirk you reproduced on purpose, and any debt you found, where the repo records debt.
+
+## Reviewing Rust
+
+- **Cite each finding.** Give the guideline ID (`M-…`) or the house rule number, so the author can read the reasoning instead of arguing with a paraphrase.
+- **Rank by consequence.** A wrong order in emitted output or a test that can't fail matters more than a naming nit.
+- **No compliance tables.** Don't add a table of the rules you followed to docs, PRs or crate READMEs (M-NO-META-DESIGN-DOCUMENTATION).
