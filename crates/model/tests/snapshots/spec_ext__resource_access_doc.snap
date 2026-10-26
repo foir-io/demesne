@@ -1,0 +1,7 @@
+---
+source: crates/model/tests/spec_ext.rs
+expression: "s.resource_access_surface(\"doc\").map(|r|\n(r.table, r.accessor_fn, r.scope_cols)).map_err(|e| e.to_string())"
+---
+Err(
+    "ResourceAccessSurface: object \"doc\" admits readers its enumeration cannot name (mode), so auth.docs_accessors_conditional lists only the accessors it can name and never the rest; call ConditionalResourceAccessSurface and decide what those rows mean for this caller",
+)

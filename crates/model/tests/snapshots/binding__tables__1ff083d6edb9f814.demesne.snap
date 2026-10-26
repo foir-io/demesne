@@ -1,0 +1,7 @@
+---
+source: crates/model/tests/binding.rs
+expression: "refusals(&spec(path), &Schema::new()).join(\"\\n\")"
+---
+object invitation: table "invitations" not found in the database
+rolestore admin roles: table "roles" not found in the database
+rolestore admin: table "role_assignments" not found in the database

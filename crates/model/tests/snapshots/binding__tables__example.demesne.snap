@@ -1,0 +1,9 @@
+---
+source: crates/model/tests/binding.rs
+expression: "refusals(&spec(path), &Schema::new()).join(\"\\n\")"
+---
+object doc: table "docs" not found in the database
+object workspace: table "workspaces" not found in the database
+rolestore staff roles: table "roles" not found in the database
+rolestore staff: table "role_grants" not found in the database
+subject root membership: table "staff_users" not found in the database

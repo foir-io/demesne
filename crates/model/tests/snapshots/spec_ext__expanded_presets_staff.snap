@@ -1,0 +1,22 @@
+---
+source: crates/model/tests/spec_ext.rs
+expression: "s.expanded_presets(\"staff\")"
+---
+Ok(
+    {
+        "tenant_owner": [
+            "docs:publish",
+            "docs:read",
+            "docs:read:*",
+            "docs:write",
+        ],
+        "ws_editor": [
+            "docs:publish",
+            "docs:read",
+            "docs:write",
+        ],
+        "ws_viewer": [
+            "docs:read",
+        ],
+    },
+)
