@@ -10,6 +10,10 @@ and the spec-to-enforcement workflow; this file is the short version of what mat
 - **This repository is public.** Never commit an adopter's spec, schema, generated output or
   data, not even as a test fixture. Write fixtures from scratch; an adopter's spec stays in the
   adopter's own repository.
+- **A spec value reaches SQL only as a quoted literal.** Every string from a spec goes through
+  `demesne_runtime::quote_literal`, and a spec string that lands where SQL expects an identifier is
+  refused unless it is a plain identifier. `crates/parity/tests/spec_strings.rs` appends a quote to
+  every string in the corpus and checks none escapes its literal.
 - **No comments in code.** Strip them. Only `// Code generated … DO NOT EDIT.` and functional
   directives survive. A comment belongs only when there is a firm, concrete reason; if it is a
   maybe, remove it and make the code clearer. Rustdoc on a published crate's public items is API

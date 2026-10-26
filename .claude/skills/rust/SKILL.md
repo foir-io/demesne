@@ -72,6 +72,8 @@ Don't load all of the vendored text. Load only the file for the area you're work
 - **Never branch on an error's message text.** Match the type or kind. Messages get reworded, and a string match silently stops matching. It looks like it still handles the case, but it doesn't.
 - **Convert errors with `From` and `?`** (M-FROM-ERROR). Use `map_err` only to add context.
 - **Don't drop a `Result` silently.** `let _ = …` and `.ok()` on a `Result` need a comment saying why dropping it is correct.
+- **Decode a boundary strictly.** At a boundary where JSON, a projection or a caller's arguments come in, a field that is missing or of the wrong type is an error naming the field. Never read it as empty, `false` or zero: a lenient default chooses without saying so, and in authorization code it can choose to allow.
+- **Recursion over input takes a depth limit.** A parser or walker that recurses once per level of input refuses past a named limit. Natively a stack overflow aborts the process. In WebAssembly there is no stack guard, so the module fails every later call until it is reloaded. Test both sides of the limit, and that the module still answers afterwards.
 
 ### 3. Determinism
 
