@@ -65,6 +65,8 @@ jobs:
         # A runaway mutant can exhaust the runner's memory and get the whole
         # machine shut down, losing the shard's results. The cap kills only the
         # process that exceeds it, and cargo-mutants records that mutant.
+        # static-parity's build script runs the emitter, so a mutant that loops
+        # forever hangs the build; the build timeout records it as a timeout.
         run: >-
           sudo systemd-run --scope --quiet
           -p MemoryMax=12G -p MemorySwapMax=0 -p OOMPolicy=continue
@@ -77,6 +79,7 @@ jobs:
           --shard ${{ matrix.shard }}/16
           --test-tool nextest
           --test-workspace=true
+          --build-timeout 600
           -- --run-ignored all
       - name: missed mutants
         if: always()
