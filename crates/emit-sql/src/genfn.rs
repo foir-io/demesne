@@ -31,14 +31,6 @@ impl GenFn {
     }
 
     #[must_use]
-    pub fn arg_types(&self) -> String {
-        if self.sig.trim().is_empty() {
-            return String::new();
-        }
-        self.sig.split(',').map(|p| p.split_whitespace().last().unwrap_or("")).collect::<Vec<_>>().join(", ")
-    }
-
-    #[must_use]
     pub fn create_sql(&self) -> String {
         let returns = if self.returns.is_empty() { "boolean" } else { &self.returns };
         let (mut lang, mut body) = ("sql", format!("  SELECT {};", self.body));
