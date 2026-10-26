@@ -1,6 +1,6 @@
 use demesne_gocompat::json;
 use demesne_runtime::projection::{holds_resolver, levels, pdp, principal, role_assignments, subjects, vocabulary};
-use demesne_runtime::{LevelClaim, RoleAssignment, SubjectIdentity, owned, resolve_roles, scope_all_empty};
+use demesne_runtime::{HoldsResolver, LevelClaim, RoleAssignment, SubjectIdentity, owned, owned_list, resolve_roles, scope_all_empty};
 
 fn value(src: &str) -> json::Value {
     json::parse(src).expect("the test JSON parses")
@@ -126,4 +126,38 @@ fn a_resolver_reads_a_plane_depth_only_beside_its_plane() {
     assert_eq!(planed.plane_depth(), 1);
     let err = holds_resolver(&resolver(r#""plane": "tenant","#)).expect_err("a plane without its depth");
     assert_eq!(err.message(), "holdsResolver.planeDepth must be an integer");
+}
+
+#[test]
+fn the_global_assignment_read_selects_root_level_rows_of_the_rolestores_kind() {
+    let r = HoldsResolver {
+        assignments: owned("role_grants"),
+        kind_col: owned("grantee_kind"),
+        kind_val: owned("o'staff"),
+        subject_col: owned("grantee_id"),
+        scope_cols: owned_list(["tenant_id", "project_id"]),
+        revoked_col: owned("revoked_at"),
+        role_col: owned("role_id"),
+        roles_table: owned("roles"),
+        roles_id: owned("id"),
+        key_col: owned("key"),
+        ..HoldsResolver::default()
+    };
+    assert_eq!(
+        r.global_assignments_sql(),
+        "SELECT ra.grantee_id, r.key, ra.tenant_id, ra.project_id FROM role_grants ra JOIN roles r ON r.id = ra.role_id WHERE ra.grantee_kind = 'o''staff' AND ra.revoked_at IS NULL AND ra.tenant_id IS NULL ORDER BY 1, 2"
+    );
+    let unkinded = HoldsResolver { kind_col: owned(""), revoked_col: owned(""), ..r.clone() };
+    assert_eq!(
+        unkinded.global_assignments_sql(),
+        "SELECT ra.grantee_id, r.key, ra.tenant_id, ra.project_id FROM role_grants ra JOIN roles r ON r.id = ra.role_id WHERE ra.tenant_id IS NULL ORDER BY 1, 2"
+    );
+    assert_eq!(HoldsResolver { scope_cols: owned_list(Vec::<String>::new()), ..r }.global_assignments_sql(), "");
+}
+
+#[test]
+fn a_claims_projection_names_its_own_setting_cast_and_role() {
+    let s = demesne_runtime::projection::session(&value(r#"{"setting": "app.claims", "cast": "jsonb", "role": "app_user"}"#)).expect("the session decodes");
+    assert_eq!((s.setting.as_ref(), s.cast.as_ref(), s.role.as_ref()), ("app.claims", "jsonb", "app_user"));
+    assert_eq!(s.session_setup_sql(demesne_runtime::SettingLifetime::Transaction), ["SET LOCAL ROLE app_user", "SELECT set_config('app.claims', $1, true)"]);
 }
