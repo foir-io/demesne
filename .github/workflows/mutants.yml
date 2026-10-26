@@ -67,6 +67,9 @@ jobs:
         # process that exceeds it, and cargo-mutants records that mutant.
         # static-parity's build script runs the emitter, so a mutant that loops
         # forever hangs the build; the build timeout records it as a timeout.
+        # A timeout is a mutant the tests caught by hanging, so exit 3 passes;
+        # cargo-mutants reports it ahead of a miss, so the next step fails the
+        # job on any miss.
         run: >-
           sudo systemd-run --scope --quiet
           -p MemoryMax=12G -p MemorySwapMax=0 -p OOMPolicy=continue
@@ -80,7 +83,9 @@ jobs:
           --test-tool nextest
           --test-workspace=true
           --build-timeout 600
+          --timeout 60
           -- --run-ignored all
+          || test $? -eq 3
       - name: missed mutants
         if: always()
         run: |
@@ -96,6 +101,7 @@ jobs:
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+          test ! -s mutants.out/missed.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
