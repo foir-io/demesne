@@ -1,13 +1,13 @@
 ---
 name: rust
-description: How Rust is written, tested and reviewed in this repo. These are house rules on lints, panics, errors, determinism, types, async and tests, built on Microsoft's Pragmatic Rust Guidelines, which are vendored by section. Use this skill whenever you write, change, review, refactor or port Rust code, or touch Cargo.toml, lint config, error types, tests or CI for a Rust crate. That includes small edits and fixes that look mechanical, because most of the rules here are about the details that make a change correct.
+description: House rules for writing, testing and reviewing Rust with a coding agent, covering lints, panics, errors, determinism, types, async and tests, built on Microsoft's Pragmatic Rust Guidelines. Use this skill whenever you write, change, review, refactor or port Rust code, or touch Cargo.toml, lint config, error types, tests or CI for a Rust crate. That includes small edits and fixes that look mechanical, because most of the rules here are about the details that make a change correct.
 ---
 
-# Rust in this repo
+# Rust house rules
 
-The code follows two layers of guidance:
+Rust written with a coding agent follows two layers of guidance:
 - **The house rules below.** They cover the judgement calls the compiler and clippy can't check.
-- **Microsoft's Pragmatic Rust Guidelines.** They are vendored under `references/pragmatic-rust/` (MIT). Each guideline has a stable ID such as `M-PANIC-ON-BUG`.
+- **Microsoft's Pragmatic Rust Guidelines** (MIT). Each guideline has a stable ID such as `M-PANIC-ON-BUG`. `references/guidelines.md` links every ID, pinned to the commit these rules were checked against.
 
 Workspace lints and CI enforce everything that can be enforced mechanically. So this skill is mostly about what a lint can't see:
 - whether an error is the right kind;
@@ -25,22 +25,22 @@ When a house rule departs from a guideline, it says why.
 
 ## Find the guideline you need
 
-Don't load all of the vendored text. Load only the file for the area you're working in. `references/pragmatic-rust/README.md` maps every ID to its file.
+Don't read the whole book. Open only the guidelines for the area you're working in, from its section of `references/guidelines.md`.
 
-| Working on | Read |
+| Working on | Section |
 |---|---|
-| Panics, invariants, `unsafe` | `correctness.md` |
-| A public API, error types, builders, traits versus generics | `libraries-ux.md` |
-| Testability, statics, newtypes, printing versus logging | `libraries-resilience.md` |
-| Types crossing crates, `Send`, I/O parameters | `libraries-interoperability.md` |
-| Cargo features, building on every platform | `libraries-building.md` |
-| A binary's `main`, its allocator, target-cpu | `application.md` |
-| Hot paths, allocation, async future size | `performance.md` |
-| Workspace layout, editions, MSRV | `project.md` |
-| Doc comments | `documentation.md` |
-| Naming, lint overrides, logging, Debug and Display | `universal.md` |
-| Porting code, writing tests, re-exports, crate docs | `ai.md`: it lists the mistakes agents make most often in Rust |
-| Macros, FFI, WASM boundaries | `macros.md`, `ffi.md` |
+| Panics, invariants, `unsafe` | correctness |
+| A public API, error types, builders, traits versus generics | libs/ux |
+| Testability, statics, newtypes, printing versus logging | libs/resilience |
+| Types crossing crates, `Send`, I/O parameters | libs/interop |
+| Cargo features, building on every platform | libs/building |
+| A binary's `main`, its allocator, target-cpu | apps |
+| Hot paths, allocation, async future size | performance |
+| Workspace layout, editions, MSRV | project |
+| Doc comments | docs |
+| Naming, lint overrides, logging, Debug and Display | universal |
+| Porting code, writing tests, re-exports, crate docs | ai: it lists the mistakes agents make most often in Rust |
+| Macros, FFI, WASM boundaries | macros, ffi |
 
 ## House rules
 
@@ -63,7 +63,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 
 - **Pick the failure mode by its cause.** Input, I/O, the network and the environment fail with a `Result`. A detected programming bug, meaning an invariant your own code should have upheld, panics (M-PANIC-ON-BUG). Don't invent an error variant for a bug no caller could act on.
 - **No `unwrap()` outside tests.**
-  - Use `expect` with a message that names the invariant: `expect("validated specs always have a table for every term")`, not `expect("failed to get table")`.
+  - Use `expect` with a message that names the invariant: `expect("a validated order always has a customer")`, not `expect("failed to get customer")`.
   - A poisoned lock is the one routine case: `expect("<lock name> poisoned")`.
   - The message is what the next person reads in a crash report (M-PANIC-MESSAGE).
 - **Library errors.** A published library's public errors follow M-ERRORS-CANONICAL-STRUCTS: a struct, a private kind, `is_xxx()` helpers, `Display` and `std::error::Error`. `thiserror` is a fine way to implement them.
