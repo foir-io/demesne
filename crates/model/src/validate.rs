@@ -286,7 +286,7 @@ fn check_role_store_planes(s: &Spec, chain: &[&Level]) -> Vec<Finding> {
             errs.push(Finding::at(rs.pos.line, format!("rolestore {} declares `plane {}`, which is not a topology level", quote(&rs.name), plane)));
             continue;
         }
-        if s.rolestore_plane_depth(rs) < non_virtual && rs.scope_cols.len() < non_virtual {
+        if rs.scope_cols.len() < non_virtual {
             errs.push(Finding::at(rs.pos.line, format!("rolestore {} declares `plane {}` but names only {} of the {} non-virtual levels in `scope` — every level below the plane must be named so the floor can pin it NULL, or an assignment scoped there would satisfy the plane's check", quote(&rs.name), plane, rs.scope_cols.len(), non_virtual)));
         }
     }
