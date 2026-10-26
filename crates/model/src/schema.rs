@@ -1,4 +1,5 @@
-use crate::analysis::{SpecExt, contains};
+use crate::SpecExt;
+use crate::analysis::contains;
 use crate::error::{Error, refuse_any};
 use demesne_gocompat::quote;
 use demesne_syntax::{ExternalArg, Finding, Grant, Object, Perm, Relation, Repr, RoleStore, Spec, Subject, Term};

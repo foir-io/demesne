@@ -1,5 +1,7 @@
-use crate::analysis::{SpecExt, grant_relation, object_grant_edge};
-use crate::conditional::{ConditionalExt, admission_names};
+use crate::ConditionalExt;
+use crate::SpecExt;
+use crate::analysis::{grant_relation, object_grant_edge};
+use crate::conditional::admission_names;
 use crate::error::Error;
 use crate::vocab::to_runtime;
 use demesne_gocompat::quote;

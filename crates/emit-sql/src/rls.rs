@@ -1,8 +1,9 @@
 use crate::Sql;
 use crate::error::Error;
 use demesne_gocompat::{fmt_slice, quote};
+use demesne_model::SpecExt;
 use demesne_model::analysis::{
-    Rels, SpecExt, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
+    Rels, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
 };
 use demesne_model::topology;
 use demesne_syntax::{

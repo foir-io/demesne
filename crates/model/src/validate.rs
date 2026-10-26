@@ -1,6 +1,7 @@
+use crate::SpecExt;
 use crate::analysis::{
-    ORDERED_TABLE_OPS, Rels, SpecExt, contains, go_type_name, grant_relation, grant_selector, is_perm_key_lit, mapped_perm, object_grant_edge,
-    object_uses_store_manage, op_to_cmd,
+    ORDERED_TABLE_OPS, Rels, contains, go_type_name, grant_relation, grant_selector, is_perm_key_lit, mapped_perm, object_grant_edge, object_uses_store_manage,
+    op_to_cmd,
 };
 use crate::conditional::is_row_leaf;
 use crate::error::Error;
@@ -624,7 +625,7 @@ fn check_gates(s: &Spec, o: &Object, rels: &Rels) -> Vec<Finding> {
     errs
 }
 
-pub fn perm_positive(n: &PermNode) -> bool {
+fn perm_positive(n: &PermNode) -> bool {
     match n {
         PermNode::Leaf(_) => true,
         PermNode::Not(_) => false,
@@ -633,7 +634,7 @@ pub fn perm_positive(n: &PermNode) -> bool {
     }
 }
 
-pub fn row_term_admitting(n: &PermNode) -> Option<&Term> {
+fn row_term_admitting(n: &PermNode) -> Option<&Term> {
     match n {
         PermNode::Leaf(t) => is_row_leaf(n).then_some(t),
         PermNode::Not(k) => {

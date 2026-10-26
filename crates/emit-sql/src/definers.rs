@@ -3,15 +3,15 @@ use crate::error::Error;
 use crate::genfn::{DefinerArm, GenFn, binds_every, grant_edge_exists};
 use crate::rls::{Virtual, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
+use demesne_model::SpecExt;
 use demesne_model::analysis::{
-    Rels, SpecExt, access_for, contains, go_type_name, grant_relation, grant_selector, mapped_perm, object_grant_edge, object_select_perm,
-    object_uses_store_manage, rels_of, store_manage_name, without_composition,
+    Rels, access_for, contains, go_type_name, grant_relation, grant_selector, mapped_perm, object_grant_edge, object_select_perm, object_uses_store_manage,
+    rels_of, store_manage_name, without_composition,
 };
-use demesne_model::conditional::{
-    ConditionalAdmission, ConditionalExt, accessor_tree_op, admission_names, is_claim_leaf, is_composition_leaf, is_row_leaf, narrowing_accessor_leaf,
-};
+use demesne_model::conditional::{accessor_tree_op, admission_names, is_claim_leaf, is_composition_leaf, is_row_leaf, narrowing_accessor_leaf};
 use demesne_model::topology;
 use demesne_model::vocab::to_runtime;
+use demesne_model::{ConditionalAdmission, ConditionalExt};
 use demesne_syntax::{
     Grant, Object, Perm, PermNode, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
 };

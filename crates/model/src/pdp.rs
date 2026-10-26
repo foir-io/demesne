@@ -1,4 +1,4 @@
-use crate::analysis::SpecExt;
+use crate::SpecExt;
 use crate::error::Error;
 use demesne_gocompat::quote;
 use demesne_runtime::Pdp;

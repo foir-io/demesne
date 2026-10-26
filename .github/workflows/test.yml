@@ -103,6 +103,8 @@ jobs:
         run: cargo deny check
       - name: test
         run: cargo nextest run --workspace --no-tests=fail
+      - name: doctests
+        run: cargo test --doc --workspace
       - name: live Postgres databases
         run: >-
           psql -h localhost -U postgres -v ON_ERROR_STOP=1

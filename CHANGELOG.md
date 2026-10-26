@@ -292,6 +292,26 @@ outcome rather than fall into a `_` arm; the syntax tree's enums, because a
 grammar addition changes what every consumer of the tree must handle; and
 `Structure`, `ReachGrantRef` and `gocompat::json::Value`.
 
+### Breaking: each public Rust item has one path, and the spec traits are sealed
+
+Items that were reachable both at a crate's root and inside a module are now
+at the root only:
+
+- `demesne_syntax::ast::*` is `demesne_syntax::*`;
+- `demesne_model::analysis::{SpecExt, Principal, ReachGrantRef}`,
+  `conditional::{ConditionalExt, ConditionalAdmission}`, and everything in
+  `schema`, `surfaces` and `validate` are at `demesne_model::`.
+
+The helper functions stay in `demesne_model::analysis` and
+`demesne_model::conditional`. `validate::perm_positive` and
+`validate::row_term_admitting` are no longer public.
+
+`SpecExt` is sealed: `Spec` is its only implementation, and `SurfaceExt` and
+`ConditionalExt` are implemented for every `SpecExt` type, so they are sealed
+with it. A minor version can add a method to any of the three. To upgrade,
+import from the crate root. A type of your own can no longer implement
+`SpecExt`; hold a `Spec` and call the methods on it.
+
 ### Migrations drop what a spec stops emitting
 
 `emit all` writes `CREATE OR REPLACE` for the current surface only. So a
