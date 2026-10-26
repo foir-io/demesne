@@ -76,3 +76,44 @@ fn an_export_binds_every_column_its_requirements_read() {
     let messages: Vec<String> = findings.iter().map(|f| f.message().to_string()).collect();
     assert_eq!(messages, ["export \"may_create\" reads row column \"project_ids\", which no parameter binds"]);
 }
+
+#[test]
+fn a_holds_check_needs_an_array_of_permissions_on_the_roles_table() {
+    let spec = |view: &str, perms_type: &str| {
+        let src = format!(
+            r"topology {{
+  level platform virtual
+  level tenant   parent platform
+}}
+vocabulary app {{ permission docs:read }}
+rolestore app {{
+  assignments role_grants
+  subject     grantee_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+  permissions perms
+}}
+subject admin {{ anchor tenant; reach descendants; identifies sub; roles configurable app; binds admin }}
+object doc {{
+  table  docs
+  scoped tenant
+  relation owner: admin via owner_id
+  permission view = {view} @rls maps select
+}}
+"
+        );
+        let mut sc = Schema::new();
+        for col in ["id", "key"] {
+            sc.add_column("roles", col, "text", false);
+        }
+        sc.add_column("roles", "perms", perms_type, false);
+        refusals(&demesne_syntax::parse(&src).expect("the spec parses"), &sc)
+    };
+    let not_array = r#"column "perms" has type "text", not an array — @holds compiles to `p_perm = ANY(perms)`"#;
+    let found = spec("owner + @holds(docs:read)", "text");
+    assert!(found.iter().any(|f| f.contains(not_array)), "{found:#?}");
+    let found = spec("owner", "text");
+    assert!(!found.iter().any(|f| f.contains("not an array")), "{found:#?}");
+    let found = spec("owner + @holds(docs:read)", "text[]");
+    assert!(!found.iter().any(|f| f.contains("not an array")), "{found:#?}");
+}

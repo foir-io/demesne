@@ -304,7 +304,9 @@ at the root only:
 
 The helper functions stay in `demesne_model::analysis` and
 `demesne_model::conditional`. `validate::perm_positive` and
-`validate::row_term_admitting` are no longer public.
+`validate::row_term_admitting` are no longer public, and
+`SpecExt::runtime_vocab`, which only called `demesne_model::vocab::to_runtime`,
+is removed.
 
 `SpecExt` is sealed: `Spec` is its only implementation, and `SurfaceExt` and
 `ConditionalExt` are implemented for every `SpecExt` type, so they are sealed

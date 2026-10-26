@@ -1,7 +1,6 @@
 use crate::analysis::{contains, grant_rel_definer_base, grant_relation, object_grant_edge, relation_is_async};
 use crate::error::Error;
 use crate::topology;
-use crate::vocab::to_runtime;
 use demesne_gocompat::quote;
 use demesne_runtime::{ClaimEntry, Session};
 use demesne_syntax::{Grant, Level, Object, Relation, Repr, RoleStore, Spec, Subject, ViaGrant, Vocabulary};
@@ -517,10 +516,6 @@ pub trait SpecExt: sealed::Sealed {
             return true;
         }
         self.spec().objects.iter().any(|other| other.relations.iter().any(|r| matches!(&r.repr, Repr::Object(vo) if vo.object == o.name)))
-    }
-
-    fn runtime_vocab(&self, v: &Vocabulary) -> demesne_runtime::Vocabulary {
-        to_runtime(v)
     }
 }
 

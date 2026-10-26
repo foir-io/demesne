@@ -54,3 +54,90 @@ fn surfaces_list_presets_access_and_async_tokens() {
     );
     insta::assert_debug_snapshot!("async_tokens", spec("testdata/corpus/fixtures/38555e21822ea082.demesne").async_surface_tokens());
 }
+
+const TWO_STORES: &str = r"topology {
+  level platform virtual
+  level tenant   parent platform
+}
+
+vocabulary app { permission docs:read }
+
+rolestore one {
+  assignments one_grants
+  subject     grantee_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+}
+
+rolestore two {
+  assignments two_grants
+  subject     grantee_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+}
+
+subject admin { anchor tenant; reach descendants; identifies sub; roles configurable app; binds admin }
+";
+
+#[test]
+fn a_vocabulary_backing_two_rolestores_names_neither() {
+    let s = demesne_syntax::parse(TWO_STORES).expect("the spec parses");
+    let err = s.holds_role_store("docs:read").map(|rs| rs.name.clone()).expect_err("app backs both rolestores");
+    assert_eq!(err.to_string(), r#"permission "docs:read" belongs to vocabulary "app", which backs more than one rolestore (one, two)"#);
+}
+
+#[test]
+fn reach_grants_name_each_edge_its_grantee_and_its_granularity() {
+    let src = r"topology {
+  level platform virtual
+  level tenant   parent platform
+}
+grant support at tenant via edge support_grants(helper_id, tenant_id)
+subject helper { anchor platform; reach via grant support; identifies sub; roles none }
+subject member { anchor tenant; reach descendants; identifies sub; roles none; binds owner }
+object doc {
+  table  docs
+  scoped tenant
+  relation grantee: member via grant doc_acl(doc_id, principal_kind, principal_id, access)
+  permission view = grantee:read @rls maps select
+}
+";
+    let s = demesne_syntax::parse(src).expect("the spec parses");
+    let got: Vec<(String, String, &str)> =
+        s.reach_grants().iter().map(|g| (g.edge_table().to_string(), g.grantee_column().to_string(), g.granularity())).collect();
+    assert_eq!(got, [("support_grants".into(), "helper_id".into(), "level"), ("doc_acl".into(), "principal_id".into(), "row")]);
+}
+
+#[test]
+fn a_grant_no_subject_reaches_is_enumerated_unless_another_reach_selects_it() {
+    let src = r"topology { level control virtual level estate parent control level space parent estate level folder parent space }
+
+grant descendants at folder via edge paths(ancestor_id, descendant_id) confers select
+grant ancestors at folder via edge paths(descendant_id, ancestor_id) named paths_up confers select
+grant spare at folder via edge spares(holder_id, folder_id)
+
+subject viewer { anchor folder; reach via grant descendants; identifies folder_id; roles none }
+
+object asset {
+  table assets
+  scoped estate > space > folder wildcard confers select
+  permission view = @scoped @rls maps select
+}
+
+object blueprint {
+  table blueprints
+  scoped estate > space > folder wildcard confers select
+  reach descendants via ancestors for select
+  permission view = @scoped @rls maps select
+}
+";
+    let s = demesne_syntax::parse(src).expect("the spec parses");
+    let enumerated = |object: &str, grant: &str| {
+        let o = s.objects.iter().find(|o| o.name == object).expect("the object exists");
+        let g = s.grants.iter().find(|g| g.name == grant).expect("the grant exists");
+        s.enumerated_grant(o, g).map(|g| g.name.clone())
+    };
+    assert_eq!(enumerated("asset", "spare"), Some("spare".into()));
+    assert_eq!(enumerated("asset", "ancestors"), None);
+    assert_eq!(enumerated("blueprint", "descendants"), Some("ancestors".into()));
+}
