@@ -137,6 +137,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
     - A runner that is thrown away after the job, such as a GitHub-hosted one, where a runaway kills only that job.
     - A shared self-hosted runner, only under a hard memory cap on the mutants step: systemd's `MemoryMax` with `MemorySwapMax=0`, or a container's `--memory` equal to its `--memory-swap`. Without a cap, Linux's out-of-memory killer may thrash the host and kill other jobs before it reaches the runaway.
   - Keep `-j` at 1 or 2 and set a short `--timeout`, so a stuck mutant ends quickly.
+  - `--timeout` bounds only the tests. If a build script runs the code being mutated, a looping mutant hangs the build instead, and builds have no timeout by default, so set `--build-timeout` too: a few times the slowest cold build.
   - Locally, prove tests with plants instead. If the repo has no mutants job in CI, say so and ask before adding one; don't fall back to running it locally.
 
 ### 7. Async
