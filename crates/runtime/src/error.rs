@@ -14,6 +14,7 @@ enum Kind {
     Vocabulary,
     Access,
     CapabilityGate,
+    Input,
 }
 
 impl Error {
@@ -35,6 +36,10 @@ impl Error {
 
     pub(crate) fn capability_gate(message: impl Into<String>) -> Self {
         Error { kind: Kind::CapabilityGate, message: message.into() }
+    }
+
+    pub(crate) fn input(message: impl Into<String>) -> Self {
+        Error { kind: Kind::Input, message: message.into() }
     }
 
     /// Returns why the call was refused.
@@ -71,6 +76,12 @@ impl Error {
     #[must_use]
     pub fn is_capability_gate(&self) -> bool {
         self.kind == Kind::CapabilityGate
+    }
+
+    /// Returns whether a projection, principal or role assignment handed in has a field missing or of the wrong type.
+    #[must_use]
+    pub fn is_input(&self) -> bool {
+        self.kind == Kind::Input
     }
 }
 

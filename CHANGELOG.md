@@ -351,6 +351,34 @@ limits.
 
 The TypeScript runtime and the generated Go and TypeScript are unchanged.
 
+### Breaking: the runtime refuses an argument or projection of the wrong type
+
+`@foir/demesne`'s operations, and the decoders in `demesne_runtime::projection`,
+read a missing or mistyped field as empty, `false` or zero. Two of those
+readings widened access:
+
+- `composeCan` read a decision it didn't recognise, such as `"DENY"`, as
+  ungoverned, so a call the PDP denied came back allowed;
+- a PDP projection dropped a procedure whose permission wasn't a string, so the
+  procedure read as ungoverned.
+
+Others chose without saying so. A missing `local` chose a connection-wide
+`SET ROLE`. A list holding `null`, such as a scope read from a NULL column, lost
+that element and shifted the positions after it.
+
+Each operation now throws an error that names the operation and the field, such
+as `demesne runtime: holds.scopeContains: assignment must be an array of
+strings`, and each decoder returns an error whose `is_input()` is true. Every
+field the TypeScript types require is required. A vocabulary's
+`implications`, a preset's `level` and a resolver's `plane` are optional, and
+`planeDepth` is required beside `plane`. A caller passing what the TypeScript
+types declare sees no change. One passing `null` for a NULL scope column
+passes `""`, the runtime's wildcard, instead.
+
+In `demesne_gocompat::json`, `Value::entries` and `Value::string_list`, which
+skipped what didn't fit, are replaced by `as_object`, `as_strings` and
+`as_string_map`, which return `None` instead.
+
 ### Migrations drop what a spec stops emitting
 
 `emit all` writes `CREATE OR REPLACE` for the current surface only. So a

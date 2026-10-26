@@ -421,17 +421,25 @@ impl Value {
         }
     }
 
+    /// Returns an object's members in order, or `None` for anything but an object.
     #[must_use]
-    pub fn entries(&self) -> &[(String, Value)] {
+    pub fn as_object(&self) -> Option<&[(String, Value)]> {
         match self {
-            Value::Map(e) | Value::Struct(e) => e,
-            _ => &[],
+            Value::Map(e) | Value::Struct(e) => Some(e),
+            _ => None,
         }
     }
 
+    /// Returns the elements of an array of strings, or `None` for anything else, including an array that holds a non-string.
     #[must_use]
-    pub fn string_list(&self) -> Vec<String> {
-        self.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default()
+    pub fn as_strings(&self) -> Option<Vec<String>> {
+        self.as_array()?.iter().map(|v| v.as_str().map(String::from)).collect()
+    }
+
+    /// Returns the members of an object whose values are all strings, or `None` for anything else.
+    #[must_use]
+    pub fn as_string_map(&self) -> Option<Vec<(String, String)>> {
+        self.as_object()?.iter().map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
     }
 }
 

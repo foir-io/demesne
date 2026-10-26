@@ -7,26 +7,60 @@ use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 type R = Result<Value, String>;
 
-static NULL: Value = Value::Null;
-
-fn field<'a>(v: &'a Value, k: &str) -> &'a Value {
-    v.get(k).unwrap_or(&NULL)
+struct Args<'a> {
+    op: &'a str,
+    members: &'a [(String, Value)],
 }
 
-fn text(v: &Value, k: &str) -> String {
-    field(v, k).as_str().unwrap_or_default().to_string()
-}
+impl<'a> Args<'a> {
+    fn get(&self, k: &str) -> Option<&'a Value> {
+        self.members.iter().find(|(key, _)| key == k).map(|(_, v)| v).filter(|v| !matches!(v, Value::Null))
+    }
 
-fn list(v: &Value, k: &str) -> Vec<String> {
-    field(v, k).string_list()
-}
+    fn wrong(&self, k: &str, want: &str) -> String {
+        format!("demesne runtime: {}: {k} must be {want}", self.op)
+    }
 
-fn flag(v: &Value, k: &str) -> bool {
-    field(v, k).as_bool().unwrap_or(false)
-}
+    fn text(&self, k: &str) -> Result<String, String> {
+        self.get(k).and_then(Value::as_str).map(String::from).ok_or_else(|| self.wrong(k, "a string"))
+    }
 
-fn str_map(v: &Value, k: &str) -> BTreeMap<String, String> {
-    field(v, k).entries().iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
+    fn optional_text(&self, k: &str) -> Result<Option<String>, String> {
+        self.get(k).map(|v| v.as_str().map(String::from).ok_or_else(|| self.wrong(k, "a string"))).transpose()
+    }
+
+    fn list(&self, k: &str) -> Result<Vec<String>, String> {
+        self.get(k).and_then(Value::as_strings).ok_or_else(|| self.wrong(k, "an array of strings"))
+    }
+
+    fn flag(&self, k: &str) -> Result<bool, String> {
+        self.get(k).and_then(Value::as_bool).ok_or_else(|| self.wrong(k, "a boolean"))
+    }
+
+    fn str_map(&self, k: &str) -> Result<BTreeMap<String, String>, String> {
+        self.get(k).and_then(Value::as_string_map).map(|m| m.into_iter().collect()).ok_or_else(|| self.wrong(k, "an object of strings"))
+    }
+
+    fn count(&self, k: &str) -> Result<usize, String> {
+        self.get(k).and_then(Value::as_i64).and_then(|n| usize::try_from(n).ok()).ok_or_else(|| self.wrong(k, "a non-negative integer"))
+    }
+
+    fn decision(&self, k: &str) -> Result<Decision, String> {
+        match self.text(k)?.as_str() {
+            "allow" => Ok(Decision::Allow),
+            "deny" => Ok(Decision::Deny),
+            "ungoverned" => Ok(Decision::NotGoverned),
+            _ => Err(self.wrong(k, r#""allow", "deny" or "ungoverned""#)),
+        }
+    }
+
+    fn lifetime(&self) -> Result<rt::SettingLifetime, String> {
+        Ok(if self.flag("local")? { rt::SettingLifetime::Transaction } else { rt::SettingLifetime::Session })
+    }
+
+    fn decode<T>(&self, k: &str, decode: impl FnOnce(&Value) -> Result<T, rt::Error>) -> Result<T, String> {
+        decode(self.get(k).unwrap_or(&Value::Null)).map_err(|e| format!("demesne runtime: {}: {e}", self.op))
+    }
 }
 
 fn arg(a: &SqlArg) -> Value {
@@ -44,14 +78,6 @@ fn point(governed: bool, allow: bool) -> Decision {
         (true, false) => Decision::Deny,
     }
 }
-fn decision(s: &str) -> Decision {
-    match s {
-        "allow" => Decision::Allow,
-        "deny" => Decision::Deny,
-        _ => Decision::NotGoverned,
-    }
-}
-
 fn unknown(op: &str) -> String {
     format!("demesne runtime: no operation {}", demesne_gocompat::quote(op))
 }
@@ -67,7 +93,10 @@ fn envelope(result: R) -> String {
 #[wasm_bindgen]
 #[must_use]
 pub fn call(op: &str, args: &str) -> String {
-    envelope(json::parse(args).map_err(|e| format!("demesne runtime: {op}: {e}")).and_then(|a| dispatch(op, &a)))
+    envelope(json::parse(args).map_err(|e| format!("demesne runtime: {op}: {e}")).and_then(|v| {
+        let members = v.as_object().ok_or_else(|| format!("demesne runtime: {op}: the arguments must be an object"))?;
+        dispatch(&Args { op, members })
+    }))
 }
 
 #[wasm_bindgen]
@@ -85,23 +114,24 @@ pub fn authorize(pdp: &str, procedure: &str, holds: &HoldsFn) -> String {
     envelope(
         json::parse(pdp)
             .map_err(|e| format!("demesne runtime: authorize: {e}"))
-            .map(|v| Value::Str(projection::pdp(&v).authorize(procedure, |perm| holds.invoke(&JsValue::UNDEFINED, perm).is_truthy()).to_string())),
+            .and_then(|v| projection::pdp(&v).map_err(|e| format!("demesne runtime: authorize: {e}")))
+            .map(|p| Value::Str(p.authorize(procedure, |perm| holds.invoke(&JsValue::UNDEFINED, perm).is_truthy()).to_string())),
     )
 }
 
-fn dispatch(op: &str, a: &Value) -> R {
-    match op.split_once('.').map_or(op, |(group, _)| group) {
-        "claims" => claims(op, a),
-        "pdp" => Ok(Value::Str(rt::compose_can(point(flag(a, "pointGoverned"), flag(a, "pointAllow")), decision(&text(a, "pdp"))).to_string())),
-        "app" => app(op, a),
-        "vocab" => vocab(op, a),
-        "holds" => holds(op, a),
-        "roles" => roles(op, a),
-        "grants" => Ok(Value::Str(rt::touch_on_conflict(&list(a, "bareKey"), &list(a, "nullableKey"), &list(a, "sets")))),
-        "roleAssignment" => role_assignment(op, a),
-        "levelGrant" => level_grant(op, a),
-        "resourceAccess" => resource_access(op, a),
-        _ => Err(unknown(op)),
+fn dispatch(a: &Args) -> R {
+    match a.op.split_once('.').map_or(a.op, |(group, _)| group) {
+        "claims" => claims(a),
+        "pdp" => Ok(Value::Str(rt::compose_can(point(a.flag("pointGoverned")?, a.flag("pointAllow")?), a.decision("pdp")?).to_string())),
+        "app" => app(a),
+        "vocab" => vocab(a),
+        "holds" => holds(a),
+        "roles" => roles(a),
+        "grants" => Ok(Value::Str(rt::touch_on_conflict(&a.list("bareKey")?, &a.list("nullableKey")?, &a.list("sets")?))),
+        "roleAssignment" => role_assignment(a),
+        "levelGrant" => level_grant(a),
+        "resourceAccess" => resource_access(a),
+        _ => Err(unknown(a.op)),
     }
 }
 
@@ -109,142 +139,141 @@ fn mint(contract: &[String], values: &BTreeMap<String, String>, extra: Option<&B
     rt::mint_claims_values_with_extra(contract, values, extra).map(Value::Str).map_err(|e| e.message().to_string())
 }
 
-fn built(claims: &Value, a: &Value) -> Result<BTreeMap<String, String>, String> {
-    rt::build_claims(&projection::subjects(claims), &projection::levels(claims), &projection::principal(field(a, "principal")))
-        .map_err(|e| e.message().to_string())
+fn built(a: &Args) -> Result<BTreeMap<String, String>, String> {
+    let (subjects, levels) = (a.decode("claims", projection::subjects)?, a.decode("claims", projection::levels)?);
+    rt::build_claims(&subjects, &levels, &a.decode("principal", projection::principal)?).map_err(|e| e.message().to_string())
 }
 
-fn claims(op: &str, a: &Value) -> R {
-    let c = field(a, "claims");
-    let session = projection::session(c);
-    let lifetime = if flag(a, "local") { rt::SettingLifetime::Transaction } else { rt::SettingLifetime::Session };
-    match op {
-        "claims.mint" => mint(&projection::contract(c), &str_map(a, "values"), None),
-        "claims.mintWithExtra" => mint(&list(a, "contract"), &str_map(a, "values"), Some(&str_map(a, "extra"))),
-        "claims.build" => built(c, a).map(|m| Value::Struct(m.into_iter().map(|(k, v)| (k, Value::Str(v))).collect())),
-        "claims.mintFor" => built(c, a).and_then(|m| mint(&projection::contract(c), &m, None)),
-        "claims.setRoleSQL" => Ok(Value::Str(session.set_role_sql(lifetime))),
-        "claims.claimsSetSQL" => Ok(Value::Str(session.claims_set_sql(lifetime))),
-        "claims.sessionSetupSQL" => Ok(Value::strings(&session.session_setup_sql(lifetime))),
-        _ => Err(unknown(op)),
+fn claims(a: &Args) -> R {
+    let contract = || a.decode("claims", projection::contract);
+    let session = || a.decode("claims", projection::session);
+    match a.op {
+        "claims.mint" => mint(&contract()?, &a.str_map("values")?, None),
+        "claims.mintWithExtra" => mint(&a.list("contract")?, &a.str_map("values")?, Some(&a.str_map("extra")?)),
+        "claims.build" => built(a).map(|m| Value::Struct(m.into_iter().map(|(k, v)| (k, Value::Str(v))).collect())),
+        "claims.mintFor" => built(a).and_then(|m| mint(&contract()?, &m, None)),
+        "claims.setRoleSQL" => Ok(Value::Str(session()?.set_role_sql(a.lifetime()?))),
+        "claims.claimsSetSQL" => Ok(Value::Str(session()?.claims_set_sql(a.lifetime()?))),
+        "claims.sessionSetupSQL" => Ok(Value::strings(&session()?.session_setup_sql(a.lifetime()?))),
+        _ => Err(unknown(a.op)),
     }
 }
 
-fn app(op: &str, a: &Value) -> R {
-    let o = projection::app_object(field(a, "object"));
-    match op {
+fn app(a: &Args) -> R {
+    let o = a.decode("object", projection::app_object)?;
+    match a.op {
         "app.checkSQL" => Ok(Value::Str(o.check_sql())),
         "app.checkManySQL" => Ok(Value::Str(o.check_many_sql())),
         "app.listResourcesSQL" => Ok(Value::Str(o.list_resources_sql())),
         "app.checkEditSQL" => Ok(Value::str(o.check_edit_sql())),
         "app.listResourcesFastSQL" => Ok(Value::Str(o.list_resources_fast_sql())),
-        _ => Err(unknown(op)),
+        _ => Err(unknown(a.op)),
     }
 }
 
-fn vocab(op: &str, a: &Value) -> R {
-    let v = projection::vocabulary(field(a, "vocab"));
+fn vocab(a: &Args) -> R {
+    let v = a.decode("vocab", projection::vocabulary)?;
     let perms = |r: Result<Vec<String>, rt::Error>| r.map(|p| Value::strings(&p)).map_err(|e| e.message().to_string());
-    match op {
-        "vocab.impliedPermissions" => perms(v.implied_permissions(&text(a, "perm"))),
-        "vocab.expandImplications" => perms(v.expand_implications(&list(a, "perms"))),
-        "vocab.presetPermissions" => perms(v.preset_permissions(&text(a, "name"))),
+    match a.op {
+        "vocab.impliedPermissions" => perms(v.implied_permissions(&a.text("perm")?)),
+        "vocab.expandImplications" => perms(v.expand_implications(&a.list("perms")?)),
+        "vocab.presetPermissions" => perms(v.preset_permissions(&a.text("name")?)),
         "vocab.rankOf" => {
-            let rank = v.rank_of(&text(a, "preset"));
+            let rank = v.rank_of(&a.text("preset")?);
             let index = rank.map_or(0, |i| i64::try_from(i).expect("a vocabulary ranks fewer presets than i64 counts"));
             Ok(Value::Struct(vec![("index".into(), Value::Int(index)), ("ok".into(), Value::Bool(rank.is_some()))]))
         }
-        "vocab.presetsAtOrAbove" => Ok(Value::strings(&v.presets_at_or_above(&text(a, "threshold")))),
+        "vocab.presetsAtOrAbove" => Ok(Value::strings(&v.presets_at_or_above(&a.text("threshold")?))),
         "vocab.capGrant" => {
-            let cap = v.cap_grant(&list(a, "held"), &list(a, "requested"));
+            let cap = v.cap_grant(&a.list("held")?, &a.list("requested")?);
             Ok(Value::Struct(vec![
                 ("allowed".into(), Value::Bool(cap.allowed)),
                 ("unknown".into(), Value::strings(&cap.unknown)),
                 ("excess".into(), Value::strings(&cap.excess)),
             ]))
         }
-        _ => Err(unknown(op)),
+        _ => Err(unknown(a.op)),
     }
 }
 
-fn holds(op: &str, a: &Value) -> R {
-    let r = projection::holds_resolver(field(a, "resolver"));
-    match op {
-        "holds.planeDepth" => Ok(Value::Int(i64::try_from(r.plane_depth()).expect("a resolver has fewer scope columns than i64 counts"))),
-        "holds.selectedScopeCols" => Ok(Value::strings(r.selected_scope_cols())),
-        "holds.assignmentsSQL" => Ok(Value::Str(r.assignments_sql())),
-        "holds.scopeContains" => Ok(Value::Bool(rt::scope_contains(&list(a, "assignment"), &list(a, "query")))),
-        "holds.withinPlane" => {
-            let depth = field(a, "depth").as_i64().map_or(0, |d| usize::try_from(d).unwrap_or(0));
-            Ok(Value::Bool(rt::within_plane(&list(a, "scope"), depth)))
-        }
-        "holds.resolve" => r
-            .resolve(&projection::role_assignments(field(a, "assignments")), &list(a, "scope"))
+fn holds(a: &Args) -> R {
+    let resolver = || a.decode("resolver", projection::holds_resolver);
+    match a.op {
+        "holds.planeDepth" => Ok(Value::Int(i64::try_from(resolver()?.plane_depth()).expect("a resolver has fewer scope columns than i64 counts"))),
+        "holds.selectedScopeCols" => Ok(Value::strings(resolver()?.selected_scope_cols())),
+        "holds.assignmentsSQL" => Ok(Value::Str(resolver()?.assignments_sql())),
+        "holds.scopeContains" => Ok(Value::Bool(rt::scope_contains(&a.list("assignment")?, &a.list("query")?))),
+        "holds.withinPlane" => Ok(Value::Bool(rt::within_plane(&a.list("scope")?, a.count("depth")?))),
+        "holds.resolve" => resolver()?
+            .resolve(&a.decode("assignments", projection::role_assignments)?, &a.list("scope")?)
             .map(|e| Value::strings(&e.permissions()))
             .map_err(|e| e.message().to_string()),
-        _ => Err(unknown(op)),
+        _ => Err(unknown(a.op)),
     }
 }
 
-fn roles(op: &str, a: &Value) -> R {
-    match op {
-        "roles.resolve" => Ok(Value::strings(&rt::resolve_roles(&projection::role_assignments(field(a, "assignments")), &list(a, "scope")).roles())),
-        "roles.new" => Ok(Value::strings(&rt::EffectiveRoles::new(&list(a, "keys")).roles())),
-        _ => Err(unknown(op)),
+fn roles(a: &Args) -> R {
+    match a.op {
+        "roles.resolve" => Ok(Value::strings(&rt::resolve_roles(&a.decode("assignments", projection::role_assignments)?, &a.list("scope")?).roles())),
+        "roles.new" => Ok(Value::strings(&rt::EffectiveRoles::new(&a.list("keys")?).roles())),
+        _ => Err(unknown(a.op)),
     }
 }
 
-fn role_assignment(op: &str, a: &Value) -> R {
-    let s = projection::role_assignment(field(a, "surface"));
-    let insert = |touch: bool| {
-        let (id, subject, role, by) = (text(a, "assignmentID"), text(a, "subjectID"), text(a, "roleID"), text(a, "grantedBy"));
-        let extra = str_map(a, "extra");
-        let scope = list(a, "scope");
-        stmt(if touch { s.assign_touch_insert(&id, &subject, &role, &scope, &by, &extra) } else { s.assign_insert(&id, &subject, &role, &scope, &by, &extra) })
+fn role_assignment(a: &Args) -> R {
+    let s = a.decode("surface", projection::role_assignment)?;
+    let insert = |touch: bool| -> R {
+        let (id, subject, role, by) = (a.text("assignmentID")?, a.text("subjectID")?, a.text("roleID")?, a.text("grantedBy")?);
+        let (extra, scope) = (a.str_map("extra")?, a.list("scope")?);
+        Ok(stmt(if touch {
+            s.assign_touch_insert(&id, &subject, &role, &scope, &by, &extra)
+        } else {
+            s.assign_insert(&id, &subject, &role, &scope, &by, &extra)
+        }))
     };
-    match op {
-        "roleAssignment.assignInsert" => Ok(insert(false)),
-        "roleAssignment.assignTouchInsert" => Ok(insert(true)),
+    match a.op {
+        "roleAssignment.assignInsert" => insert(false),
+        "roleAssignment.assignTouchInsert" => insert(true),
         "roleAssignment.revokeSQL" => Ok(Value::Str(s.revoke_sql())),
         "roleAssignment.listForRoleSQL" => Ok(Value::Str(s.list_for_role_sql())),
         "roleAssignment.listForPrincipalSQL" => Ok(Value::Str(s.list_for_principal_sql())),
-        _ => Err(unknown(op)),
+        _ => Err(unknown(a.op)),
     }
 }
 
-fn level_grant(op: &str, a: &Value) -> R {
-    let g = projection::grant(field(a, "surface"));
-    match op {
-        "levelGrant.activePredicate" => Ok(Value::Str(g.active_predicate(&text(a, "prefix")))),
+fn level_grant(a: &Args) -> R {
+    let g = a.decode("surface", projection::grant)?;
+    match a.op {
+        "levelGrant.activePredicate" => Ok(Value::Str(g.active_predicate(&a.text("prefix")?))),
         "levelGrant.grantInsert" => {
-            let expires = field(a, "expiresAt").as_str().map(String::from);
-            Ok(stmt(g.grant_insert(&text(a, "grantID"), &text(a, "granteeID"), &text(a, "levelID"), &text(a, "grantedBy"), expires, &str_map(a, "extra"))))
+            let (id, grantee, level, by) = (a.text("grantID")?, a.text("granteeID")?, a.text("levelID")?, a.text("grantedBy")?);
+            Ok(stmt(g.grant_insert(&id, &grantee, &level, &by, a.optional_text("expiresAt")?, &a.str_map("extra")?)))
         }
         "levelGrant.revokeSQL" => Ok(Value::Str(g.revoke_sql())),
         "levelGrant.listSQL" => Ok(Value::Str(g.list_sql())),
-        _ => Err(unknown(op)),
+        _ => Err(unknown(a.op)),
     }
 }
 
-fn resource_access(op: &str, a: &Value) -> R {
-    let r = projection::resource_access(field(a, "surface"));
-    let who = || (text(a, "resourceID"), text(a, "kind"), text(a, "principalID"), text(a, "access"));
-    match op {
-        "resourceAccess.isReadMode" => Ok(Value::Bool(r.is_read_mode(&text(a, "mode")))),
-        "resourceAccess.grantKindAllowed" => Ok(Value::Bool(r.grant_kind_allowed(&text(a, "kind")))),
+fn resource_access(a: &Args) -> R {
+    let r = a.decode("surface", projection::resource_access)?;
+    let who = || -> Result<_, String> { Ok((a.text("resourceID")?, a.text("kind")?, a.text("principalID")?, a.text("access")?)) };
+    match a.op {
+        "resourceAccess.isReadMode" => Ok(Value::Bool(r.is_read_mode(&a.text("mode")?))),
+        "resourceAccess.grantKindAllowed" => Ok(Value::Bool(r.grant_kind_allowed(&a.text("kind")?))),
         "resourceAccess.modeSQL" => Ok(Value::Str(r.mode_sql())),
         "resourceAccess.setVisibilitySQL" => Ok(Value::Str(r.set_visibility_sql())),
         "resourceAccess.grantInsert" => {
-            let (id, kind, principal, access) = who();
-            Ok(stmt(r.grant_insert(&list(a, "scope"), &id, &kind, &principal, &access)))
+            let (id, kind, principal, access) = who()?;
+            Ok(stmt(r.grant_insert(&a.list("scope")?, &id, &kind, &principal, &access)))
         }
         "resourceAccess.revokeDelete" => {
-            let (id, kind, principal, access) = who();
+            let (id, kind, principal, access) = who()?;
             Ok(stmt(r.revoke_delete(&id, &kind, &principal, &access)))
         }
         "resourceAccess.listGrantsSQL" => Ok(Value::Str(r.list_grants_sql())),
-        "resourceAccess.listGrantsArgs" => Ok(Value::Array(r.list_grants_args(&text(a, "resourceID")).iter().map(arg).collect())),
+        "resourceAccess.listGrantsArgs" => Ok(Value::Array(r.list_grants_args(&a.text("resourceID")?).iter().map(arg).collect())),
         "resourceAccess.accessorsSQL" => Ok(Value::Str(r.accessors_sql())),
-        _ => Err(unknown(op)),
+        _ => Err(unknown(a.op)),
     }
 }
