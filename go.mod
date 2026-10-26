@@ -13,3 +13,6 @@
 module github.com/foir-io/demesne
 
 go 1.26.1
+
+// Published in error. Use v0.93.1 or v1.0.0.
+retract v0.94.0
