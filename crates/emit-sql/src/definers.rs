@@ -138,7 +138,7 @@ fn grant_accessor_branch(g: &ViaGrant) -> String {
 }
 
 fn group_accessor_branch(table: &str, pk: &str, kind: &str, g: &ViaGroup, flat: &str) -> String {
-    if g.materialized && !flat.is_empty() {
+    if !flat.is_empty() {
         return format!("SELECT 'group'::text, '{kind}'::text, f.principal_id, 'read'::text\n    FROM {flat} f\n    WHERE f.resource_id = p_id");
     }
     format!(
@@ -1258,7 +1258,7 @@ impl Sql<'_> {
     fn reach_accessor_branch(&self, obj: &Object, t: &Term, rels: &Rels) -> Option<String> {
         match t.builtin() {
             "holds" => self.holds_accessor_branch(obj, t.holds_perm()),
-            "session" if !t.session_rel().is_empty() => self.role_relation_branch(obj, rels.get(t.session_rel())?),
+            "session" => self.role_relation_branch(obj, rels.get(t.session_rel())?),
             "" if t.walk_verb().is_empty() => rels.get(t.ident()).filter(|r| matches!(r.repr, Repr::Role)).and_then(|r| self.role_relation_branch(obj, r)),
             _ => None,
         }
