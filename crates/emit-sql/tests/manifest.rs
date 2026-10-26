@@ -136,3 +136,66 @@ fn the_survivor_check_spells_each_name_as_the_catalog_does() {
     assert!(drops.contains("(to_regclass('app.docs')::oid, 'audit'::name)"), "{drops}");
     assert!(drops.contains("('app'::name, 'Audit'::name)"), "{drops}");
 }
+
+#[test]
+fn a_migration_drops_each_kind_of_object_on_its_own() {
+    let all = Manifest::from_sql(
+        "CREATE POLICY p ON s.t FOR SELECT USING (true);
+         CREATE TRIGGER tr AFTER UPDATE ON s.t FOR EACH ROW EXECUTE FUNCTION s.f();
+         CREATE INDEX i ON s.t (x);
+         CREATE OR REPLACE FUNCTION s.f() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql;
+         CREATE TABLE s.log (x int);
+         ALTER TABLE s.t ENABLE ROW LEVEL SECURITY;",
+    )
+    .expect("a manifest");
+    let without = |strip: fn(&mut Manifest)| {
+        let mut kept = all.clone();
+        strip(&mut kept);
+        kept.drops_since(&all)
+    };
+    for (kind, drops, line, catalog) in [
+        ("policy", without(|m| m.policies.clear()), "DROP POLICY IF EXISTS p ON s.t;", Some("FROM pg_policy")),
+        ("trigger", without(|m| m.triggers.clear()), "DROP TRIGGER IF EXISTS tr ON s.t;", Some("FROM pg_trigger")),
+        ("index", without(|m| m.indexes.clear()), "DROP INDEX IF EXISTS s.i;", Some("FROM pg_class")),
+        ("function", without(|m| m.functions.clear()), "DROP FUNCTION IF EXISTS s.f();", Some("FROM pg_proc")),
+        ("table", without(|m| m.tables.clear()), "-- table s.log is no longer emitted", None),
+        ("rls", without(|m| m.rls.clear()), "-- table s.t is no longer governed", None),
+    ] {
+        assert!(drops.contains(line), "{kind}: {drops}");
+        assert_eq!(drops.contains("DO $demesne$"), catalog.is_some(), "{kind}: a survivor check only follows drops: {drops}");
+        for arm in ["FROM pg_policy", "FROM pg_trigger", "FROM pg_class", "FROM pg_proc"] {
+            assert_eq!(drops.contains(arm), catalog == Some(arm), "{kind}: the survivor check looks only for what was dropped: {drops}");
+        }
+    }
+    assert_eq!(all.drops_since(&all), "");
+}
+
+#[test]
+fn a_function_signature_keeps_a_type_with_its_own_commas_and_refuses_an_unnamed_argument() {
+    let m = Manifest::from_sql("CREATE OR REPLACE FUNCTION s.g(a numeric(10, 2), b text) RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;").expect("a manifest");
+    assert_eq!(m.functions.into_iter().collect::<Vec<_>>(), ["s.g(numeric(10, 2), text)"]);
+    let err = Manifest::from_sql("CREATE OR REPLACE FUNCTION s.g(text) RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;").expect_err("no argument name").to_string();
+    assert!(err.contains("reads only arguments written as `name type`: \"text\""), "{err}");
+    let err = Manifest::from_sql("CREATE FUNCTION s.f RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;").expect_err("no argument list").to_string();
+    assert_eq!(err, "the manifest cannot read the identity of: CREATE FUNCTION s.f RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql");
+}
+
+#[test]
+fn a_quoted_name_with_a_dot_is_one_identifier() {
+    let previous = Manifest::from_sql(
+        r#"CREATE OR REPLACE FUNCTION "a.b".f(x int) RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;
+           CREATE INDEX i ON "a.b".t (x);
+           CREATE INDEX j ON s."t.x" (y);"#,
+    )
+    .expect("a manifest");
+    let drops = Manifest::default().drops_since(&previous);
+    assert!(drops.contains(r#"DROP INDEX IF EXISTS "a.b".i;"#), "{drops}");
+    assert!(drops.contains("DROP INDEX IF EXISTS s.j;"), "{drops}");
+    assert!(drops.contains("WHERE (n.nspname, p.proname) IN (('a.b'::name, 'f'::name))"), "{drops}");
+}
+
+#[test]
+fn a_positional_parameter_does_not_open_a_dollar_quote() {
+    let m = Manifest::from_sql("CREATE POLICY a ON s.t USING ($1$ = 1); CREATE POLICY b ON s.t USING (true);").expect("a manifest");
+    assert_eq!(m.policies.len(), 2, "{:?}", m.policies);
+}

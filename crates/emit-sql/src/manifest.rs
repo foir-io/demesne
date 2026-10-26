@@ -352,7 +352,7 @@ fn quoted_end(chars: &[char], start: usize) -> Option<usize> {
 
 fn dollar_tag(chars: &[char]) -> Option<usize> {
     let body = chars.iter().skip(1).take_while(|c| c.is_ascii_alphanumeric() || **c == '_').count();
-    if body > 0 && chars[1].is_ascii_digit() {
+    if chars.get(1).is_some_and(char::is_ascii_digit) {
         return None;
     }
     (chars.get(1 + body) == Some(&'$')).then_some(body + 2)
