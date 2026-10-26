@@ -33,7 +33,7 @@ demesne-emit-sql.workspace = true
 demesne-emit-go.workspace = true
 demesne-emit-ts.workspace = true
 demesne-postgres = { workspace = true, optional = true }
-postgres = { version = "0.19.14", optional = true }
+postgres = { workspace = true, optional = true }
 
 [lints]
 workspace = true

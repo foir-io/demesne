@@ -47,7 +47,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 ### 1. Lints are the floor, not the target
 
 - **One lint config.** Lint config lives in `[workspace.lints]` in the root `Cargo.toml`, and every crate sets `[lints] workspace = true`. Don't add lint tables to a single crate's `Cargo.toml`.
-  - **The one exception is a crate exported to JavaScript.** `wasm-bindgen`'s generated glue uses `unsafe`, so that crate can't build under a workspace-wide `forbid(unsafe_code)`. Cargo can't combine `workspace = true` with an override, so the crate's own table repeats every workspace lint it can keep, with `unsafe_code = "deny"`. Its own code still writes no `unsafe`.
+  - **A crate exported to JavaScript is no exception.** `wasm-bindgen`'s generated glue builds under `forbid(unsafe_code)`. A claim that a crate can't build under a lint is a hypothesis: build it before writing the exception down.
 - **Fix the warning, don't silence it.** Lints stay at warn while you work, and CI turns every warning into a failure with `-D warnings`.
 - **Overrides are narrow, and each one gives a reason.** When a lint is wrong for a specific item, put `#[expect(clippy::lint_name, reason = "…")]` on the smallest item that needs it (M-LINT-OVERRIDE-EXPECT).
   - `#[expect]` warns as soon as the lint stops firing, so a stale override shows up by itself.
@@ -159,7 +159,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 - **Declare dependencies once.** Put each dependency in `[workspace.dependencies]` and reference it with `.workspace = true` (M-CARGO-WORKSPACE). Before adding one, check its licence, maintenance and footprint; cargo-deny checks licences and advisories in CI.
 - **Features are additive** (M-FEATURES-ADDITIVE). CI checks each feature on its own.
 - **Don't leak dependency types.** A published crate keeps third-party types out of its public API unless they earn their place (M-DONT-LEAK-TYPES).
-- **`unsafe` is forbidden workspace-wide.** If you think you need it, stop and ask rather than adding an exception. The one exception, a crate exported to JavaScript, is in rule 1.
+- **`unsafe` is forbidden workspace-wide.** If you think you need it, stop and ask rather than adding an exception.
 
 ### 9. Docs, comments and logs
 
