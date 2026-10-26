@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: mutants-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   mutants:
     # Mutation testing runs only here, on a throwaway runner: a runaway mutant
@@ -63,7 +67,7 @@ jobs:
           --in-diff mutants.diff
           --shard ${{ matrix.shard }}/16
           --test-tool nextest
-          --test-package demesne-model,demesne-emit-sql,demesne-runtime,demesne-parity,demesne-postgres
+          --test-workspace=true
           -- --run-ignored all
       - name: missed mutants
         if: always()

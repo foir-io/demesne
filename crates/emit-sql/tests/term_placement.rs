@@ -57,8 +57,18 @@ fn a_term_that_admits_alone_under_and_or_not_is_refused_with_what_it_compiles_to
     }
     let got = refusals("not @self(actor_col) and owner");
     assert!(got[0].1.contains("so the permission compiles as `owner + @self(actor_col)`, wider than it reads"), "{got:?}");
-    let got = refusals(r#"owner and @row(status, "open") and @self(actor_col)"#);
-    assert!(got[0].1.contains(r#"so the permission compiles as `owner and @row(status, "open") + @self(actor_col)`"#), "{got:?}");
+    for (view, compiled) in [
+        (r#"owner and @row(status, "open") and @self(actor_col)"#, r#"owner and @row(status, "open") + @self(actor_col)"#),
+        ("owner and (via grant impersonation + @public)", "owner + via grant impersonation + @public"),
+        (r#"owner and (@self(actor_col) + @row(status, "open"))"#, r#"owner and @row(status, "open") + @self(actor_col)"#),
+        (
+            r#"owner and (@row(status, "open") + @row(kind, "x") + @self(actor_col))"#,
+            r#"owner and (@row(status, "open") + @row(kind, "x")) + @self(actor_col)"#,
+        ),
+    ] {
+        let got = refusals(view);
+        assert!(got.iter().any(|(_, m)| m.contains(&format!("so the permission compiles as `{compiled}`, wider than it reads"))), "{view}: {got:?}");
+    }
 }
 
 #[test]
