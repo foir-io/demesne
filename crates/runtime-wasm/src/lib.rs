@@ -37,6 +37,13 @@ fn stmt((sql, args): (String, Vec<SqlArg>)) -> Value {
     Value::Struct(vec![("sql".into(), Value::Str(sql)), ("args".into(), Value::Array(args.iter().map(arg).collect()))])
 }
 
+fn point(governed: bool, allow: bool) -> Decision {
+    match (governed, allow) {
+        (false, _) => Decision::NotGoverned,
+        (true, true) => Decision::Allow,
+        (true, false) => Decision::Deny,
+    }
+}
 fn decision(s: &str) -> Decision {
     match s {
         "allow" => Decision::Allow,
@@ -85,7 +92,7 @@ pub fn authorize(pdp: &str, procedure: &str, holds: &HoldsFn) -> String {
 fn dispatch(op: &str, a: &Value) -> R {
     match op.split_once('.').map_or(op, |(group, _)| group) {
         "claims" => claims(op, a),
-        "pdp" => Ok(Value::Str(rt::compose_can(flag(a, "pointGoverned"), flag(a, "pointAllow"), decision(&text(a, "pdp"))).to_string())),
+        "pdp" => Ok(Value::Str(rt::compose_can(point(flag(a, "pointGoverned"), flag(a, "pointAllow")), decision(&text(a, "pdp"))).to_string())),
         "app" => app(op, a),
         "vocab" => vocab(op, a),
         "holds" => holds(op, a),
@@ -110,15 +117,15 @@ fn built(claims: &Value, a: &Value) -> Result<BTreeMap<String, String>, String> 
 fn claims(op: &str, a: &Value) -> R {
     let c = field(a, "claims");
     let session = projection::session(c);
-    let local = flag(a, "local");
+    let lifetime = if flag(a, "local") { rt::SettingLifetime::Transaction } else { rt::SettingLifetime::Session };
     match op {
         "claims.mint" => mint(&projection::contract(c), &str_map(a, "values"), None),
         "claims.mintWithExtra" => mint(&list(a, "contract"), &str_map(a, "values"), Some(&str_map(a, "extra"))),
         "claims.build" => built(c, a).map(|m| Value::Struct(m.into_iter().map(|(k, v)| (k, Value::Str(v))).collect())),
         "claims.mintFor" => built(c, a).and_then(|m| mint(&projection::contract(c), &m, None)),
-        "claims.setRoleSQL" => Ok(Value::Str(session.set_role_sql(local))),
-        "claims.claimsSetSQL" => Ok(Value::Str(session.claims_set_sql(local))),
-        "claims.sessionSetupSQL" => Ok(Value::strings(&session.session_setup_sql(local))),
+        "claims.setRoleSQL" => Ok(Value::Str(session.set_role_sql(lifetime))),
+        "claims.claimsSetSQL" => Ok(Value::Str(session.claims_set_sql(lifetime))),
+        "claims.sessionSetupSQL" => Ok(Value::strings(&session.session_setup_sql(lifetime))),
         _ => Err(unknown(op)),
     }
 }

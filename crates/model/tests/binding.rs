@@ -1,4 +1,4 @@
-use demesne_model::{Schema, table_coverage, validate_against};
+use demesne_model::{Nullability, Schema, table_coverage, validate_against};
 use std::collections::BTreeSet;
 
 const SPECS: [&str; 5] = [
@@ -21,7 +21,7 @@ fn refusals(s: &demesne_syntax::Spec, sc: &Schema) -> Vec<String> {
 fn tables_without_columns(tables: &BTreeSet<String>) -> Schema {
     let mut sc = Schema::new();
     for t in tables {
-        sc.add_column(t, "placeholder", "text", true);
+        sc.add_column(t, "placeholder", "text", Nullability::Nullable);
     }
     sc
 }
@@ -104,9 +104,9 @@ object doc {{
         );
         let mut sc = Schema::new();
         for col in ["id", "key"] {
-            sc.add_column("roles", col, "text", false);
+            sc.add_column("roles", col, "text", Nullability::NotNull);
         }
-        sc.add_column("roles", "perms", perms_type, false);
+        sc.add_column("roles", "perms", perms_type, Nullability::NotNull);
         refusals(&demesne_syntax::parse(&src).expect("the spec parses"), &sc)
     };
     let not_array = r#"column "perms" has type "text", not an array — @holds compiles to `p_perm = ANY(perms)`"#;
@@ -116,4 +116,13 @@ object doc {{
     assert!(!found.iter().any(|f| f.contains("not an array")), "{found:#?}");
     let found = spec("owner + @holds(docs:read)", "text[]");
     assert!(!found.iter().any(|f| f.contains("not an array")), "{found:#?}");
+}
+
+#[test]
+fn a_column_keeps_the_nullability_it_was_added_with() {
+    let mut sc = Schema::new();
+    sc.add_column("docs", "owner_id", "uuid", Nullability::Nullable);
+    sc.add_column("docs", "id", "uuid", Nullability::NotNull);
+    let nullable = |c| sc.column("docs", c).map(|c| c.nullable);
+    assert_eq!((nullable("owner_id"), nullable("id")), (Some(true), Some(false)));
 }

@@ -125,9 +125,23 @@ impl Affordance {
     }
 }
 
+/// What the asynchronous index answered for a caller and a permission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IndexAnswer {
+    Allowed,
+    Denied,
+}
+
+/// Turns the asynchronous index's answer into a UI affordance, judged against the freshness asked for.
+///
+/// An index that hasn't caught up with an `AtLeastAsFresh` zookie gives no hint. The affordance is
+/// a hint for rendering, never a substitute for enforcement.
 #[must_use]
-pub fn compose_affordance(allowed: bool, as_of: Zookie, c: Consistency) -> Affordance {
-    let hint = if allowed { AffordanceHint::Likely } else { AffordanceHint::Unlikely };
+pub fn compose_affordance(answer: IndexAnswer, as_of: Zookie, c: Consistency) -> Affordance {
+    let hint = match answer {
+        IndexAnswer::Allowed => AffordanceHint::Likely,
+        IndexAnswer::Denied => AffordanceHint::Unlikely,
+    };
     if let Consistency::AtLeastAsFresh(z) = c {
         if !as_of.reflects(z) {
             return Affordance { hint: AffordanceHint::Unknown, as_of, freshness: Freshness::Stale, source: AffordanceSource::AsyncIndex };

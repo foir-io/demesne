@@ -1,5 +1,5 @@
-use demesne_model::Schema;
 use demesne_model::scaffold::{ScaffoldOptions, scaffold};
+use demesne_model::{Nullability, Schema};
 
 fn tenancy() -> Schema {
     let mut sc = Schema::new();
@@ -13,7 +13,12 @@ fn tenancy() -> Schema {
         ("audit", &["id", "at"][..]),
     ] {
         for c in cols {
-            sc.add_column(table, c, if *c == "at" { "timestamptz" } else { "uuid" }, *c == "owner_id");
+            sc.add_column(
+                table,
+                c,
+                if *c == "at" { "timestamptz" } else { "uuid" },
+                if *c == "owner_id" { Nullability::Nullable } else { Nullability::NotNull },
+            );
         }
     }
     for (table, column, target) in [
@@ -45,7 +50,7 @@ fn ties() -> Schema {
         ("loads", &["id", "site_id", "truck_id"][..]),
     ] {
         for c in cols {
-            sc.add_column(table, c, "uuid", matches!(*c, "depot_id" | "truck_id"));
+            sc.add_column(table, c, "uuid", if matches!(*c, "depot_id" | "truck_id") { Nullability::Nullable } else { Nullability::NotNull });
         }
     }
     for (table, column, target) in [
@@ -78,7 +83,7 @@ fn deeper() -> Schema {
         ("tags", &["id", "beta_id", "gamma_id"][..]),
     ] {
         for c in cols {
-            sc.add_column(table, c, "uuid", *c == "aux_gamma_id");
+            sc.add_column(table, c, "uuid", if *c == "aux_gamma_id" { Nullability::Nullable } else { Nullability::NotNull });
         }
     }
     for (table, column, target) in [

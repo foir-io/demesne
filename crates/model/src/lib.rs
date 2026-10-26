@@ -15,7 +15,7 @@ pub mod vocab;
 
 pub use admission::{ConditionalAdmission, ConditionalExt};
 pub use error::Error;
-pub use schema::{Column, ForeignKey, Schema, TableCoverage, table_coverage, validate_against};
+pub use schema::{Column, ForeignKey, Nullability, Schema, TableCoverage, table_coverage, validate_against};
 pub use spec::{Principal, ReachGrantRef, SpecExt};
 pub use surfaces::SurfaceExt;
 pub use validate::{Structure, validate_structure};

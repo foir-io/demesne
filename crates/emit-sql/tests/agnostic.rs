@@ -1,5 +1,5 @@
 use demesne_emit_sql::{RlsResult, Sql};
-use demesne_model::{Schema, SpecExt, SurfaceExt, validate_against};
+use demesne_model::{Nullability, Schema, SpecExt, SurfaceExt, validate_against};
 
 fn agnostic() -> demesne_syntax::Spec {
     let src = std::fs::read_to_string(format!("{}/../../examples/agnostic.demesne", env!("CARGO_MANIFEST_DIR"))).expect("the agnostic example reads");
@@ -111,10 +111,10 @@ fn agnostic_schema(without: &str) -> Schema {
     ];
     for (table, cols, nullable) in tables {
         for col in cols.iter().filter(|c| **c != without) {
-            sc.add_column(table, col, "text", nullable.contains(col));
+            sc.add_column(table, col, "text", if nullable.contains(col) { Nullability::Nullable } else { Nullability::NotNull });
         }
     }
-    sc.add_column("ops_users", "is_ops", "boolean", false);
+    sc.add_column("ops_users", "is_ops", "boolean", Nullability::NotNull);
     sc
 }
 

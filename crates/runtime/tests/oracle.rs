@@ -31,7 +31,7 @@ fn run_case(proj: &Value, c: &Value) -> Value {
     let empty = Value::Map(Vec::new());
     let i = c.get("input").unwrap_or(&empty);
     let session = || projection::session(field(proj, "claims"));
-    let local = || i.get("local").and_then(Value::as_bool).unwrap_or(false);
+    let lifetime = || if i.get("local").and_then(Value::as_bool).unwrap_or(false) { rt::SettingLifetime::Transaction } else { rt::SettingLifetime::Session };
     let app = || {
         let name = text(i, "object");
         let objs = field(proj, "appSurface").as_array().expect("appSurface is an array");
@@ -45,9 +45,9 @@ fn run_case(proj: &Value, c: &Value) -> Value {
         return v;
     }
     match kind.as_str() {
-        "claims.claimsSetSQL" => Value::Str(session().claims_set_sql(local())),
-        "claims.setRoleSQL" => Value::Str(session().set_role_sql(local())),
-        "claims.sessionSetupSQL" => Value::strings(&session().session_setup_sql(local())),
+        "claims.claimsSetSQL" => Value::Str(session().claims_set_sql(lifetime())),
+        "claims.setRoleSQL" => Value::Str(session().set_role_sql(lifetime())),
+        "claims.sessionSetupSQL" => Value::strings(&session().session_setup_sql(lifetime())),
         "claims.mintWithExtra" => {
             let contract = projection::contract(field(proj, "claims"));
             let extra = str_map(i.get("extra"));

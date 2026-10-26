@@ -13,7 +13,7 @@ pub use dsn::parse_config_dump;
 pub use error::Error;
 pub use lint::{Severity, Trap, schema_traps};
 
-use demesne_model::Schema;
+use demesne_model::{Nullability, Schema};
 use postgres::Client;
 use std::collections::BTreeSet;
 
@@ -61,7 +61,7 @@ fn read_schema(client: &mut Client) -> Result<(Schema, IntrospectMeta), String> 
         .map_err(|e| query_error(&e))?;
     for row in rows {
         let (table, col, typ, nullable): (String, String, String, bool) = (row.get(0), row.get(1), row.get(2), row.get(3));
-        sc.add_column(&table, &col, &typ, nullable);
+        sc.add_column(&table, &col, &typ, if nullable { Nullability::Nullable } else { Nullability::NotNull });
         meta.columns += 1;
         tables.insert(table);
     }

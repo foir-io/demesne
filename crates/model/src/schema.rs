@@ -12,6 +12,13 @@ pub struct Column {
     pub nullable: bool,
 }
 
+/// Whether a column admits NULL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Nullability {
+    Nullable,
+    NotNull,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForeignKey {
     pub table: String,
@@ -32,7 +39,12 @@ impl Schema {
         Schema::default()
     }
 
-    pub fn add_column(&mut self, table: &str, name: &str, data_type: &str, nullable: bool) {
+    /// Adds a column to `table`, creating the table on its first column.
+    pub fn add_column(&mut self, table: &str, name: &str, data_type: &str, nullability: Nullability) {
+        let nullable = match nullability {
+            Nullability::Nullable => true,
+            Nullability::NotNull => false,
+        };
         self.tables
             .entry(table.to_string())
             .or_default()

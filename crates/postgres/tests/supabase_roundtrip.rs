@@ -1,5 +1,5 @@
 use demesne_model::SpecExt;
-use demesne_runtime::{AppObjectSurface, Decision, compose_can, mint_claims_values_with_extra};
+use demesne_runtime::{AppObjectSurface, Decision, SettingLifetime, compose_can, mint_claims_values_with_extra};
 use postgres::{Client, Error, GenericClient, Transaction};
 use std::any::Any;
 use std::cell::RefCell;
@@ -76,7 +76,7 @@ impl Framework {
         let claims_contract = spec.claims_contract().unwrap_or_else(|e| panic!("claims contract: {e}")).clone();
         let surf = demesne_emit_sql::Sql::new(spec).emit_app_surface().unwrap_or_else(|e| panic!("EmitAppSurface: {e}"));
         let note = surf.object("note").unwrap_or_else(|| panic!("the app surface carries no note object"));
-        Framework { claims_contract, setup: spec.session().session_setup_sql(true), note: NoteAccess::new(note) }
+        Framework { claims_contract, setup: spec.session().session_setup_sql(SettingLifetime::Transaction), note: NoteAccess::new(note) }
     }
 
     fn mint(&self, member_ref: &str, org: &str, ws: &str) -> Result<String, demesne_runtime::Error> {
@@ -98,7 +98,7 @@ impl NoteAccess {
 
     fn can_view(&self, q: &mut impl GenericClient, id: &str) -> Result<Decision, Error> {
         let ok: bool = q.query_one(self.can_view.as_str(), &[&id])?.try_get(0)?;
-        Ok(compose_can(true, ok, Decision::NotGoverned))
+        Ok(compose_can(if ok { Decision::Allow } else { Decision::Deny }, Decision::NotGoverned))
     }
 
     fn list_resources(&self, q: &mut impl GenericClient, after: Option<&str>, limit: i64) -> Result<Vec<String>, Error> {

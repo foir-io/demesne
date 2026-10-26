@@ -14,8 +14,12 @@ mod vocab;
 
 pub use access::ResourceAccessSurface;
 pub use app_surface::{AppCheck, AppCheckSurface, AppObjectSurface};
-pub use claims::{ClaimEntry, LevelClaim, Principal, Session, SubjectIdentity, build_claims, mint_claims_values, mint_claims_values_with_extra};
-pub use consistency::{Affordance, AffordanceHint, AffordanceSource, Consistency, ConsistencyLevel, Freshness, Zookie, compose_affordance, zookie_now_sql};
+pub use claims::{
+    ClaimEntry, LevelClaim, Principal, Session, SettingLifetime, SubjectIdentity, build_claims, mint_claims_values, mint_claims_values_with_extra,
+};
+pub use consistency::{
+    Affordance, AffordanceHint, AffordanceSource, Consistency, ConsistencyLevel, Freshness, IndexAnswer, Zookie, compose_affordance, zookie_now_sql,
+};
 pub use error::Error;
 pub use grant::GrantSurface;
 pub use holds::{EffectivePerms, EffectiveRoles, HoldsResolver, RoleAssignment, resolve_roles, scope_all_empty, scope_contains, within_plane};

@@ -3,7 +3,7 @@ use demesne_emit_ts::projections;
 use demesne_gocompat::json::Value;
 use demesne_model::analysis::object_grant_edge;
 use demesne_model::{SpecExt, SurfaceExt};
-use demesne_runtime::{self as rt, HoldsResolver, ResourceAccessSurface, RoleAssignment, SqlArg};
+use demesne_runtime::{self as rt, HoldsResolver, ResourceAccessSurface, RoleAssignment, SettingLifetime, SqlArg};
 use demesne_syntax::Spec;
 use std::collections::BTreeMap;
 
@@ -156,11 +156,11 @@ impl OracleEntry {
     fn claims(&mut self, sp: &Spec) -> Result<(), String> {
         self.proj.push(("claims".into(), projections::claims(sp).map_err(|e| e.to_string())?));
         let session = sp.session();
-        for local in [true, false] {
+        for (local, lifetime) in [(true, SettingLifetime::Transaction), (false, SettingLifetime::Session)] {
             let input = || Some(map(vec![("local", Value::Bool(local))]));
-            self.cases.push(case("claims.claimsSetSQL", input(), Value::Str(session.claims_set_sql(local))));
-            self.cases.push(case("claims.setRoleSQL", input(), Value::Str(session.set_role_sql(local))));
-            self.cases.push(case("claims.sessionSetupSQL", input(), Value::strings(&session.session_setup_sql(local))));
+            self.cases.push(case("claims.claimsSetSQL", input(), Value::Str(session.claims_set_sql(lifetime))));
+            self.cases.push(case("claims.setRoleSQL", input(), Value::Str(session.set_role_sql(lifetime))));
+            self.cases.push(case("claims.sessionSetupSQL", input(), Value::strings(&session.session_setup_sql(lifetime))));
         }
         let contract = sp.claims_contract().map_err(|e| e.to_string())?;
         let vals: BTreeMap<String, String> = contract.iter().map(|k| (k.clone(), format!("v_{k}"))).collect();

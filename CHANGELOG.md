@@ -334,6 +334,23 @@ Real specs nest a few levels, and the runtime's arguments two or three.
 `demesne_syntax::MAX_NESTING` and `demesne_gocompat::json::MAX_DEPTH` name the
 limits.
 
+### Breaking: runtime and schema calls name their choice instead of taking a `bool`
+
+- `Session::set_role_sql`, `claims_set_sql` and `session_setup_sql` take a
+  `SettingLifetime` in place of `local: bool`. `Transaction` is `SET LOCAL`
+  and `set_config(…, true)`; `Session` is `SET` and `set_config(…, false)`.
+  On a pooled connection, `Transaction` keeps the role and the caller's claims
+  from reaching the next caller to use the connection.
+- `compose_can(point, pdp)` takes the row's point check as a `Decision`:
+  `NotGoverned` when no row check governs the call, otherwise `Allow` or
+  `Deny`. The old `point_governed, point_allow` pair could be swapped without
+  a compile error, and two of its four combinations meant the same thing. The
+  order of the two arguments no longer matters.
+- `compose_affordance` takes `IndexAnswer::Allowed` or `IndexAnswer::Denied`.
+- `Schema::add_column` takes `Nullability::Nullable` or `Nullability::NotNull`.
+
+The TypeScript runtime and the generated Go and TypeScript are unchanged.
+
 ### Migrations drop what a spec stops emitting
 
 `emit all` writes `CREATE OR REPLACE` for the current surface only. So a

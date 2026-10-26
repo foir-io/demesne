@@ -60,16 +60,15 @@ pub fn capability_gate_err(object: &str, verb: &str) -> Error {
     ))
 }
 
+/// Combines a row's point check with the PDP's decision for the same call.
+///
+/// Either one denying denies. Neither governing the call leaves it ungoverned. Anything else
+/// allows. The order of the two arguments doesn't matter.
 #[must_use]
-pub fn compose_can(point_governed: bool, point_allow: bool, pdp: Decision) -> Decision {
-    if !point_governed && pdp == Decision::NotGoverned {
-        return Decision::NotGoverned;
+pub fn compose_can(point: Decision, pdp: Decision) -> Decision {
+    match (point, pdp) {
+        (Decision::Deny, _) | (_, Decision::Deny) => Decision::Deny,
+        (Decision::NotGoverned, Decision::NotGoverned) => Decision::NotGoverned,
+        (Decision::Allow, Decision::Allow | Decision::NotGoverned) | (Decision::NotGoverned, Decision::Allow) => Decision::Allow,
     }
-    if point_governed && !point_allow {
-        return Decision::Deny;
-    }
-    if pdp == Decision::Deny {
-        return Decision::Deny;
-    }
-    Decision::Allow
 }

@@ -23,21 +23,43 @@ impl Default for Session {
     }
 }
 
+/// How long a setting made for one request lasts on its connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SettingLifetime {
+    /// Until the transaction ends: `SET LOCAL`, and `set_config(…, true)`.
+    ///
+    /// On a pooled connection this is the safe choice: the role and the caller's claims can't
+    /// outlive the request and reach the next caller to use the connection.
+    Transaction,
+    /// Until the connection closes or the setting is changed again: `SET`, and `set_config(…, false)`.
+    Session,
+}
+
 impl Session {
+    /// Returns the statement that sets the caller's claims, whose JSON is bound as `$1`.
     #[must_use]
-    pub fn claims_set_sql(&self, local: bool) -> String {
+    pub fn claims_set_sql(&self, lifetime: SettingLifetime) -> String {
+        let local = match lifetime {
+            SettingLifetime::Transaction => true,
+            SettingLifetime::Session => false,
+        };
         format!("SELECT set_config('{}', $1, {local})", self.setting)
     }
 
+    /// Returns the statement that switches to the connection role the policies are written for.
     #[must_use]
-    pub fn set_role_sql(&self, local: bool) -> String {
-        let kw = if local { "SET LOCAL ROLE" } else { "SET ROLE" };
+    pub fn set_role_sql(&self, lifetime: SettingLifetime) -> String {
+        let kw = match lifetime {
+            SettingLifetime::Transaction => "SET LOCAL ROLE",
+            SettingLifetime::Session => "SET ROLE",
+        };
         format!("{kw} {}", self.role)
     }
 
+    /// Returns the statements that prepare a connection for one caller: the role, then the claims.
     #[must_use]
-    pub fn session_setup_sql(&self, local: bool) -> Vec<String> {
-        vec![self.set_role_sql(local), self.claims_set_sql(local)]
+    pub fn session_setup_sql(&self, lifetime: SettingLifetime) -> Vec<String> {
+        vec![self.set_role_sql(lifetime), self.claims_set_sql(lifetime)]
     }
 }
 
