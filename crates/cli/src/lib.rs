@@ -10,8 +10,8 @@ pub const USAGE: &str = "demesne — RLS-compiled ReBAC authorization, point it 
 
 USAGE:
   demesne validate <spec.demesne>              parse + validate a spec
-  demesne emit     <spec.demesne> [kind]       print generated SQL/Go
-                                               kind: rls|definers|enablement|triggers|claims|pdp|framework|all (default all)
+  demesne emit     <spec.demesne> [kind]       print generated SQL
+                                               kind: rls|definers|enablement|triggers|pdp|all (default all)
                                                manifest: JSON record of every object the SQL creates
                                                migrate <manifest.json>: all, then exact drops of what that
                                                             manifest's surface had and this spec no longer emits
@@ -19,7 +19,7 @@ USAGE:
                                                             kind: claims|pdp|projections|framework|all
                                                --profile supabase: emit the Supabase
                                                             deployment profile (access-token hook)
-                                               framework [pkg]: typed Go app package (default pkg \"authz\")
+                                               v1 generates no Go; use demesne v0.93.1 for Go
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
   demesne scaffold   [-i] <dsn>                generate a STARTER spec from the schema (-i: interactive)
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role,
@@ -37,6 +37,8 @@ USAGE:
 ";
 
 pub type R = Result<(), String>;
+
+const NO_GO: &str = "v1 generates no Go: use --target ts for TypeScript, or demesne v0.93.1 for Go";
 
 #[derive(Debug, Default)]
 pub struct Out {
@@ -196,7 +198,7 @@ pub fn strip_flag(args: &[String], name: &str, def: &str) -> (String, Vec<String
 }
 
 fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
-    let (target, args) = strip_flag(args, "target", "go");
+    let (target, args) = strip_flag(args, "target", "");
     let (profile, args) = strip_flag(&args, "profile", "");
     need(&args, 1, "<spec.demesne>")?;
     let s = load_spec(files, &args[0])?;
@@ -206,9 +208,10 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
         return emit_profile(out, &s, &profile);
     }
     match target.as_str() {
-        "go" => {}
+        "" => {}
         "ts" => return emit_ts(out, &s, kind),
-        other => return Err(format!("unknown --target {} (go|ts)", quote(other))),
+        "go" => return Err(NO_GO.to_string()),
+        other => return Err(format!("unknown --target {} (ts)", quote(other))),
     }
     let sql = Sql::new(&s);
     match kind {
@@ -219,16 +222,8 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
             out.print(&sql.triggers_sql());
             Ok(())
         }
-        "claims" => {
-            out.print(&demesne_emit_go::render_claims_contract_go(&s, "ClaimsContract").map_err(|e| e.to_string())?);
-            Ok(())
-        }
+        "claims" | "framework" => Err(format!("emit kind {} generated Go. {NO_GO}", quote(kind))),
         "pdp" => emit_pdp_report(out, &s),
-        "framework" => {
-            let pkg = args.get(2).map_or("authz", String::as_str);
-            out.print(&demesne_emit_go::emit_framework(&s, pkg).map_err(|e| e.to_string())?);
-            Ok(())
-        }
         "all" => emit_all_sql(out, &sql),
         "manifest" => {
             out.print(&sql.manifest().map_err(|e| e.to_string())?.to_json());
@@ -241,7 +236,7 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
             out.print(&sql.migration(&previous).map_err(|e| e.to_string())?);
             Ok(())
         }
-        other => Err(format!("unknown emit kind {} (rls|definers|enablement|triggers|claims|pdp|framework|all|manifest|migrate)", quote(other))),
+        other => Err(format!("unknown emit kind {} (rls|definers|enablement|triggers|pdp|all|manifest|migrate)", quote(other))),
     }
 }
 

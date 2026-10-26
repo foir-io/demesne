@@ -18,12 +18,6 @@ impl From<demesne_model::Error> for Error {
     }
 }
 
-impl From<demesne_emit_go::Error> for Error {
-    fn from(e: demesne_emit_go::Error) -> Self {
-        Error::new(e.to_string())
-    }
-}
-
 impl From<demesne_emit_sql::Error> for Error {
     fn from(e: demesne_emit_sql::Error) -> Self {
         Error::new(e.to_string())

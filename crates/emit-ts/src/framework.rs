@@ -1,6 +1,6 @@
 use crate::error::Error;
+use crate::plan::{check_accessor_collisions, orphan_pdp_verbs, role_tier_fields, row_check_sql, vocab_caps_tree};
 use crate::{projections, ts_json, ts_str};
-use demesne_emit_go::{check_accessor_collisions, orphan_pdp_verbs, role_tier_fields, row_check_sql, vocab_caps_tree};
 use demesne_emit_sql::Sql;
 use demesne_gocompat::json::Value;
 use demesne_gocompat::{go_export, unexport};

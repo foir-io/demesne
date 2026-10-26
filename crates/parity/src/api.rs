@@ -29,8 +29,6 @@ pub fn api_dump(s: &Spec) -> String {
         writeln!(b, "resourceaccess {}: {}", o.name, st(&ra)).expect("fmt::Write for String never fails");
     }
     dump_vocabularies(s, &mut b);
-    let ent = demesne_emit_go::render_claims_contract_entries_go(s, "ClaimsContractEntries");
-    write!(b, "claims entries go: {}\n{}", st(&ent), ent.as_ref().map_or("", String::as_str)).expect("fmt::Write for String never fails");
     dump_fields(s, &mut b);
     for rg in s.reach_grants() {
         writeln!(b, "reach grant {} {} {}", rg.edge_table(), rg.grantee_column(), rg.granularity()).expect("fmt::Write for String never fails");
@@ -73,8 +71,7 @@ fn dump_fields(s: &Spec, b: &mut String) {
         let table = &s.object_by_name(&name).expect("the name comes from the spec's own objects").table;
         write!(
             b,
-            "field access {name} go:\n{}field access {name} ts:\n{}field access {name} grants:\n{}",
-            demesne_emit_go::render_field_access_go(&fa),
+            "field access {name} ts:\n{}field access {name} grants:\n{}",
             demesne_emit_ts::render_field_access_ts(&fa),
             demesne_emit_sql::render_field_grants(&fa, table)
         )
@@ -93,7 +90,7 @@ fn dump_checks(s: &Spec, sql: &Sql, b: &mut String) {
     let pdps = emit_pdp(s);
     writeln!(b, "pdp: {}", st(&pdps)).expect("fmt::Write for String never fails");
     for (site, p) in pdps.iter().flatten() {
-        b.push_str(&demesne_emit_go::render_pdp_go(p, &format!("{site}Policy")));
+        b.push_str(&demesne_emit_ts::render_pdp_ts(p, &format!("{site}Policy")));
     }
 }
 

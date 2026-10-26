@@ -2,6 +2,7 @@
 
 mod error;
 mod framework;
+mod plan;
 pub mod projections;
 
 pub use error::Error;
