@@ -238,7 +238,7 @@ fn conjunct_claims<S: ConditionalExt + ?Sized>(s: &S, obj: &Object, t: &Term) ->
     let at_level = |level: &str| vec![ClaimMatch::column(s.claim_key_for_level(level), s.scope_col(obj, level))];
     match t.builtin() {
         "kind" => Some(vec![ClaimMatch::literal("kind", t.kind_val())]),
-        "session" if t.session_rel().is_empty() => obj.scoped.last().map(|leaf| at_level(leaf)),
+        "session" => obj.scoped.last().map(|leaf| at_level(leaf)),
         "within" if !t.within_nullable() => Some(at_level(t.within_level())),
         _ => None,
     }
