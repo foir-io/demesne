@@ -260,11 +260,11 @@ fn a_blind_write_breaks_the_composition_arm_implication() {
     assert!(warnings.iter().any(|w| w.contains("its term `part_of`")));
 }
 
-fn impersonated(edit_suffix: &str) -> String {
-    impersonation(&format!("permission edit = @session(admin) @rls maps update{edit_suffix}"))
+fn supported(edit_suffix: &str) -> String {
+    support(&format!("permission edit = @session(admin) @rls maps update{edit_suffix}"))
 }
 
-fn impersonation(perms: &str) -> String {
+fn support(perms: &str) -> String {
     format!(
         r#"
 topology {{
@@ -287,10 +287,10 @@ rolestore admin {{
   revoked     revoked_at
 }}
 
-grant impersonation at tenant
-  via edge impersonation_grants(grantee_id, tenant_id)
+grant support at tenant
+  via edge support_grants(grantee_id, tenant_id)
 
-subject operator {{ anchor platform; reach via grant impersonation; identifies sub; roles none }}
+subject operator {{ anchor platform; reach via grant support; identifies sub; roles none }}
 subject admin    {{ anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }}
 
 object project {{
@@ -306,13 +306,13 @@ object project {{
 
 #[test]
 fn a_subjects_own_reach_past_select_is_refused() {
-    let errs = errors(&impersonated(""));
+    let errs = errors(&supported(""));
     assert!(errs.iter().any(|e| e.contains("permission project.edit maps update, and a subject's own reach on this object admits callers")), "{errs:#?}");
 }
 
 #[test]
 fn a_blind_write_keeps_its_subjects_own_reach_as_a_warning() {
-    let (res, warnings) = check(&impersonated(" blind"));
+    let (res, warnings) = check(&supported(" blind"));
     assert_eq!(res, Ok(()));
     assert!(warnings.iter().any(|w| w.contains("a subject's own reach on this object") && w.contains("kept as a warning")), "{warnings:#?}");
 }
@@ -328,20 +328,20 @@ fn a_literal_holding_a_parenthesis_is_one_term() {
 
 #[test]
 fn a_write_term_that_is_a_subjects_own_reach_is_reported_once_as_that_reach() {
-    let errs = errors(&impersonation("permission edit = via grant impersonation @rls maps update"));
+    let errs = errors(&support("permission edit = via grant support @rls maps update"));
     assert_eq!(errs.len(), 1, "{errs:#?}");
     assert!(errs[0].contains("permission project.edit maps update, and a subject's own reach on this object admits callers"), "{errs:#?}");
 }
 
 #[test]
 fn a_write_term_of_one_condition_past_select_is_refused() {
-    let errs = errors(&impersonation("permission view = @session(admin) @rls maps select\n  permission edit = @self(actor_col) @rls maps update"));
+    let errs = errors(&support("permission view = @session(admin) @rls maps select\n  permission edit = @self(actor_col) @rls maps update"));
     assert!(errs.iter().any(|e| e.contains("permission project.edit maps update, and its term `@self(actor_col)` admits callers")), "{errs:#?}");
 }
 
 #[test]
 fn an_admit_arm_for_one_write_does_not_check_the_other() {
-    let errs = errors(&impersonation("permission edit = @session(admin) @rls maps update\n  admit update = @session(admin)"));
+    let errs = errors(&support("permission edit = @session(admin) @rls maps update\n  admit update = @session(admin)"));
     assert!(errs.iter().any(|e| e.contains("project.admit maps update, and its admit arm")), "{errs:#?}");
     assert!(!errs.iter().any(|e| e.contains("maps delete")), "{errs:#?}");
 }
@@ -465,8 +465,8 @@ fn an_admit_arm_past_the_limit_is_refused() {
 #[test]
 fn a_subjects_own_reach_past_the_limit_with_its_requirement_is_refused() {
     let require = (0..9).map(|i| format!(r#"(@kind("a{i}") + @kind("b{i}"))"#)).collect::<Vec<_>>().join(" and ");
-    let second = "subject auditor  { anchor platform; reach via grant impersonation; identifies aud; roles none }\nsubject admin ";
-    let errs = errors(&impersonated(&format!("\n  require edit = {require}")).replacen("subject admin ", second, 1));
+    let second = "subject auditor  { anchor platform; reach via grant support; identifies aud; roles none }\nsubject admin ";
+    let errs = errors(&supported(&format!("\n  require edit = {require}")).replacen("subject admin ", second, 1));
     assert!(
         errs.iter().any(|e| e.contains(&format!("permission project.edit maps update, but a subject's own reach on this object {PAST_LIMIT}"))),
         "{errs:#?}"

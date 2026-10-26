@@ -226,7 +226,7 @@ callers on its own wherever it is written, so the compiler ignored any `and` or
 union, and shows what the permission compiled to:
 
 ```
-line 16: permission billing.view writes `@self(actor_col)` inside `owner and
+line 16: permission invoice.view writes `@self(actor_col)` inside `owner and
 @self(actor_col)`, but a @self, @public or `via grant` term admits its callers
 on its own wherever it is written, so the permission compiles as `owner +
 @self(actor_col)`, wider than it reads: …

@@ -2,15 +2,15 @@ topology {
   level platform virtual
   level tenant   parent platform
 }
-grant impersonation at tenant
-  via edge impersonation_grants(grantee_id, tenant_id)
+grant support at tenant
+  via edge support_grants(grantee_id, tenant_id)
   active revoked_at expires expires_at
 
-subject operator { anchor platform; reach via grant impersonation; identifies sub; roles none }
+subject operator { anchor platform; reach via grant support; identifies sub; roles none }
 subject member   { anchor tenant;   reach descendants; identifies sub; roles none; binds owner }
 
-object billing {
-  table  billing_subscriptions
+object invoice {
+  table  invoices
   scoped tenant
   relation owner: member via owner_id
   permission view = owner + @scoped @rls maps select
