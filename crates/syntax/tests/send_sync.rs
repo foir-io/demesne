@@ -1,0 +1,56 @@
+const fn send_sync<T: Send + Sync>() {}
+
+#[test]
+fn every_public_type_is_send_and_sync() {
+    send_sync::<demesne_syntax::Admit>();
+    send_sync::<demesne_syntax::ArgSrc>();
+    send_sync::<demesne_syntax::Builtin>();
+    send_sync::<demesne_syntax::ClaimsAccessor>();
+    send_sync::<demesne_syntax::ExportParameter>();
+    send_sync::<demesne_syntax::External>();
+    send_sync::<demesne_syntax::ExternalArg>();
+    send_sync::<demesne_syntax::FieldRule>();
+    send_sync::<demesne_syntax::FieldScopeEntry>();
+    send_sync::<demesne_syntax::FieldScopes>();
+    send_sync::<demesne_syntax::Gate>();
+    send_sync::<demesne_syntax::Grant>();
+    send_sync::<demesne_syntax::GrantScope>();
+    send_sync::<demesne_syntax::GrantUse>();
+    send_sync::<demesne_syntax::Guard>();
+    send_sync::<demesne_syntax::GuardOp>();
+    send_sync::<demesne_syntax::Implication>();
+    send_sync::<demesne_syntax::Level>();
+    send_sync::<demesne_syntax::Membership>();
+    send_sync::<demesne_syntax::Object>();
+    send_sync::<demesne_syntax::Perm>();
+    send_sync::<demesne_syntax::PermNode>();
+    send_sync::<demesne_syntax::PermissionExport>();
+    send_sync::<demesne_syntax::Pos>();
+    send_sync::<demesne_syntax::Preset>();
+    send_sync::<demesne_syntax::ProcEntry>();
+    send_sync::<demesne_syntax::Procedures>();
+    send_sync::<demesne_syntax::Relation>();
+    send_sync::<demesne_syntax::RelationKind>();
+    send_sync::<demesne_syntax::Repr>();
+    send_sync::<demesne_syntax::Require>();
+    send_sync::<demesne_syntax::RoleStore>();
+    send_sync::<demesne_syntax::Spec>();
+    send_sync::<demesne_syntax::Subject>();
+    send_sync::<demesne_syntax::Template>();
+    send_sync::<demesne_syntax::Term>();
+    send_sync::<demesne_syntax::TermKind>();
+    send_sync::<demesne_syntax::Topology>();
+    send_sync::<demesne_syntax::UngovEntry>();
+    send_sync::<demesne_syntax::Ungoverned>();
+    send_sync::<demesne_syntax::ViaClosure>();
+    send_sync::<demesne_syntax::ViaColumn>();
+    send_sync::<demesne_syntax::ViaComposition>();
+    send_sync::<demesne_syntax::ViaEdge>();
+    send_sync::<demesne_syntax::ViaGrant>();
+    send_sync::<demesne_syntax::ViaGroup>();
+    send_sync::<demesne_syntax::ViaMemberIn>();
+    send_sync::<demesne_syntax::ViaObject>();
+    send_sync::<demesne_syntax::Vocabulary>();
+    send_sync::<demesne_syntax::Error>();
+    send_sync::<demesne_syntax::Finding>();
+}

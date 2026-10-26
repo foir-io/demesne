@@ -80,6 +80,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
   - Hash order changes between runs and versions, so goldens flap, diffs grow noisy, and two identical inputs produce different bytes.
   - When real input can make two entries tie, check whether they collide. Two objects that write the same name are usually a bug to refuse, not an order to pick.
 - **Fast hashers only for trusted keys.** M-FAST-HASHER is fine for keys you control. Keep the default DoS-resistant hasher for anything an outside caller supplies.
+- **A hand-written `Ord` agrees with `PartialEq` and `Hash`.** `a.cmp(&b) == Equal` exactly when `a == b`, and equal values hash alike. Otherwise a `BTreeSet` and a `HashSet` disagree about which entries are duplicates, and output depends on which one built it. Derive the three together when you can.
 - **Pass the outside world in.** Time, randomness, environment variables, the filesystem and the network go through a handle the caller passes in (M-MOCKABLE-SYSCALLS), so tests control them.
   - If the repo has disallowed `std::env::var` or the clock calls in `clippy.toml`, that's the reason; use the project's wrapper.
 - **No global mutable state** (M-AVOID-STATICS). A `static` is fine as a cache whose value can't change correctness, such as a compiled regex. A process-wide registry that callers add to at startup is not fine: it's hidden coupling, and tests can't isolate it.
@@ -90,6 +91,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
   - Use enums instead of string tags and boolean flags.
   - Give each newtype a constructor that checks its invariant (M-STRONG-TYPES-GUARD).
   - Use typestate when an operation is only valid in some states.
+- **No `bool` parameter in a public signature.** `session_setup_sql(true)` says nothing at the call site, and two swapped bools still compile. Take an enum (`Scope::Transaction`), split the function in two (`to_string` and `to_string_pretty`), or take a struct with named fields. Settle it before 1.0: changing a public signature later is a major version.
 - **Match exhaustively on your own enums.** A `_ =>` arm on an enum you own hides the next variant someone adds. Security-relevant crates deny `clippy::wildcard_enum_match_arm` for exactly this reason.
 - **Prefer a check the compiler runs.** A crate boundary, a private constructor or a type the compiler checks beats a grep guard, a code-review convention, or a comment saying "don't call this from X". If you find yourself writing such a comment, look for the type that would make it unnecessary.
 
@@ -109,6 +111,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 
 ### 6. Tests that can fail
 
+- **Write the failing test before the fix.** For a bug, first write the test that reproduces it and watch it fail on the unfixed code, then fix it. A test written after the fix can pass for a reason that has nothing to do with the bug.
 - **Break the code before claiming coverage.** Before saying a test covers a behaviour:
   1. break the code it guards (a plant);
   2. run the test and watch it fail;
@@ -119,6 +122,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
   - Run nextest with `--no-tests=fail`.
   - Report how many tests actually ran.
   - Check that suites behind `#[ignore]`, a feature or an env var really ran. A skipped database suite looks exactly like a passing one.
+- **Assertion messages carry the input.** Pass the values under test to the message (`assert!(errs[0].contains(…), "{errs:#?}")`), so a failure in CI can be read without running it again.
 - **No tautological tests** (M-TAUTOLOGICAL-TESTS). Don't re-assert a constant or mirror the implementation's branches. Assert a property or a behaviour someone can observe.
 - **Snapshot goldens.** Golden outputs are snapshot files, reviewed as diffs (insta). Never regenerate goldens to make a failing test pass without reading the diff and saying why it's right.
   - **Pin before you refactor.** When a change shouldn't alter output, snapshot the output first, then let the snapshots prove it didn't.
@@ -145,7 +149,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 - **No std lock guard across `.await`.** Never hold a `std::sync::Mutex` or `RwLock` guard across an `.await`. Restructure, or use an async-aware lock if one is genuinely needed.
 - **Spawn through the project.** Spawn through the project's helper if it has one, so the task keeps its tracing span and shutdown waits for it. Don't drop a `JoinHandle` without deciding what happens when the task fails.
 - **Long CPU-bound work yields.** It calls `yield_now().await` at intervals or moves to `spawn_blocking` (M-YIELD-POINTS).
-- **Futures and public types are `Send`** (M-TYPES-SEND).
+- **Futures and public types are `Send`** (M-TYPES-SEND), and `Sync` unless they need interior mutability. Assert it at compile time: a test calls `const fn send_sync<T: Send + Sync>() {}` for each public type, so a field that loses it fails this crate's build, not an adopter's.
 - **Every network call has a timeout.**
 
 ### 8. Dependencies, features, unsafe
