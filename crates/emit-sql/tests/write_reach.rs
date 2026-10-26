@@ -402,3 +402,73 @@ fn only_a_seeing_write_verb_is_within_borrowing_the_select_verb() {
         assert!(errs[0].contains("permission doc.edit maps update, and its term `borrowed`"), "{folder_perm}: {errs:#?}");
     }
 }
+
+fn alternatives(pairs: usize) -> String {
+    (0..pairs).map(|i| format!(r#"((owner and @row(s{i}, "a")) + (owner and @row(s{i}, "b")))"#)).collect::<Vec<_>>().join(" and ")
+}
+
+const PAST_LIMIT: &str = "expands past 512 conjunctions, too many to check that the SELECT policy shows every row it lets a caller update";
+
+#[test]
+fn a_write_at_the_conjunction_limit_is_checked_and_one_past_it_is_refused() {
+    let edit = |pairs, blind| {
+        note(&format!("  permission view = owner @rls maps select\n  permission edit = owner and {} @rls maps update{blind}", alternatives(pairs)))
+    };
+    assert_eq!(check(&edit(9, "")), (Ok(()), Vec::new()));
+    let errs = errors(&edit(10, ""));
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert!(
+        errs[0].contains(&format!(
+            "permission note.edit maps update, but its predicate {PAST_LIMIT}: write its predicate with fewer alternatives, or mark the permission `blind`"
+        )),
+        "{errs:#?}"
+    );
+    let (res, warnings) = check(&edit(10, " blind"));
+    assert_eq!(res, Ok(()));
+    assert_eq!(warnings.len(), 1, "{warnings:#?}");
+    assert!(warnings[0].contains(&format!("its predicate {PAST_LIMIT}: kept as a warning because the permission is marked `blind`")), "{warnings:#?}");
+}
+
+#[test]
+fn a_select_permission_or_requirement_past_the_limit_refuses_every_write_it_would_check() {
+    let errs = errors(&note(&format!(
+        "  permission view = owner and {} @rls maps select\n  permission edit = owner @rls maps update\n  admit update = owner",
+        alternatives(10)
+    )));
+    assert_eq!(errs.len(), 2, "{errs:#?}");
+    assert!(errs[0].contains(&format!("permission note.edit maps update, but the select permission note.view {PAST_LIMIT}")), "{errs:#?}");
+    assert!(errs[1].contains(&format!("permission note.admit maps update, but the select permission note.view {PAST_LIMIT}")), "{errs:#?}");
+    let (res, warnings) =
+        check(&note(&format!("  permission view = owner and {} @rls maps select\n  permission edit = owner @rls maps update blind", alternatives(10))));
+    assert_eq!(res, Ok(()));
+    assert_eq!(warnings.len(), 1, "{warnings:#?}");
+    assert!(warnings[0].contains("the select permission note.view expands past 512 conjunctions"), "{warnings:#?}");
+    let errs = errors(&note(&format!(
+        "  permission view = owner @rls maps select\n  permission edit = owner @rls maps update\n  require edit = {}",
+        alternatives(10)
+    )));
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert!(errs[0].contains(&format!("permission note.edit maps update, but `require edit` {PAST_LIMIT}")), "{errs:#?}");
+}
+
+#[test]
+fn an_admit_arm_past_the_limit_is_refused() {
+    let errs = errors(&note(&format!(
+        "  permission view = owner @rls maps select\n  permission edit = owner @rls maps update\n  admit update = owner and {}",
+        alternatives(10)
+    )));
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert!(errs[0].contains("permission note.admit maps update, but its admit arm `owner and "), "{errs:#?}");
+    assert!(errs[0].contains(PAST_LIMIT), "{errs:#?}");
+}
+
+#[test]
+fn a_subjects_own_reach_past_the_limit_with_its_requirement_is_refused() {
+    let require = (0..9).map(|i| format!(r#"(@kind("a{i}") + @kind("b{i}"))"#)).collect::<Vec<_>>().join(" and ");
+    let second = "subject auditor  { anchor platform; reach via grant impersonation; identifies aud; roles none }\nsubject admin ";
+    let errs = errors(&impersonated(&format!("\n  require edit = {require}")).replacen("subject admin ", second, 1));
+    assert!(
+        errs.iter().any(|e| e.contains(&format!("permission project.edit maps update, but a subject's own reach on this object {PAST_LIMIT}"))),
+        "{errs:#?}"
+    );
+}

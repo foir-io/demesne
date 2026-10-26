@@ -17,6 +17,13 @@ enum Expr {
 type Conj = BTreeSet<(bool, String)>;
 type Literals = Vec<(bool, Term)>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TooLarge;
+
+fn within_limit<C>(out: Vec<C>) -> Result<Vec<C>, TooLarge> {
+    if out.len() <= DNF_LIMIT { Ok(out) } else { Err(TooLarge) }
+}
+
 fn depths(s: &[u8]) -> Vec<Option<i32>> {
     let (mut depth, mut quoted) = (0i32, false);
     s.iter()
@@ -84,16 +91,15 @@ fn parse(s: &str) -> Expr {
     Expr::Atom(s.to_string())
 }
 
-fn product<C>(a: &[C], b: &[C], join: impl Fn(&C, &C) -> C) -> Option<Vec<C>> {
-    let out: Vec<C> = a.iter().flat_map(|x| b.iter().map(|y| join(x, y))).take(DNF_LIMIT + 1).collect();
-    (out.len() <= DNF_LIMIT).then_some(out)
+fn product<C>(a: &[C], b: &[C], join: impl Fn(&C, &C) -> C) -> Result<Vec<C>, TooLarge> {
+    within_limit(a.iter().flat_map(|x| b.iter().map(|y| join(x, y))).take(DNF_LIMIT + 1).collect())
 }
 
-fn dnf(e: &Expr, neg: bool) -> Option<Vec<Conj>> {
+fn dnf(e: &Expr, neg: bool) -> Result<Vec<Conj>, TooLarge> {
     let out = match (e, neg) {
         (Expr::Atom(a), _) => vec![BTreeSet::from([(neg, a.clone())])],
         (Expr::Not(k), _) => dnf(k, !neg)?,
-        (Expr::Or(kids), false) | (Expr::And(kids), true) => kids.iter().map(|k| dnf(k, neg)).collect::<Option<Vec<_>>>()?.concat(),
+        (Expr::Or(kids), false) | (Expr::And(kids), true) => kids.iter().map(|k| dnf(k, neg)).collect::<Result<Vec<_>, _>>()?.concat(),
         (Expr::And(kids), false) | (Expr::Or(kids), true) => {
             let mut out: Vec<Conj> = vec![BTreeSet::new()];
             for k in kids {
@@ -102,14 +108,14 @@ fn dnf(e: &Expr, neg: bool) -> Option<Vec<Conj>> {
             out
         }
     };
-    (out.len() <= DNF_LIMIT).then_some(out)
+    within_limit(out)
 }
 
-fn spec_dnf(n: &PermNode, neg: bool) -> Option<Vec<Literals>> {
+fn spec_dnf(n: &PermNode, neg: bool) -> Result<Vec<Literals>, TooLarge> {
     let out = match (n, neg) {
         (PermNode::Leaf(t), _) => vec![vec![(neg, t.clone())]],
         (PermNode::Not(k), _) => spec_dnf(k, !neg)?,
-        (PermNode::Or(kids), false) | (PermNode::And(kids), true) => kids.iter().map(|k| spec_dnf(k, neg)).collect::<Option<Vec<_>>>()?.concat(),
+        (PermNode::Or(kids), false) | (PermNode::And(kids), true) => kids.iter().map(|k| spec_dnf(k, neg)).collect::<Result<Vec<_>, _>>()?.concat(),
         (PermNode::And(kids), false) | (PermNode::Or(kids), true) => {
             let mut out: Vec<Literals> = vec![Vec::new()];
             for k in kids {
@@ -118,7 +124,7 @@ fn spec_dnf(n: &PermNode, neg: bool) -> Option<Vec<Literals>> {
             out
         }
     };
-    (out.len() <= DNF_LIMIT).then_some(out)
+    within_limit(out)
 }
 
 fn split_last_literal(a: &str) -> Option<(&str, &str, &str)> {
@@ -218,11 +224,15 @@ fn admit_write_ops(o: &Object) -> Vec<(&Admit, &'static str)> {
         .collect()
 }
 
+fn object_writes(o: &Object) -> Vec<(&Perm, &'static str)> {
+    o.perms.iter().filter_map(|p| write_op(p).map(|op| (p, op))).collect()
+}
+
 fn select_perm(o: &Object) -> Option<&Perm> {
     o.perms.iter().find(|p| p.has_layer("rls") && !p.predicate_only && p.maps.as_deref() == Some("select"))
 }
 
-fn with_requirement(conjs: &[Conj], requirement: &[Conj]) -> Option<Vec<Conj>> {
+fn with_requirement(conjs: &[Conj], requirement: &[Conj]) -> Result<Vec<Conj>, TooLarge> {
     product(conjs, requirement, |x, y| x.union(y).cloned().collect())
 }
 
@@ -276,6 +286,33 @@ impl Reach<'_> {
     }
 }
 
+struct Oversized<'a> {
+    line: usize,
+    obj: &'a Object,
+    verb: &'a str,
+    op: &'a str,
+    what: String,
+    blind: bool,
+}
+
+impl Oversized<'_> {
+    fn finding(&self) -> Finding {
+        let Oversized { line, obj, verb, op, what, blind } = self;
+        let tail = if *blind {
+            "kept as a warning because the permission is marked `blind`".to_string()
+        } else {
+            format!("write {what} with fewer alternatives, or mark the permission `blind` if it is meant to {op} without reading")
+        };
+        Finding::at(
+            *line,
+            format!(
+                "permission {}.{verb} maps {op}, but {what} expands past {DNF_LIMIT} conjunctions, too many to check that the SELECT policy shows every row it lets a caller {op}: {tail}",
+                obj.name
+            ),
+        )
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct WriteReach {
     pub(crate) errors: Vec<Finding>,
@@ -283,12 +320,20 @@ pub(crate) struct WriteReach {
 }
 
 impl WriteReach {
-    fn report(&mut self, f: &Reach<'_>) {
-        if f.blind {
-            self.warnings.push(f.finding());
+    fn push(&mut self, f: Finding, blind: bool) {
+        if blind {
+            self.warnings.push(f);
         } else {
-            self.errors.push(f.finding());
+            self.errors.push(f);
         }
+    }
+
+    fn report(&mut self, f: &Reach<'_>) {
+        self.push(f.finding(), f.blind);
+    }
+
+    fn oversized(&mut self, f: &Oversized<'_>) {
+        self.push(f.finding(), f.blind);
     }
 }
 
@@ -326,6 +371,10 @@ impl<'a> ObjectReach<'a> {
     fn finding(&self, line: usize, verb: &'a str, op: &'a str, what: String, escape: Escape, blind: bool) -> Reach<'a> {
         Reach { line, obj: self.obj, verb, op, what, sel: self.sel, escape, blind }
     }
+
+    fn oversized(&self, line: usize, verb: &'a str, op: &'a str, what: String, blind: bool) -> Oversized<'a> {
+        Oversized { line, obj: self.obj, verb, op, what, blind }
+    }
 }
 
 struct WriteTerm<'a> {
@@ -334,29 +383,37 @@ struct WriteTerm<'a> {
     requirement: Vec<Conj>,
 }
 
+fn unchecked_object(o: &Object, what: &str, out: &mut WriteReach) {
+    let writes = object_writes(o).into_iter().map(|(pm, op)| (pm.pos.line, pm.verb.as_str(), op, pm.blind));
+    let admits = admit_write_ops(o).into_iter().map(|(a, op)| (a.pos.line, "admit", op, false));
+    for (line, verb, op, blind) in writes.chain(admits) {
+        out.oversized(&Oversized { line, obj: o, verb, op, what: what.to_string(), blind });
+    }
+}
+
 fn quoted_terms(trees: &[PermNode]) -> String {
     let terms: Vec<String> = trees.iter().map(|t| format!("`{}`", PermNode::display(t))).collect();
     if let [one] = terms.as_slice() { format!("its term {one}") } else { format!("its terms {}", terms.join(", ")) }
 }
 
 impl Sql<'_> {
-    fn requirement_dnf(&self, o: &Object, pm: Option<&Perm>) -> Option<Vec<Conj>> {
-        let Some(pm) = pm else { return Some(vec![BTreeSet::new()]) };
-        let req = self.perm_require_sql(o, pm, self.s.owner_subject(leaf(o))).ok()?;
+    fn requirement_dnf(&self, o: &Object, pm: Option<&Perm>) -> Result<Option<Vec<Conj>>, String> {
+        let Some(pm) = pm else { return Ok(Some(vec![BTreeSet::new()])) };
+        let Ok(req) = self.perm_require_sql(o, pm, self.s.owner_subject(leaf(o))) else { return Ok(None) };
         if req.is_empty() {
-            return Some(vec![BTreeSet::new()]);
+            return Ok(Some(vec![BTreeSet::new()]));
         }
-        dnf(&parse(&req), false)
+        dnf(&parse(&req), false).map(Some).map_err(|TooLarge| format!("`require {}`", pm.verb))
     }
 
-    fn op_requirement(&self, o: &Object, op: &str) -> Option<Vec<Conj>> {
+    fn op_requirement(&self, o: &Object, op: &str) -> Result<Option<Vec<Conj>>, String> {
         self.requirement_dnf(o, o.perms.iter().find(|p| p.has_layer("rls") && p.maps() == op))
     }
 
-    fn select_permission_dnf(&self, o: &Object, sel: Option<&Perm>, virt: &Virtual) -> Option<Vec<Conj>> {
-        let Some(sel) = sel else { return Some(Vec::new()) };
-        let pred = self.admission_predicate(o, sel, self.s.owner_subject(leaf(o)), virt).ok()?;
-        dnf(&parse(&pred), false)
+    fn select_permission_dnf(&self, o: &Object, sel: Option<&Perm>, virt: &Virtual) -> Result<Option<Vec<Conj>>, String> {
+        let Some(sel) = sel else { return Ok(Some(Vec::new())) };
+        let Ok(pred) = self.admission_predicate(o, sel, self.s.owner_subject(leaf(o)), virt) else { return Ok(None) };
+        dnf(&parse(&pred), false).map(Some).map_err(|TooLarge| format!("the select permission {}.{}", o.name, sel.verb))
     }
 
     fn blind_misuse(&self) -> Vec<Finding> {
@@ -373,23 +430,19 @@ impl Sql<'_> {
             .collect()
     }
 
-    fn object_reach<'a>(&self, imp: &'a Implications<'a>, o: &'a Object, virt: &Virtual) -> Option<ObjectReach<'a>> {
-        let writes: Vec<(&Perm, &'static str)> = o.perms.iter().filter_map(|p| write_op(p).map(|op| (p, op))).collect();
+    fn object_reach<'a>(&self, imp: &'a Implications<'a>, o: &'a Object, virt: &Virtual) -> Result<Option<ObjectReach<'a>>, String> {
+        let writes = object_writes(o);
         let admits = admit_write_ops(o);
         if writes.is_empty() && admits.is_empty() {
-            return None;
+            return Ok(None);
         }
         let sel = select_perm(o);
-        Some(ObjectReach {
-            imp,
-            obj: o,
-            sel,
-            sel_permission: self.select_permission_dnf(o, sel, virt)?,
-            sel_requirement: self.requirement_dnf(o, sel)?,
-            requirements: [("update", self.op_requirement(o, "update")?), ("delete", self.op_requirement(o, "delete")?)],
-            writes,
-            admits,
-        })
+        let (Some(sel_permission), Some(sel_requirement), Some(update), Some(delete)) =
+            (self.select_permission_dnf(o, sel, virt)?, self.requirement_dnf(o, sel)?, self.op_requirement(o, "update")?, self.op_requirement(o, "delete")?)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ObjectReach { imp, obj: o, sel, sel_permission, sel_requirement, requirements: [("update", update), ("delete", delete)], writes, admits }))
     }
 
     pub(crate) fn write_reach(&self) -> WriteReach {
@@ -397,10 +450,15 @@ impl Sql<'_> {
         let Ok(virt) = self.virtual_levels() else { return out };
         let imp = implications(self.s);
         for o in &self.s.objects {
-            let Some(r) = self.object_reach(&imp, o, &virt) else { continue };
-            self.check_structural_reach(&r, &virt, &mut out);
-            self.check_write_terms(&r, &virt, &mut out);
-            self.check_admit_arms(&r, &virt, &mut out);
+            match self.object_reach(&imp, o, &virt) {
+                Ok(Some(r)) => {
+                    self.check_structural_reach(&r, &virt, &mut out);
+                    self.check_write_terms(&r, &virt, &mut out);
+                    self.check_admit_arms(&r, &virt, &mut out);
+                }
+                Ok(None) => {}
+                Err(what) => unchecked_object(o, &what, &mut out),
+            }
         }
         out
     }
@@ -411,22 +469,30 @@ impl Sql<'_> {
             if structural.is_empty() {
                 continue;
             }
-            let Some(conjs) = dnf(&parse(&structural.join(" OR ")), false).and_then(|c| with_requirement(&c, r.requirement(op))) else { continue };
-            let Some(escape) = r.escape(&conjs) else { continue };
             let write = r.writes.iter().find(|(_, w)| *w == op);
             let line = write.map_or(r.obj.pos.line, |(p, _)| p.pos.line);
             let verb = write.map_or("admit", |(p, _)| p.verb.as_str());
             let blind = write.is_some_and(|(p, _)| p.blind);
-            out.report(&r.finding(line, verb, op, "a subject's own reach on this object".to_string(), escape, blind));
+            let what = "a subject's own reach on this object".to_string();
+            match dnf(&parse(&structural.join(" OR ")), false).and_then(|c| with_requirement(&c, r.requirement(op))).map(|c| r.escape(&c)) {
+                Ok(Some(escape)) => out.report(&r.finding(line, verb, op, what, escape, blind)),
+                Ok(None) => {}
+                Err(TooLarge) => out.oversized(&r.oversized(line, verb, op, what, blind)),
+            }
         }
     }
 
     fn check_write_terms(&self, r: &ObjectReach<'_>, virt: &Virtual, out: &mut WriteReach) {
         for &(pm, op) in &r.writes {
             let w = WriteTerm { pm, structural: self.structural_atoms(r.obj, virt, op), requirement: r.requirement(op).to_vec() };
-            let disjuncts = spec_dnf(&pm.tree, false).unwrap_or_default();
-            let escapes: Vec<(PermNode, Escape)> =
-                disjuncts.iter().filter(|d| d.iter().any(|(neg, _)| !neg)).filter_map(|d| self.disjunct_escape(r, &w, d, virt)).collect();
+            let found = spec_dnf(&pm.tree, false).and_then(|disjuncts| {
+                disjuncts.iter().filter(|d| d.iter().any(|(neg, _)| !neg)).map(|d| self.disjunct_escape(r, &w, d, virt)).collect::<Result<Vec<_>, _>>()
+            });
+            let Ok(found) = found else {
+                out.oversized(&r.oversized(pm.pos.line, &pm.verb, op, "its predicate".to_string(), pm.blind));
+                continue;
+            };
+            let escapes: Vec<(PermNode, Escape)> = found.into_iter().flatten().collect();
             for (tree, _) in escapes.iter().filter(|(_, e)| *e == Escape::Permission) {
                 let what = quoted_terms(std::slice::from_ref(tree));
                 out.report(&r.finding(pm.pos.line, &pm.verb, op, what, Escape::Permission, pm.blind));
@@ -448,24 +514,24 @@ impl Sql<'_> {
             .collect()
     }
 
-    fn disjunct_escape(&self, r: &ObjectReach<'_>, w: &WriteTerm<'_>, d: &[(bool, Term)], virt: &Virtual) -> Option<(PermNode, Escape)> {
+    fn disjunct_escape(&self, r: &ObjectReach<'_>, w: &WriteTerm<'_>, d: &[(bool, Term)], virt: &Virtual) -> Result<Option<(PermNode, Escape)>, TooLarge> {
         let mut part = w.pm.clone();
         part.tree = disjunct_node(d);
-        let pred = self.rls_predicate(r.obj, &part, self.s.owner_subject(leaf(r.obj)), virt).ok()?;
-        let conjs = dnf(&parse(&pred), false)?;
-        let own: Vec<Conj> = conjs.into_iter().filter(|c| !(c.len() == 1 && c.iter().all(|(n, a)| !n && w.structural.contains(a)))).collect();
-        let escape = r.escape(&with_requirement(&own, &w.requirement)?)?;
-        Some((part.tree, escape))
+        let Ok(pred) = self.rls_predicate(r.obj, &part, self.s.owner_subject(leaf(r.obj)), virt) else { return Ok(None) };
+        let own: Vec<Conj> =
+            dnf(&parse(&pred), false)?.into_iter().filter(|c| !(c.len() == 1 && c.iter().all(|(n, a)| !n && w.structural.contains(a)))).collect();
+        Ok(r.escape(&with_requirement(&own, &w.requirement)?).map(|escape| (part.tree, escape)))
     }
 
     fn check_admit_arms(&self, r: &ObjectReach<'_>, virt: &Virtual, out: &mut WriteReach) {
         let cust = self.s.owner_subject(leaf(r.obj));
         for &(a, op) in &r.admits {
             let Ok(pred) = self.admit_arm_predicate(r.obj, a, op, cust, virt) else { continue };
-            let Some(conjs) = dnf(&parse(&pred), false).and_then(|c| with_requirement(&c, r.requirement(op))) else { continue };
-            if let Some(escape) = r.escape(&conjs) {
-                let what = format!("its admit arm `{}`", PermNode::display(&a.tree));
-                out.report(&r.finding(a.pos.line, "admit", op, what, escape, false));
+            let what = format!("its admit arm `{}`", PermNode::display(&a.tree));
+            match dnf(&parse(&pred), false).and_then(|c| with_requirement(&c, r.requirement(op))).map(|c| r.escape(&c)) {
+                Ok(Some(escape)) => out.report(&r.finding(a.pos.line, "admit", op, what, escape, false)),
+                Ok(None) => {}
+                Err(TooLarge) => out.oversized(&r.oversized(a.pos.line, "admit", op, what, false)),
             }
         }
     }
@@ -473,14 +539,14 @@ impl Sql<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DNF_LIMIT, Expr, parse, product};
+    use super::{DNF_LIMIT, Expr, TooLarge, parse, product};
 
     #[test]
     fn a_product_up_to_the_limit_is_kept_and_one_past_it_is_refused() {
         let (rows, cols) = ((0..16).collect::<Vec<usize>>(), (0..32).collect::<Vec<usize>>());
-        assert_eq!(product(&rows, &cols, |r, c| r * 32 + c), Some((0..DNF_LIMIT).collect()));
+        assert_eq!(product(&rows, &cols, |r, c| r * 32 + c), Ok((0..DNF_LIMIT).collect()));
         let (rows, cols) = ((0..27).collect::<Vec<usize>>(), (0..19).collect::<Vec<usize>>());
-        assert_eq!(product(&rows, &cols, |r, c| r * 19 + c), None);
+        assert_eq!(product(&rows, &cols, |r, c| r * 19 + c), Err(TooLarge));
     }
 
     #[test]

@@ -36,6 +36,11 @@ permission `blind` (`permission purge = … @rls maps delete blind`): the findin
 becomes a warning on stderr, and the spec validates. `blind` on a permission
 that doesn't map update or delete under `@rls` is refused.
 
+The check expands each side into alternatives, and stops at 512. A write whose
+own predicate, select permission, `require` or subjects' reach expands past
+that is refused rather than passed unchecked, and `blind` keeps it as a
+warning.
+
 To adopt: reach the writers in the select permission (add the write terms, or
 an implication such as `x:write implies x:read`), or mark deliberate blind
 writes `blind`. The examples were changed this way: `agnostic` and `example`
@@ -227,8 +232,10 @@ on its own wherever it is written, so the permission compiles as `owner +
 @self(actor_col)`, wider than it reads: …
 ```
 
-The Go engine and v0.94.0 compile these forms the same way, so run v1's
-`validate` over specs written for them. No spec in demesne's corpus uses one.
+The Go engine at v0.93.1, and v0.94.0, compile these forms the same way;
+earlier Go releases weren't measured. The frozen Go line will not be patched,
+so if you wrote a spec for the Go engine, run v1's `validate` over it. No spec
+in demesne's corpus uses one of these forms.
 
 ### Breaking: `@scoped` beside an ordinary term is refused
 
