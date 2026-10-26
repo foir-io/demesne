@@ -14,6 +14,7 @@ impl Files for MemFiles {
 }
 
 #[wasm_bindgen]
+#[derive(Debug)]
 pub struct RunResult {
     code: u8,
     stdout: Vec<u8>,
@@ -23,21 +24,25 @@ pub struct RunResult {
 #[wasm_bindgen]
 impl RunResult {
     #[wasm_bindgen(getter)]
+    #[must_use]
     pub fn code(&self) -> u8 {
         self.code
     }
 
     #[wasm_bindgen(getter)]
+    #[must_use]
     pub fn stdout(&self) -> Vec<u8> {
         self.stdout.clone()
     }
 
     #[wasm_bindgen(getter)]
+    #[must_use]
     pub fn stderr(&self) -> Vec<u8> {
         self.stderr.clone()
     }
 }
 
+#[must_use]
 pub fn run_native(args: &[String], files: BTreeMap<String, Vec<u8>>) -> Output {
     run_pure(args, &MemFiles(files)).unwrap_or_else(|| Output {
         code: 1,
@@ -47,7 +52,9 @@ pub fn run_native(args: &[String], files: BTreeMap<String, Vec<u8>>) -> Output {
 }
 
 #[wasm_bindgen]
-pub fn run(args: Vec<String>, paths: Vec<String>, blob: Vec<u8>, lengths: Vec<u32>) -> RunResult {
+#[must_use]
+#[expect(clippy::needless_pass_by_value, reason = "wasm-bindgen hands a JavaScript string array over only by value")]
+pub fn run(args: Vec<String>, paths: Vec<String>, blob: &[u8], lengths: Vec<u32>) -> RunResult {
     let mut files = BTreeMap::new();
     let mut at = 0usize;
     for (p, n) in paths.into_iter().zip(lengths) {
@@ -60,6 +67,7 @@ pub fn run(args: Vec<String>, paths: Vec<String>, blob: Vec<u8>, lengths: Vec<u3
 }
 
 #[wasm_bindgen]
+#[must_use]
 pub fn validate(source: &str) -> Option<String> {
     let spec = match demesne_syntax::parse(source) {
         Ok(s) => s,
@@ -68,7 +76,7 @@ pub fn validate(source: &str) -> Option<String> {
     demesne_emit_sql::validate(&spec).err().map(|e| format!("validate: {e}"))
 }
 
-/// Returns every problem in `source`, or for a valid spec the warnings it still earns, as a JSON array of `{"severity": "error" | "warning", "line": number | null, "message": string}`. The line is the one a message names with its `line N:` prefix.
+/// Returns every problem in `source`, or for a valid spec the warnings it still earns, as a JSON array of `{"severity": "error" | "warning", "line": number | null, "message": string}`. The line is the finding's own, or null when it belongs to no single line.
 #[wasm_bindgen]
 #[must_use]
 pub fn diagnostics(source: &str) -> String {
@@ -88,11 +96,13 @@ fn located(severity: &str, f: &demesne_syntax::Finding) -> Value {
 }
 
 #[wasm_bindgen]
+#[must_use]
 pub fn version() -> String {
     demesne_cli::build_version().to_string()
 }
 
 #[wasm_bindgen]
+#[must_use]
 pub fn live_commands() -> Vec<String> {
-    LIVE_COMMANDS.iter().map(|c| c.to_string()).collect()
+    LIVE_COMMANDS.iter().map(ToString::to_string).collect()
 }

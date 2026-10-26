@@ -7,7 +7,7 @@ fn files(path: &str) -> BTreeMap<String, Vec<u8>> {
 }
 
 fn args(a: &[&str]) -> Vec<String> {
-    a.iter().map(|s| s.to_string()).collect()
+    a.iter().map(ToString::to_string).collect()
 }
 
 #[test]
