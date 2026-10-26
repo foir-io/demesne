@@ -30,6 +30,10 @@ fn a_held_permission_names_its_rolestore() {
     let two = spec("examples/planes.demesne");
     assert_eq!(two.holds_role_store("platform:manage").map(|rs| rs.name.clone()), Ok("platform".to_string()));
     assert_eq!(two.holds_role_store("content:read").map(|rs| rs.name.clone()), Ok("admin".to_string()));
+    let src = std::fs::read_to_string(format!("{}/../../examples/planes.demesne", env!("CARGO_MANIFEST_DIR"))).expect("the spec reads");
+    let unbacked = demesne_syntax::parse(&format!("{src}\nvocabulary extra {{ permission extra:read }}\n")).expect("the spec parses");
+    let err = unbacked.holds_role_store("extra:read").map(|rs| rs.name.clone()).expect_err("no rolestore uses extra");
+    assert_eq!(err.to_string(), "permission \"extra:read\" belongs to vocabulary \"extra\", which backs no rolestore");
 }
 
 #[test]

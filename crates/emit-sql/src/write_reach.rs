@@ -124,16 +124,13 @@ fn spec_dnf(n: &PermNode, neg: bool) -> Option<Vec<Literals>> {
 fn split_last_literal(a: &str) -> Option<(&str, &str, &str)> {
     let end = a.rfind('\'')?;
     let start = a[..end].rfind('\'')?;
-    Some((&a[..start], &a[start + 1..end], &a[end + 1..]))
+    Some((&a[..start], &a[start + 1..end], &a[end..]))
 }
 
 fn perm_implies(s: &Spec, held: &str, needed: &str) -> bool {
     held.contains(':')
         && needed.contains(':')
-        && s.vocabs
-            .iter()
-            .filter(|v| v.permissions.iter().any(|p| p == held))
-            .any(|v| demesne_model::vocab::to_runtime(v).implied_permissions(held).is_ok_and(|implied| implied.iter().any(|p| p == needed)))
+        && s.vocabs.iter().any(|v| demesne_model::vocab::to_runtime(v).implied_permissions(held).is_ok_and(|implied| implied.iter().any(|p| p == needed)))
 }
 
 struct Implications<'a> {
@@ -471,5 +468,25 @@ impl Sql<'_> {
                 out.report(&r.finding(a.pos.line, "admit", op, what, escape, false));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DNF_LIMIT, Expr, parse, product};
+
+    #[test]
+    fn a_product_up_to_the_limit_is_kept_and_one_past_it_is_refused() {
+        let (rows, cols) = ((0..16).collect::<Vec<usize>>(), (0..32).collect::<Vec<usize>>());
+        assert_eq!(product(&rows, &cols, |r, c| r * 32 + c), Some((0..DNF_LIMIT).collect()));
+        let (rows, cols) = ((0..27).collect::<Vec<usize>>(), (0..19).collect::<Vec<usize>>());
+        assert_eq!(product(&rows, &cols, |r, c| r * 19 + c), None);
+    }
+
+    #[test]
+    fn a_negated_condition_parses_to_that_condition_negated() {
+        let atom = |a: &str| Expr::Atom(a.to_string());
+        assert_eq!(parse("(a = 'x') IS NOT TRUE"), Expr::Not(Box::new(atom("a = 'x'"))));
+        assert_eq!(parse("(a = 'x' OR b = 'y') IS NOT TRUE"), Expr::Not(Box::new(Expr::Or(vec![atom("a = 'x'"), atom("b = 'y'")]))));
     }
 }

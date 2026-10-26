@@ -178,6 +178,28 @@ fn rules_on_requirements_and_admit_arms() {
             true,
         ),
         (
+            "a requirement on a permission only the kernel layer compiles",
+            with(|b| {
+                b.replace(
+                    "  permission view = owner + grantee:read @rls maps select\n",
+                    "  permission view = owner + grantee:read @rls maps select\n  permission share = owner @kernel\n  require share = @self(owner_id)\n",
+                )
+            }),
+            "permission \"share\" compiles no row predicate",
+            true,
+        ),
+        (
+            "a requirement on a permission the check layer compiles",
+            with(|b| {
+                b.replace(
+                    "  permission view = owner + grantee:read @rls maps select\n",
+                    "  permission view = owner + grantee:read @rls maps select\n  permission share = owner @check\n  require share = @self(owner_id)\n",
+                )
+            }),
+            "compiles no row predicate",
+            false,
+        ),
+        (
             "an admit arm joining only a kernel permission",
             with(|b| {
                 b.replace(

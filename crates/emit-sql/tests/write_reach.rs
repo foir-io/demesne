@@ -345,3 +345,60 @@ fn an_admit_arm_for_one_write_does_not_check_the_other() {
     assert!(errs.iter().any(|e| e.contains("project.admit maps update, and its admit arm")), "{errs:#?}");
     assert!(!errs.iter().any(|e| e.contains("maps delete")), "{errs:#?}");
 }
+
+#[test]
+fn an_admit_arm_for_delete_is_checked_against_select() {
+    let errs = errors(&note(
+        r#"  permission view   = owner @rls maps select
+  permission remove = owner @rls maps delete
+  admit delete = @claim("support", "on")"#,
+    ));
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert!(errs[0].contains(r#"permission note.admit maps delete, and its admit arm `@claim("support", "on")`"#), "{errs:#?}");
+}
+
+#[test]
+fn a_kernel_write_is_not_held_to_the_select_policy() {
+    let (res, warnings) = check(&note(
+        "  relation sender: member via created_by
+  permission view = owner @rls maps select
+  permission edit = owner + sender @kernel maps update",
+    ));
+    assert_eq!(res, Ok(()));
+    assert!(warnings.is_empty(), "{warnings:#?}");
+}
+
+fn borrowing(folder_perm: &str, verb: &str) -> String {
+    format!(
+        "{HEADER}
+object folder {{
+  table  folders
+  pk     folder_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner @rls maps select
+  {folder_perm}
+}}
+
+object doc {{
+  table  docs
+  pk     doc_pk
+  scoped org > workspace
+  relation in_folder: folder via object folder->view on folder_ref
+  relation borrowed:  folder via object folder->{verb} on folder_ref
+  permission view = in_folder @rls maps select
+  permission edit = borrowed @rls maps update
+}}
+"
+    )
+}
+
+#[test]
+fn only_a_seeing_write_verb_is_within_borrowing_the_select_verb() {
+    assert_eq!(check(&borrowing("permission edit = owner @rls maps update", "edit")).0, Ok(()));
+    for (folder_perm, verb) in [("permission create = owner @rls maps insert", "create"), ("permission edit = owner @rls maps update blind", "edit")] {
+        let errs = errors(&borrowing(folder_perm, verb));
+        assert_eq!(errs.len(), 1, "{folder_perm}: {errs:#?}");
+        assert!(errs[0].contains("permission doc.edit maps update, and its term `borrowed`"), "{folder_perm}: {errs:#?}");
+    }
+}
