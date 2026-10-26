@@ -18,13 +18,16 @@ and the spec-to-enforcement workflow; this file is the short version of what mat
   directives survive. A comment belongs only when there is a firm, concrete reason; if it is a
   maybe, remove it and make the code clearer. Rustdoc on a published crate's public items is API
   documentation, not a comment: document them, with `# Errors` and `# Panics` where they apply.
-- The compiler, CLI and runtime are the Rust workspace under `crates/`. The Go engine (`/`)
-  is frozen at v0.93.x: it is the full Go library, maintained on `release/v0.93`, and the
-  reference `scripts/parity` diffs the Rust build against. It stays standard-library only;
-  third-party dependencies (a database driver) live in the separate `cmd/demesne` and `pgx`
-  modules.
-- Keep every suite green and `golangci-lint` clean. Regenerate golden examples with
-  `UPDATE_ORACLE=1`; never hand-edit a generated file.
+- The compiler, CLI and runtime are the Rust workspace under `crates/`, and `@foir/demesne` runs
+  the Rust runtime as WebAssembly. `main` holds no Go. The frozen Go engine (v0.93.x) lives on
+  `release/v0.93` and its tags, and `scripts/parity` builds it from a tag to diff the Rust build
+  against.
+- The root `go.mod` exists only to retract v0.94.0 and v1.0.0 through v1.999.999, because each
+  `vX.Y.Z` tag on `main` is also a version of the Go module `github.com/foir-io/demesne`. Without
+  the range, `go get -u` would move Go users onto a version with no Go code. Keep it.
+- Keep every suite green. Regenerate the goldens with
+  `UPDATE_ORACLE=1 cargo test -p demesne-parity --test goldens --test oracle_manifest`; never
+  hand-edit a generated file.
 - Every CLI output is pinned by snapshots in `crates/parity/tests/snapshots/`. After an intended
   output change, run `INSTA_UPDATE=always cargo test -p demesne-parity --test pinned_output`
   and read the whole diff before committing it.
@@ -33,14 +36,11 @@ and the spec-to-enforcement workflow; this file is the short version of what mat
 
 - Rust: `cargo test --workspace && cargo clippy --workspace --all-targets`
 - Live Postgres suites: `DEMESNE_PG_URL=… SUPABASE_DB_URL=… cargo test -p demesne-postgres -- --ignored`
-- Parity against Go: `demesne-parity run --go-tag <tag> --go-cli <go demesne> --rust-cli <rust demesne> --out <dir>`,
+- Parity against the frozen Go engine: `demesne-parity run --go-tag <tag> --go-cli <go demesne> --rust-cli <rust demesne> --out <dir>`,
   `scripts/parity/live-db.sh`, `scripts/parity/dsn.sh`, and `node scripts/parity/wasm.mjs` after
   `scripts/build-wasm.sh`
-- Engine: `go test ./... && go vet ./... && golangci-lint run ./...`
-- CLI: `cd cmd/demesne && go test ./...`
-- pgx: `cd pgx && go test ./...`
-- TypeScript: `cd ts && pnpm -r test`
-- Regenerate examples: `UPDATE_ORACLE=1 go test -run TestEmitFramework_ExampleArtifact .`
+- TypeScript: `scripts/build-runtime-wasm.sh`, then `cd ts && pnpm -r test`
+- VS Code: `cd editors/vscode && npm run build:wasm && npm test`
 
 ## Cutting a release
 
@@ -62,9 +62,8 @@ packages `@foir/demesne`, `@foir/demesne-cli` and its five platform packages.
    run's build verifies each crate against that stale build and fails.
 5. Verify the release assets, `npx @foir/demesne-cli version`, and each crate on crates.io.
 
-`tag-namespace = "v"` keeps the release run to tags that start with `v`, so the Go runtime's
-`go/vX.Y.Z` and `go/pgx/vX.Y.Z` tags start no run. A `vX.Y.Z` tag on `main` is also a Go
-module version whose Go code is the frozen engine, which is harmless.
+`tag-namespace = "v"` keeps the release run to tags that start with `v`, so the Go engine's
+`pgx/vX.Y.Z` tags on `release/v0.93` start no run.
 
 **Go library fixes (v0.93.x) go on `release/v0.93`**, cut from the last v0.93 tag when the
 first fix is needed. A tag runs the workflow at its own
@@ -82,6 +81,6 @@ adopter PR that pins an unreleased version reddens its CI on work that is fine.
 ## Mental model
 
 One `.demesne` spec compiles to two things: a Postgres RLS enforcement floor (the moat) and an
-equivalence-checked, typed application surface (Go and TypeScript). The database decides; the
-generated `Can<Verb>` delegates to the same compiled predicate the RLS policy enforces. Do not
+equivalence-checked, typed application surface (TypeScript, and Rust through the crates). The
+database decides; the generated check delegates to the same compiled predicate the RLS policy enforces. Do not
 introduce a parallel evaluator, and do not let the application surface diverge from the floor.

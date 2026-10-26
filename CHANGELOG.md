@@ -184,30 +184,18 @@ weaken the policies:
 demesne's own policies raise none of these. `demesne_postgres::schema_traps`
 is the same check in the Rust API.
 
-### Breaking: generated Go imports a small runtime, not the engine
+### Breaking: v1 is Rust and TypeScript; Go stays on v0.93.1
 
-The Go framework that `demesne emit <spec> framework <pkg>` writes imported the
-whole Go engine, parser and compiler included, though it used only a handful
-of runtime functions. It now imports `github.com/foir-io/demesne/go`, a new
-module that is standard-library only. It carries:
+v1 generates no Go and ships no Go module. `demesne emit <spec> claims` and
+`demesne emit <spec> framework`, which printed Go, and `--target go` now say so
+and point to `--target ts`. The Go code generator is not published as a crate.
 
-- the querier, with `FromSQL`;
-- decisions and `ComposeCan`;
-- claims minting;
-- the holds resolver with its vocabulary rules.
-
-Each of these is copied from the engine. Apart from the import line, the
-generated code is unchanged. For pgx, `github.com/foir-io/demesne/go/pgx`
-provides `FromPgx`.
-
-- The runtime replays the 392 resolver, scope, assignment-SQL and claims cases
-  in `oracle.json`, and its unit tests also pass against the engine.
-- Every corpus spec's generated framework, 142 packages, compiles against it.
-
-The engine stays at v0.93.x for Go programs that compile specs at runtime or
-call `Spec.EmitFramework`. It is frozen, so fixes from v1.0 on reach Go
-through the CLI and this runtime. The runtime has its own module path, so
-`go get -u` never swaps the engine for it.
+The Go engine stays frozen at v0.93.1 on the `release/v0.93` branch, with its
+CLI and `pgx` modules, and Go programs keep using it. v1's root `go.mod` holds
+no Go code. It retracts v0.94.0 and v1.0.0 through v1.999.999, so `go get -u`
+and `@latest` keep Go users on v0.93.1, and it marks the module deprecated with
+a pointer to the CLI and `@foir/demesne`. A thin Go layer over the Rust
+runtime is planned as its own module.
 
 ### Breaking: `@foir/demesne` runs demesne's Rust runtime, compiled to WebAssembly
 
@@ -406,7 +394,7 @@ limits.
 - `compose_affordance` takes `IndexAnswer::Allowed` or `IndexAnswer::Denied`.
 - `Schema::add_column` takes `Nullability::Nullable` or `Nullability::NotNull`.
 
-The TypeScript runtime and the generated Go and TypeScript are unchanged.
+The TypeScript runtime and the generated TypeScript are unchanged.
 
 ### Breaking: the runtime refuses an argument or projection of the wrong type
 

@@ -1,6 +1,6 @@
 # demesne-cli
 
-The `demesne` command line: validate a spec, emit its SQL, Go and TypeScript, and check it against a live Postgres (`introspect`, `scaffold`, `check`, `diff`, `coverage`).
+The `demesne` command line: validate a spec, emit its SQL and TypeScript, and check it against a live Postgres (`introspect`, `scaffold`, `check`, `diff`, `coverage`).
 
 ```
 cargo install demesne-cli

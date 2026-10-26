@@ -11,7 +11,7 @@ npm i -D @foir/demesne-cli
 
 This package is a thin launcher: on install, npm pulls the one
 `@foir/demesne-cli-<platform>` optional dependency that matches your OS and CPU, and the `demesne`
-bin execs that binary. No Go toolchain required.
+bin execs that binary. No Rust toolchain required.
 
 Prefer a standalone binary? Grab one from the [GitHub releases](https://github.com/foir-io/demesne/releases), or build from source — clone the repo and run `cargo build --release -p demesne-cli`.
 

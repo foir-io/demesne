@@ -23,7 +23,7 @@ The systems in the matrix below are Demesne's real peers — authorization engin
 | **Consistency** | Same rows, same transaction — no lag, no token | Strong via TrueTime + zookies | Eventually consistent | Eventually consistent | Stateless; freshness = caller's attrs | Eventually consistent facts |
 | **Reverse queries (who-can-access)** | Coverage-gated, fail-closed — not provably complete | `Expand` (tree) | Partial, depth-bounded | First-class `ListObjects` / `ListUsers` | `PlanResources` partial eval + ORM adapters | First-class list / SQL `WHERE` filter |
 | **Separate datastore** | None — reads existing domain tables | Yes (Spanner + Leopard) | Yes (own DB) | Yes (own store) | None (stateless) | Yes for Oso Cloud; none for the lib |
-| **Spec / policy language** | One `.demesne` spec → SQL + Go/TS | Per-namespace config + rewrites | OPL DSL + tuples | Model DSL → JSON + CEL | YAML/JSON + CEL | Polar |
+| **Spec / policy language** | One `.demesne` spec → SQL + TS/Rust | Per-namespace config + rewrites | OPL DSL + tuples | Model DSL → JSON + CEL | YAML/JSON + CEL | Polar |
 | **Bypass-resistance** | High — ambient; raw SQL as the app role is still filtered | Advisory — must call and obey | Advisory | Advisory | Advisory | Advisory — depends on call-site coverage |
 | **Runtime footprint** | Library + CLI, no service | Large (Spanner, aclservers, Leopard) | Service + its own DB | Service + its own datastore | Stateless sidecar | Managed service (or in-proc lib) |
 
@@ -35,7 +35,7 @@ A few things follow from that:
 
 - Access rides every query. A forgotten check or an ad-hoc raw query is still filtered, because the rule is part of the data path, not a step the caller chooses to take.
 - There is no second datastore. Authorization reads the same domain tables in the same transaction, so there is no dual-write to keep in sync and no consistency token reconciling two timelines.
-- The application layer is checked against the floor. The same spec generates a typed Go and TypeScript surface (`Check`, `ListResources`, `CheckMany`), and that surface is equivalence-checked against the policies the database enforces. The in-app code is a convenience, not the only gate.
+- The application layer is checked against the floor. The same spec generates a typed TypeScript and Rust surface (`check`, `listResources`, `checkMany`), and that surface is equivalence-checked against the policies the database enforces. The in-app code is a convenience, not the only gate.
 
 Every other system in the matrix lives outside the data path, so it can only protect the calls that remember to ask.
 

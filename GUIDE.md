@@ -146,7 +146,7 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 | command | needs a DB | what it does |
 |---|---|---|
 | `demesne validate <spec>` | no | parse + validate the spec |
-| `demesne emit <spec> [rls\|definers\|triggers\|claims\|pdp\|all]` | no | print the generated SQL/Go |
+| `demesne emit <spec> [rls\|definers\|enablement\|triggers\|pdp\|all]` | no | print the generated SQL; `--target ts` prints TypeScript |
 | `demesne introspect <dsn>` | yes | summarise the live schema |
 | `demesne scaffold [-i] <dsn>` | yes | generate a starter spec from the schema (`-i`: interactive — asks for the RLS role + definer/table schemas, lists ungoverned tables as TODO stubs) |
 | `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, verify the RLS role is not `BYPASSRLS`, and look for schema traps |
@@ -346,7 +346,7 @@ A permission can also gate on what the caller *holds*: `@holds(docs:publish)`
 means "the caller's admin role confers `docs:publish` at this row's scope" and
 compiles to a generated `<admin>_has_perm` definer matching the verb against the
 rolestore's materialized `permissions` array (`p_perm = ANY(...)`). It scopes
-like the Go `HoldsResolver`: an assignment left NULL at a scope level is a
+like the runtime's holds resolver: an assignment left NULL at a scope level is a
 wildcard at that level, so a tenant-wide assignment reaches every project and an
 assignment left NULL at the *root* level is global — it reaches every tenant.
 That root NULL is how a platform-wide scope is expressed; there is no separate
@@ -459,7 +459,7 @@ still fails closed.
 Two consequences follow. A `via object` **borrow** of a conditional object is
 refused at validation: the borrow compiles to a call to the other object's plain
 enumerator, and taking the identity half while losing the claim is the failure
-this is meant to prevent. And in the Go runtime, `ResourceAccessSurface` refuses
+this is meant to prevent. And in the runtime, `ResourceAccessSurface` refuses
 a conditional object and names the alternative —
 `ConditionalResourceAccessSurface`, which returns the same surface over the
 conditional function, reports `IsConditional()`, and whose `AccessorsSQL()`
@@ -670,8 +670,8 @@ assigned — and the **scope** is the subtree it carries that authority over. A
 `project:manage` role assigned at tenant scope therefore reaches every project
 in that tenant but still confers no `billing:*`.
 
-The closure is compiled into all three surfaces from the one declaration: the
-Go and TypeScript `Resolve` expand a held permission into its closure, and the
+The closure is compiled into every surface from the one declaration: the
+runtime's `resolve` (Rust, and TypeScript through WebAssembly) expands a held permission into its closure, and the
 SQL definer tests the role's array against a generated
 `<admin>_perm_implied_by(p_perm)` reverse closure with an array overlap. A NULL
 `permissions` column fails closed.
@@ -685,9 +685,9 @@ serves exactly as a table does, and `ValidateAgainst` binds it from whatever
 `information_schema` reports, which does not distinguish the two.
 
 That is the supported way to apply an admission rule the **database** must also
-honour. The `AssignmentsSQL` + `ResolveHeld` seam is a Go read path; the emitted
-definers run inside Postgres, where no Go filter reaches. A rule applied only in
-Go therefore holds in the session and the PDP while every RLS branch ignores it —
+honour. The `assignmentsSQL` + `resolveHeld` seam is an application read path; the
+emitted definers run inside Postgres, where no application filter reaches. A rule applied
+only in the application therefore holds in the session and the PDP while every RLS branch ignores it —
 the two planes disagree, and nothing in the generated artefacts says so. Naming a
 filtered relation here applies the rule to both at once, and to any definer a
 later spec change adds:
@@ -697,8 +697,8 @@ rolejoin role_id roles_active id key
 ```
 
 with `roles_active` a view over the role table carrying whatever the adopter's
-policy is — a `disabled_at IS NULL`, a tenant partition, an RP scope. The engine
-still bakes in none of it; it just stops being a Go-only choice where to put it.
+policy is — a `disabled_at IS NULL`, a tenant partition, an RP scope. Demesne
+still bakes in none of it; it just stops being an application-only choice where to put it.
 
 **If the underlying table has RLS, create the view `WITH (security_invoker =
 true)`.** A view otherwise runs with its *owner's* rights, and a migration role is
@@ -740,7 +740,7 @@ rolestore platform {
 `plane` names the deepest level an assignment in this rolestore may carry.
 Levels at or above it keep the wildcard-on-NULL matching described above; every
 scope column *below* it is **pinned `IS NULL`**, in the emitted definer, in the
-assignment fetch, and in the Go and TypeScript `Resolve`. Pinning is not the
+assignment fetch, and in the runtime's `resolve`. Pinning is not the
 same as omitting the columns: with `plane platform` (the virtual root) the
 generated check takes no scope argument at all and reads
 
@@ -833,119 +833,122 @@ in the spec but kept as separate physical stores, never one generic tuple table.
 ## The runtime glue
 
 Enforcement lives in the database, but your app still needs a little runtime: to
-mint claims, enforce verbs, and answer point-checks. The engine ships these as
-pure helpers, and none of them re-evaluate policy in app code.
+mint claims, enforce verbs, and answer point-checks. The `demesne-runtime` crate ships these
+as pure helpers, built from a spec through `SpecExt` and `SurfaceExt` in `demesne-model`, and
+none of them re-evaluate policy in app code. `@foir/demesne` has the same functions for
+TypeScript, in camelCase (`buildClaims`, `mintClaimsFor`, `sessionSetupSQL`, `authorize`,
+`resolve`, …), built from the projection `demesne emit <spec> --target ts` writes.
 
 - **The session and claims wrapper** takes a principal to an in-force RLS session
   without hand-mapping field names.
-  - `Spec.ClaimsContractEntries()` — the structured claims contract. Each key
+  - `spec.claims_contract_entries()` — the structured claims contract. Each key
     comes with its source: the topology level whose scope id feeds it, and/or the
-    subjects whose `identifies` feeds it. `ClaimsContract()` returns the flat list
+    subjects whose `identifies` feeds it. `claims_contract()` returns the flat list
     of keys.
-  - `Spec.BuildClaims(Principal{Subject, ID, Scopes})` — maps a principal's typed
+  - `spec.build_claims(&Principal { subject, id, scopes })` — maps a principal's typed
     inputs onto the contract. The inputs are which subject it is, that subject's
     id, and the scope id per topology level. The subject id maps to its
     `identifies` key, and each scope id to that level's claim key. Add a contract
     key to the spec and it flows through with no code change. A principal that also
     carries non-contract keys adds them to the returned map before minting.
-  - `Spec.MintClaims(values)` / `Spec.MintClaimsFor(principal)` plus
-    `Spec.ClaimsSetSQL(local)` — render the validated `request.jwt.claims` blob and
-    the `set_config` statement that installs it. `MintClaimsFor` is `BuildClaims`
-    then `MintClaims`.
-  - `Spec.SetRoleSQL(local)` / `Spec.SessionSetupSQL(local)` — the statement
+  - `spec.mint_claims(&values)` / `spec.mint_claims_for(&principal)` plus
+    `spec.session().claims_set_sql(lifetime)` — render the validated `request.jwt.claims` blob and
+    the `set_config` statement that installs it. `mint_claims_for` is
+    `build_claims` then `mint_claims`.
+  - `session.set_role_sql(lifetime)` / `session.session_setup_sql(lifetime)` — the statement
     sequence that opens an RLS session: `SET [LOCAL] ROLE <role>`, then the claims
     `set_config`. Run them in order in your transaction; the second binds the
     minted blob to `$1`. The RLS role is spec-declared via `claims … role <r>` and
-    defaults to `authenticated`.
-- `PDP.Authorize(procedure, holds) → Allow | Deny | NotGoverned` — the verb gate at
-  your request boundary, for the verb permissions RLS can't see.
-- `Spec.HoldsResolver(rolestore)` — the holds resolver. It produces the `holds`
-  callback `PDP.Authorize` takes, so you never hand-write "given a principal and
+    defaults to `authenticated`. On a pooled connection pass
+    `SettingLifetime::Transaction`, so the role and claims end with the transaction.
+- `pdp.authorize(procedure, holds) → Allow | Deny | NotGoverned`, on a `Pdp` from
+  `demesne_model::pdp::emit_pdp` — the verb gate at your request boundary, for the verb permissions RLS can't see.
+- `spec.holds_resolver(rolestore)` — the holds resolver. It produces the `holds`
+  callback `authorize` takes, so you never hand-write "given a principal and
   scope, what permissions do they hold?".
-  - `HoldsResolver.AssignmentsSQL()` builds the active-assignment read: every role
+  - `HoldsResolver::assignments_sql()` builds the active-assignment read: every role
     a principal holds across all scopes (`$1` is the principal id; filters on kind,
     subject, and not-revoked). You execute it — under the principal's claims, or as
-    a trusted read for another subject. The engine never runs it. Adopter-specific
+    a trusted read for another subject. The runtime never runs it. Adopter-specific
     admission rules stay your policy: a disabled role, or a client- or RP-scoped
-    grant. Compose them around this read; the engine bakes in none.
+    grant. Compose them around this read; the runtime bakes in none.
 
-    This seam governs the **Go** plane only. The same spec also emits SECURITY
-    DEFINER bodies that join the rolestore's role relation, and no Go filter
-    reaches inside those, so an admission rule applied only here holds in the PDP
+    This seam governs the **application** plane only. The same spec also emits SECURITY
+    DEFINER bodies that join the rolestore's role relation, and no application
+    filter reaches inside those, so an admission rule applied only here holds in the PDP
     and is ignored by every RLS branch. A rule that must hold on **both** planes
     belongs in the relation the spec names — see *A rolestore's role relation may
     be a view* below.
-  - `HoldsResolver.Resolve(rows, scope) → EffectivePerms` folds those rows into the
+  - `HoldsResolver::resolve(rows, scope) → EffectivePerms` folds those rows into the
     effective permission set at a query scope. It keeps each assignment whose scope
     contains the query and unions their permissions. The root column is a strict
     tenancy boundary: a grant pinned deeper covers that subtree, so a higher-level
     grant answers a lower-level query but never the reverse. This boundary is
-    derived from the rolestore's scope columns. `EffectivePerms.Holds` is the
-    `PDP.Authorize` callback. A role's permissions come from a materialized
+    derived from the rolestore's scope columns. `EffectivePerms::holds` is the
+    `authorize` callback. A role's permissions come from a materialized
     `permissions` column when the rolestore declares one, so operator-configured
     custom roles resolve verbatim; otherwise they come from expanding the role key
     through the vocabulary.
-  - `Vocabulary.PresetPermissions(name)` — expands a preset into a flat permission
+  - `Vocabulary::preset_permissions(name)` — expands a preset into a flat permission
     set, handling `*`, nested preset refs, and fail-closed on cycles. The same logic
-    seeds or validates a materialized `permissions` column. `RankOf` and
-    `PresetsAtOrAbove` expose the rank ladder for delegation.
-- `demesne.ResolveRoles(assignments, scope) → EffectiveRoles` — the role-tier read,
-  the sibling of the holds resolver. `Resolve` answers "what permissions does this
-  principal hold here?"; `ResolveRoles` answers "what role tiers does it hold here?",
+    seeds or validates a materialized `permissions` column. `rank_of` and
+    `presets_at_or_above` expose the rank ladder for delegation.
+- `resolve_roles(assignments, scope) → EffectiveRoles` — the role-tier read,
+  the sibling of the holds resolver. `resolve` answers "what permissions does this
+  principal hold here?"; `resolve_roles` answers "what role tiers does it hold here?",
   which a wildcard role (`owner = *`) or a global plane role can't be read off the
   permission set. It reads the same assignment rows, keeping each role key whose scope
   contains the query. A role granted at an empty scope is a global plane role, held in
   every scope: the same boundary the generated `has_<plane>_role` definer enforces.
-  `EffectiveRoles.Holds` reports membership of one role key. `NewEffectiveRoles(keys...)`
+  `EffectiveRoles::holds` reports membership of one role key. `EffectiveRoles::new(keys)`
   builds the set straight from a session when you already know the held keys and don't
   need a database read.
-- `Spec.RoleAssignmentSurface(rolestore)` — the control-plane write side of the
+- `spec.role_assignment_surface(rolestore)` — the control-plane write side of the
   rolestore, the dual of the holds resolver's read. It generates the assign,
   revoke, and list statements so you never hand-write them.
-  - `AssignInsert(id, subject, role, scope, grantedBy)` — the `INSERT … RETURNING`
+  - `assign_insert(id, subject, role, scope, granted_by, extra)` — the `INSERT … RETURNING`
     that confers a role at a scope (kind inlined; scope and grantor bound).
-  - `RevokeSQL()` — the idempotent soft-revoke: `UPDATE <revoked> = now()[,
+  - `revoke_sql()` — the idempotent soft-revoke: `UPDATE <revoked> = now()[,
     <revoked_by>] WHERE <pk> = $1 AND <revoked> IS NULL`.
-  - `ListForRoleSQL()` / `ListForPrincipalSQL()` — the by-role audit view and the
+  - `list_for_role_sql()` / `list_for_principal_sql()` — the by-role audit view and the
     by-principal active view, joined to the role's key and permissions.
 
-  Each builds SQL plus ordered args you execute under `WithRLS`. The
-  `role_assignments` table's own RLS denies an out-of-scope write, so the engine
+  Each builds SQL plus ordered args you execute under the caller's session. The
+  `role_assignments` table's own RLS denies an out-of-scope write, so the runtime
   never re-checks it. The audit columns (`pk`, `granted … by`, `revoked … by`) are
   optional rolestore declarations. The intersection-cap delegation guard — "can't
   grant a role you don't hold" — is a separate primitive.
-- `Vocabulary.CapGrant(held, requested) → DelegationCap{Allowed, Unknown, Excess}`
+- `Vocabulary::cap_grant(held, requested) → DelegationCap { allowed, unknown, excess }`
   — the delegation cap, the "you can't grant a permission you don't hold" guard
-  when authoring or assigning a role. `Unknown` is the requested perms outside the
-  vocabulary (fail-closed); `Excess` is the valid perms the grantor doesn't hold.
+  when authoring or assigning a role. `unknown` is the requested perms outside the
+  vocabulary (fail-closed); `excess` is the valid perms the grantor doesn't hold.
   It composes with the holds resolver: pass the grantor's
-  `EffectivePerms.Permissions()` as `held`. It owns only the intersection and
-  validity. The rest is adopter glue you wrap around it: a rank floor (via `RankOf`
-  / `PresetsAtOrAbove`), a higher-plane bypass, and the principal-kind check.
-- `Spec.Vocabularies()` and `Spec.ExpandedPresets(rolestore)` — the introspection
+  `EffectivePerms::permissions()` as `held`. It owns only the intersection and
+  validity. The rest is adopter glue you wrap around it: a rank floor (via `rank_of`
+  / `presets_at_or_above`), a higher-plane bypass, and the principal-kind check.
+- `spec.vocabs` and `spec.expanded_presets(rolestore)` — the introspection
   read for a role-management or permission-admin UI built from the compiled spec, the
-  single source of the vocabulary, with nothing re-declared. `Vocabularies()` returns
-  every declared vocabulary and its permissions in declaration order, and marks each
-  parameterized permission: one that carries the open `*` model segment (`docs:read:*`)
-  rather than a concrete one (`docs:read`), so a picker can split the model segment
-  itself. `ExpandedPresets(rolestore)` resolves each preset of that rolestore's bound
+  single source of the vocabulary, with nothing re-declared. `spec.vocabs` holds
+  every declared vocabulary and its permissions in declaration order. A permission that
+  carries the open `*` model segment (`docs:read:*`) rather than a concrete one
+  (`docs:read`) is parameterized, so a picker can split the model segment itself.
+  `expanded_presets(rolestore)` resolves each preset of that rolestore's bound
   vocabulary to a flat permission set. It expands both `+` preset references and the
-  `= *` wildcard to the full vocabulary, reusing the `PresetPermissions` logic and the
-  same rolestore-to-vocabulary binding the generated `Holds` surface uses. Each
-  permission list is sorted. The map is unordered, so sort its keys for a stable
-  display. A vocabulary with no presets yields an empty map. It returns generic data
+  `= *` wildcard to the full vocabulary, reusing the `preset_permissions` logic and the
+  same rolestore-to-vocabulary binding the generated `holds` surface uses. Each
+  permission list is sorted, and the map is ordered by preset name. A vocabulary with no presets yields an empty map. It returns generic data
   only: which permissions exist, which are parameterized, and what each preset resolves
   to. It never decides what any of that means; the bucketing, labeling, and layout are
-  your UI's job, not the engine's.
-- `Spec.GrantSurface(name)` — the control-plane write side of a `grant … via edge`
+  your UI's job, not the runtime's.
+- `spec.grant_surface(name)` — the control-plane write side of a `grant … via edge`
   store (operator or impersonation reach), the dual of the reach definer.
-  - `GrantInsert(id, grantee, level, grantedBy, expiresAt, extra)` — issue a grant,
+  - `grant_insert(id, grantee, level, granted_by, expires_at, extra)` — issue a grant,
     so the grantee reaches that level node. Declared extra columns (`column <col>`)
     are written from `extra` and projected back, so a response echoing them isn't
     emptied.
-  - `RevokeSQL()` — soft-revoke (stamp the active column) when the grant is
+  - `revoke_sql()` — soft-revoke (stamp the active column) when the grant is
     revocable, otherwise a hard `DELETE`. Idempotent.
-  - `ListSQL()` — grants with three optional filters: `$1` grantee, `$2` level,
+  - `list_sql()` — grants with three optional filters: `$1` grantee, `$2` level,
     `$3` active-only. The active predicate is built from the grant's own active and
     expiry columns — the same conjuncts the reach definer uses — so reads and writes
     agree.
@@ -954,88 +957,80 @@ pure helpers, and none of them re-evaluate policy in app code.
   edge exposes no app-role write policy, so a self-grant is impossible. The audit
   and extra columns (`pk`, `granted by`, `revoked by`, `created`, `column <col>`)
   are optional grant declarations.
-- `Spec.PointCheckSQL(object)` — a read-check query you run under the principal's
+- `spec.point_check_sql(object)` — a read-check query you run under the principal's
   claims. The database answers "can this principal see this row?" through the real
   policy. Use it for UI affordances, never as a substitute for enforcement.
 
 ---
 
-## The typed app framework (`emit … framework`)
+## The typed app framework (`emit … --target ts framework`)
 
-Above the runtime glue, Demesne can generate the typed Go your app is built on.
-The generated package gives you:
+Above the runtime glue, Demesne can generate the typed TypeScript your app is built on.
+The generated module gives you:
 
-- a `Claims` struct and the session envelope;
-- per-object `Can<Verb>(ctx, q, id)` methods;
-- `Caps(held)` — a typed boolean per verb-gate permission, for UI affordances;
-- `RoleTiers(held)` — a typed boolean per role tier, plane and scoped, for UI affordances;
-- scoped query builders, `ListResources` and `CheckMany`;
-- a per-rolestore holds resolver;
-- a reusable `Check(ctx, q, object, verb, id)`;
-- an HTTP `CheckHandler`.
+- a `Claims` interface, `mint`, and `sessionSetupSQL` for the session envelope;
+- per-object `canView` and `canEdit`, plus `listResources` and `checkMany`;
+- `can<Verb>(held)` for verb permissions, and `caps(held)` — a typed boolean per verb-gate permission, for UI affordances;
+- `roleTiers(held)` — a typed boolean per role tier, plane and scoped, for UI affordances;
+- a per-rolestore holds resolver (`holds`, `holdsRoles`);
+- a reusable `check(q, object, verb, id)`;
+- `checkHandler`, a framework-agnostic `Request` → `Response` entry point.
 
-The generated package imports the Go runtime, `github.com/foir-io/demesne/go`, and
-references `demesne.Querier` directly. The runtime is small and standard-library
-only: the composition rules, the holds resolver and claims minting, with no parser
-or compiler. The typed surface stays a thin wrapper over it. Everything runs under
-the caller's claims, and the database decides: the generated check delegates to
-the same compiled predicate the RLS policy enforces.
+The generated module imports `@foir/demesne`, which runs demesne's Rust runtime compiled to
+WebAssembly, in Node, Workers and the browser. Everything runs under the caller's claims, and
+the database decides: the generated check delegates to the same compiled predicate the RLS
+policy enforces.
 
-Generate it with the `demesne` CLI, behind a `//go:generate` directive, and add the
-runtime to your module:
-
-```go
-//go:generate sh -c "demesne emit ../../authz.demesne framework authz > authz.go"
-```
+Generate it with the `demesne` CLI, and add the runtime to your package:
 
 ```
-demesne emit authz.demesne framework authz > internal/authz/authz.go   # gofmt'd, deterministic
-go get github.com/foir-io/demesne/go
+demesne emit authz.demesne --target ts framework > src/authz.ts   # deterministic
+npm install @foir/demesne
 ```
 
 The output is the same for the same spec and CLI version, so commit it and let CI
 regenerate it to check for drift.
 
-On the v0.93.x Go engine, `Spec.EmitFramework(pkg)` still generates the same
-package importing the engine instead. The engine is frozen there, and fixes from
-v1.0 on reach Go only through the CLI and this runtime. The runtime has its own
-module path, so `go get -u` never swaps the engine for it.
+A Rust application builds the same surface from the crates: `demesne-emit-rust` writes the
+spec's static tables from `build.rs`, and `demesne-runtime` runs them.
 
-**Wiring a connection.** Adapt your driver to `demesne.Querier`. Use
-`demesne.FromSQL(db)` for `database/sql`, or
-`github.com/foir-io/demesne/go/pgx`.`FromPgx(pool)` for pgx — a separate module, so
-the runtime stays stdlib-pure. Run the generated `Can<Verb>` inside a transaction
-that has already run `SessionSetupSQL` and the `Claims.Mint()` result.
+v1 generates no Go. The Go engine is frozen at v0.93.1 on the `release/v0.93` branch, where
+`Spec.EmitFramework(pkg)` still generates the Go package; a Go application stays on it.
+
+**Wiring a connection.** The module declares a `Querier` with one method,
+`query(text, params) → { rows }`, which a node-postgres `Client` or `Pool` already satisfies.
+Run the generated `can<Verb>` inside a transaction that has already run `sessionSetupSQL(true)`
+and bound the `mint(claims)` result.
 
 **A few sharp edges.**
 
 - *Composite primary keys.* An object with `pk (a, b, …)` has no single-column row
-  identity, so it gets no `Can`, `ListResources`, or `CheckMany`. The generated
-  code lists it in a banner. Check those rows through a related object or your own
+  identity, so it gets no `can`, `listResources`, or `checkMany`. The generated code
+  lists it in a banner. Check those rows through a related object or your own
   predicate.
-- *Admission filters.* `Holds` bakes in the generic active-assignment read. When
+- *Admission filters.* `holds` bakes in the generic active-assignment read. When
   you need adopter filters such as disabled roles or scoped grants, use the
-  `AssignmentsSQL` + `ResolveHeld` seam instead: run your own filtered read, then
-  resolve. That covers the Go plane. If the same rule must also hold under RLS,
+  `assignmentsSQL` + `resolveHeld` seam instead: run your own filtered read, then
+  resolve. That covers the application plane. If the same rule must also hold under RLS,
   put it in the relation `rolejoin` names rather than in the read — the emitted
-  definers join that relation and cannot see a Go filter.
-- *Extra claims.* `Claims.Extra` carries deployment claims the spec's contract
+  definers join that relation and cannot see an application filter.
+- *Extra claims.* `Claims.extra` carries deployment claims the spec's contract
   doesn't model.
 - *Which verbs get a row check.* Only `select` (read) and `update` (edit) get one,
-  and the reusable `Check` covers those. `@pdp` verbs decide on held permissions —
-  call `Can<Verb>(held)`, or read `Caps(held)` for a boolean; passing one to `Check`
-  returns a capability-gate error, never a silent `NotGoverned`. Insert and delete
+  and the reusable `check` covers those. `@pdp` verbs decide on held permissions —
+  call `can<Verb>(held)`, or read `caps(held)` for a boolean; passing one to `check`
+  throws a capability-gate error, never a silent "ungoverned". Insert and delete
   have no pre-flight check.
-- *Two affordance axes.* `Caps(held)` answers the verb axis: can this principal
-  publish? `RoleTiers(held)` answers the role-tier axis: is this principal a platform
+- *Two affordance axes.* `caps(held)` answers the verb axis: can this principal
+  publish? `roleTiers(held)` answers the role-tier axis: is this principal a platform
   admin, or a tenant owner? A wildcard role or a global plane membership can't be read
   off the verb set, so the two stay separate accessors over separate held sets. Both
-  are UI hints; the floor still decides. `RoleTiers` reads a held-roles set
-  (`EffectiveRoles`), resolved by the generated `HoldsRoles` / `ResolveHeldRoles`, or
-  built from a session with `demesne.NewEffectiveRoles`. A preset at a `virtual` level
+  are UI hints; the floor still decides. `roleTiers` reads a held-roles set
+  (`EffectiveRoles`), resolved by the generated `holdsRoles` / `resolveHeldRoles`, or
+  built from a session with `newEffectiveRoles`. A preset at a `virtual` level
   is a plane role and lists first; the rolestore's scoped presets follow.
-- *Multiple rolestores.* The holds surface is suffixed per rolestore (`HoldsStaff`,
-  `HoldsOps`, …). A `@pdp` verb whose permission no rolestore vocabulary covers is
+- *Multiple rolestores.* The holds surface is suffixed per rolestore (`holdsStaff`,
+  `holdsOps`, …). A `@pdp` verb whose permission no rolestore vocabulary covers is
   flagged in a banner: nothing can produce its `held`, so resolve it yourself or
   add a rolestore.
 
