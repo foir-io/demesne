@@ -18,26 +18,18 @@ type Conj = BTreeSet<(bool, String)>;
 type Literals = Vec<(bool, Term)>;
 
 fn depths(s: &[u8]) -> Vec<Option<i32>> {
-    let mut out = Vec::with_capacity(s.len());
-    let (mut depth, mut quoted, mut i) = (0i32, false, 0usize);
-    while i < s.len() {
-        let c = s[i];
-        if quoted && c == b'\'' && s.get(i + 1) == Some(&b'\'') {
-            out.extend([None, None]);
-            i += 2;
-            continue;
-        }
-        if quoted || c == b'\'' {
-            out.push(None);
-            quoted ^= c == b'\'';
-            i += 1;
-            continue;
-        }
-        out.push(Some(depth));
-        depth += i32::from(c == b'(') - i32::from(c == b')');
-        i += 1;
-    }
-    out
+    let (mut depth, mut quoted) = (0i32, false);
+    s.iter()
+        .map(|&c| {
+            if quoted || c == b'\'' {
+                quoted ^= c == b'\'';
+                return None;
+            }
+            let here = depth;
+            depth += i32::from(c == b'(') - i32::from(c == b')');
+            Some(here)
+        })
+        .collect()
 }
 
 fn wraps_whole(s: &str) -> bool {
