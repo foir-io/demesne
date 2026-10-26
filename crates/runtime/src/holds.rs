@@ -196,7 +196,7 @@ pub fn resolve_roles(assignments: &[RoleAssignment], scope: &[String]) -> Effect
         if a.role_key.is_empty() {
             continue;
         }
-        if scope_all_empty(&a.scope) || scope_contains(&a.scope, scope) {
+        if scope_contains(&a.scope, scope) {
             e.roles.insert(a.role_key.clone());
         }
     }
