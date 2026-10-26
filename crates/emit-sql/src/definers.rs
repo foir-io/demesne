@@ -12,6 +12,7 @@ use demesne_model::conditional::{accessor_tree_op, admission_names, is_claim_lea
 use demesne_model::topology;
 use demesne_model::vocab::to_runtime;
 use demesne_model::{ConditionalAdmission, ConditionalExt};
+use demesne_runtime::quote_literal;
 use demesne_syntax::{
     Grant, Object, Perm, PermNode, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
 };
@@ -65,7 +66,7 @@ fn classify_and_kid(k: &PermNode) -> AndKid<'_> {
 fn kind_cond(rs: &RoleStore, alias: &str) -> Vec<String> {
     match &rs.kind_col {
         None => Vec::new(),
-        Some(k) => vec![format!("{alias}{k} = '{}'", rs.kind_val.as_deref().unwrap_or(""))],
+        Some(k) => vec![format!("{alias}{k} = {}", quote_literal(rs.kind_val.as_deref().unwrap_or("")))],
     }
 }
 
@@ -85,7 +86,7 @@ fn leaf(obj: &Object) -> &str {
 }
 
 fn sql_text_or_null(v: &str) -> String {
-    if v.is_empty() { "NULL::text".into() } else { format!("'{v}'::text") }
+    if v.is_empty() { "NULL::text".into() } else { format!("{}::text", quote_literal(v)) }
 }
 
 fn accessor_repr_covered(r: &Repr) -> bool {
@@ -112,19 +113,20 @@ fn accessor_gen_fn(table: &str, id_t: &str, branches: &[String]) -> GenFn {
 }
 
 fn owner_accessor_branch(table: &str, pk: &str, kind: &str, vc: &ViaColumn, first: bool) -> String {
+    let kind = quote_literal(kind);
     if first {
         return format!(
-            "SELECT 'owner'::text AS source, '{kind}'::text AS principal_kind, {} AS principal_id, 'write'::text AS access\n    FROM {table} WHERE {pk} = p_id AND {}",
+            "SELECT 'owner'::text AS source, {kind}::text AS principal_kind, {} AS principal_id, 'write'::text AS access\n    FROM {table} WHERE {pk} = p_id AND {}",
             vc.column,
             owner_col_present_pub(vc)
         );
     }
-    format!("SELECT 'owner'::text, '{kind}'::text, {}, 'write'::text\n    FROM {table} WHERE {pk} = p_id AND {}", vc.column, owner_col_present_pub(vc))
+    format!("SELECT 'owner'::text, {kind}::text, {}, 'write'::text\n    FROM {table} WHERE {pk} = p_id AND {}", vc.column, owner_col_present_pub(vc))
 }
 
 fn owner_excl_cond(vc: &ViaColumn) -> String {
     match &vc.discrim_col {
-        Some(d) => format!("r.{d} IS DISTINCT FROM '{}'", vc.discrim_val.as_deref().unwrap_or("")),
+        Some(d) => format!("r.{d} IS DISTINCT FROM {}", quote_literal(vc.discrim_val.as_deref().unwrap_or(""))),
         None => format!("r.{} IS NULL", vc.column),
     }
 }
@@ -132,24 +134,26 @@ fn owner_excl_cond(vc: &ViaColumn) -> String {
 fn grant_accessor_branch(g: &ViaGrant) -> String {
     let mut conds = vec![format!("{} = p_id", g.record_col)];
     if let Some(d) = &g.discrim_col {
-        conds.push(format!("{d} = '{}'", g.discrim_val.as_deref().unwrap_or("")));
+        conds.push(format!("{d} = {}", quote_literal(g.discrim_val.as_deref().unwrap_or(""))));
     }
     format!("SELECT 'grant'::text, {}, {}, {}\n    FROM {} WHERE {}", g.kind_col, g.principal_col, g.access_col, g.table, conds.join(" AND "))
 }
 
 fn group_accessor_branch(table: &str, pk: &str, kind: &str, g: &ViaGroup, flat: &str) -> String {
+    let kind = quote_literal(kind);
     if !flat.is_empty() {
-        return format!("SELECT 'group'::text, '{kind}'::text, f.principal_id, 'read'::text\n    FROM {flat} f\n    WHERE f.resource_id = p_id");
+        return format!("SELECT 'group'::text, {kind}::text, f.principal_id, 'read'::text\n    FROM {flat} f\n    WHERE f.resource_id = p_id");
     }
     format!(
-        "SELECT 'group'::text, '{kind}'::text, c.{}, 'read'::text\n    FROM {table} t\n    JOIN {} c ON c.{} = t.{}\n    WHERE t.{pk} = p_id",
+        "SELECT 'group'::text, {kind}::text, c.{}, 'read'::text\n    FROM {table} t\n    JOIN {} c ON c.{} = t.{}\n    WHERE t.{pk} = p_id",
         g.member_col, g.closure, g.group_col, g.col
     )
 }
 
 fn closure_accessor_branch(table: &str, pk: &str, kind: &str, c: &ViaClosure) -> String {
+    let kind = quote_literal(kind);
     format!(
-        "SELECT 'closure'::text, '{kind}'::text, x.{}, 'read'::text\n    FROM {table} t\n    JOIN {} x ON x.{} = t.{}\n    WHERE t.{pk} = p_id",
+        "SELECT 'closure'::text, {kind}::text, x.{}, 'read'::text\n    FROM {table} t\n    JOIN {} x ON x.{} = t.{}\n    WHERE t.{pk} = p_id",
         c.ancestor_col, c.closure, c.descendant_col, c.col
     )
 }
@@ -164,7 +168,7 @@ fn object_accessor_branch(table: &str, pk: &str, vo: &ViaObject, other_table: &s
 fn composition_accessor_branch(table: &str, schema: &str, vc: &ViaComposition) -> String {
     let mut conds = vec![format!("e.{} = p_id", vc.child_col)];
     if let Some(k) = &vc.kind_col {
-        conds.push(format!("e.{k} = '{}'", vc.kind_val.as_deref().unwrap_or("")));
+        conds.push(format!("e.{k} = {}", quote_literal(vc.kind_val.as_deref().unwrap_or(""))));
     }
     format!(
         "SELECT a.source, a.principal_kind, a.principal_id, a.access\n    FROM {} e\n    JOIN LATERAL {schema}.{table}_direct_accessors(e.{}) a ON true\n    WHERE {}",
@@ -307,7 +311,7 @@ impl Sql<'_> {
             }
             let mut conj = vec![format!("{} = user_id", m.id_col), m.flag_col.clone()];
             if let Some(ac) = &m.active_col {
-                conj.push(format!("{ac} = '{}'", or(m.active_val.as_deref())));
+                conj.push(format!("{ac} = {}", quote_literal(or(m.active_val.as_deref()))));
             }
             let sig = format!("user_id {}", self.s.id_type());
             let strict = binds_every(&sig, &[&conj]);
@@ -562,8 +566,8 @@ impl Sql<'_> {
         for p in &vocab.permissions {
             let mut set = impliers.get(p).cloned().unwrap_or_default();
             set.sort();
-            let lits: Vec<String> = set.iter().map(|q| format!("'{q}'")).collect();
-            rows.push(format!("('{}', ARRAY[{}]::text[])", p, lits.join(", ")));
+            let lits: Vec<String> = set.iter().map(|q| quote_literal(q)).collect();
+            rows.push(format!("({}, ARRAY[{}]::text[])", quote_literal(p), lits.join(", ")));
         }
         Ok(GenFn {
             name: self.s.perm_implied_by_fn(rs),
@@ -810,7 +814,7 @@ impl Sql<'_> {
         let plain = Sql { s: self.s, definer_body: false };
         let base = without_composition(obj);
         let kind_filter = match &vc.kind_col {
-            Some(k) => format!(" AND e.{k} = '{}'", or(vc.kind_val.as_deref())),
+            Some(k) => format!(" AND e.{k} = {}", quote_literal(or(vc.kind_val.as_deref()))),
             None => String::new(),
         };
         let mut arms = Vec::new();
@@ -874,7 +878,7 @@ impl Sql<'_> {
                 defs.fns.push(self.store_can_edit_definer(&can_edit, o, virt, store)?);
             }
             let dv = object_grant_edge(o).and_then(|e| e.discrim_val.clone()).unwrap_or_default();
-            whens.push(format!("WHEN '{}' THEN {}.{}(p_id)", dv, self.s.definer_schema(), can_edit));
+            whens.push(format!("WHEN {} THEN {}.{}(p_id)", quote_literal(&dv), self.s.definer_schema(), can_edit));
         }
         Ok(whens)
     }
@@ -941,7 +945,7 @@ impl Sql<'_> {
         }
         let mut keys: Vec<String> = keys.cloned().unwrap_or_default();
         keys.sort();
-        let quoted: Vec<String> = keys.iter().map(|k| format!("'{k}'")).collect();
+        let quoted: Vec<String> = keys.iter().map(|k| quote_literal(k)).collect();
         let mut conds = kind_cond(rs, "ra.");
         conds.push(format!("ra.{} = user_id", or(rs.subject_col.as_deref())));
         conds.extend(scope);
@@ -1046,8 +1050,8 @@ impl Sql<'_> {
                 claim_val = format!("{}::text", a.claim_val_col);
             }
             branches.push(format!(
-                "SELECT '{}'::text, {}, NULL::{}, 'read'::text, {}, {}\n    FROM {} WHERE {}",
-                a.source,
+                "SELECT {}::text, {}, NULL::{}, 'read'::text, {}, {}\n    FROM {} WHERE {}",
+                quote_literal(&a.source),
                 sql_text_or_null(&a.principal_kind),
                 id_t,
                 sql_text_or_null(&a.claim_key),
@@ -1291,13 +1295,13 @@ impl Sql<'_> {
         on.extend(revoked_cond(rs, "ra."));
         let held = match self.s.rolestore_vocab(rs) {
             Ok(v) if !v.implications.is_empty() => {
-                format!("ro.{perms_col}::text[] && {}.{}('{perm}')", self.s.definer_schema(), self.s.perm_implied_by_fn(rs))
+                format!("ro.{perms_col}::text[] && {}.{}({})", self.s.definer_schema(), self.s.perm_implied_by_fn(rs), quote_literal(perm))
             }
-            _ => format!("'{perm}' = ANY(ro.{perms_col})"),
+            _ => format!("{} = ANY(ro.{perms_col})", quote_literal(perm)),
         };
         Some(format!(
-            "SELECT 'holds'::text AS source, '{}'::text AS principal_kind, ra.{} AS principal_id, 'read'::text AS access\n    FROM {} e JOIN {} ra ON {}\n    JOIN {} ro ON ro.{} = ra.{}\n    WHERE e.{} = p_id AND {}",
-            or(rs.kind_val.as_deref()),
+            "SELECT 'holds'::text AS source, {}::text AS principal_kind, ra.{} AS principal_id, 'read'::text AS access\n    FROM {} e JOIN {} ra ON {}\n    JOIN {} ro ON ro.{} = ra.{}\n    WHERE e.{} = p_id AND {}",
+            quote_literal(or(rs.kind_val.as_deref())),
             or(rs.subject_col.as_deref()),
             obj.table,
             or(rs.assignments.as_deref()),
@@ -1337,8 +1341,8 @@ impl Sql<'_> {
         on.extend(revoked_cond(rs, "ra."));
         on.extend(scope_conds);
         Some(format!(
-            "SELECT 'role'::text, '{}'::text, ra.{}, 'read'::text\n    FROM {} r\n    JOIN {} ra ON {}\n    WHERE {}",
-            or(rs.kind_val.as_deref()),
+            "SELECT 'role'::text, {}::text, ra.{}, 'read'::text\n    FROM {} r\n    JOIN {} ra ON {}\n    WHERE {}",
+            quote_literal(or(rs.kind_val.as_deref())),
             or(rs.subject_col.as_deref()),
             obj.table,
             or(rs.assignments.as_deref()),
@@ -1423,7 +1427,7 @@ impl Sql<'_> {
         if let Some(presets) = presets.filter(|p| !p.is_empty()) {
             let mut ks = presets.clone();
             ks.sort();
-            let q: Vec<String> = ks.iter().map(|p| format!("'{p}'")).collect();
+            let q: Vec<String> = ks.iter().map(|p| quote_literal(p)).collect();
             join = format!(
                 " JOIN {} rr ON rr.{} = ra.{} AND rr.{} IN ({})",
                 or(rs.roles_table.as_deref()),
@@ -1437,11 +1441,11 @@ impl Sql<'_> {
         on.extend(revoked_cond(rs, "ra."));
         on.extend(conds);
         format!(
-            "SELECT '{}'::text AS source, '{}'::text AS principal_kind, ra.{} AS principal_id, '{}'::text AS access\n    FROM {} e JOIN {} ra ON {}{}\n    WHERE e.{} = p_id",
-            source,
-            or(rs.kind_val.as_deref()),
+            "SELECT {}::text AS source, {}::text AS principal_kind, ra.{} AS principal_id, {}::text AS access\n    FROM {} e JOIN {} ra ON {}{}\n    WHERE e.{} = p_id",
+            quote_literal(source),
+            quote_literal(or(rs.kind_val.as_deref())),
             or(rs.subject_col.as_deref()),
-            access,
+            quote_literal(access),
             obj.table,
             or(rs.assignments.as_deref()),
             on.join(" AND "),
@@ -1455,8 +1459,8 @@ impl Sql<'_> {
         on.extend(revoked_cond(rs, "ra."));
         on.push(format!("ra.{} = e.{}", self.scope_col_for_level(rs, level), self.s.scope_col(obj, level)));
         format!(
-            "SELECT 'role'::text, '{}'::text, ra.{}, 'read'::text\n    FROM {} e JOIN {} ra ON {}\n    WHERE e.{} = p_id",
-            or(rs.kind_val.as_deref()),
+            "SELECT 'role'::text, {}::text, ra.{}, 'read'::text\n    FROM {} e JOIN {} ra ON {}\n    WHERE e.{} = p_id",
+            quote_literal(or(rs.kind_val.as_deref())),
             or(rs.subject_col.as_deref()),
             obj.table,
             or(rs.assignments.as_deref()),
@@ -1478,11 +1482,11 @@ impl Sql<'_> {
             None => g.name.clone(),
         };
         format!(
-            "SELECT '{}'::text, '{}'::text, ig.{}, '{}'::text\n    FROM {} e JOIN {} ig ON {}\n    WHERE e.{} = p_id",
-            g.name,
-            kind,
+            "SELECT {}::text, {}::text, ig.{}, {}::text\n    FROM {} e JOIN {} ig ON {}\n    WHERE e.{} = p_id",
+            quote_literal(&g.name),
+            quote_literal(&kind),
             g.grantee_col(),
-            grant_access(g),
+            quote_literal(grant_access(g)),
             obj.table,
             g.table(),
             conds.join(" AND "),
@@ -1505,7 +1509,7 @@ impl Sql<'_> {
         let principal = self.s.owner_principal_name(obj);
         let mut owner_match = format!("r.{} = p_{}_id", vc.column, principal);
         if let Some(d) = &vc.discrim_col {
-            owner_match = format!("{owner_match} AND r.{d} = '{}'", or(vc.discrim_val.as_deref()));
+            owner_match = format!("{owner_match} AND r.{d} = {}", quote_literal(or(vc.discrim_val.as_deref())));
         }
         let body = format!("EXISTS (SELECT 1 FROM {} r WHERE r.{} = p_{}_id AND {})", obj.table, obj.pk(), obj.name, owner_match);
         Ok(GenFn {
@@ -1552,9 +1556,9 @@ impl Sql<'_> {
 fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, kind: &str, param: &str) -> GenFn {
     let mut conjuncts = vec![format!("{} = p_{}_id", vg.record_col, obj.name)];
     if let Some(d) = &vg.discrim_col {
-        conjuncts.push(format!("{d} = '{}'", or(vg.discrim_val.as_deref())));
+        conjuncts.push(format!("{d} = {}", quote_literal(or(vg.discrim_val.as_deref()))));
     }
-    conjuncts.push(format!("{} = '{}'", vg.kind_col, kind));
+    conjuncts.push(format!("{} = {}", vg.kind_col, quote_literal(kind)));
     conjuncts.push(format!("{} = p_{}_id", vg.principal_col, param));
     conjuncts.push(format!("{} = p_access", vg.access_col));
     let mut body = grant_edge_exists(&vg.table, &conjuncts);
@@ -1571,9 +1575,9 @@ fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, kind: &str,
 pub(crate) fn grant_group_conds(vg: &ViaGrant, obj: &Object, param: &str) -> Vec<String> {
     let mut conds = vec![format!("g.{} = p_{}_id", vg.record_col, obj.name)];
     if let Some(d) = &vg.discrim_col {
-        conds.push(format!("g.{d} = '{}'", or(vg.discrim_val.as_deref())));
+        conds.push(format!("g.{d} = {}", quote_literal(or(vg.discrim_val.as_deref()))));
     }
-    conds.push(format!("g.{} = '{}'", vg.kind_col, or(vg.group_kind_val.as_deref())));
+    conds.push(format!("g.{} = {}", vg.kind_col, quote_literal(or(vg.group_kind_val.as_deref()))));
     conds.push(format!("gc.{} = p_{}_id", or(vg.group_member_col.as_deref()), param));
     conds.push(format!("g.{} = p_access", vg.access_col));
     conds

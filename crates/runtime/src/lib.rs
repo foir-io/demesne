@@ -32,6 +32,15 @@ pub type SqlArg = Option<String>;
 pub type Str = std::borrow::Cow<'static, str>;
 pub type Strs = std::borrow::Cow<'static, [Str]>;
 
+/// Quotes `s` as a Postgres string literal, as Postgres's own `quote_literal` does.
+///
+/// Each `'` is doubled. A value holding a backslash also has each backslash doubled and takes the
+/// `E` prefix, so the literal means the same whatever `standard_conforming_strings` is set to.
+#[must_use]
+pub fn quote_literal(s: &str) -> String {
+    if s.contains('\\') { format!("E'{}'", s.replace('\\', "\\\\").replace('\'', "''")) } else { format!("'{}'", s.replace('\'', "''")) }
+}
+
 pub fn owned(s: impl Into<String>) -> Str {
     std::borrow::Cow::Owned(s.into())
 }

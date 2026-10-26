@@ -237,6 +237,31 @@ earlier Go releases weren't measured. The frozen Go line will not be patched,
 so if you wrote a spec for the Go engine, run v1's `validate` over it. No spec
 in demesne's corpus uses one of these forms.
 
+### Security: a quote in a spec string can no longer rewrite a policy
+
+A value written as a string in a spec reached the emitted SQL without its
+quotes doubled. That covered `@claim`, `@kind`, `@row`, `mode`, a `where` or
+`kind` discriminator, a guard, a membership's `active` value and the claims
+setting. Only a grant's claim value was escaped. So
+`@claim("tier", "x' OR true OR '")` passed `validate` and emitted a policy that
+admits every caller, and an apostrophe, as in `"O'Brien"`, broke the SQL.
+
+Every such value now reaches the SQL through `demesne_runtime::quote_literal`,
+which quotes as Postgres's `quote_literal` does: each quote is doubled, and a
+value holding a backslash is written as `E'…'` with its backslashes doubled, so
+it reads the same whatever `standard_conforming_strings` is set to. The
+runtime quotes the values in its projections the same way. A `tables schema`
+or `definers schema` that isn't a plain identifier is refused, because it lands
+where quoting can't help. A spec whose strings hold no quote or backslash emits
+exactly what it did.
+
+A test appends a quote, a backslash and quote, and a bare `OR` to every string
+in demesne's 373 specs, emits each, and checks that none reaches the SQL outside
+a literal under either setting of `standard_conforming_strings`.
+
+The Go engine at v0.93.1 emits the same SQL. With the Go engine, keep `'` and
+`\` out of spec strings.
+
 ### Breaking: `@scoped` beside an ordinary term is refused
 
 Every ordinary term is already held to the row's scope, so `@scoped` in a

@@ -1,6 +1,7 @@
 use crate::Sql;
 use crate::rls::{Virtual, leaf};
 use demesne_model::SpecExt;
+use demesne_runtime::quote_literal;
 use demesne_syntax::{Admit, Finding, Object, Perm, PermNode, Repr, Spec, Term, ViaObject};
 use std::collections::BTreeSet;
 
@@ -161,7 +162,7 @@ impl Implications<'_> {
 }
 
 fn composition_implications(schema: &str, obj: &Object, rel: &str) -> Vec<(String, String)> {
-    let call = |access: &str| format!("{schema}.{}_composition_{rel}({}.{}, '{access}')", obj.name, obj.table, obj.pk());
+    let call = |access: &str| format!("{schema}.{}_composition_{rel}({}.{}, {})", obj.name, obj.table, obj.pk(), quote_literal(access));
     [("update", "write"), ("delete", "delete")]
         .into_iter()
         .filter(|(op, _)| obj.perms.iter().find(|p| p.has_layer("rls") && p.maps() == *op).is_some_and(|p| !p.blind))

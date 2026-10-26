@@ -1,6 +1,7 @@
 use crate::Sql;
 use crate::genfn::GenFn;
 use demesne_model::SpecExt;
+use demesne_runtime::quote_literal;
 use demesne_syntax::Repr;
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -231,7 +232,7 @@ BEGIN
   LOCK TABLE {q} IN SHARE ROW EXCLUSIVE MODE;
   DELETE FROM {q};
   INSERT INTO {q} (resource_id, principal_kind, principal_id)
-  SELECT o.{pk}, '{kind}', c.{mc}
+  SELECT o.{pk}, {kind}, c.{mc}
   FROM {ts}.{ot} o JOIN {ts}.{clo} c ON c.{gc} = o.{col};
   RETURN NULL;
 END;
@@ -239,7 +240,7 @@ $$;",
             f = self.fn_name(),
             q = self.q_flat(),
             pk = self.obj_pk,
-            kind = self.kind,
+            kind = quote_literal(&self.kind),
             mc = self.member_col,
             ts = self.table_schema(),
             ot = self.obj_table,
@@ -264,7 +265,7 @@ DECLARE
 BEGIN
   LOCK TABLE {q} IN SHARE ROW EXCLUSIVE MODE;
   WITH canon AS (
-    SELECT o.{pk} AS resource_id, '{kind}'::text AS principal_kind, c.{mc} AS principal_id
+    SELECT o.{pk} AS resource_id, {kind}::text AS principal_kind, c.{mc} AS principal_id
     FROM {ts}.{ot} o JOIN {ts}.{clo} c ON c.{gc} = o.{col}
   )
   SELECT
@@ -277,7 +278,7 @@ BEGIN
     RAISE WARNING 'demesne: flat {q} drift — % missing, % stale (over-grant); self-healing', v_missing, v_stale;
     DELETE FROM {q};
     INSERT INTO {q} (resource_id, principal_kind, principal_id)
-    SELECT o.{pk}, '{kind}', c.{mc}
+    SELECT o.{pk}, {kind}, c.{mc}
     FROM {ts}.{ot} o JOIN {ts}.{clo} c ON c.{gc} = o.{col};
   END IF;
   RETURN v_missing + v_stale;
@@ -287,7 +288,7 @@ $$;",
             s = self.schema(),
             q = self.q_flat(),
             pk = self.obj_pk,
-            kind = self.kind,
+            kind = quote_literal(&self.kind),
             mc = self.member_col,
             ts = self.table_schema(),
             ot = self.obj_table,

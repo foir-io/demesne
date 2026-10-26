@@ -3,7 +3,7 @@ use crate::error::Error;
 use demesne_model::SpecExt;
 use demesne_model::analysis::relation_is_async;
 use demesne_model::conditional::accessor_tree_op;
-use demesne_runtime::{AppCheck, AppCheckSurface, AppObjectSurface, owned};
+use demesne_runtime::{AppCheck, AppCheckSurface, AppObjectSurface, owned, quote_literal};
 use demesne_syntax::{Object, Repr};
 
 impl Sql<'_> {
@@ -73,9 +73,9 @@ impl Sql<'_> {
         let Some(cust) = o.scoped.last().and_then(|l| self.s.owner_subject(l)) else { return String::new() };
         let kind = rel.types.first().map_or("", String::as_str);
         format!(
-            "SELECT allowed, as_of::text FROM {}_affordance($1, '{}', {})",
+            "SELECT allowed, as_of::text FROM {}_affordance($1, {}, {})",
             self.s.async_index_base(&o.table, &rel.name),
-            kind,
+            quote_literal(kind),
             self.id_claim(cust.identifies())
         )
     }

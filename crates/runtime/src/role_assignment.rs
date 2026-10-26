@@ -156,14 +156,14 @@ impl RoleAssignmentSurface {
             cols.push(format!("r.{}", self.perms_col));
         }
         format!(
-            "SELECT {} FROM {} a JOIN {} r ON r.{} = a.{} WHERE a.{} = '{}' AND a.{} = $1 AND a.{} IS NULL",
+            "SELECT {} FROM {} a JOIN {} r ON r.{} = a.{} WHERE a.{} = {} AND a.{} = $1 AND a.{} IS NULL",
             cols.join(", "),
             self.assignments,
             self.roles_table,
             self.roles_id,
             self.role_col,
             self.kind_col,
-            self.kind_val,
+            crate::quote_literal(&self.kind_val),
             self.subject_col,
             self.revoked_col
         )

@@ -5,7 +5,7 @@ use crate::ast::{
     Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant,
     ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
-use crate::lexer::{Tok, Token, lex};
+use crate::lexer::{Tok, Token, is_plain_identifier, lex};
 use demesne_gocompat::quote;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -185,6 +185,9 @@ impl Parser {
         let sch = self.string()?;
         if declared {
             return Err(self.err(duplicate));
+        }
+        if !sch.is_empty() && !is_plain_identifier(&sch) {
+            return Err(self.err(format!("schema {} is not a plain identifier: use letters, digits and _, not starting with a digit", quote(&sch))));
         }
         Ok(non_empty(sch))
     }

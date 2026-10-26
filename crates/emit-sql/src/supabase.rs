@@ -2,6 +2,7 @@ use crate::Sql;
 use crate::error::Error;
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
+use demesne_runtime::quote_literal;
 use std::fmt::Write as _;
 
 const SUPABASE_HOOK_FN: &str = "demesne_access_token_hook";
@@ -49,7 +50,8 @@ impl Sql<'_> {
         b.push_str("  meta := coalesce(claims->'app_metadata', '{}'::jsonb);\n");
         b.push_str("  -- one lift per Demesne claims-contract key (app_metadata -> top-level claim):\n");
         for k in &keys {
-            writeln!(b, "  if meta ? '{k}' then claims := jsonb_set(claims, '{{{k}}}', meta->'{k}'); end if;").expect("fmt::Write for String never fails");
+            let (key, path) = (quote_literal(k), quote_literal(&format!("{{{}}}", array_element(k))));
+            writeln!(b, "  if meta ? {key} then claims := jsonb_set(claims, {path}, meta->{key}); end if;").expect("fmt::Write for String never fails");
         }
         b.push_str("  event := jsonb_set(event, '{claims}', claims);\n");
         b.push_str("  return event;\nend;\n$$;\n\n");
@@ -57,5 +59,34 @@ impl Sql<'_> {
         b.push_str("grant usage on schema public to supabase_auth_admin;\n");
         writeln!(b, "revoke execute on function public.{SUPABASE_HOOK_FN} from authenticated, anon, public;").expect("fmt::Write for String never fails");
         Ok(b)
+    }
+}
+
+fn array_element(s: &str) -> String {
+    let plain = !s.is_empty() && !s.eq_ignore_ascii_case("null") && !s.chars().any(|c| matches!(c, '{' | '}' | ',' | '"' | '\\') || c.is_whitespace());
+    if plain {
+        return s.to_string();
+    }
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::array_element;
+
+    #[test]
+    fn a_path_element_is_quoted_only_where_postgres_would_misread_it() {
+        assert_eq!(array_element("tenant_id"), "tenant_id");
+        for (key, want) in [
+            ("plan,tier", r#""plan,tier""#),
+            ("", r#""""#),
+            ("NULL", r#""NULL""#),
+            ("a b", r#""a b""#),
+            (r#"x"y"#, r#""x\"y""#),
+            (r"x\y", r#""x\\y""#),
+            ("{a}", r#""{a}""#),
+        ] {
+            assert_eq!(array_element(key), want, "{key}");
+        }
     }
 }

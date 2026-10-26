@@ -6,6 +6,7 @@ use demesne_model::analysis::{
     Rels, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
 };
 use demesne_model::topology;
+use demesne_runtime::quote_literal;
 use demesne_syntax::{
     Admit, ArgSrc, Grant, Guard, GuardOp, Level, Membership, Object, Perm, PermNode, Relation, Repr, Require, Subject, Term, ViaClosure, ViaColumn,
     ViaComposition, ViaGrant, ViaGroup, ViaObject,
@@ -125,8 +126,8 @@ pub fn scan_definers(sql: &str, schema: &str) -> Vec<String> {
 
 pub(crate) fn guard_sql(g: &Guard) -> String {
     match g.op {
-        GuardOp::Ne => format!("({} IS NULL OR {} <> '{}')", g.col, g.col, g.val),
-        GuardOp::Eq => format!("{} = '{}'", g.col, g.val),
+        GuardOp::Ne => format!("({} IS NULL OR {} <> {})", g.col, g.col, quote_literal(&g.val)),
+        GuardOp::Eq => format!("{} = {}", g.col, quote_literal(&g.val)),
     }
 }
 
@@ -154,7 +155,7 @@ fn owner_col_present(vc: &ViaColumn) -> String {
     let base = format!("{} IS NOT NULL", vc.column);
     match &vc.discrim_col {
         None => base,
-        Some(d) => format!("{base} AND {d} = '{}'", vc.discrim_val.as_deref().unwrap_or("")),
+        Some(d) => format!("{base} AND {d} = {}", quote_literal(vc.discrim_val.as_deref().unwrap_or(""))),
     }
 }
 
@@ -188,7 +189,7 @@ impl Sql<'_> {
             Some(c) => (c.setting.as_str(), c.cast.as_str()),
             None => ("request.jwt.claims", "json"),
         };
-        format!("(current_setting('{setting}', true)::{cast} ->> '{key}')")
+        format!("(current_setting({}, true)::{cast} ->> {})", quote_literal(setting), quote_literal(key))
     }
 
     #[must_use]
@@ -207,7 +208,7 @@ impl Sql<'_> {
             Some(c) => (c.setting.as_str(), c.cast.as_str()),
             None => ("request.jwt.claims", "json"),
         };
-        format!("(NULLIF(current_setting('{setting}', true), '')::{cast} ->> '{key}')") + &self.s.id_cast()
+        format!("(NULLIF(current_setting({}, true), '')::{cast} ->> {})", quote_literal(setting), quote_literal(key)) + &self.s.id_cast()
     }
 
     pub(crate) fn virtual_levels(&self) -> R<Virtual> {
@@ -557,7 +558,7 @@ impl Sql<'_> {
     }
 
     fn claim_reach_predicate(&self, g: &Grant) -> String {
-        format!("{} = '{}'", self.claim(g.claim_key()), g.claim_value().replace('\'', "''"))
+        format!("{} = {}", self.claim(g.claim_key()), quote_literal(g.claim_value()))
     }
 
     pub(crate) fn object_verb_predicate(&self, obj: &Object, verb: &str, virt: &Virtual) -> R<String> {
@@ -663,7 +664,7 @@ impl Sql<'_> {
 
     fn emit_term(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
         if let Some(col) = t.mode_col() {
-            let mut frag = format!("{} = '{}'", col, t.mode_val());
+            let mut frag = format!("{} = {}", col, quote_literal(t.mode_val()));
             if !t.mode_scope().is_empty() {
                 frag = format!("{} AND {}", frag, self.mode_plane_scope(t.mode_scope(), cust_claim));
             }
@@ -728,9 +729,9 @@ impl Sql<'_> {
             "app_scope" => self.rls_emit_app_scope(obj, t, rels, cust_claim),
             "store_manage" => self.rls_emit_store_manage(obj),
             "session" => self.rls_emit_session(obj, pm, t, rels, cust_claim),
-            "kind" => Ok(vec![format!("{} = '{}'", self.claim("kind"), t.kind_val())]),
-            "claim" => Ok(vec![format!("{} = '{}'", self.claim(t.claim_key()), t.claim_val())]),
-            "row" => Ok(vec![format!("{} = '{}'", t.row_col(), t.row_val())]),
+            "kind" => Ok(vec![format!("{} = {}", self.claim("kind"), quote_literal(t.kind_val()))]),
+            "claim" => Ok(vec![format!("{} = {}", self.claim(t.claim_key()), quote_literal(t.claim_val()))]),
+            "row" => Ok(vec![format!("{} = {}", t.row_col(), quote_literal(t.row_val()))]),
             "within" => {
                 let col = self.s.scope_col(obj, t.within_level());
                 let claim = self.id_claim(&self.s.claim_key_for_level(t.within_level()));
@@ -772,7 +773,7 @@ impl Sql<'_> {
             }
             i += 1;
         }
-        args.push(format!("'{perm}'"));
+        args.push(quote_literal(perm));
         Ok(vec![format!("{}.{}({})", self.s.definer_schema(), self.s.holds_perm_fn(rs), args.join(", "))])
     }
 
@@ -787,7 +788,7 @@ impl Sql<'_> {
                 return Err(format!("@app_scope(exclude {}): excluded relation must be an owner column", quote(ex)));
             };
             base = match &vc.discrim_col {
-                Some(d) => format!("({} AND {} IS DISTINCT FROM '{}')", base, d, vc.discrim_val.as_deref().unwrap_or("")),
+                Some(d) => format!("({} AND {} IS DISTINCT FROM {})", base, d, quote_literal(vc.discrim_val.as_deref().unwrap_or(""))),
                 None => format!("({} AND {} IS NULL)", base, vc.column),
             };
         }
@@ -849,16 +850,16 @@ impl Sql<'_> {
                     base = format!("{} = ANY({})", vc.column, self.id_claim_set(claim_key));
                 }
                 if let Some(d) = &vc.discrim_col {
-                    base = format!("({} AND {} = '{}')", base, d, vc.discrim_val.as_deref().unwrap_or(""));
+                    base = format!("({} AND {} = {})", base, d, quote_literal(vc.discrim_val.as_deref().unwrap_or("")));
                 }
                 Ok(vec![base])
             }
             Repr::Edge(e) => {
                 req_claim(cust_claim, obj, &format!("edge relation {}", t.ident()))?;
-                Ok(vec![format!("{}.{}({}, {}, '{}')", schema, e.table, self.id_claim(cust_claim), pk, access)])
+                Ok(vec![format!("{}.{}({}, {}, {})", schema, e.table, self.id_claim(cust_claim), pk, quote_literal(access))])
             }
             Repr::Composition(vc) => {
-                let call = format!("{}.{}_composition_{}({}, '{}')", schema, obj.name, r.name, pk, access);
+                let call = format!("{}.{}_composition_{}({}, {})", schema, obj.name, r.name, pk, quote_literal(access));
                 Ok(vec![self.probed(&composition_probe(obj, vc), call)])
             }
             Repr::Closure(c) => self.rls_closure_frag(obj, c, t.ident(), cust_claim),
@@ -919,8 +920,14 @@ impl Sql<'_> {
             if claim.is_empty() {
                 return Err(format!("grant relation {} kind {}: no subject resolves a claim", quote(&r.name), quote(&r.types[i])));
             }
-            let mut frag =
-                format!("{}.{}({}, {}, '{}')", self.s.definer_schema(), name, self.id_claim(&claim), format_args!("{}.{}", obj.table, obj.pk()), access);
+            let mut frag = format!(
+                "{}.{}({}, {}, {})",
+                self.s.definer_schema(),
+                name,
+                self.id_claim(&claim),
+                format_args!("{}.{}", obj.table, obj.pk()),
+                quote_literal(access)
+            );
             if !cust_claim.is_empty() && claim != cust_claim {
                 frag = format!("({} AND {} IS NULL)", frag, self.claim(cust_claim));
             }
@@ -954,7 +961,7 @@ impl Sql<'_> {
                 if !a.claim().is_empty() {
                     self.id_claim(a.claim())
                 } else if !a.lit().is_empty() {
-                    format!("'{}'", a.lit())
+                    quote_literal(a.lit())
                 } else {
                     a.col().to_string()
                 }
@@ -1036,7 +1043,7 @@ pub(crate) fn composition_probe(obj: &Object, vc: &ViaComposition) -> String {
     }
     let mut conds = vec![format!("hop.{} = {}.{}", vc.child_col, obj.table, obj.pk())];
     if let Some(k) = &vc.kind_col {
-        conds.push(format!("hop.{} = '{}'", k, vc.kind_val.as_deref().unwrap_or("")));
+        conds.push(format!("hop.{} = {}", k, quote_literal(vc.kind_val.as_deref().unwrap_or(""))));
     }
     conds.push(format!("hop.{} IS NOT NULL", vc.parent_col));
     format!("EXISTS (SELECT 1 FROM {} hop WHERE {})", vc.table, conds.join(" AND "))

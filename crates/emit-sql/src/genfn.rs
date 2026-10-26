@@ -1,3 +1,4 @@
+use demesne_runtime::quote_literal;
 use std::fmt::Write as _;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefinerArm {
@@ -58,7 +59,8 @@ impl GenFn {
     fn arms_body(&self) -> String {
         let mut b = String::from("#variable_conflict use_column\nBEGIN\n");
         for a in &self.arms {
-            write!(b, "  IF {} = '{}' THEN\n    RETURN {};\n  END IF;\n", self.arm_param, a.value, a.body).expect("fmt::Write for String never fails");
+            write!(b, "  IF {} = {} THEN\n    RETURN {};\n  END IF;\n", self.arm_param, quote_literal(&a.value), a.body)
+                .expect("fmt::Write for String never fails");
         }
         b.push_str("  RETURN false;\nEND");
         b

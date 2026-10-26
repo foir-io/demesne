@@ -1,5 +1,6 @@
 use crate::Sql;
 use demesne_model::SpecExt;
+use demesne_runtime::quote_literal;
 use demesne_syntax::Repr;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -62,12 +63,12 @@ DECLARE
   prev xid8;
   ev record;
 BEGIN
-  INSERT INTO {cur} (index_name) VALUES ('{key}') ON CONFLICT (index_name) DO NOTHING;
-  SELECT applied_horizon INTO prev FROM {cur} WHERE index_name = '{key}' FOR UPDATE;
+  INSERT INTO {cur} (index_name) VALUES ({key}) ON CONFLICT (index_name) DO NOTHING;
+  SELECT applied_horizon INTO prev FROM {cur} WHERE index_name = {key} FOR UPDATE;
   FOR ev IN
     SELECT op, resource_id, principal_kind, principal_id
     FROM {cl}
-    WHERE rel = '{rel}' AND txid >= prev AND txid < h
+    WHERE rel = {rel} AND txid >= prev AND txid < h
     ORDER BY seq
   LOOP
     IF ev.op = 'grant' THEN
@@ -80,22 +81,22 @@ BEGIN
     END IF;
   END LOOP;
   UPDATE {cur} SET applied_horizon = (CASE WHEN h > applied_horizon THEN h ELSE applied_horizon END), updated_at = now()
-    WHERE index_name = '{key}';
+    WHERE index_name = {key};
   RETURN h;
 END;
 $$;",
             f = self.fn_name("apply"),
             cur = self.cursor,
-            key = self.index_key(),
+            key = quote_literal(self.index_key()),
             cl = self.changelog,
-            rel = self.rel_const(),
+            rel = quote_literal(self.rel_const()),
             b = self.base
         )
     }
 
     #[must_use]
     pub fn rebuild_fn_sql(&self) -> String {
-        let where_ = if self.discrim_col.is_empty() { String::new() } else { format!(" WHERE {} = '{}'", self.discrim_col, self.discrim_val) };
+        let where_ = if self.discrim_col.is_empty() { String::new() } else { format!(" WHERE {} = {}", self.discrim_col, quote_literal(&self.discrim_val)) };
         format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS xid8
@@ -103,20 +104,20 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
 AS $$
 DECLARE h xid8 := pg_snapshot_xmin(pg_current_snapshot());
 BEGIN
-  INSERT INTO {cur} (index_name) VALUES ('{key}') ON CONFLICT (index_name) DO NOTHING;
-  PERFORM 1 FROM {cur} WHERE index_name = '{key}' FOR UPDATE;
+  INSERT INTO {cur} (index_name) VALUES ({key}) ON CONFLICT (index_name) DO NOTHING;
+  PERFORM 1 FROM {cur} WHERE index_name = {key} FOR UPDATE;
   DELETE FROM {b};
   INSERT INTO {b} (resource_id, principal_kind, principal_id)
     SELECT DISTINCT {rc}, {kc}, {pc} FROM {ts}.{gt}{w}
     ON CONFLICT DO NOTHING;
   UPDATE {cur} SET applied_horizon = (CASE WHEN h > applied_horizon THEN h ELSE applied_horizon END), updated_at = now()
-    WHERE index_name = '{key}';
+    WHERE index_name = {key};
   RETURN h;
 END;
 $$;",
             f = self.fn_name("rebuild"),
             cur = self.cursor,
-            key = self.index_key(),
+            key = quote_literal(self.index_key()),
             b = self.base,
             rc = self.record_col,
             kc = self.kind_col,
@@ -135,12 +136,12 @@ RETURNS TABLE(allowed boolean, as_of xid8)
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public
 AS $$
   SELECT EXISTS(SELECT 1 FROM {b} WHERE resource_id = p_resource AND principal_kind = p_kind AND principal_id = p_principal),
-         COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = '{key}'), '0'::xid8);
+         COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8);
 $$;",
             f = self.fn_name("affordance"),
             b = self.base,
             cur = self.cursor,
-            key = self.index_key(),
+            key = quote_literal(self.index_key()),
             t = self.id_type()
         )
     }
@@ -148,10 +149,10 @@ $$;",
     #[must_use]
     pub fn watermark_fn_sql(&self) -> String {
         format!(
-            "CREATE OR REPLACE FUNCTION {f}()\nRETURNS xid8\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public\nAS $$ SELECT COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = '{key}'), '0'::xid8); $$;",
+            "CREATE OR REPLACE FUNCTION {f}()\nRETURNS xid8\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public\nAS $$ SELECT COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8); $$;",
             f = self.fn_name("watermark"),
             cur = self.cursor,
-            key = self.index_key()
+            key = quote_literal(self.index_key())
         )
     }
 }

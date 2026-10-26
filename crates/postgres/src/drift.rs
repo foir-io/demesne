@@ -1,5 +1,6 @@
 use crate::{Error, query_error};
 use demesne_emit_sql::{Object, objects};
+use demesne_runtime::quote_literal;
 use postgres::{Client, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -153,7 +154,8 @@ impl Comparison<'_> {
             let name = if used.insert(bare.clone()) { bare } else { format!("demesne_shadow_{i}") };
             let cols: Option<String> = row.get(1);
             tx.batch_execute(&format!("CREATE TEMP TABLE {name} ({})", cols.unwrap_or_default())).map_err(|e| query_error(&e))?;
-            let shadow_oid: u32 = tx.query_one(&format!("SELECT 'pg_temp.{name}'::regclass::oid"), &[]).map_err(|e| query_error(&e))?.get(0);
+            let shadow_oid: u32 =
+                tx.query_one(&format!("SELECT {}::regclass::oid", quote_literal(&format!("pg_temp.{name}"))), &[]).map_err(|e| query_error(&e))?.get(0);
             self.live.insert(t.clone(), oid);
             self.shadow.insert(t, (name, shadow_oid));
         }

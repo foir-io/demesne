@@ -94,7 +94,7 @@ impl HoldsResolver {
         }
         let mut conds = Vec::new();
         if !self.kind_col.is_empty() {
-            conds.push(format!("ra.{} = '{}'", self.kind_col, self.kind_val));
+            conds.push(format!("ra.{} = {}", self.kind_col, crate::quote_literal(&self.kind_val)));
         }
         conds.push(format!("ra.{} = $1", self.subject_col));
         if !self.revoked_col.is_empty() {
@@ -123,7 +123,7 @@ impl HoldsResolver {
         cols.extend(self.scope_cols.iter().map(|c| format!("ra.{c}")));
         let mut conds = Vec::new();
         if !self.kind_col.is_empty() {
-            conds.push(format!("ra.{} = '{}'", self.kind_col, self.kind_val));
+            conds.push(format!("ra.{} = {}", self.kind_col, crate::quote_literal(&self.kind_val)));
         }
         if !self.revoked_col.is_empty() {
             conds.push(format!("ra.{} IS NULL", self.revoked_col));

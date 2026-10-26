@@ -43,7 +43,7 @@ impl Session {
             SettingLifetime::Transaction => true,
             SettingLifetime::Session => false,
         };
-        format!("SELECT set_config('{}', $1, {local})", self.setting)
+        format!("SELECT set_config({}, $1, {local})", crate::quote_literal(&self.setting))
     }
 
     /// Returns the statement that switches to the connection role the policies are written for.

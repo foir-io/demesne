@@ -68,6 +68,10 @@ fn is_ident(c: u8) -> bool {
     is_ident_start(c) || c.is_ascii_digit()
 }
 
+pub(crate) fn is_plain_identifier(s: &str) -> bool {
+    s.bytes().next().is_some_and(is_ident_start) && s.bytes().all(is_ident)
+}
+
 struct Lexer<'a> {
     src: &'a [u8],
     pos: usize,

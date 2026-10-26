@@ -1,5 +1,6 @@
 use crate::Sql;
 use demesne_model::SpecExt;
+use demesne_runtime::quote_literal;
 use demesne_syntax::Repr;
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -31,7 +32,7 @@ impl ChangelogTrigger {
         if !self.discrim_col.is_empty() {
             return format!("{row_var}.{}", self.discrim_col);
         }
-        format!("'{}'", self.table)
+        quote_literal(&self.table)
     }
 
     #[must_use]
@@ -47,12 +48,12 @@ BEGIN
   IF (TG_OP = 'INSERT') THEN
     INSERT INTO {cl} (rel, resource_id, principal_kind, principal_id, op)
       VALUES ({new_rel}, NEW.{rc}, NEW.{kc}, NEW.{pc}, 'grant');
-    PERFORM pg_notify('{ch}', json_build_object('rel', {new_rel}, 'resource_id', NEW.{rc}, 'principal_kind', NEW.{kc}, 'principal_id', NEW.{pc}, 'op', 'grant')::text);
+    PERFORM pg_notify({ch}, json_build_object('rel', {new_rel}, 'resource_id', NEW.{rc}, 'principal_kind', NEW.{kc}, 'principal_id', NEW.{pc}, 'op', 'grant')::text);
     RETURN NEW;
   ELSIF (TG_OP = 'DELETE') THEN
     INSERT INTO {cl} (rel, resource_id, principal_kind, principal_id, op)
       VALUES ({old_rel}, OLD.{rc}, OLD.{kc}, OLD.{pc}, 'revoke');
-    PERFORM pg_notify('{ch}', json_build_object('rel', {old_rel}, 'resource_id', OLD.{rc}, 'principal_kind', OLD.{kc}, 'principal_id', OLD.{pc}, 'op', 'revoke')::text);
+    PERFORM pg_notify({ch}, json_build_object('rel', {old_rel}, 'resource_id', OLD.{rc}, 'principal_kind', OLD.{kc}, 'principal_id', OLD.{pc}, 'op', 'revoke')::text);
     RETURN OLD;
   END IF;
   RETURN NULL;
@@ -65,7 +66,7 @@ $$;",
             kc = self.kind_col,
             pc = self.principal_col,
             old_rel = self.rel_expr("OLD"),
-            ch = CHANGELOG_CHANNEL
+            ch = quote_literal(CHANGELOG_CHANNEL)
         )
     }
 
@@ -114,7 +115,7 @@ impl ObjectChangelogTrigger {
     #[must_use]
     pub fn function_sql(&self) -> String {
         let cols = "(rel, resource_id, principal_kind, principal_id, op)";
-        let (cl, rel, pk, ch) = (&self.changelog, &self.rel, &self.pk, CHANGELOG_CHANNEL);
+        let (cl, rel, pk, ch) = (&self.changelog, quote_literal(&self.rel), &self.pk, quote_literal(CHANGELOG_CHANNEL));
         let mut body = String::new();
         if !self.owner_id_col.is_empty() {
             let (id, kind) = (&self.owner_id_col, &self.owner_kind_col);
@@ -122,16 +123,16 @@ impl ObjectChangelogTrigger {
                 .expect("fmt::Write for String never fails");
             writeln!(body, "    IF OLD.{id} IS NOT NULL THEN").expect("fmt::Write for String never fails");
             writeln!(body, "      INSERT INTO {cl} {cols}").expect("fmt::Write for String never fails");
-            writeln!(body, "        VALUES ('{rel}', NEW.{pk}, COALESCE(OLD.{kind}, ''), OLD.{id}, 'revoke');").expect("fmt::Write for String never fails");
+            writeln!(body, "        VALUES ({rel}, NEW.{pk}, COALESCE(OLD.{kind}, ''), OLD.{id}, 'revoke');").expect("fmt::Write for String never fails");
             writeln!(body,
-                "      PERFORM pg_notify('{ch}', json_build_object('rel', '{rel}', 'resource_id', NEW.{pk}, 'principal_kind', COALESCE(OLD.{kind}, ''), 'principal_id', OLD.{id}, 'op', 'revoke')::text);"
+                "      PERFORM pg_notify({ch}, json_build_object('rel', {rel}, 'resource_id', NEW.{pk}, 'principal_kind', COALESCE(OLD.{kind}, ''), 'principal_id', OLD.{id}, 'op', 'revoke')::text);"
             ).expect("fmt::Write for String never fails");
             body.push_str("    END IF;\n");
             writeln!(body, "    IF NEW.{id} IS NOT NULL THEN").expect("fmt::Write for String never fails");
             writeln!(body, "      INSERT INTO {cl} {cols}").expect("fmt::Write for String never fails");
-            writeln!(body, "        VALUES ('{rel}', NEW.{pk}, COALESCE(NEW.{kind}, ''), NEW.{id}, 'grant');").expect("fmt::Write for String never fails");
+            writeln!(body, "        VALUES ({rel}, NEW.{pk}, COALESCE(NEW.{kind}, ''), NEW.{id}, 'grant');").expect("fmt::Write for String never fails");
             writeln!(body,
-                "      PERFORM pg_notify('{ch}', json_build_object('rel', '{rel}', 'resource_id', NEW.{pk}, 'principal_kind', COALESCE(NEW.{kind}, ''), 'principal_id', NEW.{id}, 'op', 'grant')::text);"
+                "      PERFORM pg_notify({ch}, json_build_object('rel', {rel}, 'resource_id', NEW.{pk}, 'principal_kind', COALESCE(NEW.{kind}, ''), 'principal_id', NEW.{id}, 'op', 'grant')::text);"
             ).expect("fmt::Write for String never fails");
             body.push_str("    END IF;\n");
             body.push_str("  END IF;\n");
@@ -140,9 +141,9 @@ impl ObjectChangelogTrigger {
             let m = &self.mode_col;
             writeln!(body, "  IF (OLD.{m} IS DISTINCT FROM NEW.{m}) THEN").expect("fmt::Write for String never fails");
             writeln!(body, "    INSERT INTO {cl} {cols}").expect("fmt::Write for String never fails");
-            writeln!(body, "      VALUES ('{rel}', NEW.{pk}, '', '', 'visibility');").expect("fmt::Write for String never fails");
+            writeln!(body, "      VALUES ({rel}, NEW.{pk}, '', '', 'visibility');").expect("fmt::Write for String never fails");
             writeln!(body,
-                "    PERFORM pg_notify('{ch}', json_build_object('rel', '{rel}', 'resource_id', NEW.{pk}, 'principal_kind', '', 'principal_id', '', 'op', 'visibility')::text);"
+                "    PERFORM pg_notify({ch}, json_build_object('rel', {rel}, 'resource_id', NEW.{pk}, 'principal_kind', '', 'principal_id', '', 'op', 'visibility')::text);"
             ).expect("fmt::Write for String never fails");
             body.push_str("  END IF;\n");
         }
