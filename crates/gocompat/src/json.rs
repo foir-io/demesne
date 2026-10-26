@@ -177,13 +177,22 @@ fn write_object<'a>(out: &mut String, fields: impl Iterator<Item = (&'a str, &'a
     out.push('}');
 }
 
+/// The deepest [`parse`] lets arrays and objects nest.
+///
+/// The parser recurses once per level, so a limit keeps hostile input from exhausting the stack.
+/// That matters most in WebAssembly, which has no stack guard: an overflow there leaves the
+/// module unusable for every later call. Go's `encoding/json` allows 10,000 levels; this parser
+/// overflows the stack in WebAssembly well before that, so it follows `serde_json`'s default of 128.
+pub const MAX_DEPTH: usize = 128;
+
 /// Parses one JSON document into a [`Value`], keeping object keys in source order.
 ///
 /// # Errors
 ///
-/// Malformed JSON, an integer outside `i64`, or bytes after the document.
+/// Malformed JSON, an integer outside `i64`, arrays and objects nested deeper than
+/// [`MAX_DEPTH`], or bytes after the document.
 pub fn parse(src: &str) -> Result<Value, ParseError> {
-    let mut p = Parser { b: src.as_bytes(), i: 0 };
+    let mut p = Parser { b: src.as_bytes(), i: 0, depth: 0 };
     p.ws();
     let v = p.value().map_err(|message| ParseError { message })?;
     p.ws();
@@ -210,6 +219,7 @@ impl std::error::Error for ParseError {}
 struct Parser<'a> {
     b: &'a [u8],
     i: usize,
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -239,8 +249,7 @@ impl Parser<'_> {
 
     fn value(&mut self) -> Result<Value, String> {
         match self.b.get(self.i) {
-            Some(b'{') => self.object(),
-            Some(b'[') => self.array(),
+            Some(&c @ (b'{' | b'[')) => self.nested(c),
             Some(b'"') => Ok(Value::Str(self.string()?)),
             Some(b't') => self.lit("true", Value::Bool(true)),
             Some(b'f') => self.lit("false", Value::Bool(false)),
@@ -248,6 +257,16 @@ impl Parser<'_> {
             Some(c) if *c == b'-' || c.is_ascii_digit() => self.number(),
             _ => Err(format!("json: unexpected byte at {}", self.i)),
         }
+    }
+
+    fn nested(&mut self, open: u8) -> Result<Value, String> {
+        if self.depth == MAX_DEPTH {
+            return Err(format!("json: invalid character {:?} exceeded max depth", char::from(open)));
+        }
+        self.depth += 1;
+        let v = if open == b'{' { self.object() } else { self.array() }?;
+        self.depth -= 1;
+        Ok(v)
     }
 
     fn object(&mut self) -> Result<Value, String> {

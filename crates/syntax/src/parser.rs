@@ -18,11 +18,20 @@ struct LevelChain {
     verbs_by_level: BTreeMap<String, Vec<String>>,
 }
 
+/// The deepest a permission or requirement may nest parentheses.
+///
+/// The parser and every pass over a permission recurse once per level, so a limit keeps hostile
+/// input from exhausting the stack. That matters most in WebAssembly, which has no stack guard:
+/// an overflow there leaves the module unusable for every later call. The compiler handles a few
+/// hundred levels there; real specs nest a handful.
+pub const MAX_NESTING: usize = 64;
+
 /// Parses `.demesne` spec text into a [`Spec`], expanding templates.
 ///
 /// # Errors
 ///
-/// A lexical or syntax error, or a template that cannot be expanded. The error carries the line.
+/// A lexical or syntax error, parentheses nested deeper than [`MAX_NESTING`], or a template that
+/// cannot be expanded. The error carries the line.
 pub fn parse(src: &str) -> Result<Spec, Error> {
     parse_bytes(src.as_bytes())
 }
@@ -31,10 +40,11 @@ pub fn parse(src: &str) -> Result<Spec, Error> {
 ///
 /// # Errors
 ///
-/// Invalid UTF-8 in a literal, a lexical or syntax error, or a template that cannot be expanded.
+/// Invalid UTF-8 in a literal, a lexical or syntax error, parentheses nested deeper than
+/// [`MAX_NESTING`], or a template that cannot be expanded.
 pub fn parse_bytes(src: &[u8]) -> Result<Spec, Error> {
     let toks = lex(src)?;
-    let mut p = Parser { toks, i: 0 };
+    let mut p = Parser { toks, i: 0, depth: 0 };
     let mut s = p.parse_spec()?;
     expand_templates(&mut s)?;
     Ok(s)
@@ -47,6 +57,7 @@ fn non_empty(s: String) -> Option<String> {
 struct Parser {
     toks: Vec<Token>,
     i: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -928,8 +939,13 @@ impl Parser {
 
     fn parse_perm_primary(&mut self) -> PResult<PermNode> {
         if self.peek() == Tok::LParen {
+            if self.depth == MAX_NESTING {
+                return Err(self.err(format!("parentheses nest more than {MAX_NESTING} deep")));
+            }
             self.advance();
+            self.depth += 1;
             let n = self.parse_perm_union()?;
+            self.depth -= 1;
             self.expect(Tok::RParen)?;
             return Ok(n);
         }

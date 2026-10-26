@@ -12,4 +12,4 @@ pub use ast::{
     ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 pub use error::{Error, Finding};
-pub use parser::{parse, parse_bytes};
+pub use parser::{MAX_NESTING, parse, parse_bytes};

@@ -314,6 +314,26 @@ with it. A minor version can add a method to any of the three. To upgrade,
 import from the crate root. A type of your own can no longer implement
 `SpecExt`; hold a `Spec` and call the methods on it.
 
+### Breaking: deeply nested input is refused
+
+A permission or requirement whose parentheses nest more than 64 deep is a parse
+error on its line. JSON nested more than 128 deep, in the runtime's arguments
+or a migration manifest, is refused with Go's message, `invalid character '['
+exceeded max depth`. Go allows 10,000 levels; this parser runs out of stack in
+WebAssembly well before that.
+
+Both parsers recurse once per level, and nothing stopped them:
+
+- natively, a permission about 5,700 levels deep overflowed the stack and
+  aborted the process;
+- in WebAssembly, which has no stack guard, the compiler failed at about 1,500
+  levels and the runtime at about 50,000, and every later call on that module
+  failed too, valid ones included, until it was reloaded.
+
+Real specs nest a few levels, and the runtime's arguments two or three.
+`demesne_syntax::MAX_NESTING` and `demesne_gocompat::json::MAX_DEPTH` name the
+limits.
+
 ### Migrations drop what a spec stops emitting
 
 `emit all` writes `CREATE OR REPLACE` for the current surface only. So a

@@ -37,3 +37,20 @@ test("a blind write is a warning, not an error", () => {
 test("a parse error is an error on its line", () => {
   assert.deepEqual(findings("topology {"), [{ severity: "error", line: 1, message: 'expected }, got EOF ""' }]);
 });
+
+const nestedSpec = (expr) =>
+  `topology {\n  level tenant\n  level workspace parent tenant\n}\nsubject member { anchor workspace; reach self; identifies sub; roles none }\nobject doc {\n  table docs\n  scoped tenant > workspace\n  relation owner: member via owner_id\n  permission view = ${expr} @rls maps select\n}\n`;
+const parens = (depth) => "(".repeat(depth) + "owner" + ")".repeat(depth);
+
+test("a spec nested to the limit validates", () => {
+  let deepest = "owner";
+  for (let i = 0; i < 32; i++) deepest = i % 2 ? `(owner and (${deepest} + @kind("k${i}")))` : `(@kind("k${i}") + (${deepest} and owner))`;
+  assert.deepEqual(findings(nestedSpec(deepest)), []);
+});
+
+test("a spec nested past the limit is an error on its line, and the compiler keeps answering", () => {
+  const refused = [{ severity: "error", line: 10, message: "parentheses nest more than 64 deep" }];
+  assert.deepEqual(findings(nestedSpec(parens(65))), refused);
+  assert.deepEqual(findings(nestedSpec(parens(100000))), refused);
+  assert.deepEqual(findings(nestedSpec(parens(1))), []);
+});
