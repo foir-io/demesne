@@ -141,6 +141,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
     - A runner that is thrown away after the job, such as a GitHub-hosted one, where a runaway kills only that job.
     - A shared self-hosted runner, only under a hard memory cap on the mutants step: systemd's `MemoryMax` with `MemorySwapMax=0`, or a container's `--memory` equal to its `--memory-swap`. Without a cap, Linux's out-of-memory killer may thrash the host and kill other jobs before it reaches the runaway.
   - Keep `-j` at 1 or 2 and set a short `--timeout`, so a stuck mutant ends quickly.
+  - `--in-diff` mutates every line the diff adds, and a moved file is all added lines. Moving a module mutates code that may never have been mutated, so expect misses in it that have nothing to do with the move.
   - `--timeout` bounds only the tests. If a build script runs the code being mutated, a looping mutant hangs the build instead, and builds have no timeout by default, so set `--build-timeout` too: a few times the slowest cold build.
   - Locally, prove tests with plants instead. If the repo has no mutants job in CI, say so and ask before adding one; don't fall back to running it locally.
 
@@ -154,6 +155,7 @@ Don't load all of the vendored text. Load only the file for the area you're work
 
 ### 8. Dependencies, features, unsafe
 
+- **Publish from an empty target directory.** `cargo publish --workspace` verifies each crate against the others through a local registry, and Cargo never rebuilds a registry crate whose name and version it has already compiled. A target directory that holds an earlier dry run at the same version verifies against that stale build: `CARGO_TARGET_DIR="$(mktemp -d)" cargo publish --workspace`.
 - **Declare dependencies once.** Put each dependency in `[workspace.dependencies]` and reference it with `.workspace = true` (M-CARGO-WORKSPACE). Before adding one, check its licence, maintenance and footprint; cargo-deny checks licences and advisories in CI.
 - **Features are additive** (M-FEATURES-ADDITIVE). CI checks each feature on its own.
 - **Don't leak dependency types.** A published crate keeps third-party types out of its public API unless they earn their place (M-DONT-LEAK-TYPES).
