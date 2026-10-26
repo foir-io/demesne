@@ -67,6 +67,44 @@ fn ties() -> Schema {
     sc
 }
 
+fn deeper() -> Schema {
+    let mut sc = Schema::new();
+    for (table, cols) in [
+        ("alphas", &["id"][..]),
+        ("betas", &["id", "alpha_id"][..]),
+        ("gammas", &["id", "alpha_id", "beta_id"][..]),
+        ("items", &["id", "alpha_id", "beta_id", "gamma_id", "aux_gamma_id"][..]),
+        ("marks", &["id", "alpha_id", "beta_id", "gamma_id"][..]),
+        ("tags", &["id", "beta_id", "gamma_id"][..]),
+    ] {
+        for c in cols {
+            sc.add_column(table, c, "uuid", *c == "aux_gamma_id");
+        }
+    }
+    for (table, column, target) in [
+        ("betas", "alpha_id", "alphas"),
+        ("gammas", "alpha_id", "alphas"),
+        ("gammas", "beta_id", "betas"),
+        ("items", "alpha_id", "alphas"),
+        ("items", "beta_id", "betas"),
+        ("items", "gamma_id", "gammas"),
+        ("items", "aux_gamma_id", "gammas"),
+        ("marks", "alpha_id", "alphas"),
+        ("marks", "beta_id", "betas"),
+        ("marks", "gamma_id", "gammas"),
+        ("tags", "beta_id", "betas"),
+        ("tags", "gamma_id", "gammas"),
+    ] {
+        sc.add_foreign_key(table, column, target, "id");
+    }
+    sc
+}
+
+#[test]
+fn the_deepest_parent_and_the_most_used_column_name_win() {
+    insta::assert_snapshot!("deeper", scaffold(&deeper(), ScaffoldOptions::default()).expect("alphas, betas and gammas are containers"));
+}
+
 #[test]
 fn ties_break_by_name_and_a_second_root_is_named_not_forked() {
     insta::assert_snapshot!("ties", scaffold(&ties(), ScaffoldOptions::default()).expect("regions, zones and sites are containers"));

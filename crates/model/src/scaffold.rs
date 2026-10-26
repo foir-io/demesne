@@ -45,7 +45,7 @@ fn compute_depth(
             continue;
         }
         let d = compute_depth(r, g, is_level, depth, parent);
-        if best_d.is_none_or(|b| d > b || (d == b && *r < best)) {
+        if best_d.is_none_or(|b| d > b) {
             best.clone_from(r);
             best_d = Some(d);
         }
@@ -86,7 +86,7 @@ fn name_containers(g: &FkGraph, threshold: usize) -> BTreeMap<String, String> {
         let mut best = String::new();
         let mut best_n: Option<usize> = None;
         for (col, &n) in &g.col_into[c] {
-            if best_n.is_none_or(|b| n > b || (n == b && *col < best)) {
+            if best_n.is_none_or(|b| n > b) {
                 best.clone_from(col);
                 best_n = Some(n);
             }
