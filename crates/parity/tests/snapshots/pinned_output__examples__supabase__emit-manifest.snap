@@ -8,7 +8,8 @@ exit: 0
   "manifest": 1,
   "functions": [
     "demesne.note_acl_grants(text, text, text)",
-    "demesne.notes_accessors_conditional(text)"
+    "demesne.notes_accessors_conditional(text)",
+    "demesne.notes_admits(text, jsonb)"
   ],
   "policies": [
     {

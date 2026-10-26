@@ -274,6 +274,7 @@ fn resource_access(a: &Args) -> R {
         "resourceAccess.listGrantsSQL" => Ok(Value::Str(r.list_grants_sql())),
         "resourceAccess.listGrantsArgs" => Ok(Value::Array(r.list_grants_args(&a.text("resourceID")?).iter().map(arg).collect())),
         "resourceAccess.accessorsSQL" => Ok(Value::Str(r.accessors_sql())),
+        "resourceAccess.admitsSQL" => Ok(Value::Str(r.admits_sql().map_err(|e| e.to_string())?)),
         _ => Err(unknown(a.op)),
     }
 }

@@ -1,5 +1,5 @@
 use crate::{Error, query_error};
-use demesne_emit_sql::{Object, objects};
+use demesne_emit_sql::{Object, objects, revoked_from_public};
 use demesne_runtime::quote_literal;
 use postgres::{Client, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
@@ -60,7 +60,7 @@ pub struct Drift {
 
 /// Compares the live database with `sql`, the spec's whole SQL, in both directions.
 ///
-/// Policies are compared by command, roles, permissive, `USING` and `WITH CHECK`, and functions and triggers by their whole definition. Orphans are the policies on a governed table, and the functions in a definer schema or triggers calling them, that the SQL does not create.
+/// Policies are compared by command, roles, permissive, `USING` and `WITH CHECK`, and functions and triggers by their whole definition. A function the SQL revokes `EXECUTE` on from PUBLIC is also changed when PUBLIC may execute it live. Orphans are the policies on a governed table, and the functions in a definer schema or triggers calling them, that the SQL does not create.
 ///
 /// Each generated object is created as a temporary copy and read back, so both sides are compared as Postgres deparses them. Nothing outside the session's temporary schema is created, and the transaction is rolled back. An `allow` entry is an orphan's object text, such as `function auth.f(text)`, to leave unreported; an entry that matches no orphan is reported as stale.
 ///
@@ -69,15 +69,17 @@ pub struct Drift {
 /// The SQL creates an object the manifest does not record, or a catalog query fails.
 pub fn drift(client: &mut Client, sql: &str, allow: &[String]) -> Result<Drift, Error> {
     let objs = objects(sql).map_err(|e| Error::sql(e.to_string()))?;
-    compare(client, &objs, allow).map_err(Error::query)
+    let revoked = revoked_from_public(sql).into_iter().collect();
+    compare(client, &objs, &revoked, allow).map_err(Error::query)
 }
 
-fn compare(client: &mut Client, objs: &[(Object, String)], allow: &[String]) -> Result<Drift, String> {
+fn compare(client: &mut Client, objs: &[(Object, String)], revoked: &BTreeSet<String>, allow: &[String]) -> Result<Drift, String> {
     let mut tx = client.transaction().map_err(|e| query_error(&e))?;
     tx.batch_execute("SET LOCAL check_function_bodies = off; SELECT set_config('search_path', current_setting('search_path') || ', pg_temp', true)")
         .map_err(|e| query_error(&e))?;
     let mut c = Comparison {
         objs,
+        revoked,
         live: BTreeMap::new(),
         shadow: BTreeMap::new(),
         governed: BTreeSet::new(),
@@ -108,6 +110,7 @@ struct PolicyDef {
 
 struct Comparison<'a> {
     objs: &'a [(Object, String)],
+    revoked: &'a BTreeSet<String>,
     live: BTreeMap<String, u32>,
     shadow: BTreeMap<String, (String, u32)>,
     governed: BTreeSet<String>,
@@ -253,6 +256,11 @@ impl Comparison<'_> {
                 self.found(DriftKind::Missing, object, "generated but not live (apply it)".into());
                 continue;
             };
+            let open = self.revoked.contains(sig)
+                && tx.query_one("SELECT has_function_privilege('public', $1::oid, 'EXECUTE')", &[&live_oid]).map_err(|e| query_error(&e))?.get::<_, bool>(0);
+            if open {
+                self.found(DriftKind::Changed, object.clone(), "PUBLIC may execute it, and the generated SQL revokes that (re-apply it)".into());
+            }
             let scratch = self.scratch.get(o).cloned().unwrap_or_default();
             let defs = tx
                 .query_one("SELECT pg_get_functiondef($1), pg_get_functiondef(to_regprocedure($2)::oid)", &[&live_oid, &scratch])
@@ -262,7 +270,8 @@ impl Comparison<'_> {
                 Some((l, g)) => {
                     self.found(DriftKind::Changed, object, format!("its live definition is not the generated one (re-apply it): live `{l}`, generated `{g}`"));
                 }
-                None => self.out.functions += 1,
+                None if !open => self.out.functions += 1,
+                None => {}
             }
         }
         self.schemas = schemas.into_iter().collect();

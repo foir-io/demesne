@@ -232,6 +232,12 @@ pub fn objects(sql: &str) -> Result<Vec<(Object, String)>, ManifestError> {
     read_objects(sql).map_err(ManifestError::new)
 }
 
+/// Returns the signature of each function `sql` revokes `EXECUTE` on from PUBLIC, such as `auth.notes_admits(text, jsonb)`, in script order.
+#[must_use]
+pub fn revoked_from_public(sql: &str) -> Vec<String> {
+    statements(sql).iter().filter_map(|stmt| stmt.strip_prefix("REVOKE EXECUTE ON FUNCTION ")?.strip_suffix(" FROM PUBLIC").map(str::to_string)).collect()
+}
+
 fn read_objects(sql: &str) -> Result<Vec<(Object, String)>, String> {
     let mut out = Vec::new();
     for stmt in statements(sql) {

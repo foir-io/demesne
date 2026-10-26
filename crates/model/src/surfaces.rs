@@ -1,6 +1,6 @@
 use crate::ConditionalExt;
 use crate::SpecExt;
-use crate::analysis::{grant_relation, object_grant_edge};
+use crate::analysis::{grant_relation, object_grant_edge, object_select_policy_perm};
 use crate::conditional::admission_names;
 use crate::error::Error;
 use crate::vocab::to_runtime;
@@ -146,6 +146,7 @@ pub trait SurfaceExt: SpecExt {
             discrim_col: s(edge.discrim_col.as_deref()),
             discrim_val: s(edge.discrim_val.as_deref()),
             accessor_fn: o(format!("{schema}.{}_accessors", obj.table)),
+            admits_fn: s(object_select_policy_perm(obj).map(|_| format!("{schema}.{}_admits", obj.table)).as_deref()),
             ..Default::default()
         };
         let cond = self.conditional_accessors(obj);

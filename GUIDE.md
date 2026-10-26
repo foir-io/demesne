@@ -326,13 +326,16 @@ path that cleans up rows which predate it.
 Claim-side builtins (`@kind`, `@session`, `@app_scope`, `@within`, `@scoped`,
 `@holds`, `@claim`) compose inside intersections: `(@kind("admin") and grantee:read)`
 enforces both in the emitted policy. Beside a relational term, the reverse
-accessor enumeration treats a claim-side conjunct as neutral — it drops the
-conjunct and may over-report, never under-report, because the forward RLS still
-enforces it. A `mode` conjunct is dropped on the same argument: it tests the row
-rather than the request, but it narrows just the same. A conjunction with no
-relational term is one conditional row instead (below), which carries every
-claim it requires, and the enumeration refuses, fail-closed, only a conjunction
-in which no term can be listed at all. A
+accessor enumeration lists the relation's principals as candidates and leaves a
+claim-side conjunct to `<table>_admits` (below), which decides which of them a
+given request admits. A row-side conjunct, `@row`, `not @row` or a `mode`, tests
+the row rather than the request, so the listing applies it: the relation's
+principals are listed only on rows where it holds. `@holds` narrows the listing
+too, but only the principals of its own store's kind, so a request carrying more
+than one subject's claims is never left out. A conjunction with no relational
+term is one conditional row instead (below), which carries every claim it
+requires, and the enumeration refuses, fail-closed, only a conjunction in which
+no term can be listed at all. A
 `@public`, `@open`, or `@self` conjunct still refuses: the first two would mean
 "everyone", and `@self` binds a row column to the caller's claim, which the
 enumerator cannot reverse.
@@ -375,11 +378,10 @@ so the term would be quietly ignored. That is a refusal, not a warning.
 
 #### Which side it lands on is the whole story
 
-On a **conjunct** a claim narrows. Beside a relational term, the reverse accessor
-enumeration treats it as neutral exactly like its claim-side siblings: the
-conjunct is dropped, the listing may over-report and can never under-report, and
-the forward policy still enforces it. Beside only other conditions, it joins
-their conditional row as one more claim the caller must carry.
+On a **conjunct** a claim narrows. Beside a relational term, the listing names
+the relation's principals as candidates and leaves the claim to
+`<table>_admits`, like its claim-side siblings. Beside only other conditions, it
+joins their conditional row as one more claim the caller must carry.
 
 On a **disjunct** it does the opposite. It admits callers no other branch
 admits, and unlike a relational term it names no subject that can be read back
@@ -442,15 +444,16 @@ A conjunction of ONLY such terms — `(@app_scope(exclude admin_owner) and
 claim. The others qualify it: each `@claim`, `@kind`, `@session` and
 non-nullable `@within` is one more entry in the row's claims, and every
 row-side condition is ANDed into the anchor. A conjunct no single row can
-state — a negated claim, `@scoped`, a nullable `@within`, `@holds` — is dropped,
-so the row may over-report and never under-reports. A conjunction carrying a
+state, such as a negated claim, `@scoped`, a nullable `@within` or `@holds`, is
+dropped: the row admits more callers than the conjunction does, never fewer, and
+`<table>_admits` decides the rest. A conjunction carrying a
 *relational* term is untouched: it is enumerable, and folding it would lose the
 subjects it can name.
 
 A **negated** claim is the mirror case and is simply dropped. `and not
 @claim(…)` narrows, and dropping any conjunct can only add names to the listing,
-so the enumeration over-reports and stays sound while the forward policy goes on
-enforcing it. Reversing it would be meaningless anyway — "everyone who does not
+so the listing names candidates the claim may refuse, and `<table>_admits`
+refuses them. Reversing it would be meaningless anyway — "everyone who does not
 carry the claim" is no more enumerable than everyone who does. This is not
 extended to the other claim-side builtins: `@app_scope` *gates* the role branch,
 so negating it is not a conjunct that lifts out cleanly, and `not @app_scope`
@@ -459,10 +462,10 @@ still fails closed.
 Two consequences follow. A `via object` **borrow** of a conditional object is
 refused at validation: the borrow compiles to a call to the other object's plain
 enumerator, and taking the identity half while losing the claim is the failure
-this is meant to prevent. And in the runtime, `ResourceAccessSurface` refuses
-a conditional object and names the alternative —
-`ConditionalResourceAccessSurface`, which returns the same surface over the
-conditional function, reports `IsConditional()`, and whose `AccessorsSQL()`
+this is meant to prevent. And in the runtime, `resource_access_surface` refuses
+a conditional object and names the alternative,
+`conditional_resource_access_surface`, which returns the same surface over the
+conditional function, reports `is_conditional()`, and whose `accessors_sql()`
 selects the claim columns. A caller written against the conditional constructor
 stays correct if a claim is added to the spec later.
 
@@ -475,6 +478,46 @@ belong to the object rather than to the expression, so both shapes pick them up
 from the same tail. A composition on a disjunct is added by that tail; one
 nested inside an `and` refuses, because a union arm added afterwards is not an
 intersection.
+
+#### The listing names candidates; `<table>_admits` decides
+
+The listing answers "who could read this row?", and it never names fewer
+principals than the policy admits. It can't state every condition a policy puts
+on the request: the containment every scoped policy starts with, a reach set
+from a grant or a closure, an `@external` predicate that takes a claim, a claim
+beside a relation. So for every object with a listing and a select policy, the
+definers also include
+
+```
+auth.<table>_admits(p_id, p_claims jsonb) → boolean
+```
+
+It answers whether a request carrying `p_claims` would see the row. It runs the
+table's own select policy, `admit` arms included, and its `require view`
+policy, with `p_claims` set as the request's claims for the length of the call;
+the caller's own claims are back in place when it returns. It runs the compiled
+predicate itself, so its answer is the database's, and there is no second
+evaluator to drift from it. It is `STRICT`: a NULL id or NULL claims returns
+NULL.
+
+Use the two together. List the candidates, build each one's claims the way your
+session code mints them, and ask `_admits` about each. In the runtime,
+`ResourceAccessSurface::admits_sql()` (`admitsSQL` in `@foir/demesne`) returns
+`SELECT auth.<table>_admits($1, $2::jsonb)`: bind the row's key and the claims
+as JSON text.
+
+`_admits` answers for any claims, so it can probe a row its caller can't read:
+whether the row exists, and whatever its policy tests. It is emitted with
+`EXECUTE` revoked from PUBLIC; grant it only to the role your trusted server
+code uses. If your definer schema has default privileges that grant execute on
+new functions, as an exposed schema on Supabase often does, revoke it from
+those roles too. `demesne diff` reports it as changed when PUBLIC may execute
+it live.
+
+A select `admit` arm adds a conditional row to the listing, with the `admit`
+source and the claims and row conditions the arm states. A conjunct no row can
+state, such as a relation confined by a claim, is left out of that row, so the
+row admits more callers than the arm does, never fewer.
 
 ### `@row`: narrow a term to rows with a value
 
@@ -502,11 +545,11 @@ that mode is open to everyone the term is scoped to, the mode column is what
 surface lets a row be set to. `@row` is none of those. It reads any column,
 changes nothing about how the object is tracked or shared, and only narrows.
 
-In the accessor listing a row term beside a relation is dropped, as a `mode`
-conjunct is: the listing may over-report and never under-reports, and the
-policy goes on enforcing it. Beside a claim or another term that makes the
-listing conditional, it is exact: the conditional row appears only where the
-row term holds.
+In the accessor listing a row term beside a relation narrows it exactly, as a
+`mode` conjunct does: the relation's principals are listed only on rows where
+the term holds. Beside a claim or another term that makes the listing
+conditional, it is exact the same way: the conditional row appears only where
+the row term holds.
 
 ### `transient`: a subject that stands for one request
 

@@ -75,13 +75,14 @@ fn diff_reports_every_way_the_live_database_differs_from_the_spec() {
 
     let clean = drift(&mut db, &sql, &[]).expect("diff runs");
     assert_eq!(clean.findings, [], "the database the SQL just built is in sync");
-    assert_eq!((clean.policies, clean.functions, clean.triggers), (2, 3, 1));
+    assert_eq!((clean.policies, clean.functions, clean.triggers), (2, 4, 1));
     assert_eq!(temporaries(&mut db), 0, "diff leaves nothing in the session");
 
     db.batch_execute(
         "ALTER POLICY notes_select ON d38_rows.notes USING (true);
          ALTER POLICY docs_select ON d38_rows.docs TO public;
          CREATE OR REPLACE FUNCTION d38_auth.note_acl_grants(p_member_id text, p_note_id text, p_access text) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT true $$;
+         GRANT EXECUTE ON FUNCTION d38_auth.notes_admits(text, jsonb) TO PUBLIC;
          DROP TRIGGER docs_obj_changelog ON d38_rows.docs;
          DROP FUNCTION d38_auth.docs_obj_changelog();
          CREATE POLICY rogue ON d38_rows.notes FOR SELECT USING (true);
@@ -99,6 +100,7 @@ fn diff_reports_every_way_the_live_database_differs_from_the_spec() {
             (DriftKind::Changed, "policy docs_select on d38_rows.docs"),
             (DriftKind::Changed, "policy notes_select on d38_rows.notes"),
             (DriftKind::Changed, "function d38_auth.note_acl_grants(text, text, text)"),
+            (DriftKind::Changed, "function d38_auth.notes_admits(text, jsonb)"),
             (DriftKind::Missing, "function d38_auth.docs_obj_changelog()"),
             (DriftKind::Invalid, "trigger docs_obj_changelog on d38_rows.docs"),
             (DriftKind::Orphan, "policy rogue on d38_rows.notes"),
@@ -120,6 +122,7 @@ fn diff_reports_every_way_the_live_database_differs_from_the_spec() {
         detail("function d38_auth.note_acl_grants(text, text, text)"),
         "its live definition is not the generated one (re-apply it): live `STABLE`, generated `STABLE STRICT SECURITY DEFINER`"
     );
+    assert_eq!(detail("function d38_auth.notes_admits(text, jsonb)"), "PUBLIC may execute it, and the generated SQL revokes that (re-apply it)");
     assert_eq!(
         detail("trigger docs_obj_changelog on d38_rows.docs"),
         "the generated trigger does not compile against the live database: function d38_auth.docs_obj_changelog() does not exist"

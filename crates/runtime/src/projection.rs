@@ -296,6 +296,7 @@ pub fn resource_access(v: &Value) -> Result<ResourceAccessSurface, Error> {
         discrim_col: r.str("discrimCol")?,
         discrim_val: r.str("discrimVal")?,
         accessor_fn: r.str("accessorFn")?,
+        admits_fn: r.str("admitsFn")?,
         conditional: r.flag("accessorsConditional")?,
         conditional_by: Str::Borrowed(""),
     })

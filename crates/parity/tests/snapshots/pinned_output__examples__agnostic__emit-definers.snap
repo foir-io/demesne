@@ -76,6 +76,27 @@ AS $$
     FROM assets WHERE asset_pk = p_id AND share = 'open'
 $$;
 
+CREATE OR REPLACE FUNCTION auth.assets_admits(p_id text, p_claims jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+DECLARE
+  prior text := current_setting('request.jwt.claims', true);
+  admitted boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', p_claims::text, true);
+  admitted := EXISTS (SELECT 1 FROM assets WHERE asset_pk = p_id AND ((auth.is_ops((current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR share = 'open' OR auth.asset_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'read') OR auth.asset_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write') OR auth.asset_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'delete')))));
+  PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
+  RETURN admitted;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION auth.assets_admits(text, jsonb) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION auth.spaces_accessors(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
 LANGUAGE sql
@@ -91,6 +112,27 @@ AS $$
     FROM spaces e JOIN crew_grants ra ON ra.member_kind = 'crew' AND ra.killed_at IS NULL AND ra.tenant_ref = e.tenant_ref AND ra.space_ref = e.space_pk JOIN crew_roles rr ON rr.row_id = ra.role_ref AND rr.slug IN ('editor', 'viewer')
     WHERE e.space_pk = p_id
 $$;
+
+CREATE OR REPLACE FUNCTION auth.spaces_admits(p_id text, p_claims jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+DECLARE
+  prior text := current_setting('request.jwt.claims', true);
+  admitted boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', p_claims::text, true);
+  admitted := EXISTS (SELECT 1 FROM spaces WHERE space_pk = p_id AND (auth.is_ops((current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_ref = (current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR auth.crew_has_space_role((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk) OR space_pk = (current_setting('request.jwt.claims', true)::json ->> 'spc')))));
+  PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
+  RETURN admitted;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION auth.spaces_admits(text, jsonb) FROM PUBLIC;
 
 
 --- stderr ---

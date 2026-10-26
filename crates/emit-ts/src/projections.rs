@@ -155,6 +155,7 @@ pub fn res_access(r: &rt::ResourceAccessSurface) -> Value {
         ("discrimCol", s(&r.discrim_col)),
         ("discrimVal", s(&r.discrim_val)),
         ("accessorFn", s(&r.accessor_fn)),
+        ("admitsFn", s(&r.admits_fn)),
         ("accessorsConditional", Value::Bool(r.conditional)),
     ])
 }

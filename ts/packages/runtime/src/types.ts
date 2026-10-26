@@ -166,6 +166,7 @@ export interface ResourceAccessSurface {
   discrimVal: string;
 
   accessorFn: string;
+  admitsFn: string;
   accessorsConditional: boolean;
 }
 

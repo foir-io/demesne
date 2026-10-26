@@ -9,12 +9,14 @@ exit: 0
   "functions": [
     "auth.doc_acl_grants(text, text, text)",
     "auth.docs_accessors_conditional(text)",
+    "auth.docs_admits(text, jsonb)",
     "auth.has_org_role(text)",
     "auth.is_root(text)",
     "auth.is_tenant_staff(text, text)",
     "auth.member_can_access_doc(text, text, text)",
     "auth.staff_has_workspace_role(text, text, text)",
-    "auth.workspaces_accessors(text)"
+    "auth.workspaces_accessors(text)",
+    "auth.workspaces_admits(text, jsonb)"
   ],
   "policies": [
     {

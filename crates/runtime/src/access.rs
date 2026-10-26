@@ -19,6 +19,7 @@ pub struct ResourceAccessSurface {
     pub discrim_col: Str,
     pub discrim_val: Str,
     pub accessor_fn: Str,
+    pub admits_fn: Str,
     pub conditional: bool,
     pub conditional_by: Str,
 }
@@ -32,7 +33,7 @@ impl ResourceAccessSurface {
     pub fn require_unconditional(self, object: &str) -> Result<Self, Error> {
         if self.conditional {
             return Err(Error::access(format!(
-                "ResourceAccessSurface: object {} admits readers its enumeration cannot name ({}), so {} lists only the accessors it can name and never the rest; call ConditionalResourceAccessSurface and decide what those rows mean for this caller",
+                "ResourceAccessSurface: object {} admits readers its enumeration cannot name ({}), so {} lists only the accessors it can name and never the rest; call conditional_resource_access_surface and decide what those rows mean for this caller",
                 demesne_gocompat::quote(object),
                 self.conditional_by,
                 self.accessor_fn
@@ -140,6 +141,25 @@ impl ResourceAccessSurface {
     #[must_use]
     pub fn conditional_by(&self) -> &str {
         &self.conditional_by
+    }
+
+    /// Returns the statement that asks whether a request carrying the claims bound to `$2` would see the row whose key is `$1`.
+    ///
+    /// It calls the table's `<table>_admits` function, which runs the table's own select policies against those claims, so the
+    /// answer is the database's. Bind `$2` to the claims as JSON text. The accessor listing names the candidates; this decides
+    /// each one exactly.
+    ///
+    /// # Errors
+    ///
+    /// The object's read permission compiles to no row-level security policy, so there is no `<table>_admits` to ask.
+    pub fn admits_sql(&self) -> Result<String, Error> {
+        if self.admits_fn.is_empty() {
+            return Err(Error::access(format!(
+                "ResourceAccessSurface: table {} has no select policy, so there is no admits function to ask",
+                demesne_gocompat::quote(&self.table)
+            )));
+        }
+        Ok(format!("SELECT {}($1, $2::jsonb)", self.admits_fn))
     }
 
     #[must_use]

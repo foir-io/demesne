@@ -96,6 +96,8 @@ function runCase(proj: any, c: OracleCase): unknown {
       return resourceAccess.listGrantsSQL(proj.resourceAccess[i.object]);
     case "resourceAccess.accessorsSQL":
       return resourceAccess.accessorsSQL(proj.resourceAccess[i.object]);
+    case "resourceAccess.admitsSQL":
+      return resourceAccess.admitsSQL(proj.resourceAccess[i.object]);
     case "resourceAccess.listGrantsArgs":
       return resourceAccess.listGrantsArgs(proj.resourceAccess[i.object], "rec1");
     case "resourceAccess.grantInsert":

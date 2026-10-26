@@ -167,6 +167,7 @@ pub(crate) fn resource_access(r: &rt::ResourceAccessSurface) -> String {
         .f("discrim_col", s(&r.discrim_col))
         .f("discrim_val", s(&r.discrim_val))
         .f("accessor_fn", s(&r.accessor_fn))
+        .f("admits_fn", s(&r.admits_fn))
         .f("conditional", r.conditional.to_string())
         .f("conditional_by", s(&r.conditional_by))
         .render()

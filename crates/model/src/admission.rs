@@ -1,6 +1,6 @@
 use crate::SpecExt;
 use crate::analysis::{Rels, rels_of};
-use crate::conditional::{accessor_tree_op, is_row_leaf, narrowing_accessor_leaf, not_kid};
+use crate::conditional::{accessor_tree_op, is_row_leaf, mode_row_sql, narrowing_accessor_leaf, not_kid, row_term_sql};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{Object, PermNode, Relation, Repr, Term, ViaColumn};
 
@@ -87,13 +87,8 @@ pub trait ConditionalExt: SpecExt {
                 ..Default::default()
             });
         }
-        if let Some(col) = t.mode_col() {
-            return Some(ConditionalAdmission {
-                source: "mode".into(),
-                principal_kind: t.mode_scope().into(),
-                row_cond: format!("{} = {}", col, quote_literal(t.mode_val())),
-                ..Default::default()
-            });
+        if let Some(row_cond) = mode_row_sql(t) {
+            return Some(ConditionalAdmission { source: "mode".into(), principal_kind: t.mode_scope().into(), row_cond, ..Default::default() });
         }
         if t.builtin() == "app_scope" {
             return Some(ConditionalAdmission { source: "app_scope".into(), row_cond: app_scope_exclusions(t, rels), ..Default::default() });
@@ -154,44 +149,28 @@ pub trait ConditionalExt: SpecExt {
     /// relational, and it has no conditional row.
     fn conditional_conjunction(&self, obj: &Object, n: &PermNode, rels: &Rels) -> Option<ConditionalAdmission> {
         let PermNode::And(kids) = n else { return None };
-        let mut admit: Option<ConditionalAdmission> = None;
-        let mut conds: Vec<String> = Vec::new();
-        let mut claims: Vec<ClaimMatch> = Vec::new();
-        for k in kids {
-            match conjunction_kid(self, obj, k, rels) {
-                ConjunctionKid::Unenumerable => return None,
-                ConjunctionKid::Narrowing => {}
-                ConjunctionKid::RowCond(c) => conds.push(c),
-                ConjunctionKid::Claims(c) => claims.extend(c),
-                ConjunctionKid::Admission(mut a) => {
-                    claims.append(&mut a.claims);
-                    match &admit {
-                        None => admit = Some(a),
-                        Some(_) => conds.extend((!a.row_cond.is_empty()).then_some(a.row_cond)),
-                    }
-                }
-            }
-        }
-        let mut admit = match admit {
-            Some(a) => a,
-            None if !claims.is_empty() => ConditionalAdmission { source: "claim".into(), ..Default::default() },
-            None => return None,
-        };
-        if !admit.row_cond.is_empty() {
-            conds.insert(0, std::mem::take(&mut admit.row_cond));
-        }
-        admit.row_cond = conds.join(" AND ");
-        admit.claims = claims;
-        Some(admit)
+        fold_conjunction(self, obj, kids, rels, Unstated::Refuse)
+    }
+
+    /// Returns one conditional row for each select `admit` arm, or for each branch of an arm that is a union.
+    ///
+    /// An arm names nobody the listing could enumerate, so each row has a NULL principal and the `admit` source. It carries
+    /// the claims and row conditions the arm states; a conjunct no row can state, such as a relation confined by a claim,
+    /// is left out, so the row may admit more callers than the arm does, never fewer.
+    fn admit_admissions(&self, obj: &Object, rels: &Rels) -> Vec<ConditionalAdmission> {
+        obj.admits.iter().filter(|a| a.ops.iter().any(|op| op == "select")).flat_map(|a| arm_admissions(self, obj, &a.tree, rels)).collect()
     }
 
     fn conditional_accessors(&self, obj: &Object) -> Vec<ConditionalAdmission> {
         let Some(sel) = crate::analysis::object_select_perm(obj) else { return Vec::new() };
         let rels = rels_of(obj);
-        if !accessor_tree_op(&sel.tree).is_empty() {
-            return self.adding_conditional_terms(obj, &sel.tree, &rels);
-        }
-        sel.tree.leaves().iter().flat_map(|t| self.union_admissions(obj, t, &rels)).collect()
+        let mut out = if accessor_tree_op(&sel.tree).is_empty() {
+            sel.tree.leaves().iter().flat_map(|t| self.union_admissions(obj, t, &rels)).collect()
+        } else {
+            self.adding_conditional_terms(obj, &sel.tree, &rels)
+        };
+        out.extend(self.admit_admissions(obj, &rels));
+        out
     }
 
     fn adding_conditional_terms(&self, obj: &Object, n: &PermNode, rels: &Rels) -> Vec<ConditionalAdmission> {
@@ -226,6 +205,57 @@ fn app_scope_exclusions(t: &Term, rels: &Rels) -> String {
     conds.join(" AND ")
 }
 
+#[derive(Clone, Copy)]
+enum Unstated {
+    Refuse,
+    Drop,
+}
+
+fn arm_admissions<S: ConditionalExt + ?Sized>(s: &S, obj: &Object, n: &PermNode, rels: &Rels) -> Vec<ConditionalAdmission> {
+    let row = match n {
+        PermNode::Or(kids) => return kids.iter().flat_map(|k| arm_admissions(s, obj, k, rels)).collect(),
+        PermNode::And(kids) => fold_conjunction(s, obj, kids, rels, Unstated::Drop),
+        other => fold_conjunction(s, obj, std::slice::from_ref(other), rels, Unstated::Drop),
+    };
+    row.into_iter().map(|a| ConditionalAdmission { source: "admit".into(), ..a }).collect()
+}
+
+fn fold_conjunction<S: ConditionalExt + ?Sized>(s: &S, obj: &Object, kids: &[PermNode], rels: &Rels, unstated: Unstated) -> Option<ConditionalAdmission> {
+    let mut admit: Option<ConditionalAdmission> = None;
+    let mut conds: Vec<String> = Vec::new();
+    let mut claims: Vec<ClaimMatch> = Vec::new();
+    for k in kids {
+        match conjunction_kid(s, obj, k, rels) {
+            ConjunctionKid::Unenumerable => match unstated {
+                Unstated::Refuse => return None,
+                Unstated::Drop => {}
+            },
+            ConjunctionKid::Narrowing => {}
+            ConjunctionKid::RowCond(c) => conds.push(c),
+            ConjunctionKid::Claims(c) => claims.extend(c),
+            ConjunctionKid::Admission(mut a) => {
+                claims.append(&mut a.claims);
+                match &admit {
+                    None => admit = Some(a),
+                    Some(_) => conds.extend((!a.row_cond.is_empty()).then_some(a.row_cond)),
+                }
+            }
+        }
+    }
+    let mut admit = match (admit, unstated) {
+        (Some(a), _) => a,
+        (None, _) if !claims.is_empty() => ConditionalAdmission { source: "claim".into(), ..Default::default() },
+        (None, Unstated::Refuse) => return None,
+        (None, Unstated::Drop) => ConditionalAdmission::default(),
+    };
+    if !admit.row_cond.is_empty() {
+        conds.insert(0, std::mem::take(&mut admit.row_cond));
+    }
+    admit.row_cond = conds.join(" AND ");
+    admit.claims = claims;
+    Some(admit)
+}
+
 enum ConjunctionKid {
     RowCond(String),
     Claims(Vec<ClaimMatch>),
@@ -247,7 +277,7 @@ fn conjunct_claims<S: ConditionalExt + ?Sized>(s: &S, obj: &Object, t: &Term) ->
 fn conjunction_kid<S: ConditionalExt + ?Sized>(s: &S, obj: &Object, k: &PermNode, rels: &Rels) -> ConjunctionKid {
     if let Some(inner) = not_kid(k) {
         if let Some(t) = inner.term().filter(|_| is_row_leaf(inner)) {
-            return ConjunctionKid::RowCond(format!("({} = {}) IS NOT TRUE", t.row_col(), quote_literal(t.row_val())));
+            return ConjunctionKid::RowCond(format!("({}) IS NOT TRUE", row_term_sql(t)));
         }
         if narrowing_accessor_leaf(inner) || inner.term().is_some_and(|t| s.conditional_term(t, rels).is_some()) {
             return ConjunctionKid::Narrowing;
@@ -255,7 +285,7 @@ fn conjunction_kid<S: ConditionalExt + ?Sized>(s: &S, obj: &Object, k: &PermNode
     }
     let PermNode::Leaf(t) = k else { return ConjunctionKid::Unenumerable };
     if is_row_leaf(k) {
-        return ConjunctionKid::RowCond(format!("{} = {}", t.row_col(), quote_literal(t.row_val())));
+        return ConjunctionKid::RowCond(row_term_sql(t));
     }
     if let Some(a) = s.conditional_term(t, rels) {
         return ConjunctionKid::Admission(a);

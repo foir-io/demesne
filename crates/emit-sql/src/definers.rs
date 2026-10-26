@@ -1,14 +1,16 @@
 use crate::Sql;
 use crate::error::Error;
-use crate::genfn::{DefinerArm, GenFn, binds_every, grant_edge_exists};
+use crate::genfn::{DefinerArm, Execute, GenFn, Language, binds_every, grant_edge_exists};
 use crate::rls::{Virtual, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
-    Rels, access_for, contains, go_type_name, grant_relation, grant_selector, mapped_perm, object_grant_edge, object_select_perm, object_uses_store_manage,
-    rels_of, store_manage_name, without_composition,
+    Rels, access_for, contains, go_type_name, grant_relation, grant_selector, mapped_perm, object_grant_edge, object_select_perm, object_select_policy_perm,
+    object_uses_store_manage, rels_of, store_manage_name, without_composition,
 };
-use demesne_model::conditional::{accessor_tree_op, admission_names, is_claim_leaf, is_composition_leaf, is_row_leaf, narrowing_accessor_leaf};
+use demesne_model::conditional::{
+    accessor_tree_op, admission_names, is_claim_leaf, is_composition_leaf, is_row_leaf, mode_row_sql, narrowing_accessor_leaf, row_term_sql,
+};
 use demesne_model::topology;
 use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
@@ -47,20 +49,30 @@ impl Definers {
 enum AndKid<'a> {
     Positive(&'a PermNode),
     Negative(&'a PermNode),
-    Narrowing(String),
+    Row(String),
+    Holds(&'a str),
+    Request,
 }
 
 fn classify_and_kid(k: &PermNode) -> AndKid<'_> {
     match k {
         PermNode::Not(inner) => match inner.term() {
-            Some(t) if is_claim_leaf(inner) || is_row_leaf(inner) => AndKid::Narrowing(format!("not {}", t.display())),
+            Some(t) if is_row_leaf(inner) => AndKid::Row(format!("({}) IS NOT TRUE", row_term_sql(t))),
+            Some(_) if is_claim_leaf(inner) => AndKid::Request,
             _ => AndKid::Negative(inner),
         },
         _ => match k.term() {
-            Some(t) if narrowing_accessor_leaf(k) => AndKid::Narrowing(t.display()),
+            Some(t) if is_row_leaf(k) => AndKid::Row(row_term_sql(t)),
+            Some(t) if let Some(cond) = mode_row_sql(t) => AndKid::Row(cond),
+            Some(t) if t.builtin() == "holds" => AndKid::Holds(t.holds_perm()),
+            Some(_) if narrowing_accessor_leaf(k) => AndKid::Request,
             _ => AndKid::Positive(k),
         },
     }
+}
+
+fn narrowing_names(kids: &[PermNode]) -> String {
+    kids.iter().filter(|k| !matches!(classify_and_kid(k), AndKid::Positive(_) | AndKid::Negative(_))).map(PermNode::display).collect::<Vec<_>>().join(", ")
 }
 
 fn kind_cond(rs: &RoleStore, alias: &str) -> Vec<String> {
@@ -648,8 +660,31 @@ impl Sql<'_> {
             }
             defs.named.insert(name);
             defs.fns.extend(self.accessor_definers(obj, &cond));
+            defs.add_each_once(self.admits_definer(obj)?);
         }
         Ok(())
+    }
+
+    fn admits_definer(&self, obj: &Object) -> R<Option<GenFn>> {
+        let Some(sel) = object_select_policy_perm(obj) else { return Ok(None) };
+        let policy = Sql { s: self.s, definer_body: false };
+        let virt = policy.virtual_levels()?;
+        let pred = policy.admission_with_require(obj, sel, self.s.owner_subject(leaf(obj)), &virt)?;
+        let setting = quote_literal(self.claims_setting().0);
+        Ok(Some(GenFn {
+            name: format!("{}_admits", obj.table),
+            sig: format!("p_id {}, p_claims jsonb", self.s.id_type()),
+            raw_body: true,
+            strict: true,
+            language: Language::Plpgsql,
+            execute: Execute::Granted,
+            body: format!(
+                "#variable_conflict use_column\nDECLARE\n  prior text := current_setting({setting}, true);\n  admitted boolean;\nBEGIN\n  PERFORM set_config({setting}, p_claims::text, true);\n  admitted := EXISTS (SELECT 1 FROM {} WHERE {} = p_id AND ({pred}));\n  PERFORM set_config({setting}, coalesce(prior, ''), true);\n  RETURN admitted;\nEND",
+                obj.table,
+                obj.pk()
+            ),
+            ..Default::default()
+        }))
     }
 
     fn accessor_coverage(&self, obj: &Object) -> (bool, String) {
@@ -739,6 +774,7 @@ impl Sql<'_> {
             }
             defs.named.insert(name);
             defs.fns.push(d);
+            defs.add_each_once(self.admits_definer(obj)?);
         }
         Ok(())
     }
@@ -1237,22 +1273,30 @@ impl Sql<'_> {
         let PermNode::And(kids) = n else { unreachable!() };
         let mut positives: Vec<&PermNode> = Vec::new();
         let mut negatives: Vec<&PermNode> = Vec::new();
-        let mut dropped: Vec<String> = Vec::new();
+        let mut rows: Vec<String> = Vec::new();
+        let mut holds: Vec<&str> = Vec::new();
         for k in kids {
             match classify_and_kid(k) {
                 AndKid::Positive(p) => positives.push(p),
                 AndKid::Negative(ng) => negatives.push(ng),
-                AndKid::Narrowing(d) => dropped.push(d),
+                AndKid::Row(cond) => rows.push(cond),
+                AndKid::Holds(perm) => holds.push(perm),
+                AndKid::Request => {}
             }
         }
         if positives.is_empty() {
-            if !dropped.is_empty() {
-                return Err(format!("a conjunction of only narrowing terms ({}) leaves no relational term to enumerate", dropped.join(", ")));
+            let narrowing = narrowing_names(kids);
+            if !narrowing.is_empty() {
+                return Err(format!("a conjunction of only narrowing terms ({narrowing}) leaves no relational term to enumerate"));
             }
             return Err("a conjunction needs a positive relational term to enumerate".into());
         }
         let base = self.accessor_tree_sql(obj, positives[0], rels)?;
         let mut filters = Vec::new();
+        if !rows.is_empty() {
+            filters.push(format!("EXISTS (SELECT 1 FROM {} WHERE {} = p_id AND {})", obj.table, obj.pk(), rows.join(" AND ")));
+        }
+        filters.extend(holds.into_iter().filter_map(|perm| self.holds_filter(obj, perm)));
         for p in &positives[1..] {
             let sub = self.accessor_tree_sql(obj, p, rels)?;
             filters.push(format!(
@@ -1269,6 +1313,17 @@ impl Sql<'_> {
             return Ok(base);
         }
         Ok(format!("SELECT a.* FROM ({}) a(source, principal_kind, principal_id, access)\n    WHERE {}", base, filters.join("\n      AND ")))
+    }
+
+    fn holds_filter(&self, obj: &Object, perm: &str) -> Option<String> {
+        let rs = self.s.holds_role_store(perm).ok()?;
+        let kind = rs.kind_val.as_deref()?;
+        self.s.subject_by_name(kind).filter(|sub| sub.identifies() == self.s.admin_identify())?;
+        let held = self.holds_accessor_branch(obj, perm)?;
+        Some(format!(
+            "(a.principal_kind IS DISTINCT FROM {} OR (a.principal_kind, a.principal_id) IN (SELECT b.principal_kind, b.principal_id FROM ({held}) b(source, principal_kind, principal_id, access)))",
+            quote_literal(kind)
+        ))
     }
 
     fn reach_accessor_branch(&self, obj: &Object, t: &Term, rels: &Rels) -> Option<String> {

@@ -281,6 +281,7 @@ export const recordAccess: ResourceAccessSurface = {
   discrimCol: "resource_type",
   discrimVal: "record",
   accessorFn: "auth.records_accessors",
+  admitsFn: "auth.records_admits",
   accessorsConditional: false,
 };
 

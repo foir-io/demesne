@@ -43,3 +43,7 @@ export function listGrantsArgs(p: ResourceAccessSurface, resourceID: string): Sq
 export function accessorsSQL(p: ResourceAccessSurface): string {
   return run("resourceAccess.accessorsSQL", { surface: p });
 }
+
+export function admitsSQL(p: ResourceAccessSurface): string {
+  return run("resourceAccess.admitsSQL", { surface: p });
+}

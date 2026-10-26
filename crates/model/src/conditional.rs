@@ -1,6 +1,7 @@
 use crate::ConditionalAdmission;
 use crate::analysis::Rels;
-use demesne_syntax::{PermNode, Repr};
+use demesne_runtime::quote_literal;
+use demesne_syntax::{PermNode, Repr, Term};
 
 pub fn accessor_tree_op(n: &PermNode) -> &'static str {
     match n {
@@ -14,6 +15,18 @@ pub fn accessor_tree_op(n: &PermNode) -> &'static str {
 #[must_use]
 pub fn is_row_leaf(n: &PermNode) -> bool {
     matches!(n, PermNode::Leaf(t) if t.builtin() == "row")
+}
+
+/// Returns the SQL a `@row` term compiles to: true of a row whose column holds the value.
+#[must_use]
+pub fn row_term_sql(t: &Term) -> String {
+    format!("{} = {}", t.row_col(), quote_literal(t.row_val()))
+}
+
+/// Returns the SQL a `mode` term tests on the row, without the plane it may be scoped to.
+#[must_use]
+pub fn mode_row_sql(t: &Term) -> Option<String> {
+    t.mode_col().map(|col| format!("{col} = {}", quote_literal(t.mode_val())))
 }
 
 #[must_use]

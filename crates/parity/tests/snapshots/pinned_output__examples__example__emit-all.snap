@@ -89,6 +89,27 @@ AS $$
     FROM docs WHERE id = p_id AND visibility = 'public_world'
 $$;
 
+CREATE OR REPLACE FUNCTION auth.docs_admits(p_id text, p_claims jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+DECLARE
+  prior text := current_setting('request.jwt.claims', true);
+  admitted boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', p_claims::text, true);
+  admitted := EXISTS (SELECT 1 FROM docs WHERE id = p_id AND ((auth.is_root((current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') IS NULL) OR (tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (current_setting('request.jwt.claims', true)::json ->> 'member_id') OR visibility = 'public_project' OR visibility = 'public_world' OR auth.doc_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'read') OR auth.doc_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write') OR auth.doc_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'delete')))));
+  PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
+  RETURN admitted;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION auth.docs_admits(text, jsonb) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION auth.workspaces_accessors(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
 LANGUAGE sql
@@ -104,6 +125,27 @@ AS $$
     FROM workspaces e JOIN role_grants ra ON ra.grantee_kind = 'staff' AND ra.revoked_at IS NULL AND ra.tenant_id = e.tenant_id AND ra.workspace_id = e.id JOIN roles rr ON rr.id = ra.role_id AND rr.key IN ('ws_editor', 'ws_viewer')
     WHERE e.id = p_id
 $$;
+
+CREATE OR REPLACE FUNCTION auth.workspaces_admits(p_id text, p_claims jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+DECLARE
+  prior text := current_setting('request.jwt.claims', true);
+  admitted boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', p_claims::text, true);
+  admitted := EXISTS (SELECT 1 FROM workspaces WHERE id = p_id AND (auth.is_root((current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.is_tenant_staff((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id) OR auth.staff_has_workspace_role((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, id) OR id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id')))));
+  PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
+  RETURN admitted;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION auth.workspaces_admits(text, jsonb) FROM PUBLIC;
 
 
 ALTER TABLE public.docs ENABLE ROW LEVEL SECURITY;

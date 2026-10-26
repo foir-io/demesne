@@ -84,6 +84,7 @@ export const resourceAccess: Record<string, ResourceAccessSurface> = {
     "discrimCol": "",
     "discrimVal": "",
     "accessorFn": "demesne.notes_accessors_conditional",
+    "admitsFn": "demesne.notes_admits",
     "accessorsConditional": true
   }
 };

@@ -194,6 +194,13 @@
         "kind": "resourceAccess.accessorsSQL"
       },
       {
+        "expect": "SELECT auth.records_admits($1, $2::jsonb)",
+        "input": {
+          "object": "record"
+        },
+        "kind": "resourceAccess.admitsSQL"
+      },
+      {
         "expect": [
           "rec1",
           "record"
@@ -385,6 +392,7 @@
           "discrimCol": "resource_type",
           "discrimVal": "record",
           "accessorFn": "auth.records_accessors_conditional",
+          "admitsFn": "auth.records_admits",
           "accessorsConditional": true
         }
       },

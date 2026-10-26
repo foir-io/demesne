@@ -16,8 +16,8 @@ pub use asynch::AsyncIndex;
 pub use changelog::{CHANGELOG_CHANNEL, ChangelogTrigger, ObjectChangelogTrigger};
 pub use closure::{ClosureTrigger, GroupTrigger, MaterializedFlat};
 pub use error::{Error, ManifestError};
-pub use genfn::{DefinerArm, GenFn, definers_sql};
-pub use manifest::{Manifest, Object, objects};
+pub use genfn::{DefinerArm, Execute, GenFn, Language, definers_sql};
+pub use manifest::{Manifest, Object, objects, revoked_from_public};
 pub use rls::{Policy, RlsResult, scan_definers};
 
 use demesne_gocompat::quote;

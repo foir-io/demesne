@@ -31,10 +31,11 @@ fn a_migration_drops_exactly_what_the_previous_surface_had_and_this_one_does_not
             "DROP FUNCTION IF EXISTS auth.docs_obj_changelog();",
             "DROP FUNCTION IF EXISTS auth.note_acl_grants(text, text, text);",
             "DROP FUNCTION IF EXISTS auth.notes_accessors_conditional(text);",
+            "DROP FUNCTION IF EXISTS auth.notes_admits(text, jsonb);",
         ]
     );
-    assert!(drops.contains("WHERE (n.nspname, p.proname) IN (('auth'::name, 'docs_obj_changelog'::name), ('auth'::name, 'note_acl_grants'::name), ('auth'::name, 'notes_accessors_conditional'::name))"), "{drops}");
-    assert!(drops.contains("AND p.oid <> ALL (array_remove(ARRAY[to_regprocedure('auth.notes_accessors_conditional(uuid)')::oid]::oid[], NULL))"), "{drops}");
+    assert!(drops.contains("WHERE (n.nspname, p.proname) IN (('auth'::name, 'docs_obj_changelog'::name), ('auth'::name, 'note_acl_grants'::name), ('auth'::name, 'notes_accessors_conditional'::name), ('auth'::name, 'notes_admits'::name))"), "{drops}");
+    assert!(drops.contains("AND p.oid <> ALL (array_remove(ARRAY[to_regprocedure('auth.notes_accessors_conditional(uuid)')::oid, to_regprocedure('auth.notes_admits(uuid, jsonb)')::oid]::oid[], NULL))"), "{drops}");
     assert!(drops.contains("-- table auth._authz_changelog is no longer emitted; it is not dropped, as it holds data"), "{drops}");
     assert!(drops.contains("-- table public.docs is no longer governed; row level security stays enabled and forced"), "{drops}");
 }
@@ -49,7 +50,7 @@ fn a_migration_from_its_own_surface_is_the_plain_sql() {
 #[test]
 fn the_manifest_reads_back_what_it_wrote() {
     let m = Sql::new(&spec("d15-before.demesne")).manifest().expect("a manifest");
-    assert_eq!(m.functions.len(), 3, "{m:?}");
+    assert_eq!(m.functions.len(), 4, "{m:?}");
     assert_eq!(Manifest::from_json(&m.to_json()), Ok(m));
 }
 

@@ -75,7 +75,7 @@ terms used to be refused as unenumerable; it now enumerates them.
 What adopters see: an object whose select names `@kind`, `@self`, `@session`,
 `@within` or `@public` now has `<table>_accessors_conditional` in place of
 `<table>_accessors`, and `ResourceAccessSurface` refuses it, as it refuses any
-conditional object; read it through `ConditionalResourceAccessSurface` and
+conditional object; read it through `conditional_resource_access_surface` and
 decide what each condition means for the caller. Code that switches on
 `source` meets `holds`, `role`, `public` and `scope`.
 
@@ -110,6 +110,51 @@ What adopters change:
 - In Rust, `demesne_model::ConditionalAdmission` carries `claims: Vec<ClaimMatch>`
   in place of `claim_key`, `claim_val` and `claim_val_col`, and
   `ConditionalExt::conditional_conjunction` takes the object.
+
+### Breaking: `<table>_admits` gives the exact answer, and the listing names candidates
+
+The accessor listing can't state every condition a select policy puts on a
+request: the containment every scoped policy starts with, a reach set from a
+grant or a closure, an `@external` predicate that takes a claim, or a claim
+beside a relation. It named the candidates and left those conditions out, so
+nothing answered "can this person read this row?" exactly.
+
+Every object with a listing and a select policy now also gets
+`auth.<table>_admits(p_id, p_claims jsonb) → boolean`. It runs the table's own
+select policy, `admit` arms included, and its `require view` policy, with
+`p_claims` as the request's claims, and puts the caller's claims back when it
+returns. Its answer is the database's, for every policy, reach sets and
+`@external` included.
+
+- It's emitted with `EXECUTE` revoked from PUBLIC: it answers for any claims,
+  so it can probe a row. Grant it to the role your trusted server code uses.
+  `demesne diff` reports it as changed when PUBLIC may execute it live.
+- `ResourceAccessSurface` gains `admits_fn` and `admits_sql()` (`admitsFn` and
+  `admitsSQL` in `@foir/demesne`), which returns
+  `SELECT auth.<table>_admits($1, $2::jsonb)`. The runtime refuses a projection
+  without `admitsFn`, so regenerate projections made before v1.
+
+The listing changes in three ways:
+
+- A row-side conjunct beside a relation (`@row`, `not @row` or `mode`) used to
+  be dropped. It now narrows the listing exactly: `(owner and @row(status,
+  "open"))` names the owner only on open rows.
+- `@holds` beside a relation narrows the principals of its own store's kind.
+  Principals of other kinds stay, so a request that carries two subjects'
+  claims is never left out.
+- A select `admit` arm was missing from the listing, so a caller only the arm
+  admits appeared nowhere. Each arm now adds a conditional row with the `admit`
+  source and the claims it states, and an object with one lists through
+  `<table>_accessors_conditional`.
+
+What adopters change:
+
+- Apply the new functions, and grant `_admits` only where it's needed.
+- Read an object with a select `admit` arm through
+  `conditional_resource_access_surface`.
+- Treat the listing as the candidates, and ask `_admits` for the exact answer.
+- In Rust, `demesne_emit_sql::GenFn` gains `language` and `execute`, so a struct
+  literal needs both, or `..Default::default()`.
 
 ### Breaking: objects that would overwrite each other's SQL on one table are refused
 

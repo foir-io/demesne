@@ -111,6 +111,7 @@ fn writer_case(proj: &Value, kind: &str, i: &Value) -> Option<Value> {
         "resourceAccess.setVisibilitySQL" => Value::Str(acc().set_visibility_sql()),
         "resourceAccess.listGrantsSQL" => Value::Str(acc().list_grants_sql()),
         "resourceAccess.accessorsSQL" => Value::Str(acc().accessors_sql()),
+        "resourceAccess.admitsSQL" => Value::Str(acc().admits_sql().expect("the oracle's resource-access objects read through a select policy")),
         "resourceAccess.listGrantsArgs" => args(&acc().list_grants_args("rec1")),
         "resourceAccess.grantInsert" => {
             stmt(acc().grant_insert(&strings(field(i, "scope")), &text(i, "resourceID"), &text(i, "kind"), &text(i, "principalID"), &text(i, "access")))
@@ -138,5 +139,5 @@ fn rust_runtime_passes_the_committed_oracle() {
         }
     }
     assert!(failures.is_empty(), "{} of {total} oracle cases differ:\n{}", failures.len(), failures.join("\n"));
-    assert_eq!(total, 536, "the committed oracle carries 536 cases");
+    assert_eq!(total, 537, "the committed oracle carries 537 cases");
 }

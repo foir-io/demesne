@@ -5,6 +5,7 @@ use demesne_model::SpecExt;
 use demesne_model::analysis::{
     Rels, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
 };
+use demesne_model::conditional::{mode_row_sql, row_term_sql};
 use demesne_model::topology;
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
@@ -185,11 +186,15 @@ pub(crate) fn leaf(obj: &Object) -> &str {
 impl Sql<'_> {
     #[must_use]
     pub fn claim(&self, key: &str) -> String {
-        let (setting, cast) = match &self.s.claims {
+        let (setting, cast) = self.claims_setting();
+        format!("(current_setting({}, true)::{cast} ->> {})", quote_literal(setting), quote_literal(key))
+    }
+
+    pub(crate) fn claims_setting(&self) -> (&str, &str) {
+        match &self.s.claims {
             Some(c) => (c.setting.as_str(), c.cast.as_str()),
             None => ("request.jwt.claims", "json"),
-        };
-        format!("(current_setting({}, true)::{cast} ->> {})", quote_literal(setting), quote_literal(key))
+        }
     }
 
     #[must_use]
@@ -204,10 +209,7 @@ impl Sql<'_> {
 
     #[must_use]
     pub fn session_claim(&self, key: &str) -> String {
-        let (setting, cast) = match &self.s.claims {
-            Some(c) => (c.setting.as_str(), c.cast.as_str()),
-            None => ("request.jwt.claims", "json"),
-        };
+        let (setting, cast) = self.claims_setting();
         format!("(NULLIF(current_setting({}, true), '')::{cast} ->> {})", quote_literal(setting), quote_literal(key)) + &self.s.id_cast()
     }
 
@@ -663,8 +665,7 @@ impl Sql<'_> {
     }
 
     fn emit_term(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
-        if let Some(col) = t.mode_col() {
-            let mut frag = format!("{} = {}", col, quote_literal(t.mode_val()));
+        if let Some(mut frag) = mode_row_sql(t) {
             if !t.mode_scope().is_empty() {
                 frag = format!("{} AND {}", frag, self.mode_plane_scope(t.mode_scope(), cust_claim));
             }
@@ -731,7 +732,7 @@ impl Sql<'_> {
             "session" => self.rls_emit_session(obj, pm, t, rels, cust_claim),
             "kind" => Ok(vec![format!("{} = {}", self.claim("kind"), quote_literal(t.kind_val()))]),
             "claim" => Ok(vec![format!("{} = {}", self.claim(t.claim_key()), quote_literal(t.claim_val()))]),
-            "row" => Ok(vec![format!("{} = {}", t.row_col(), quote_literal(t.row_val()))]),
+            "row" => Ok(vec![row_term_sql(t)]),
             "within" => {
                 let col = self.s.scope_col(obj, t.within_level());
                 let claim = self.id_claim(&self.s.claim_key_for_level(t.within_level()));

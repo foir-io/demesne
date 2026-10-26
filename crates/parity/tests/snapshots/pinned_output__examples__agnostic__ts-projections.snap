@@ -209,6 +209,7 @@ export const resourceAccess: Record<string, ResourceAccessSurface> = {
     "discrimCol": "",
     "discrimVal": "",
     "accessorFn": "auth.assets_accessors_conditional",
+    "admitsFn": "auth.assets_admits",
     "accessorsConditional": true
   }
 };

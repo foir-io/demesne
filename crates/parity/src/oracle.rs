@@ -280,6 +280,8 @@ impl OracleEntry {
         self.cases.push(case("resourceAccess.setVisibilitySQL", obj_in(), Value::Str(r.set_visibility_sql())));
         self.cases.push(case("resourceAccess.listGrantsSQL", obj_in(), Value::Str(r.list_grants_sql())));
         self.cases.push(case("resourceAccess.accessorsSQL", obj_in(), Value::Str(r.accessors_sql())));
+        let admits = r.admits_sql().expect("every resource-access object in the oracle spec reads through a select policy");
+        self.cases.push(case("resourceAccess.admitsSQL", obj_in(), Value::Str(admits)));
         self.cases.push(case("resourceAccess.listGrantsArgs", obj_in(), args(&r.list_grants_args("rec1"))));
         self.cases.push(case(
             "resourceAccess.grantInsert",

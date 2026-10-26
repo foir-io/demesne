@@ -111,6 +111,11 @@ pub fn object_select_perm(o: &Object) -> Option<&Perm> {
 }
 
 #[must_use]
+pub fn object_select_policy_perm(o: &Object) -> Option<&Perm> {
+    object_select_perm(o).filter(|pm| pm.has_layer("rls") && !pm.predicate_only)
+}
+
+#[must_use]
 pub fn mapped_perm<'a>(o: &'a Object, verb: &str) -> Option<&'a Perm> {
     o.perms.iter().find(|pm| pm.verb == verb && pm.has_layer("rls") && !pm.predicate_only && !op_to_cmd(pm.maps()).is_empty())
 }

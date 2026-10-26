@@ -10,6 +10,11 @@ describe("resource access surface (discriminated store)", () => {
     expect(resourceAccess.grantKindAllowed(recordAccess, "nobody")).toBe(false);
   });
 
+  it("admitsSQL asks the table's admits function, and refuses a table with no select policy", () => {
+    expect(resourceAccess.admitsSQL(recordAccess)).toBe("SELECT auth.records_admits($1, $2::jsonb)");
+    expect(() => resourceAccess.admitsSQL({ ...recordAccess, admitsFn: "" })).toThrow(/records.*no select policy/);
+  });
+
   it("modeSQL / setVisibilitySQL / accessorsSQL", () => {
     expect(resourceAccess.modeSQL(recordAccess)).toBe("SELECT access_mode FROM records WHERE id = $1");
     expect(resourceAccess.setVisibilitySQL(recordAccess)).toBe("UPDATE records SET access_mode = $1 WHERE id = $2");
