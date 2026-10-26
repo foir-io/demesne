@@ -67,13 +67,13 @@ AS $$
 $$;
 
 CREATE OR REPLACE FUNCTION auth.docs_accessors_conditional(p_id text)
-RETURNS TABLE(source text, principal_kind text, principal_id text, access text, via_claim_key text, via_claim_value text)
+RETURNS TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text AS via_claim_key, NULL::text AS via_claim_value
+  SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text[] AS via_claim_keys, NULL::text[] AS via_claim_values
     FROM (
   SELECT 'owner'::text AS source, 'member'::text AS principal_kind, owner_id AS principal_id, 'write'::text AS access
     FROM docs WHERE id = p_id AND owner_id IS NOT NULL
@@ -82,10 +82,10 @@ AS $$
     FROM doc_acl WHERE doc_id = p_id
     ) b(source, principal_kind, principal_id, access)
   UNION ALL
-  SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text, NULL::text
+  SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text[], NULL::text[]
     FROM docs WHERE id = p_id AND visibility = 'public_project'
   UNION ALL
-  SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text, NULL::text
+  SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text[], NULL::text[]
     FROM docs WHERE id = p_id AND visibility = 'public_world'
 $$;
 

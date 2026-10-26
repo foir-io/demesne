@@ -1,4 +1,4 @@
-use demesne_model::{ConditionalAdmission, ConditionalExt};
+use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 
 const SPEC: &str = r"topology {
   level platform virtual
@@ -29,21 +29,59 @@ fn admissions(view: &str) -> Vec<ConditionalAdmission> {
     s.conditional_accessors(doc)
 }
 
-fn claim(key: &str, val: &str, row_cond: &str) -> ConditionalAdmission {
-    ConditionalAdmission { source: "claim".into(), claim_key: key.into(), claim_val: val.into(), row_cond: row_cond.into(), ..Default::default() }
+fn lit(key: &str, val: &str) -> ClaimMatch {
+    ClaimMatch { key: key.into(), value: ClaimValue::Literal(val.into()) }
+}
+
+fn col(key: &str, column: &str) -> ClaimMatch {
+    ClaimMatch { key: key.into(), value: ClaimValue::Column(column.into()) }
+}
+
+fn row(source: &str, claims: &[ClaimMatch], row_cond: &str) -> ConditionalAdmission {
+    ConditionalAdmission { source: source.into(), claims: claims.to_vec(), row_cond: row_cond.into(), ..Default::default() }
 }
 
 #[test]
-fn a_conjunction_of_claims_admits_on_its_first_claim() {
-    assert_eq!(admissions(r#"owner + (@claim("tier", "gold") and @claim("region", "eu"))"#), [claim("tier", "gold", "")]);
+fn a_conjunction_of_claims_requires_every_claim() {
+    assert_eq!(admissions(r#"owner + (@claim("tier", "gold") and @claim("region", "eu"))"#), [row("claim", &[lit("tier", "gold"), lit("region", "eu")], "")]);
+}
+
+#[test]
+fn a_claim_side_conjunct_joins_the_row_in_the_order_written() {
+    assert_eq!(admissions(r#"owner + (@kind("staff") and @claim("tier", "gold"))"#), [row("claim", &[lit("kind", "staff"), lit("tier", "gold")], "")]);
+    assert_eq!(
+        admissions(r#"owner + (@claim("tier", "gold") and @within(tenant))"#),
+        [row("claim", &[lit("tier", "gold"), col("tenant_id", "tenant_id")], "")]
+    );
+}
+
+#[test]
+fn a_conjunction_of_claim_side_terms_alone_lists_one_claim_row() {
+    assert_eq!(admissions(r#"owner + (@kind("staff") and @session)"#), [row("claim", &[lit("kind", "staff"), col("project_id", "project_id")], "")]);
+}
+
+#[test]
+fn a_mode_row_carries_the_claims_beside_it() {
+    assert_eq!(admissions(r#"owner + (mode visibility = "open" and @kind("staff"))"#), [row("mode", &[lit("kind", "staff")], "visibility = 'open'")]);
 }
 
 #[test]
 fn a_later_admissions_row_condition_joins_the_first_admissions() {
-    assert_eq!(admissions(r#"owner + (@claim("tier", "gold") and mode visibility = "open")"#), [claim("tier", "gold", "visibility = 'open'")]);
+    assert_eq!(admissions(r#"owner + (@claim("tier", "gold") and mode visibility = "open")"#), [row("claim", &[lit("tier", "gold")], "visibility = 'open'")]);
 }
 
 #[test]
-fn a_negated_narrowing_term_leaves_the_conjunction_listable() {
-    assert_eq!(admissions(r#"owner + (@claim("tier", "gold") and @row(status, "open") and not @kind("guest"))"#), [claim("tier", "gold", "status = 'open'")]);
+fn a_conjunct_no_row_can_state_is_left_out_and_never_narrows_the_listing_below_the_policy() {
+    for conjunct in ["not @kind(\"guest\")", "@scoped", "@within(tenant nullable)"] {
+        assert_eq!(
+            admissions(&format!(r#"owner + (@claim("tier", "gold") and @row(status, "open") and {conjunct})"#)),
+            [row("claim", &[lit("tier", "gold")], "status = 'open'")],
+            "{conjunct}"
+        );
+    }
+}
+
+#[test]
+fn a_conjunction_beside_a_relation_lists_no_conditional_row() {
+    assert_eq!(admissions(r#"owner + (grantee:read and @claim("tier", "gold"))"#), []);
 }

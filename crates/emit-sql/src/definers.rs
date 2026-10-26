@@ -11,7 +11,7 @@ use demesne_model::analysis::{
 use demesne_model::conditional::{accessor_tree_op, admission_names, is_claim_leaf, is_composition_leaf, is_row_leaf, narrowing_accessor_leaf};
 use demesne_model::topology;
 use demesne_model::vocab::to_runtime;
-use demesne_model::{ConditionalAdmission, ConditionalExt};
+use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
     Grant, Object, Perm, PermNode, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
@@ -83,6 +83,21 @@ fn or(o: Option<&str>) -> &str {
 
 fn leaf(obj: &Object) -> &str {
     obj.scoped.last().map_or("", String::as_str)
+}
+
+fn claim_arrays(claims: &[ClaimMatch]) -> (String, String) {
+    if claims.is_empty() {
+        return ("NULL::text[]".into(), "NULL::text[]".into());
+    }
+    let keys: Vec<String> = claims.iter().map(|c| quote_literal(&c.key)).collect();
+    let values: Vec<String> = claims
+        .iter()
+        .map(|c| match &c.value {
+            ClaimValue::Literal(v) => quote_literal(v),
+            ClaimValue::Column(col) => format!("{col}::text"),
+        })
+        .collect();
+    (format!("ARRAY[{}]::text[]", keys.join(", ")), format!("ARRAY[{}]::text[]", values.join(", ")))
 }
 
 fn sql_text_or_null(v: &str) -> String {
@@ -1037,7 +1052,7 @@ impl Sql<'_> {
     fn conditional_accessor_gen_fn(&self, obj: &Object, base: &GenFn, adms: &[ConditionalAdmission]) -> GenFn {
         let id_t = self.s.id_type();
         let mut branches = vec![format!(
-            "SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text AS via_claim_key, NULL::text AS via_claim_value\n    FROM (\n{}\n    ) b(source, principal_kind, principal_id, access)",
+            "SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text[] AS via_claim_keys, NULL::text[] AS via_claim_values\n    FROM (\n{}\n    ) b(source, principal_kind, principal_id, access)",
             base.body
         )];
         for a in adms {
@@ -1045,17 +1060,14 @@ impl Sql<'_> {
             if !a.row_cond.is_empty() {
                 write!(where_, " AND {}", a.row_cond).expect("fmt::Write for String never fails");
             }
-            let mut claim_val = sql_text_or_null(&a.claim_val);
-            if !a.claim_val_col.is_empty() {
-                claim_val = format!("{}::text", a.claim_val_col);
-            }
+            let (keys, values) = claim_arrays(&a.claims);
             branches.push(format!(
                 "SELECT {}::text, {}, NULL::{}, 'read'::text, {}, {}\n    FROM {} WHERE {}",
                 quote_literal(&a.source),
                 sql_text_or_null(&a.principal_kind),
                 id_t,
-                sql_text_or_null(&a.claim_key),
-                claim_val,
+                keys,
+                values,
                 obj.table,
                 where_
             ));
@@ -1063,7 +1075,7 @@ impl Sql<'_> {
         GenFn {
             name: format!("{}_accessors_conditional", obj.table),
             sig: format!("p_id {id_t}"),
-            returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text, via_claim_key text, via_claim_value text)"),
+            returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text, via_claim_keys text[], via_claim_values text[])"),
             raw_body: true,
             body: format!("  {}", branches.join("\n  UNION ALL\n  ")),
             ..Default::default()
@@ -1207,7 +1219,7 @@ impl Sql<'_> {
                 let parts = kids
                     .iter()
                     .filter(|k| {
-                        !(self.s.is_conditional_leaf(obj, k, rels) || self.s.conditional_conjunction(k, rels).is_some() || is_composition_leaf(k, rels))
+                        !(self.s.is_conditional_leaf(obj, k, rels) || self.s.conditional_conjunction(obj, k, rels).is_some() || is_composition_leaf(k, rels))
                     })
                     .map(|k| self.accessor_tree_sql(obj, k, rels).map(|sql| format!("({sql})")))
                     .collect::<R<Vec<String>>>()?;

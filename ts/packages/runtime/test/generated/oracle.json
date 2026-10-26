@@ -187,7 +187,7 @@
         "kind": "resourceAccess.listGrantsSQL"
       },
       {
-        "expect": "SELECT source, principal_kind, principal_id, access, via_claim_key, via_claim_value FROM auth.records_accessors_conditional($1)",
+        "expect": "SELECT source, principal_kind, principal_id, access, via_claim_keys, via_claim_values FROM auth.records_accessors_conditional($1)",
         "input": {
           "object": "record"
         },

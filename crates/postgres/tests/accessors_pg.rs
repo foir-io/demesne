@@ -243,22 +243,22 @@ fn staff_failures(db: &mut Client) -> Vec<String> {
 
 struct Row {
     source: String,
-    key: Option<String>,
-    value: Option<String>,
+    keys: Option<Vec<String>>,
+    values: Option<Vec<String>>,
 }
 
 fn conditional_rows(db: &mut Client, table: &str, id: &str) -> Vec<Row> {
-    db.query(&format!("SELECT source, via_claim_key, via_claim_value FROM d36_auth.{table}_accessors_conditional($1) WHERE principal_id IS NULL"), &[&id])
+    db.query(&format!("SELECT source, via_claim_keys, via_claim_values FROM d36_auth.{table}_accessors_conditional($1) WHERE principal_id IS NULL"), &[&id])
         .unwrap_or_else(|e| panic!("{table}_accessors_conditional: {e}"))
         .iter()
-        .map(|r| Row { source: r.get(0), key: r.get(1), value: r.get(2) })
+        .map(|r| Row { source: r.get(0), keys: r.get(1), values: r.get(2) })
         .collect()
 }
 
 fn covers(rows: &[Row], claims: &serde_like::Claims) -> bool {
-    rows.iter().any(|r| match (r.source.as_str(), &r.key, &r.value) {
+    rows.iter().any(|r| match (r.source.as_str(), &r.keys, &r.values) {
         ("public" | "scope", _, _) => true,
-        (_, Some(k), Some(v)) => claims.get(k) == Some(v.as_str()),
+        (_, Some(keys), Some(values)) => keys.len() == values.len() && keys.iter().zip(values).all(|(k, v)| claims.get(k) == Some(v.as_str())),
         _ => false,
     })
 }

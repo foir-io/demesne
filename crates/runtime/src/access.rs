@@ -145,7 +145,7 @@ impl ResourceAccessSurface {
     #[must_use]
     pub fn accessors_sql(&self) -> String {
         if self.conditional {
-            return format!("SELECT source, principal_kind, principal_id, access, via_claim_key, via_claim_value FROM {}($1)", self.accessor_fn);
+            return format!("SELECT source, principal_kind, principal_id, access, via_claim_keys, via_claim_values FROM {}($1)", self.accessor_fn);
         }
         format!("SELECT source, principal_kind, principal_id, access FROM {}($1)", self.accessor_fn)
     }

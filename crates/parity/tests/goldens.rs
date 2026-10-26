@@ -56,6 +56,9 @@ fn rust_regenerates_every_committed_golden() {
     ];
     let mut stale = Vec::new();
     for (path, got) in &goldens {
+        if std::env::var_os("UPDATE_ORACLE").is_some() {
+            std::fs::write(root().join(path), got).expect("the golden writes");
+        }
         let want = std::fs::read_to_string(root().join(path)).unwrap();
         if &want != got {
             stale.push(path.as_str());

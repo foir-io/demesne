@@ -13,7 +13,7 @@ pub mod topology;
 mod validate;
 pub mod vocab;
 
-pub use admission::{ConditionalAdmission, ConditionalExt};
+pub use admission::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 pub use error::Error;
 pub use schema::{Column, ForeignKey, Nullability, Schema, TableCoverage, table_coverage, validate_against};
 pub use spec::{Principal, ReachGrantRef, SpecExt};

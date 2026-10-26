@@ -53,9 +53,10 @@ pub fn admission_names(adms: &[ConditionalAdmission]) -> String {
     let mut out = Vec::new();
     for a in adms {
         let mut n = a.source.clone();
-        if !a.claim_key.is_empty() {
+        let keys: Vec<&str> = a.claims.iter().map(|c| c.key.as_str()).filter(|k| !k.is_empty()).collect();
+        if !keys.is_empty() {
             n.push(' ');
-            n.push_str(&a.claim_key);
+            n.push_str(&keys.join(" and "));
         }
         if seen.insert(n.clone()) {
             out.push(n);

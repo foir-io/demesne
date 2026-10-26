@@ -79,6 +79,38 @@ conditional object; read it through `ConditionalResourceAccessSurface` and
 decide what each condition means for the caller. Code that switches on
 `source` meets `holds`, `role`, `public` and `scope`.
 
+### Breaking: a conditional listing row carries every claim it requires
+
+`<table>_accessors_conditional` had room for one claim per row, in
+`via_claim_key` and `via_claim_value`, so a conjunction of conditions kept only
+its first claim. `@claim("tier", "gold") and @claim("region", "eu")` listed every
+caller with `tier = gold`. A `@kind`, `@session` or `@within` beside a claim, or
+beside a `mode`, was dropped. The listing named callers the policy refuses.
+
+The two columns are now `via_claim_keys text[]` and `via_claim_values text[]`.
+A row admits a caller whose request carries every key, each with the value at
+the same position. Identity rows, and conditional rows that need no claim, have
+NULL arrays.
+
+A conjunction of conditions lists one row that carries every `@claim`, `@kind`,
+`@session` and non-nullable `@within` in it. A conjunct no row can state is still
+dropped, so the listing may over-report and never under-reports: a negation,
+`@scoped`, a nullable `@within` or `@holds`. A conjunction of claim-side terms
+alone, such as `@kind("admin") and @session`, was refused as unlistable and now
+lists its row.
+
+What adopters change:
+
+- Before applying v1's SQL, drop each `<table>_accessors_conditional`: Postgres
+  can't change a function's return type with `CREATE OR REPLACE`, refuses, and
+  says so.
+- Read the two arrays in place of `via_claim_key` and `via_claim_value`, and
+  require every pair. A query that names the old columns fails rather than
+  reading half an answer.
+- In Rust, `demesne_model::ConditionalAdmission` carries `claims: Vec<ClaimMatch>`
+  in place of `claim_key`, `claim_val` and `claim_val_col`, and
+  `ConditionalExt::conditional_conjunction` takes the object.
+
 ### Breaking: objects that would overwrite each other's SQL on one table are refused
 
 Two objects on one table that both compile a policy for the same operation

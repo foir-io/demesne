@@ -325,12 +325,14 @@ path that cleans up rows which predate it.
 
 Claim-side builtins (`@kind`, `@session`, `@app_scope`, `@within`, `@scoped`,
 `@holds`, `@claim`) compose inside intersections: `(@kind("admin") and grantee:read)`
-enforces both in the emitted policy. The reverse accessor enumeration treats a
-claim-side conjunct as neutral — it drops the conjunct and may over-report,
-never under-report, because the forward RLS still enforces it — and refuses,
-fail-closed, when a conjunction leaves no relational term to enumerate. A `mode`
-conjunct is dropped on the same argument: it tests the row rather than the
-request, but it narrows just the same. A
+enforces both in the emitted policy. Beside a relational term, the reverse
+accessor enumeration treats a claim-side conjunct as neutral — it drops the
+conjunct and may over-report, never under-report, because the forward RLS still
+enforces it. A `mode` conjunct is dropped on the same argument: it tests the row
+rather than the request, but it narrows just the same. A conjunction with no
+relational term is one conditional row instead (below), which carries every
+claim it requires, and the enumeration refuses, fail-closed, only a conjunction
+in which no term can be listed at all. A
 `@public`, `@open`, or `@self` conjunct still refuses: the first two would mean
 "everyone", and `@self` binds a row column to the caller's claim, which the
 enumerator cannot reverse.
@@ -373,10 +375,11 @@ so the term would be quietly ignored. That is a refusal, not a warning.
 
 #### Which side it lands on is the whole story
 
-On a **conjunct** a claim narrows, and the reverse accessor enumeration treats it
-as neutral exactly like its claim-side siblings: the conjunct is dropped, the
-listing may over-report and can never under-report, and the forward policy still
-enforces it.
+On a **conjunct** a claim narrows. Beside a relational term, the reverse accessor
+enumeration treats it as neutral exactly like its claim-side siblings: the
+conjunct is dropped, the listing may over-report and can never under-report, and
+the forward policy still enforces it. Beside only other conditions, it joins
+their conditional row as one more claim the caller must carry.
 
 On a **disjunct** it does the opposite. It admits callers no other branch
 admits, and unlike a relational term it names no subject that can be read back
@@ -407,12 +410,16 @@ gets
 
 ```
 auth.<table>_accessors_conditional(p_id)
-  → (source, principal_kind, principal_id, access, via_claim_key, via_claim_value)
+  → (source, principal_kind, principal_id, access, via_claim_keys text[], via_claim_values text[])
 ```
 
-which is the identity rows it always had, widened with two null columns, plus one
-row per admission that names nobody. Each carries a **NULL principal id**, the
-`source` that admitted it, and for a claim the key and value.
+which is the identity rows it always had, widened with two NULL array columns,
+plus one row per admission that names nobody. Each carries a **NULL principal
+id**, the `source` that admitted it, and the claims a caller's request must
+carry to be admitted: every one of them, the i-th key with the i-th value. A
+value read from the row, such as a scope column under `@within`, is that column's
+value. A row that needs no claim, such as `@public` or a `mode` on its own, has
+NULL arrays.
 
 Where the term carries a test against the **row**, the row is anchored on it and
 appears only when it actually holds — a `mode` row shows up on a public row and
@@ -431,8 +438,12 @@ code that acknowledges it. A NULL in the column you were going to read is neithe
 
 A conjunction of ONLY such terms — `(@app_scope(exclude admin_owner) and
 @kind("service"))` — is one conditional admission rather than a refusal. The
-`source` comes from the term that admits, the others qualify it, and every
-row-side condition is ANDed into the anchor. A conjunction carrying a
+`source` comes from the term that admits, or is `claim` when every term is a
+claim. The others qualify it: each `@claim`, `@kind`, `@session` and
+non-nullable `@within` is one more entry in the row's claims, and every
+row-side condition is ANDed into the anchor. A conjunct no single row can
+state — a negated claim, `@scoped`, a nullable `@within`, `@holds` — is dropped,
+so the row may over-report and never under-reports. A conjunction carrying a
 *relational* term is untouched: it is enumerable, and folding it would lose the
 subjects it can name.
 

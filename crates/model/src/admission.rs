@@ -4,13 +4,41 @@ use crate::conditional::{accessor_tree_op, is_row_leaf, narrowing_accessor_leaf,
 use demesne_runtime::quote_literal;
 use demesne_syntax::{Object, PermNode, Relation, Repr, Term, ViaColumn};
 
+/// The value a claim must have for a conditional row to admit a caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimValue {
+    /// A value written in the spec.
+    Literal(String),
+    /// The value of a column on the row.
+    Column(String),
+}
+
+/// A claim a caller's request must carry, with the value it must have.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimMatch {
+    pub key: String,
+    pub value: ClaimValue,
+}
+
+impl ClaimMatch {
+    fn literal(key: impl Into<String>, value: impl Into<String>) -> Self {
+        ClaimMatch { key: key.into(), value: ClaimValue::Literal(value.into()) }
+    }
+
+    fn column(key: impl Into<String>, column: impl Into<String>) -> Self {
+        ClaimMatch { key: key.into(), value: ClaimValue::Column(column.into()) }
+    }
+}
+
+/// One row of an object's conditional reader listing: callers it admits without naming them.
+///
+/// A caller is admitted when the row's `row_cond` holds and their request carries every claim in
+/// `claims`, each with its value.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConditionalAdmission {
     pub source: String,
     pub principal_kind: String,
-    pub claim_key: String,
-    pub claim_val: String,
-    pub claim_val_col: String,
+    pub claims: Vec<ClaimMatch>,
     pub row_cond: String,
 }
 
@@ -42,10 +70,10 @@ pub trait ConditionalExt: SpecExt {
         if let Some(d) = &vc.discrim_col {
             conds.push(format!("{} = {}", d, quote_literal(vc.discrim_val.as_deref().unwrap_or(""))));
         }
+        let key = self.subject_by_name(&r.types[0]).map(|s| s.identifies().to_string()).unwrap_or_default();
         Some(ConditionalAdmission {
             source: "claim".into(),
-            claim_key: self.subject_by_name(&r.types[0]).map(|s| s.identifies().to_string()).unwrap_or_default(),
-            claim_val_col: vc.column.clone(),
+            claims: vec![ClaimMatch::column(key, vc.column.clone())],
             row_cond: conds.join(" AND "),
             ..Default::default()
         })
@@ -55,8 +83,7 @@ pub trait ConditionalExt: SpecExt {
         if t.builtin() == "claim" {
             return Some(ConditionalAdmission {
                 source: "claim".into(),
-                claim_key: t.claim_key().into(),
-                claim_val: t.claim_val().into(),
+                claims: vec![ClaimMatch::literal(t.claim_key(), t.claim_val())],
                 ..Default::default()
             });
         }
@@ -85,17 +112,11 @@ pub trait ConditionalExt: SpecExt {
         if let Some(a) = self.conditional_term(t, rels) {
             return vec![a];
         }
-        let claim = |claim_key: String, claim_val: &str, claim_val_col: String| ConditionalAdmission {
-            source: "claim".into(),
-            claim_key,
-            claim_val: claim_val.into(),
-            claim_val_col,
-            ..Default::default()
-        };
+        let claim = |m: ClaimMatch| ConditionalAdmission { source: "claim".into(), claims: vec![m], ..Default::default() };
         match t.builtin() {
             "public" => vec![ConditionalAdmission { source: "public".into(), ..Default::default() }],
-            "kind" => vec![claim("kind".into(), t.kind_val(), String::new())],
-            "self" => vec![claim(self.admin_identify().into(), "", t.self_col().into())],
+            "kind" => vec![claim(ClaimMatch::literal("kind", t.kind_val()))],
+            "self" => vec![claim(ClaimMatch::column(self.admin_identify(), t.self_col()))],
             "session" if t.session_rel().is_empty() => self.level_admissions(obj, obj.scoped.last().map_or("", String::as_str), false),
             "within" => self.level_admissions(obj, t.within_level(), t.within_nullable()),
             _ => Vec::new(),
@@ -107,8 +128,7 @@ pub trait ConditionalExt: SpecExt {
         let col = self.scope_col(obj, level);
         let matched = ConditionalAdmission {
             source: "claim".into(),
-            claim_key: self.claim_key_for_level(level),
-            claim_val_col: col.clone(),
+            claims: vec![ClaimMatch::column(self.claim_key_for_level(level), col.clone())],
             row_cond: if nullable { format!("{col} IS NOT NULL") } else { String::new() },
             ..Default::default()
         };
@@ -125,27 +145,43 @@ pub trait ConditionalExt: SpecExt {
         }
     }
 
-    fn conditional_conjunction(&self, n: &PermNode, rels: &Rels) -> Option<ConditionalAdmission> {
+    /// Returns the single conditional row a conjunction lists, carrying every claim it requires.
+    ///
+    /// The row takes its source from the conjunction's first admission, or is a `claim` row when
+    /// the conjunction is claims alone. A conjunct no row can state exactly, such as a negation,
+    /// `@scoped`, a nullable `@within` or `@holds`, is left out, so the row may admit more callers
+    /// than the policy does, never fewer. A conjunct naming principals makes the conjunction
+    /// relational, and it has no conditional row.
+    fn conditional_conjunction(&self, obj: &Object, n: &PermNode, rels: &Rels) -> Option<ConditionalAdmission> {
         let PermNode::And(kids) = n else { return None };
-        if kids.is_empty() {
-            return None;
-        }
         let mut admit: Option<ConditionalAdmission> = None;
         let mut conds: Vec<String> = Vec::new();
+        let mut claims: Vec<ClaimMatch> = Vec::new();
         for k in kids {
-            match conjunction_kid(self, k, rels) {
+            match conjunction_kid(self, obj, k, rels) {
                 ConjunctionKid::Unenumerable => return None,
                 ConjunctionKid::Narrowing => {}
                 ConjunctionKid::RowCond(c) => conds.push(c),
-                ConjunctionKid::Admission(a) if admit.is_none() => admit = Some(a),
-                ConjunctionKid::Admission(a) => conds.extend((!a.row_cond.is_empty()).then_some(a.row_cond)),
+                ConjunctionKid::Claims(c) => claims.extend(c),
+                ConjunctionKid::Admission(mut a) => {
+                    claims.append(&mut a.claims);
+                    match &admit {
+                        None => admit = Some(a),
+                        Some(_) => conds.extend((!a.row_cond.is_empty()).then_some(a.row_cond)),
+                    }
+                }
             }
         }
-        let mut admit = admit?;
+        let mut admit = match admit {
+            Some(a) => a,
+            None if !claims.is_empty() => ConditionalAdmission { source: "claim".into(), ..Default::default() },
+            None => return None,
+        };
         if !admit.row_cond.is_empty() {
-            conds.insert(0, admit.row_cond.clone());
+            conds.insert(0, std::mem::take(&mut admit.row_cond));
         }
         admit.row_cond = conds.join(" AND ");
+        admit.claims = claims;
         Some(admit)
     }
 
@@ -162,7 +198,7 @@ pub trait ConditionalExt: SpecExt {
         match n {
             PermNode::Leaf(t) => self.union_admissions(obj, t, rels),
             PermNode::Not(_) => Vec::new(),
-            PermNode::And(kids) => match self.conditional_conjunction(n, rels) {
+            PermNode::And(kids) => match self.conditional_conjunction(obj, n, rels) {
                 Some(a) => vec![a],
                 None => kids.iter().filter(|k| !narrowing_accessor_leaf(k)).flat_map(|k| self.adding_conditional_terms(obj, k, rels)).collect(),
             },
@@ -192,12 +228,23 @@ fn app_scope_exclusions(t: &Term, rels: &Rels) -> String {
 
 enum ConjunctionKid {
     RowCond(String),
+    Claims(Vec<ClaimMatch>),
     Admission(ConditionalAdmission),
     Narrowing,
     Unenumerable,
 }
 
-fn conjunction_kid<S: ConditionalExt + ?Sized>(s: &S, k: &PermNode, rels: &Rels) -> ConjunctionKid {
+fn conjunct_claims<S: ConditionalExt + ?Sized>(s: &S, obj: &Object, t: &Term) -> Option<Vec<ClaimMatch>> {
+    let at_level = |level: &str| vec![ClaimMatch::column(s.claim_key_for_level(level), s.scope_col(obj, level))];
+    match t.builtin() {
+        "kind" => Some(vec![ClaimMatch::literal("kind", t.kind_val())]),
+        "session" if t.session_rel().is_empty() => obj.scoped.last().map(|leaf| at_level(leaf)),
+        "within" if !t.within_nullable() => Some(at_level(t.within_level())),
+        _ => None,
+    }
+}
+
+fn conjunction_kid<S: ConditionalExt + ?Sized>(s: &S, obj: &Object, k: &PermNode, rels: &Rels) -> ConjunctionKid {
     if let Some(inner) = not_kid(k) {
         if let Some(t) = inner.term().filter(|_| is_row_leaf(inner)) {
             return ConjunctionKid::RowCond(format!("({} = {}) IS NOT TRUE", t.row_col(), quote_literal(t.row_val())));
@@ -212,6 +259,9 @@ fn conjunction_kid<S: ConditionalExt + ?Sized>(s: &S, k: &PermNode, rels: &Rels)
     }
     if let Some(a) = s.conditional_term(t, rels) {
         return ConjunctionKid::Admission(a);
+    }
+    if let Some(c) = conjunct_claims(s, obj, t) {
+        return ConjunctionKid::Claims(c);
     }
     if narrowing_accessor_leaf(k) { ConjunctionKid::Narrowing } else { ConjunctionKid::Unenumerable }
 }
