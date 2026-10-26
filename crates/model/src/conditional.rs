@@ -51,7 +51,7 @@ pub fn not_kid(n: &PermNode) -> Option<&PermNode> {
 #[must_use]
 pub fn is_composition_leaf(n: &PermNode, rels: &Rels) -> bool {
     match n {
-        PermNode::Leaf(t) if !t.ident().is_empty() => rels.get(t.ident()).is_some_and(|r| matches!(r.repr, Repr::Composition(_))),
+        PermNode::Leaf(t) => rels.get(t.ident()).is_some_and(|r| matches!(r.repr, Repr::Composition(_))),
         _ => false,
     }
 }
