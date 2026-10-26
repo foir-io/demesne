@@ -62,7 +62,16 @@ jobs:
       - name: the change under test
         run: git diff "origin/${{ github.base_ref }}...HEAD" -- crates/emit-sql/src crates/model/src crates/runtime/src > mutants.diff
       - name: mutants
+        # A runaway mutant can exhaust the runner's memory and get the whole
+        # machine shut down, losing the shard's results. The cap kills only the
+        # process that exceeds it, and cargo-mutants records that mutant.
         run: >-
+          sudo systemd-run --scope --quiet
+          -p MemoryMax=12G -p MemorySwapMax=0 -p OOMPolicy=continue
+          --uid="$(id -u)" --gid="$(id -g)"
+          env "PATH=$PATH" "HOME=$HOME" "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}"
+          "CARGO_TERM_COLOR=always" "CARGO_BUILD_JOBS=3"
+          "DEMESNE_PG_URL=$DEMESNE_PG_URL" "SUPABASE_DB_URL=$SUPABASE_DB_URL"
           cargo mutants --no-shuffle -vV --in-place
           --in-diff mutants.diff
           --shard ${{ matrix.shard }}/16
