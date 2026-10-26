@@ -16,5 +16,8 @@ demesne-gocompat.workspace = true
 demesne-syntax.workspace = true
 demesne-runtime.workspace = true
 
+[dev-dependencies]
+insta.workspace = true
+
 [lints]
 workspace = true

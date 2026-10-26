@@ -221,6 +221,7 @@ dependencies = [
  "demesne-gocompat",
  "demesne-runtime",
  "demesne-syntax",
+ "insta",
 ]
 
 [[package]]

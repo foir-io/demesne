@@ -1,0 +1,5 @@
+---
+source: crates/model/tests/scaffold.rs
+expression: err.to_string()
+---
+scaffold: no tenancy container found (no table referenced by >= 6 others via FK) — supply foreign keys, or lower MinContainerRefs
