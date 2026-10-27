@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.0.0
 
 
 ### Breaking: a write that the select permission can't see is refused
