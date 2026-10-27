@@ -255,7 +255,7 @@ one implementation of every builder.
   that, so the `workerd` export condition imports the `.wasm` file as a module
   instead.
 - **Tested in each environment:**
-  - the 695 tests pass in Node, inside workerd and in headless Chrome;
+  - the 716 tests pass in Node, inside workerd and in headless Chrome;
   - a packed tarball is bundled and run in all three;
   - the example app's live-Postgres round trips pass on top of it.
 - **Size:** the module is 179 KB, everything the default entry loads is 95 KB
