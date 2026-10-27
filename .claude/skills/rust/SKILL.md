@@ -93,8 +93,13 @@ Don't read the whole book. Open only the guidelines for the area you're working 
   - Use enums instead of string tags and boolean flags.
   - Give each newtype a constructor that checks its invariant (M-STRONG-TYPES-GUARD).
   - Use typestate when an operation is only valid in some states.
+- **"Everything" is a variant, not a sentinel.** An empty list, a `"*"` string or a `None` that means "everything" is one refactor away from meaning "nothing", and a reader can't tell which. Give "everything" its own enum variant that only one constructor builds.
+- **Privilege is a value only the gate can make.** Code that may bypass a check, such as row-level security or a tenant filter, takes a token or a distinct type (a privileged transaction, say) that only the gate that decided can construct. The compiler then lists every bypass, and no grep script or allowlist has to.
+- **What a type requires belongs to the type.** When every write must also audit, or record an idempotency key, make the transaction type require it: `commit` takes it, or the builder can't finish without it. A registry each write path has to remember to join can't tell when one forgets.
 - **No `bool` parameter in a public signature.** `session_setup_sql(true)` says nothing at the call site, and two swapped bools still compile. Take an enum (`Scope::Transaction`), split the function in two (`to_string` and `to_string_pretty`), or take a struct with named fields. Settle it before 1.0: changing a public signature later is a major version.
 - **Match exhaustively on your own enums.** A `_ =>` arm on an enum you own hides the next variant someone adds. Security-relevant crates deny `clippy::wildcard_enum_match_arm` for exactly this reason.
+- **Mark public types that will grow `#[non_exhaustive]`** before the first stable release, so adding an enum variant or a struct field isn't a breaking change. Inside your own crate, matches on them stay exhaustive.
+- **Don't clone to quiet the borrow checker.** A `.clone()` added only to end a borrow error usually hides a shape problem: borrow for a shorter scope, move the value to where it's consumed, or pass a reference. Clone when two owners really need the value.
 - **Prefer a check the compiler runs.** A crate boundary, a private constructor or a type the compiler checks beats a grep guard, a code-review convention, or a comment saying "don't call this from X". If you find yourself writing such a comment, look for the type that would make it unnecessary.
 
 ### 5. Porting from another language
@@ -106,6 +111,12 @@ Don't read the whole book. Open only the guidelines for the area you're working 
   - stringly typed options;
   - goroutine-per-thing concurrency.
 - **Contain byte-identical compatibility.** When output has to match the old implementation exactly, put the shims in one clearly named compat module or crate, and keep everything else idiomatic. Then the shims can be deleted in one place once parity is no longer required.
+  - **Known traps when matching Go byte for byte:**
+    - `sort.Slice` isn't stable, so ties come out in whatever order it leaves them. Give both sides a total order first.
+    - Go's `%q` and Rust's `{:?}` escape differently. Port quoting as its own function, with golden tests.
+    - `encoding/json` escapes `<`, `>`, `&`, U+2028 and U+2029 by default; `serde_json` escapes none of them.
+    - protojson varies its whitespace on purpose. Compare it by meaning, never byte for byte.
+    - A hash over Go's "deterministic" protobuf encoding isn't canonical across implementations. Export golden vectors from Go for every stored format before switching.
 - **Flag old bugs; don't silently copy or fix them.** When the old code has a bug or a non-best-practice pattern, record it where the repo records debt (its debt register or ticket).
   - A silent fix breaks parity without anyone noticing.
   - A silent copy carries the debt forward.
@@ -124,6 +135,9 @@ Don't read the whole book. Open only the guidelines for the area you're working 
   - Run nextest with `--no-tests=fail`.
   - Report how many tests actually ran.
   - Check that suites behind `#[ignore]`, a feature or an env var really ran. A skipped database suite looks exactly like a passing one.
+- **A database test fails when its database is missing.** It panics, naming the variable to set. It never skips, because a skipped suite reads as a pass.
+- **Test two paths against each other over a grid.** When two paths must agree, such as a point check and the policy it mirrors, a cache and its source, or a port and its original, generate a grid of inputs and compare every answer, not a handful of examples. Check that the grid produced both outcomes for every case, or the paths may agree only because the grid never tried.
+- **When a test fails, check its expectation first.** An expected value an agent wrote is a hypothesis about the system. Confirm it against the system before changing code to match it.
 - **Assertion messages carry the input.** Pass the values under test to the message (`assert!(errs[0].contains(…), "{errs:#?}")`), so a failure in CI can be read without running it again.
 - **No tautological tests** (M-TAUTOLOGICAL-TESTS). Don't re-assert a constant or mirror the implementation's branches. Assert a property or a behaviour someone can observe.
 - **Snapshot goldens.** Golden outputs are snapshot files, reviewed as diffs (insta). Never regenerate goldens to make a failing test pass without reading the diff and saying why it's right.
@@ -154,18 +168,21 @@ Don't read the whole book. Open only the guidelines for the area you're working 
 - **Long CPU-bound work yields.** It calls `yield_now().await` at intervals or moves to `spawn_blocking` (M-YIELD-POINTS).
 - **Futures and public types are `Send`** (M-TYPES-SEND), and `Sync` unless they need interior mutability. Assert it at compile time: a test calls `const fn send_sync<T: Send + Sync>() {}` for each public type, so a field that loses it fails this crate's build, not an adopter's.
 - **Every network call has a timeout.**
+- **A function holding a transaction takes the transaction.** It takes `&mut Transaction`, and its state holds no pool, so it can't acquire a second connection while the first is open. With a small pool, that nested acquire deadlocks under load.
 
 ### 8. Dependencies, features, unsafe
 
 - **Publish from an empty target directory.** `cargo publish --workspace` verifies each crate against the others through a local registry, and Cargo never rebuilds a registry crate whose name and version it has already compiled. A target directory that holds an earlier dry run at the same version verifies against that stale build: `CARGO_TARGET_DIR="$(mktemp -d)" cargo publish --workspace`.
 - **Declare dependencies once.** Put each dependency in `[workspace.dependencies]` and reference it with `.workspace = true` (M-CARGO-WORKSPACE). Before adding one, check its licence, maintenance and footprint; cargo-deny checks licences and advisories in CI.
 - **Features are additive** (M-FEATURES-ADDITIVE). CI checks each feature on its own.
+  - When features select editions or tiers of a product, check every combination with `cargo hack --feature-powerset`, and give each tier its own schema and migration set from the first migration. Tools such as sqlx record a checksum for each applied migration, so splitting a set later means rewriting history on every database.
 - **Don't leak dependency types.** A published crate keeps third-party types out of its public API unless they earn their place (M-DONT-LEAK-TYPES).
 - **`unsafe` is forbidden workspace-wide.** If you think you need it, stop and ask rather than adding an exception.
 
 ### 9. Docs, comments and logs
 
 - **Public items are documented with the canonical sections:** `# Errors`, `# Panics`, `# Examples` (M-CANONICAL-DOCS). The first sentence is one line, about 15 words (M-FIRST-DOC-SENTENCE).
+- **Doc examples use `?`.** An example returns a `Result` and propagates errors with `?`, so readers copy error handling rather than `unwrap()` (C-QUESTION-MARK in the Rust API Guidelines).
 - **Comments explain the invariant or the reason, not the history.** Leave out ticket numbers and the story of how the design was reached, in both code and crate docs (M-NO-META-DESIGN-DOCUMENTATION). That history belongs in the commit message and the ticket.
 - **Name magic values.** A magic value becomes a named constant, with a comment on why it has that value and what breaks if it changes (M-DOCUMENTED-MAGIC).
 - **Log structured events.** Logs are `tracing` events with named fields (M-LOG-STRUCTURED). Never log secrets, tokens or personal data, and redact before the event, not after.
@@ -177,6 +194,8 @@ Don't read the whole book. Open only the guidelines for the area you're working 
    - `cargo clippy --workspace --all-targets -- -D warnings`;
    - `cargo nextest run --workspace --no-tests=fail`, plus the repo's ignored or live suites if you touched their area;
    - `cargo deny check` if dependencies changed.
+
+   The gate is rustc: `cargo check`, clippy and the tests decide. A faster checker can shorten the loop, but one without a borrow checker passes code rustc rejects.
 2. Report test counts and which suites ran. Name anything you skipped and why.
 3. Check that each new `#[expect]` has a reason a reviewer would accept.
 4. Record any quirk you reproduced on purpose, and any debt you found, where the repo records debt.
