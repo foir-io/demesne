@@ -523,6 +523,12 @@ returning each finding's severity, line and message as JSON.
 - **Accessor refusals name the real definer schema.** The two refusals for a
   select permission whose readers can't be listed named
   `auth.<table>_accessors` whatever the definer schema was.
+- **Definers are created after the functions they call.** They were written
+  in spec order, so when an object borrowed from one written later in the
+  spec, its listing came before the function it calls, and Postgres refused
+  the SQL with `function … does not exist`. Each generated function now
+  follows every generated function it calls, and SQL with no such call keeps
+  its order. A new test checks this for every corpus spec.
 - **Breaking: multi-host URLs follow libpq.** Each host keeps its own port. A
   host without one takes the default port (`PGPORT`, or 5432), and an empty
   host takes the default host. Two cases change:

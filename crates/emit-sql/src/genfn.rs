@@ -126,6 +126,28 @@ fn binds_arg(conj: &[String], arg: &str) -> bool {
     conj.iter().any(|c| c.ends_with(&suffix))
 }
 
+fn calls(text: &str, call: &str) -> bool {
+    text.match_indices(call).any(|(k, _)| text[..k].chars().next_back().is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_')))
+}
+
+pub(crate) fn order_by_calls(fns: Vec<GenFn>) -> Vec<GenFn> {
+    let texts: Vec<String> = fns.iter().map(GenFn::create_sql).collect();
+    let call_of: Vec<String> = fns.iter().map(|f| format!("{}.{}(", f.schema(), f.name)).collect();
+    let deps: Vec<Vec<usize>> = texts.iter().enumerate().map(|(i, t)| (0..fns.len()).filter(|&j| j != i && calls(t, &call_of[j])).collect()).collect();
+    let mut placed = vec![false; fns.len()];
+    let mut order = Vec::with_capacity(fns.len());
+    while order.len() < fns.len() {
+        let next = (0..fns.len())
+            .find(|&i| !placed[i] && deps[i].iter().all(|&j| placed[j]))
+            .or_else(|| (0..fns.len()).find(|&i| !placed[i]))
+            .expect("a function is still unplaced while the order is shorter than the list");
+        placed[next] = true;
+        order.push(next);
+    }
+    let mut slots: Vec<Option<GenFn>> = fns.into_iter().map(Some).collect();
+    order.into_iter().map(|i| slots[i].take().expect("each function is placed once")).collect()
+}
+
 #[must_use]
 pub fn definers_sql(defs: &[GenFn]) -> String {
     let mut b = String::new();

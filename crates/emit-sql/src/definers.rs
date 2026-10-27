@@ -1,6 +1,6 @@
 use crate::Sql;
 use crate::error::Error;
-use crate::genfn::{DefinerArm, Execute, GenFn, Language, binds_every, grant_edge_exists};
+use crate::genfn::{DefinerArm, Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
 use crate::rls::{Virtual, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
@@ -327,7 +327,7 @@ impl Sql<'_> {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
         }
-        Ok(out)
+        Ok(order_by_calls(out))
     }
 
     fn def_emit_membership(&self, out: &mut Vec<GenFn>) -> R<()> {

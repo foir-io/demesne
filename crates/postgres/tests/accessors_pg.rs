@@ -106,14 +106,6 @@ object session_doc {
   permission view = owner + @session(editor) + grantee:read @rls maps select
 }
 
-object team {
-  table  teams
-  scoped tenant > workspace
-  relation grantee: member via grant team_acl(team_id, principal_kind, principal_id, access)
-  permission view = grantee:read @rls maps select
-  admit select = @kind("service")
-}
-
 object team_doc {
   table  team_docs
   scoped tenant > workspace
@@ -121,6 +113,14 @@ object team_doc {
   relation in_team: team via object team->view on team_id
   relation grantee: member via grant team_doc_acl(doc_id, principal_kind, principal_id, access)
   permission view = owner + in_team + grantee:read @rls maps select
+}
+
+object team {
+  table  teams
+  scoped tenant > workspace
+  relation grantee: member via grant team_acl(team_id, principal_kind, principal_id, access)
+  permission view = grantee:read @rls maps select
+  admit select = @kind("service")
 }
 "#;
 
