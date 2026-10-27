@@ -258,9 +258,9 @@ one implementation of every builder.
   - the 695 tests pass in Node, inside workerd and in headless Chrome;
   - a packed tarball is bundled and run in all three;
   - the example app's live-Postgres round trips pass on top of it.
-- **Size:** the module is 150 KB, everything the default entry loads is 83 KB
-  gzipped, and the package is 153 KB. A budget on every build holds these
-  under 180 KB and 96 KB.
+- **Size:** the module is 179 KB, everything the default entry loads is 95 KB
+  gzipped, and the package is 173 KB. A budget on every build holds the first
+  two under 180 KB and 96 KB.
 - **What changes for callers:**
   - The Go-compatibility helpers `goCmp`, `goSort`, `goEncodeString` and
     `goJSONStringify` are no longer exported.
