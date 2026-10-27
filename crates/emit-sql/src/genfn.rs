@@ -126,14 +126,10 @@ fn binds_arg(conj: &[String], arg: &str) -> bool {
     conj.iter().any(|c| c.ends_with(&suffix))
 }
 
-fn calls(text: &str, call: &str) -> bool {
-    text.match_indices(call).any(|(k, _)| text[..k].chars().next_back().is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_')))
-}
-
 pub(crate) fn order_by_calls(fns: Vec<GenFn>) -> Vec<GenFn> {
     let texts: Vec<String> = fns.iter().map(GenFn::create_sql).collect();
     let call_of: Vec<String> = fns.iter().map(|f| format!("{}.{}(", f.schema(), f.name)).collect();
-    let deps: Vec<Vec<usize>> = texts.iter().enumerate().map(|(i, t)| (0..fns.len()).filter(|&j| j != i && calls(t, &call_of[j])).collect()).collect();
+    let deps: Vec<Vec<usize>> = texts.iter().enumerate().map(|(i, t)| (0..fns.len()).filter(|&j| j != i && t.contains(&call_of[j])).collect()).collect();
     let mut placed = vec![false; fns.len()];
     let mut order = Vec::with_capacity(fns.len());
     while order.len() < fns.len() {
