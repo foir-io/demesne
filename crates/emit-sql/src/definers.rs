@@ -185,9 +185,9 @@ fn closure_accessor_branch(table: &str, pk: &str, kind: &str, c: &ViaClosure) ->
     )
 }
 
-fn object_accessor_branch(table: &str, pk: &str, vo: &ViaObject, other_table: &str, schema: &str) -> String {
+fn object_accessor_branch(table: &str, pk: &str, vo: &ViaObject, other_fn: &str, schema: &str) -> String {
     format!(
-        "SELECT a.source, a.principal_kind, a.principal_id, a.access\n    FROM {table} t\n    JOIN LATERAL {schema}.{other_table}_accessors(t.{}) a ON true\n    WHERE t.{pk} = p_id",
+        "SELECT a.source, a.principal_kind, a.principal_id, a.access\n    FROM {table} t\n    JOIN LATERAL {schema}.{other_fn}(t.{}) a ON true\n    WHERE t.{pk} = p_id",
         vo.col
     )
 }
@@ -741,18 +741,29 @@ impl Sql<'_> {
         if grant_relation(other).is_none() {
             return (false, format!("borrowed object {} has no accessor enumerator", quote(&vo.object)));
         }
-        let cond = self.s.conditional_accessors(other);
+        let cond = self.s.permission_admissions(other);
         if !cond.is_empty() {
             return (
                 false,
                 format!(
-                    "borrowed object {} admits readers its enumeration cannot name ({}), so it enumerates conditionally and has no plain accessor to borrow",
-                    quote(&vo.object),
+                    "borrowed permission {}.{} admits readers its enumeration cannot name ({}), so it enumerates conditionally and has no plain accessor to borrow",
+                    vo.object,
+                    vo.verb,
                     admission_names(&cond)
                 ),
             );
         }
         self.accessor_coverage_seen(other, seen)
+    }
+
+    fn permission_accessors_name(&self, obj: &Object) -> Option<String> {
+        let sel = object_select_perm(obj)?;
+        let arms_only = self.s.permission_admissions(obj).is_empty() && !self.s.admit_admissions(obj, &rels_of(obj)).is_empty();
+        arms_only.then(|| format!("{}_{}_accessors", obj.table, sel.verb))
+    }
+
+    fn borrowed_accessors_fn(&self, other: &Object) -> String {
+        self.permission_accessors_name(other).unwrap_or_else(|| format!("{}_accessors", other.table))
     }
 
     fn def_emit_structural_accessors(&self, defs: &mut Definers) -> R<()> {
@@ -1081,15 +1092,20 @@ impl Sql<'_> {
             return fns;
         }
         let last = fns.len() - 1;
-        fns[last] = self.conditional_accessor_gen_fn(obj, &fns[last], cond);
+        let Some(name) = self.permission_accessors_name(obj) else {
+            fns[last] = self.conditional_accessor_gen_fn(obj, &fns[last].body, cond);
+            return fns;
+        };
+        let base = format!("  SELECT p.source, p.principal_kind, p.principal_id, p.access FROM {}.{name}(p_id) p", self.s.definer_schema());
+        fns[last].name = name;
+        fns.push(self.conditional_accessor_gen_fn(obj, &base, cond));
         fns
     }
 
-    fn conditional_accessor_gen_fn(&self, obj: &Object, base: &GenFn, adms: &[ConditionalAdmission]) -> GenFn {
+    fn conditional_accessor_gen_fn(&self, obj: &Object, base: &str, adms: &[ConditionalAdmission]) -> GenFn {
         let id_t = self.s.id_type();
         let mut branches = vec![format!(
-            "SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text[] AS via_claim_keys, NULL::text[] AS via_claim_values\n    FROM (\n{}\n    ) b(source, principal_kind, principal_id, access)",
-            base.body
+            "SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text[] AS via_claim_keys, NULL::text[] AS via_claim_values\n    FROM (\n{base}\n    ) b(source, principal_kind, principal_id, access)"
         )];
         for a in adms {
             let mut where_ = format!("{} = p_id", obj.pk());
@@ -1176,7 +1192,7 @@ impl Sql<'_> {
             if let Repr::Object(vo) = &r.repr
                 && let Some(other) = self.s.object_by_name(&vo.object)
             {
-                out.push(object_accessor_branch(&obj.table, obj.pk(), vo, &other.table, self.s.definer_schema()));
+                out.push(object_accessor_branch(&obj.table, obj.pk(), vo, &self.borrowed_accessors_fn(other), self.s.definer_schema()));
             }
         }
         out
@@ -1237,7 +1253,7 @@ impl Sql<'_> {
                 let Some(other) = self.s.object_by_name(&vo.object) else {
                     return Err(format!("relation {} borrows unknown object {}", quote(name), quote(&vo.object)));
                 };
-                Ok(object_accessor_branch(&obj.table, obj.pk(), vo, &other.table, self.s.definer_schema()))
+                Ok(object_accessor_branch(&obj.table, obj.pk(), vo, &self.borrowed_accessors_fn(other), self.s.definer_schema()))
             }
             other => {
                 Err(format!("relation {} ({}) has no accessor branch (only owner/grant/group/closure/object leaves compose)", quote(name), go_type_name(other)))

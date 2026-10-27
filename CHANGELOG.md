@@ -145,7 +145,11 @@ The listing changes in three ways:
 - A select `admit` arm was missing from the listing, so a caller only the arm
   admits appeared nowhere. Each arm now adds a conditional row with the `admit`
   source and the claims it states, and an object with one lists through
-  `<table>_accessors_conditional`.
+  `<table>_accessors_conditional`. An arm belongs to the select policy and not
+  to the permission, so a `via object` borrow of the permission never reaches
+  it. When the arms are all that make the listing conditional, the object also
+  gets `<table>_<verb>_accessors`, the permission's readers alone, and a borrow
+  lists through it.
 
 What adopters change:
 

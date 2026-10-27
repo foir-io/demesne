@@ -161,16 +161,28 @@ pub trait ConditionalExt: SpecExt {
         obj.admits.iter().filter(|a| a.ops.iter().any(|op| op == "select")).flat_map(|a| arm_admissions(self, obj, &a.tree, rels)).collect()
     }
 
+    /// Returns every conditional row an object's reader listing carries: its select permission's and its select `admit` arms'.
     fn conditional_accessors(&self, obj: &Object) -> Vec<ConditionalAdmission> {
+        if crate::analysis::object_select_perm(obj).is_none() {
+            return Vec::new();
+        }
+        let mut out = self.permission_admissions(obj);
+        out.extend(self.admit_admissions(obj, &rels_of(obj)));
+        out
+    }
+
+    /// Returns the conditional rows an object's select permission lists, leaving out its select `admit` arms.
+    ///
+    /// A `via object` borrow of the select verb reaches the permission and never the arms, so these are the only rows a
+    /// borrow would have to carry.
+    fn permission_admissions(&self, obj: &Object) -> Vec<ConditionalAdmission> {
         let Some(sel) = crate::analysis::object_select_perm(obj) else { return Vec::new() };
         let rels = rels_of(obj);
-        let mut out = if accessor_tree_op(&sel.tree).is_empty() {
+        if accessor_tree_op(&sel.tree).is_empty() {
             sel.tree.leaves().iter().flat_map(|t| self.union_admissions(obj, t, &rels)).collect()
         } else {
             self.adding_conditional_terms(obj, &sel.tree, &rels)
-        };
-        out.extend(self.admit_admissions(obj, &rels));
-        out
+        }
     }
 
     fn adding_conditional_terms(&self, obj: &Object, n: &PermNode, rels: &Rels) -> Vec<ConditionalAdmission> {

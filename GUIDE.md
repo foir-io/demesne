@@ -459,10 +459,10 @@ extended to the other claim-side builtins: `@app_scope` *gates* the role branch,
 so negating it is not a conjunct that lifts out cleanly, and `not @app_scope`
 still fails closed.
 
-Two consequences follow. A `via object` **borrow** of a conditional object is
-refused at validation: the borrow compiles to a call to the other object's plain
-enumerator, and taking the identity half while losing the claim is the failure
-this is meant to prevent. And in the runtime, `resource_access_surface` refuses
+Two consequences follow. A `via object` **borrow** of a permission that lists
+conditionally is refused at validation: the borrow compiles to a call to the
+other object's plain enumerator, and taking the identity half while losing the
+claim is the failure this is meant to prevent. And in the runtime, `resource_access_surface` refuses
 a conditional object and names the alternative,
 `conditional_resource_access_surface`, which returns the same surface over the
 conditional function, reports `is_conditional()`, and whose `accessors_sql()`
@@ -518,6 +518,19 @@ A select `admit` arm adds a conditional row to the listing, with the `admit`
 source and the claims and row conditions the arm states. A conjunct no row can
 state, such as a relation confined by a claim, is left out of that row, so the
 row admits more callers than the arm does, never fewer.
+
+An arm belongs to the select policy, not to the select permission, so a
+`via object` borrow of the permission never reaches it. When the arms are all
+that make an object's listing conditional, the object also gets
+
+```
+auth.<table>_<verb>_accessors(p_id)
+  → (source, principal_kind, principal_id, access)
+```
+
+which lists the permission's readers alone, and a borrow of the permission
+lists through it. `<table>_accessors_conditional` reads it and adds the arm
+rows, and `<table>_accessors` is still not emitted.
 
 ### `@row`: narrow a term to rows with a value
 

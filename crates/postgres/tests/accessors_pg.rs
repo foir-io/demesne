@@ -105,6 +105,23 @@ object session_doc {
   relation grantee: member via grant session_acl(doc_id, principal_kind, principal_id, access)
   permission view = owner + @session(editor) + grantee:read @rls maps select
 }
+
+object team {
+  table  teams
+  scoped tenant > workspace
+  relation grantee: member via grant team_acl(team_id, principal_kind, principal_id, access)
+  permission view = grantee:read @rls maps select
+  admit select = @kind("service")
+}
+
+object team_doc {
+  table  team_docs
+  scoped tenant > workspace
+  relation owner:   member via owner_id
+  relation in_team: team via object team->view on team_id
+  relation grantee: member via grant team_doc_acl(doc_id, principal_kind, principal_id, access)
+  permission view = owner + in_team + grantee:read @rls maps select
+}
 "#;
 
 const TABLES: &str = "
@@ -144,6 +161,14 @@ INSERT INTO role_grants VALUES
 INSERT INTO held_docs VALUES ('d1', 't1', 'w1', 'm1');
 INSERT INTO role_docs VALUES ('d1', 't1', 'w1', 'm1');
 INSERT INTO session_docs VALUES ('d1', 't1', 'w1', 'm1');
+CREATE TABLE teams (id text PRIMARY KEY, tenant_id text, workspace_id text);
+CREATE TABLE team_acl (team_id text, principal_kind text, principal_id text, access text);
+CREATE TABLE team_docs (id text PRIMARY KEY, tenant_id text, workspace_id text, owner_id text, team_id text);
+CREATE TABLE team_doc_acl (doc_id text, principal_kind text, principal_id text, access text);
+INSERT INTO teams VALUES ('a', 't1', 'w1');
+INSERT INTO team_acl VALUES ('a', 'member', 'm_team', 'read');
+INSERT INTO team_docs VALUES ('d1', 't1', 'w1', 'm1', 'a');
+INSERT INTO team_doc_acl VALUES ('d1', 'member', 'm_doc', 'read');
 ";
 
 const STAFF: [&str; 5] = ["viewer_w1", "owner_t1", "viewer_w2", "revoked", "no_perms"];
@@ -213,7 +238,30 @@ fn the_accessor_listing_covers_every_caller_rls_admits() {
     install(&mut db);
     let mut failures = staff_failures(&mut db);
     failures.extend(conditional_failures(&mut db));
+    failures.extend(borrow_failures(&mut db));
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn borrow_failures(db: &mut Client) -> Vec<String> {
+    let member_claims = |id: &str| format!(r#"{{"member_id":"{id}","tenant_id":"t1","workspace_id":"w1"}}"#);
+    let service = r#"{"kind":"service","tenant_id":"t1","workspace_id":"w1"}"#;
+    let listed_members: BTreeSet<String> = listed(db, "team_docs").into_iter().filter(|(k, _)| k == "member").map(|(_, id)| id).collect();
+    let admitted_members: BTreeSet<String> =
+        ["m1", "m_team", "m_doc", "m_none"].into_iter().filter(|m| admitted(db, "team_docs", &member_claims(m))).map(String::from).collect();
+    let mut failures = Vec::new();
+    if listed_members != admitted_members {
+        failures.push(format!("team_docs: RLS admits {admitted_members:?} but the listing names {listed_members:?}"));
+    }
+    if !admitted_members.contains("m_team") {
+        failures.push("team_docs: the team's grantee reads nothing through the borrow, so the case tests nothing".into());
+    }
+    if !admitted_to(db, "teams", "a", service) {
+        failures.push("teams: the select arm admits no service caller, so the case tests nothing".into());
+    }
+    if admitted(db, "team_docs", service) {
+        failures.push("team_docs: the team's select arm reaches through the borrow, which the listing does not name".into());
+    }
+    failures
 }
 
 fn staff_failures(db: &mut Client) -> Vec<String> {

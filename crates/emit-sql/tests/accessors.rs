@@ -111,6 +111,55 @@ fn a_borrow_of_a_verb_other_than_select_cannot_be_listed() {
     assert!(err.contains("only a read borrow is reversible (\"edit\" is not \"workspace\"'s select verb)"), "{err}");
 }
 
+const TEAM_VIEW: &str = "permission view = grantee:read @rls maps select";
+
+fn borrowed_arm() -> String {
+    format!(
+        "topology {{ level tenant }}
+vocabulary v {{ permission team:read }}
+subject member {{ anchor tenant reach self identifies member_id roles configurable v binds owner }}
+object team {{
+  table  teams
+  scoped tenant
+  relation grantee: member via grant team_acl(team_id, principal_kind, principal_id, access)
+  {TEAM_VIEW}
+  admit select = @kind(\"service\")
+}}
+object doc {{
+  table  docs
+  scoped tenant
+  relation in_team: team via object team->view on team_id
+  relation grantee: member via grant doc_acl(doc_id, principal_kind, principal_id, access)
+  permission view = in_team + grantee:read @rls maps select
+}}
+"
+    )
+}
+
+#[test]
+fn a_borrow_of_an_object_with_a_select_arm_lists_the_borrowed_permissions_readers() {
+    let src = borrowed_arm();
+    let names: Vec<String> = definers(&src).into_iter().map(|d| d.name).collect();
+    assert!(!names.iter().any(|n| n == "teams_accessors"), "{names:?}");
+    let docs = accessor(&src, "docs_accessors");
+    assert!(docs.contains("JOIN LATERAL auth.teams_view_accessors(t.team_id) a ON true"), "{docs}");
+    let readers = accessor(&src, "teams_view_accessors");
+    assert!(readers.contains("FROM team_acl WHERE team_id = p_id"), "{readers}");
+    assert!(!readers.contains("'admit'"), "{readers}");
+    let listing = accessor(&src, "teams_accessors_conditional");
+    assert!(listing.contains("FROM auth.teams_view_accessors(p_id) p"), "{listing}");
+    assert!(listing.contains("SELECT 'admit'::text"), "{listing}");
+}
+
+#[test]
+fn a_borrow_of_a_permission_that_lists_conditionally_is_refused() {
+    let src = swap(&borrowed_arm(), &[(TEAM_VIEW, "permission view = grantee:read + @kind(\"auditor\") @rls maps select")]);
+    let s = demesne_syntax::parse(&src).expect("the spec parses");
+    let err = validate(&s).expect_err("a conditional permission has no plain reader listing to borrow").to_string();
+    assert!(err.contains("relation \"in_team\" borrows team->view, not soundly enumerable (borrowed permission team.view admits readers"), "{err}");
+    assert!(!err.contains("admit kind"), "{err}");
+}
+
 #[test]
 fn a_materialized_group_lists_its_resources_only_when_an_owner_names_the_caller() {
     let src = "topology { level tenant level project parent tenant }
