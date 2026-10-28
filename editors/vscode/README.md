@@ -13,6 +13,17 @@ Code, with no CLI and no network. It checks an open spec as you type, after a 20
   permission can't reach.
 - An error that names no line sits on the first line.
 
+A spec written in several files is checked as one when the `demesne.specs` setting lists
+its files, in order, relative to the workspace folder:
+
+```json
+"demesne.specs": [["authz/core.demesne", "authz/extra.demesne"]]
+```
+
+A file in such a list is checked together with the others, using the editor's text for an
+open file and the saved file otherwise, and each finding shows in the file it names. A file
+in no list is checked on its own.
+
 Highlights: top-level blocks (`topology`, `vocabulary`, `subject`, `object`,
 `template`, `procedures`, `ungoverned`, `fieldscopes`, `rolestore`, `grant`,
 `claims`, `definers`, `tables`); clause keywords; `@`-prefixed terms
@@ -50,6 +61,7 @@ code --install-extension demesne-0.1.0.vsix
 
 - `package.json` — extension manifest (language + grammar contribution).
 - `extension.js` — checks open `.demesne` documents and publishes their diagnostics.
-- `lint.js` — runs the compiler's `diagnostics` export over a document's text.
+- `lint.js` — runs the compiler's `diagnostics` export over a document's text, and its
+  `diagnostics_files` export over the files of a spec in several files.
 - `language-configuration.json` — comments, brackets, auto-closing pairs.
 - `syntaxes/demesne.tmLanguage.json` — the TextMate grammar.

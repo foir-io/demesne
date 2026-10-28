@@ -39,4 +39,12 @@ exports.run = async () => {
     "the edit to turn the errors into warnings",
   );
   console.log(`demesne live validation: ${found.length} errors on lines ${found.map((d) => d.range.start.line + 1).join(", ")}, then ${vscode.languages.getDiagnostics(doc.uri).length} warnings after the edit`);
+
+  const files = ["base.demesne", "extra.demesne", "last.demesne"].map((f) => join(repo, "testdata/multi", f));
+  const extra = await vscode.workspace.openTextDocument(vscode.Uri.file(files[1]));
+  await vscode.window.showTextDocument(extra);
+  await until(() => vscode.languages.getDiagnostics(extra.uri).length === 1, "the second file, checked alone, refusing its replace");
+  await vscode.workspace.getConfiguration("demesne").update("specs", [files], vscode.ConfigurationTarget.Global);
+  await until(() => vscode.languages.getDiagnostics(extra.uri).length === 0, "the second file checked with the files of its spec");
+  console.log("demesne spec in several files: the second file is clean once the setting names the files before it");
 };

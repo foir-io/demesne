@@ -533,7 +533,9 @@ WebAssembly from `crates/wasm`, over each open `.demesne` file after a 200 ms
 pause in typing. It underlines every parse and validation error on the line
 it names, in `demesne validate`'s words, and shows a valid spec's warnings,
 such as a `blind` write. The compiler build gains a `diagnostics` export
-returning each finding's severity, line and message as JSON.
+returning each finding's severity, line and message as JSON. A spec in several
+files is checked as one when the `demesne.specs` setting lists its files, and
+each finding shows in the file it names.
 
 ### Fixes to behaviour carried over from the Go engine
 

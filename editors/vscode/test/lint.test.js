@@ -2,7 +2,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
-const { findings } = require("../lint.js");
+const { findings, findingsInFiles } = require("../lint.js");
 
 const repo = join(__dirname, "../../..");
 const gap = readFileSync(join(repo, "testdata/gaps/d37-wider-write.demesne"), "utf8");
@@ -53,4 +53,14 @@ test("a spec nested past the limit is an error on its line, and the compiler kee
   assert.deepEqual(findings(nestedSpec(parens(65))), refused);
   assert.deepEqual(findings(nestedSpec(parens(100000))), refused);
   assert.deepEqual(findings(nestedSpec(parens(1))), []);
+});
+
+test("the files of a spec are checked as one, and a finding names its file", () => {
+  const files = ["base.demesne", "extra.demesne"].map((f) => join(repo, "testdata/multi", f));
+  assert.deepEqual(findingsInFiles(files, files.map((f) => readFileSync(f, "utf8"))), []);
+  const got = findingsInFiles([files[1]], [readFileSync(files[1], "utf8")]);
+  assert.deepEqual(
+    got.map((f) => [f.severity, f.file, f.line]),
+    [["error", files[1], 11]],
+  );
 });

@@ -42,7 +42,23 @@
         "scopeName": "source.demesne",
         "path": "./syntaxes/demesne.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Demesne",
+      "properties": {
+        "demesne.specs": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Specs written in several files. Each entry lists one spec's files in order, as paths relative to the workspace folder, such as `[\"authz/core.demesne\", \"authz/extra.demesne\"]`. A file in an entry is checked together with the files of its spec, and each finding shows in the file it names.",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
   },
   "scripts": {
     "build:wasm": "../../scripts/build-wasm.sh wasm nodejs",
