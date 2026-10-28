@@ -6,7 +6,7 @@ demesne's runtime for Go. The module embeds the Rust runtime compiled to WebAsse
 go get github.com/foir-io/demesne/go@v1.1.0
 ```
 
-The module's version is the demesne release whose runtime it embeds. Generate code with the CLI of the same version.
+The module's major and minor version are those of the demesne release whose runtime it embeds, and a patch release can fix the Go layer alone. Generate code with the CLI of the same minor version.
 
 ## The typed surface
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## go/v1.1.1
+
+The Go module only; it embeds the v1.1.0 runtime.
+
+### A hand-built projection with nil fields is read as empty
+
+A projection built in Go with a nil slice or map, such as a `demesne.PDP`
+without `Ungoverned` or a `demesne.HoldsResolver` without `ScopeCols`, reached
+the runtime as JSON `null`, and the runtime refused it with
+`… must be an array of strings`. Each projection type now writes a nil slice
+or map as an empty one. The projections `--target go` generates were never
+affected, because their JSON always carries every field.
+
 ## v1.1.0
 
 ### Go applications run the Rust runtime
