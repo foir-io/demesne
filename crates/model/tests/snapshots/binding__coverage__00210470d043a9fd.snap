@@ -1,0 +1,23 @@
+---
+source: crates/model/tests/binding.rs
+expression: "table_coverage(&s, &db)"
+---
+TableCoverage {
+    governed: [
+        "allowances",
+        "assets",
+        "blueprints",
+        "catalogs",
+        "entries",
+        "folders",
+        "ledgers",
+        "spaces",
+    ],
+    referenced: [
+        "approvals",
+        "paths",
+    ],
+    ungoverned: [
+        "unrelated_log",
+    ],
+}

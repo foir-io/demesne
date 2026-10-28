@@ -11,6 +11,10 @@ use std::error::Error as StdError;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::Arc;
 
+const PROTOCOL_3_0: i32 = 3 << 16;
+
+const FIRST_PROTOCOL_3_2_SERVER: i64 = 180_000;
+
 enum Addr {
     Tcp(IpAddr),
     Unix(String),
@@ -45,7 +49,7 @@ impl ServerCertVerifier for NoVerify {
         _end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
         _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
+        _ocsp_response: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         Ok(ServerCertVerified::assertion())
@@ -73,10 +77,10 @@ impl ServerCertVerifier for ChainOnly {
         end_entity: &CertificateDer<'_>,
         intermediates: &[CertificateDer<'_>],
         server_name: &ServerName<'_>,
-        ocsp: &[u8],
+        ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        match self.0.verify_server_cert(end_entity, intermediates, server_name, ocsp, now) {
+        match self.0.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now) {
             Err(rustls::Error::InvalidCertificate(CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. })) => {
                 Ok(ServerCertVerified::assertion())
             }
@@ -106,14 +110,16 @@ impl ServerCertVerifier for NameFirst {
         end_entity: &CertificateDer<'_>,
         intermediates: &[CertificateDer<'_>],
         server_name: &ServerName<'_>,
-        ocsp: &[u8],
+        ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        let cert = webpki::EndEntityCert::try_from(end_entity).map_err(|_| rustls::Error::InvalidCertificate(CertificateError::BadEncoding))?;
+        let Ok(cert) = webpki::EndEntityCert::try_from(end_entity) else {
+            return Err(rustls::Error::InvalidCertificate(CertificateError::BadEncoding));
+        };
         if let Err(webpki::Error::CertNotValidForName(ctx)) = cert.verify_is_valid_for_subject_name(server_name) {
             return Err(rustls::Error::InvalidCertificate(CertificateError::NotValidForNameContext { expected: ctx.expected, presented: ctx.presented }));
         }
-        self.0.verify_server_cert(end_entity, intermediates, server_name, ocsp, now)
+        self.0.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
     }
 
     fn verify_tls12_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
@@ -139,15 +145,16 @@ fn webpki_verifier(roots: &Roots, provider: &Arc<CryptoProvider>) -> Result<Arc<
             store.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
         }
     }
-    WebPkiServerVerifier::builder_with_provider(Arc::new(store), provider.clone())
-        .build()
-        .map_err(|_| "tls: failed to verify certificate: x509: failed to load system roots and no roots provided".to_string())
+    let Ok(verifier) = WebPkiServerVerifier::builder_with_provider(Arc::new(store), Arc::clone(provider)).build() else {
+        return Err("tls: failed to verify certificate: x509: failed to load system roots and no roots provided".to_string());
+    };
+    Ok(verifier)
 }
 
 fn rustls_config(plan: &TlsPlan) -> Result<ClientConfig, String> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let verifier: Arc<dyn ServerCertVerifier> = match plan.verify {
-        Verify::None => Arc::new(NoVerify(provider.clone())),
+        Verify::None => Arc::new(NoVerify(Arc::clone(&provider))),
         Verify::Chain => Arc::new(ChainOnly(webpki_verifier(&plan.roots, &provider)?)),
         Verify::Full => Arc::new(NameFirst(webpki_verifier(&plan.roots, &provider)?)),
     };
@@ -167,7 +174,7 @@ fn rustls_config(plan: &TlsPlan) -> Result<ClientConfig, String> {
     Ok(cfg)
 }
 
-fn alert_text(a: &AlertDescription) -> String {
+fn alert_text(a: AlertDescription) -> String {
     use AlertDescription as A;
     match a {
         A::CloseNotify => "close notify".into(),
@@ -204,7 +211,7 @@ fn alert_text(a: &AlertDescription) -> String {
         A::CertificateRequired => "certificate required".into(),
         A::NoApplicationProtocol => "no application protocol".into(),
         A::EncryptedClientHelloRequired => "encrypted client hello required".into(),
-        other => format!("alert({})", u8::from(*other)),
+        other => format!("alert({})", u8::from(other)),
     }
 }
 
@@ -231,9 +238,10 @@ fn go_tls_error(e: &rustls::Error, verify: Verify, host: &str) -> String {
                 CertificateError::UnknownIssuer => "x509: certificate signed by unknown authority".to_string(),
                 CertificateError::NotValidForName => hostname_error(host, &[]),
                 CertificateError::NotValidForNameContext { presented, .. } => hostname_error(host, presented),
-                CertificateError::Expired | CertificateError::ExpiredContext { .. } | CertificateError::NotValidYet | CertificateError::NotValidYetContext { .. } => {
-                    "x509: certificate has expired or is not yet valid".to_string()
-                }
+                CertificateError::Expired
+                | CertificateError::ExpiredContext { .. }
+                | CertificateError::NotValidYet
+                | CertificateError::NotValidYetContext { .. } => "x509: certificate has expired or is not yet valid".to_string(),
                 other => format!("x509: {other:?}"),
             };
             match verify {
@@ -241,7 +249,7 @@ fn go_tls_error(e: &rustls::Error, verify: Verify, host: &str) -> String {
                 _ => format!("tls: failed to verify certificate: {body}"),
             }
         }
-        rustls::Error::AlertReceived(a) => format!("remote error: tls: {}", alert_text(a)),
+        rustls::Error::AlertReceived(a) => format!("remote error: tls: {}", alert_text(*a)),
         other => format!("tls: {other}"),
     }
 }
@@ -290,7 +298,9 @@ fn classify(e: &postgres::Error, a: &Attempt) -> Failure {
             Addr::Unix(_) => "unix",
         };
         return Failure::plain(match source.and_then(find_in_chain::<std::io::Error>) {
-            Some(io) if io.kind() == std::io::ErrorKind::TimedOut && io.raw_os_error().is_none() => "dial error: timeout: context deadline exceeded".to_string(),
+            Some(io) if io.kind() == std::io::ErrorKind::TimedOut && io.raw_os_error().is_none() => {
+                "dial error: timeout: context deadline exceeded".to_string()
+            }
             Some(io) => format!("dial error: dial {net} {}: connect: {}", a.address, errno_text(io)),
             None => "dial error".to_string(),
         });
@@ -299,7 +309,7 @@ fn classify(e: &postgres::Error, a: &Attempt) -> Failure {
         if source.is_some_and(|s| s.to_string() == "server does not support TLS") {
             return Failure::plain("tls error: server refused TLS connection");
         }
-        let verify = a.tls.map(|p| p.verify).unwrap_or(Verify::None);
+        let verify = a.tls.map_or(Verify::None, |p| p.verify);
         if let Some(r) = source.and_then(find_in_chain::<rustls::Error>) {
             return Failure::plain(format!("failed to write startup message: write failed: {}", go_tls_error(r, verify, a.original)));
         }
@@ -417,8 +427,11 @@ fn attempt(cfg: &ConnConfig, a: &Attempt, ignore_not_preferred: bool) -> Result<
     }
     if cfg.min_protocol != "3.0" {
         let v: i64 = first_cell(&mut client, "show server_version_num").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-        if v < 180000 {
-            return Err(Failure::plain("server protocol version too low: %!w(<nil>)"));
+        if v < FIRST_PROTOCOL_3_2_SERVER {
+            return Err(Failure::plain(format!(
+                "server protocol version too low: min_protocol_version is {}, but the server speaks only protocol 3.0",
+                cfg.min_protocol
+            )));
         }
     }
     validate(&mut client, cfg.session_attrs, ignore_not_preferred)?;
@@ -427,7 +440,7 @@ fn attempt(cfg: &ConnConfig, a: &Attempt, ignore_not_preferred: bool) -> Result<
 
 fn startup_packet(cfg: &ConnConfig) -> Vec<u8> {
     let mut body = Vec::new();
-    body.extend_from_slice(&196608i32.to_be_bytes());
+    body.extend_from_slice(&PROTOCOL_3_0.to_be_bytes());
     let mut param = |k: &str, v: &str| {
         body.extend_from_slice(k.as_bytes());
         body.push(0);
@@ -439,7 +452,7 @@ fn startup_packet(cfg: &ConnConfig) -> Vec<u8> {
         param("database", &cfg.database);
     }
     body.push(0);
-    let mut out = ((body.len() + 4) as i32).to_be_bytes().to_vec();
+    let mut out = i32::try_from(body.len() + 4).expect("a startup packet is a few hundred bytes").to_be_bytes().to_vec();
     out.extend(body);
     out
 }
@@ -496,7 +509,7 @@ fn lookup_host(host: &str) -> Result<Vec<IpAddr>, String> {
         return Ok(vec![ip]);
     }
     let not_found = || format!("lookup {host}: no such host");
-    let addrs = (host, 0).to_socket_addrs().map_err(|_| not_found())?;
+    let Ok(addrs) = (host, 0).to_socket_addrs() else { return Err(not_found()) };
     let mut ips: Vec<IpAddr> = Vec::new();
     for a in addrs {
         if !ips.contains(&a.ip()) {
@@ -518,8 +531,17 @@ fn connect_error(cfg: &ConnConfig, details: &str) -> String {
     if details.contains('\n') { format!("{prefix}\n\t{}", details.replace('\n', "\n\t")) } else { format!("{prefix} {details}") }
 }
 
-pub fn connect(conn: &str) -> Result<Client, String> {
-    let cfg = dsn::parse_config(conn).map_err(|e| e.to_string())?;
+/// Connects to Postgres from a URL or keyword/value string, the way libpq and pgx do.
+///
+/// # Errors
+///
+/// The connection string does not parse, or every host fails to connect, authenticate or meet the TLS mode. The message lists each attempt.
+pub fn connect(conn: &str) -> Result<Client, crate::Error> {
+    let cfg = dsn::parse_config(conn).map_err(|e| crate::Error::connection_string(e.to_string()))?;
+    connect_with(&cfg).map_err(crate::Error::connect)
+}
+
+fn connect_with(cfg: &ConnConfig) -> Result<Client, String> {
     let mut errors: Vec<String> = Vec::new();
     let mut attempts: Vec<Attempt> = Vec::new();
     for fb in &cfg.fallbacks {
@@ -536,23 +558,29 @@ pub fn connect(conn: &str) -> Result<Client, String> {
         match lookup_host(&fb.host) {
             Ok(ips) => {
                 for ip in ips {
-                    attempts.push(Attempt { addr: Addr::Tcp(ip), port: fb.port, address: join_host_port(ip, fb.port), original: &fb.host, tls: fb.tls.as_ref() });
+                    attempts.push(Attempt {
+                        addr: Addr::Tcp(ip),
+                        port: fb.port,
+                        address: join_host_port(ip, fb.port),
+                        original: &fb.host,
+                        tls: fb.tls.as_ref(),
+                    });
                 }
             }
             Err(e) => errors.push(e),
         }
     }
     if attempts.is_empty() {
-        return Err(connect_error(&cfg, &format!("hostname resolving error: {}", errors.join("\n"))));
+        return Err(connect_error(cfg, &format!("hostname resolving error: {}", errors.join("\n"))));
     }
     let mut not_preferred: Option<&Attempt> = None;
     for a in &attempts {
-        match attempt(&cfg, a, false) {
+        match attempt(cfg, a, false) {
             Ok(c) => return Ok(c),
             Err(f) => {
                 errors.push(format!("{} ({}): {}", a.address, a.original, f.text));
                 if matches!(f.code.as_deref(), Some("28P01" | "3D000" | "42501")) {
-                    return Err(connect_error(&cfg, &errors.join("\n")));
+                    return Err(connect_error(cfg, &errors.join("\n")));
                 }
                 if f.not_preferred {
                     not_preferred = Some(a);
@@ -561,10 +589,10 @@ pub fn connect(conn: &str) -> Result<Client, String> {
         }
     }
     if let Some(a) = not_preferred {
-        match attempt(&cfg, a, true) {
+        match attempt(cfg, a, true) {
             Ok(c) => return Ok(c),
             Err(f) => errors.push(format!("{} ({}): {}", a.address, a.original, f.text)),
         }
     }
-    Err(connect_error(&cfg, &errors.join("\n")))
+    Err(connect_error(cfg, &errors.join("\n")))
 }

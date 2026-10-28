@@ -1,0 +1,19 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+DROP POLICY IF EXISTS records_select ON public.records;
+CREATE POLICY records_select ON public.records FOR SELECT TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.member_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'records:read') OR auth.member_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'records:write'))));
+
+DROP POLICY IF EXISTS records_update ON public.records;
+CREATE POLICY records_update ON public.records FOR UPDATE TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.member_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'records:write'))))
+    WITH CHECK ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.member_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'records:write'))));
+
+
+--- stderr ---
+
+--- end ---

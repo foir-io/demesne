@@ -1,0 +1,15 @@
+---
+source: crates/model/tests/binding.rs
+expression: "refusals(&s, &sc).join(\"\\n\")"
+---
+object invitation relation "sender": table "invitations" has no column "invited_by"
+object invitation scope: table "invitations" has no column "tenant_id"
+rolestore admin roles: table "roles" has no column "id"
+rolestore admin roles: table "roles" has no column "key"
+rolestore admin roles: table "roles" has no column "permissions"
+rolestore admin: table "role_assignments" has no column "principal_id"
+rolestore admin: table "role_assignments" has no column "principal_kind"
+rolestore admin: table "role_assignments" has no column "project_id"
+rolestore admin: table "role_assignments" has no column "revoked_at"
+rolestore admin: table "role_assignments" has no column "role_id"
+rolestore admin: table "role_assignments" has no column "tenant_id"

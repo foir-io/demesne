@@ -1,0 +1,50 @@
+topology {
+  level platform virtual
+  level space parent platform col space_ref
+}
+
+vocabulary staff {
+  permission content:manage
+  permission media:share
+  permission self:manage implies media:share
+  preset space_role0 @ space = self:manage
+  preset space_role1 @ space = *
+}
+
+rolestore staff {
+  assignments role_assignments
+  kind principal_kind = "staff"
+  subject principal_id
+  scope space_ref
+  rolejoin role_id roles id key
+  revoked revoked_at by revoked_by
+  permissions perms
+  granted granted_at by granted_by
+}
+
+grant support at space
+  via edge support_grants(grantee_id, space_ref)
+  active revoked_at expires expires_at confers select, insert, update, delete
+
+subject admin { anchor space; reach descendants; identifies sub; roles configurable staff; binds admin }
+subject customer { anchor space; reach self; identifies customer_id; roles none; binds owner }
+subject operator { anchor platform; reach via grant support; identifies sub; roles none }
+subject visitor { anchor space; reach self; identifies visitor_id; roles none; transient set }
+
+object doc {
+  table docs
+  scoped space
+  relation owner: customer via owner_id
+  relation member: admin via role
+  relation scope_member: admin via memberin space(@sub, space_ref)
+  permission view = @app_scope @rls maps select guard status <> "archived"
+  permission edit = @session + @kind("admin") @rls maps update blind guard status <> "archived"
+}
+
+object record {
+  table records
+  scoped space
+  relation owner: customer via owner_id
+  relation parent: doc via object doc->view on doc_id
+  permission view = @claim("tier", "gold") + @kind("admin") @rls maps select
+}

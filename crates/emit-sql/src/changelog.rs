@@ -1,8 +1,9 @@
 use crate::Sql;
-use demesne_gocompat::sort_slice;
 use demesne_model::SpecExt;
-use demesne_syntax::*;
+use demesne_runtime::quote_literal;
+use demesne_syntax::Repr;
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
 pub const CHANGELOG_CHANNEL: &str = "demesne_authz_changelog";
 
@@ -31,12 +32,13 @@ impl ChangelogTrigger {
         if !self.discrim_col.is_empty() {
             return format!("{row_var}.{}", self.discrim_col);
         }
-        format!("'{}'", self.table)
+        quote_literal(&self.table)
     }
 
+    #[must_use]
     pub fn function_sql(&self) -> String {
         format!(
-            r#"CREATE OR REPLACE FUNCTION {f}()
+            r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -46,17 +48,17 @@ BEGIN
   IF (TG_OP = 'INSERT') THEN
     INSERT INTO {cl} (rel, resource_id, principal_kind, principal_id, op)
       VALUES ({new_rel}, NEW.{rc}, NEW.{kc}, NEW.{pc}, 'grant');
-    PERFORM pg_notify('{ch}', json_build_object('rel', {new_rel}, 'resource_id', NEW.{rc}, 'principal_kind', NEW.{kc}, 'principal_id', NEW.{pc}, 'op', 'grant')::text);
+    PERFORM pg_notify({ch}, json_build_object('rel', {new_rel}, 'resource_id', NEW.{rc}, 'principal_kind', NEW.{kc}, 'principal_id', NEW.{pc}, 'op', 'grant')::text);
     RETURN NEW;
   ELSIF (TG_OP = 'DELETE') THEN
     INSERT INTO {cl} (rel, resource_id, principal_kind, principal_id, op)
       VALUES ({old_rel}, OLD.{rc}, OLD.{kc}, OLD.{pc}, 'revoke');
-    PERFORM pg_notify('{ch}', json_build_object('rel', {old_rel}, 'resource_id', OLD.{rc}, 'principal_kind', OLD.{kc}, 'principal_id', OLD.{pc}, 'op', 'revoke')::text);
+    PERFORM pg_notify({ch}, json_build_object('rel', {old_rel}, 'resource_id', OLD.{rc}, 'principal_kind', OLD.{kc}, 'principal_id', OLD.{pc}, 'op', 'revoke')::text);
     RETURN OLD;
   END IF;
   RETURN NULL;
 END;
-$$;"#,
+$$;",
             f = self.fn_name(),
             cl = self.changelog,
             new_rel = self.rel_expr("NEW"),
@@ -64,10 +66,11 @@ $$;"#,
             kc = self.kind_col,
             pc = self.principal_col,
             old_rel = self.rel_expr("OLD"),
-            ch = CHANGELOG_CHANNEL
+            ch = quote_literal(CHANGELOG_CHANNEL)
         )
     }
 
+    #[must_use]
     pub fn trigger_sql(&self) -> String {
         let name = format!("{}_changelog", self.table);
         let ts = or_default(&self.table_schema, "public");
@@ -109,37 +112,39 @@ impl ObjectChangelogTrigger {
         cols
     }
 
+    #[must_use]
     pub fn function_sql(&self) -> String {
         let cols = "(rel, resource_id, principal_kind, principal_id, op)";
-        let (cl, rel, pk, ch) = (&self.changelog, &self.rel, &self.pk, CHANGELOG_CHANNEL);
+        let (cl, rel, pk, ch) = (&self.changelog, quote_literal(&self.rel), &self.pk, quote_literal(CHANGELOG_CHANNEL));
         let mut body = String::new();
         if !self.owner_id_col.is_empty() {
             let (id, kind) = (&self.owner_id_col, &self.owner_kind_col);
-            body.push_str(&format!("  IF (OLD.{id} IS DISTINCT FROM NEW.{id}) OR (OLD.{kind} IS DISTINCT FROM NEW.{kind}) THEN\n"));
-            body.push_str(&format!("    IF OLD.{id} IS NOT NULL THEN\n"));
-            body.push_str(&format!("      INSERT INTO {cl} {cols}\n"));
-            body.push_str(&format!("        VALUES ('{rel}', NEW.{pk}, COALESCE(OLD.{kind}, ''), OLD.{id}, 'revoke');\n"));
-            body.push_str(&format!(
-                "      PERFORM pg_notify('{ch}', json_build_object('rel', '{rel}', 'resource_id', NEW.{pk}, 'principal_kind', COALESCE(OLD.{kind}, ''), 'principal_id', OLD.{id}, 'op', 'revoke')::text);\n"
-            ));
+            writeln!(body, "  IF (OLD.{id} IS DISTINCT FROM NEW.{id}) OR (OLD.{kind} IS DISTINCT FROM NEW.{kind}) THEN")
+                .expect("fmt::Write for String never fails");
+            writeln!(body, "    IF OLD.{id} IS NOT NULL THEN").expect("fmt::Write for String never fails");
+            writeln!(body, "      INSERT INTO {cl} {cols}").expect("fmt::Write for String never fails");
+            writeln!(body, "        VALUES ({rel}, NEW.{pk}, COALESCE(OLD.{kind}, ''), OLD.{id}, 'revoke');").expect("fmt::Write for String never fails");
+            writeln!(body,
+                "      PERFORM pg_notify({ch}, json_build_object('rel', {rel}, 'resource_id', NEW.{pk}, 'principal_kind', COALESCE(OLD.{kind}, ''), 'principal_id', OLD.{id}, 'op', 'revoke')::text);"
+            ).expect("fmt::Write for String never fails");
             body.push_str("    END IF;\n");
-            body.push_str(&format!("    IF NEW.{id} IS NOT NULL THEN\n"));
-            body.push_str(&format!("      INSERT INTO {cl} {cols}\n"));
-            body.push_str(&format!("        VALUES ('{rel}', NEW.{pk}, COALESCE(NEW.{kind}, ''), NEW.{id}, 'grant');\n"));
-            body.push_str(&format!(
-                "      PERFORM pg_notify('{ch}', json_build_object('rel', '{rel}', 'resource_id', NEW.{pk}, 'principal_kind', COALESCE(NEW.{kind}, ''), 'principal_id', NEW.{id}, 'op', 'grant')::text);\n"
-            ));
+            writeln!(body, "    IF NEW.{id} IS NOT NULL THEN").expect("fmt::Write for String never fails");
+            writeln!(body, "      INSERT INTO {cl} {cols}").expect("fmt::Write for String never fails");
+            writeln!(body, "        VALUES ({rel}, NEW.{pk}, COALESCE(NEW.{kind}, ''), NEW.{id}, 'grant');").expect("fmt::Write for String never fails");
+            writeln!(body,
+                "      PERFORM pg_notify({ch}, json_build_object('rel', {rel}, 'resource_id', NEW.{pk}, 'principal_kind', COALESCE(NEW.{kind}, ''), 'principal_id', NEW.{id}, 'op', 'grant')::text);"
+            ).expect("fmt::Write for String never fails");
             body.push_str("    END IF;\n");
             body.push_str("  END IF;\n");
         }
         if !self.mode_col.is_empty() {
             let m = &self.mode_col;
-            body.push_str(&format!("  IF (OLD.{m} IS DISTINCT FROM NEW.{m}) THEN\n"));
-            body.push_str(&format!("    INSERT INTO {cl} {cols}\n"));
-            body.push_str(&format!("      VALUES ('{rel}', NEW.{pk}, '', '', 'visibility');\n"));
-            body.push_str(&format!(
-                "    PERFORM pg_notify('{ch}', json_build_object('rel', '{rel}', 'resource_id', NEW.{pk}, 'principal_kind', '', 'principal_id', '', 'op', 'visibility')::text);\n"
-            ));
+            writeln!(body, "  IF (OLD.{m} IS DISTINCT FROM NEW.{m}) THEN").expect("fmt::Write for String never fails");
+            writeln!(body, "    INSERT INTO {cl} {cols}").expect("fmt::Write for String never fails");
+            writeln!(body, "      VALUES ({rel}, NEW.{pk}, '', '', 'visibility');").expect("fmt::Write for String never fails");
+            writeln!(body,
+                "    PERFORM pg_notify({ch}, json_build_object('rel', {rel}, 'resource_id', NEW.{pk}, 'principal_kind', '', 'principal_id', '', 'op', 'visibility')::text);"
+            ).expect("fmt::Write for String never fails");
             body.push_str("  END IF;\n");
         }
         format!(
@@ -149,6 +154,7 @@ impl ObjectChangelogTrigger {
         )
     }
 
+    #[must_use]
     pub fn trigger_sql(&self) -> String {
         let name = format!("{}_obj_changelog", self.table);
         let ts = or_default(&self.table_schema, "public");
@@ -166,6 +172,7 @@ impl Sql<'_> {
         format!("{}._authz_changelog", self.s.definer_schema())
     }
 
+    #[must_use]
     pub fn changelog_table_sql(&self) -> String {
         let t = self.changelog_table();
         let txid = if self.s.has_async() { ",\n  txid xid8 NOT NULL DEFAULT pg_current_xact_id()" } else { "" };
@@ -173,36 +180,36 @@ impl Sql<'_> {
             "CREATE TABLE IF NOT EXISTS {t} (\n  seq bigserial PRIMARY KEY,\n  rel text NOT NULL,\n  resource_id text NOT NULL,\n  principal_kind text NOT NULL,\n  principal_id text NOT NULL,\n  op text NOT NULL,\n  at timestamptz NOT NULL DEFAULT now(){txid}\n);\nCREATE INDEX IF NOT EXISTS _authz_changelog_seq_idx ON {t} (seq);\nCREATE INDEX IF NOT EXISTS _authz_changelog_principal_idx ON {t} (principal_kind, principal_id);\n"
         );
         if self.s.has_async() {
-            base.push_str(&format!("CREATE INDEX IF NOT EXISTS _authz_changelog_rel_txid_idx ON {t} (rel, txid);\n"));
+            writeln!(base, "CREATE INDEX IF NOT EXISTS _authz_changelog_rel_txid_idx ON {t} (rel, txid);").expect("fmt::Write for String never fails");
         }
         base
     }
 
+    #[must_use]
     pub fn emit_changelog_triggers(&self) -> Vec<ChangelogTrigger> {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
-        for obj in &self.s.objects {
-            for r in &obj.relations {
-                let Repr::Grant(g) = &r.repr else { continue };
-                if !g.tracked || !seen.insert(g.table.clone()) {
-                    continue;
-                }
-                out.push(ChangelogTrigger {
-                    schema: self.s.definer_schema().into(),
-                    table_schema: self.s.table_schema().into(),
-                    changelog: self.changelog_table(),
-                    table: g.table.clone(),
-                    record_col: g.record_col.clone(),
-                    kind_col: g.kind_col.clone(),
-                    principal_col: g.principal_col.clone(),
-                    discrim_col: g.discrim_col.clone().unwrap_or_default(),
-                });
+        for (_, r) in self.s.relations() {
+            let Repr::Grant(g) = &r.repr else { continue };
+            if !g.tracked || !seen.insert(g.table.clone()) {
+                continue;
             }
+            out.push(ChangelogTrigger {
+                schema: self.s.definer_schema().into(),
+                table_schema: self.s.table_schema().into(),
+                changelog: self.changelog_table(),
+                table: g.table.clone(),
+                record_col: g.record_col.clone(),
+                kind_col: g.kind_col.clone(),
+                principal_col: g.principal_col.clone(),
+                discrim_col: g.discrim_col.clone().unwrap_or_default(),
+            });
         }
-        sort_slice(&mut out, |a, b| a.table < b.table);
+        out.sort_by(|a, b| a.table.cmp(&b.table));
         out
     }
 
+    #[must_use]
     pub fn emit_object_changelog_triggers(&self) -> Vec<ObjectChangelogTrigger> {
         let mut out = Vec::new();
         for obj in &self.s.objects {
@@ -231,10 +238,11 @@ impl Sql<'_> {
             }
             out.push(t);
         }
-        sort_slice(&mut out, |a, b| a.table < b.table);
+        out.sort_by(|a, b| (&a.table, &a.rel).cmp(&(&b.table, &b.rel)));
         out
     }
 
+    #[must_use]
     pub fn changelog_sql(&self) -> String {
         let grant_trigs = self.emit_changelog_triggers();
         let obj_trigs = self.emit_object_changelog_triggers();

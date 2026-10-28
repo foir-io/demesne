@@ -1,0 +1,18 @@
+# gap	spec	args ({spec} is the fixture)	v0.93.1 output matches	this release matches (and v0.93.1 must not)
+WRITE	wider-write.demesne	validate {spec}	^ok: 1 objects	permission note\.remove maps delete, and its term `grantee:write` admits callers the select permission note\.view does not reach
+ACCESS	accessors-holds.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'holds'::text AS source, 'staff'::text AS principal_kind, ra\.grantee_id
+ACCESS	accessors-role.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	FROM docs e JOIN role_grants ra ON ra\.grantee_kind = 'staff' AND ra\.revoked_at IS NULL AND ra\.tenant_id = e\.tenant_id AND ra\.workspace_id = e\.workspace_id JOIN roles rr ON rr\.id = ra\.role_id AND rr\.key IN \('viewer'\)
+ACCESS	accessors-session-rel.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	FROM docs e JOIN role_grants ra ON ra\.grantee_kind = 'staff' AND ra\.revoked_at IS NULL AND ra\.tenant_id = e\.tenant_id AND ra\.workspace_id = e\.workspace_id JOIN roles rr ON rr\.id = ra\.role_id AND rr\.key IN \('viewer'\)
+ACCESS	accessors-kind.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'claim'::text, NULL::text, NULL::text, 'read'::text, 'kind'::text, 'member'::text
+ACCESS	accessors-public.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'public'::text, NULL::text, NULL::text, 'read'::text
+ACCESS	accessors-self.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	'sub'::text, owner_id::text
+ACCESS	accessors-session.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	'workspace_id'::text, workspace_id::text
+ACCESS	accessors-within-nullable.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'scope'::text, NULL::text, NULL::text, 'read'::text
+ACCESS	accessors-tree-holds.demesne	validate {spec}	term "@holds\(docs:read\)" has no accessor branch	^ok: 2 objects
+NAMES	shared-table-names.demesne	validate {spec}	^ok: 14 objects	each compile a policy named "items_select"; Postgres keeps only the last one created
+MIGRATE	migrate-after.demesne	emit {spec} migrate {gaps}/migrate-before.manifest.json	unknown emit kind "migrate"	DROP FUNCTION IF EXISTS auth\.notes_accessors_conditional\(text\);
+QUIRK1	quirk-accessors-schema.demesne	validate {spec}	\(auth\.docs_accessors would under-report\)	\(app_auth\.docs_accessors would under-report\)
+QUIRK1	quirk-structural-schema.demesne	validate {spec}	\(auth\.assets_accessors would under-report\)	\(app_auth\.assets_accessors would under-report\)
+IMPLIED	quirk-implied-schema.demesne	emit {spec} definers	[^_]auth\.member_perm_implied_by\(p_perm\)	app_auth\.member_perm_implied_by\(p_perm\)
+LONE	lone-term-under-not.demesne	emit {spec} rls	OR actor_col = \(current_setting	writes `@self\(actor_col\)` inside `not @self\(actor_col\) and owner`, but a @self, @public or `via grant` term admits its callers on its own
+SCOPED	scoped-absorbed.demesne	emit {spec} rls	AND \(owner_id = \(current_setting	writes `owner \+ @scoped`, which compiles as `owner`

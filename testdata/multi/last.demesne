@@ -1,0 +1,8 @@
+replace object doc {
+  table  docs
+  scoped tenant > workspace
+  relation owner:   member via owner_id
+  relation grantee: member via grant acl(resource_id, principal_kind, principal_id, access) where resource_type = "doc"
+  permission view = owner + grantee:read + grantee:write @rls maps select
+  permission edit = owner + grantee:write @rls maps update
+}

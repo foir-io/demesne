@@ -1,21 +1,157 @@
-use crate::ast::*;
-use crate::lexer::{Tok, Token, lex};
 use crate::Error;
+use crate::ast::{
+    Admit, ArgSrc, Builtin, ClaimsAccessor, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantScope, GrantUse,
+    Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset, ProcEntry, Procedures, Relation, RelationKind, Repr,
+    Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant,
+    ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+};
+use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 type PResult<T> = Result<T, Error>;
 
+#[derive(Debug)]
+struct LevelChain {
+    chain: Vec<String>,
+    wildcards: Vec<String>,
+    verbs_by_level: BTreeMap<String, Vec<String>>,
+}
+
+/// The deepest a permission or requirement may nest parentheses.
+///
+/// The parser and every pass over a permission recurse once per level, so a limit keeps hostile
+/// input from exhausting the stack. That matters most in WebAssembly, which has no stack guard:
+/// an overflow there leaves the module unusable for every later call. The compiler handles a few
+/// hundred levels there; real specs nest a handful.
+pub const MAX_NESTING: usize = 64;
+
+/// Parses `.demesne` spec text into a [`Spec`], expanding templates.
+///
+/// # Errors
+///
+/// A lexical or syntax error, parentheses nested deeper than [`MAX_NESTING`], or a template that
+/// cannot be expanded. The error carries the line.
 pub fn parse(src: &str) -> Result<Spec, Error> {
     parse_bytes(src.as_bytes())
 }
 
+/// Parses `.demesne` spec bytes into a [`Spec`], expanding templates.
+///
+/// # Errors
+///
+/// Invalid UTF-8 in a literal, a lexical or syntax error, parentheses nested deeper than
+/// [`MAX_NESTING`], or a template that cannot be expanded.
 pub fn parse_bytes(src: &[u8]) -> Result<Spec, Error> {
-    let toks = lex(src)?;
-    let mut p = Parser { toks, i: 0 };
-    let mut s = p.parse_spec()?;
+    let fragment = Parser { toks: lex(src)?, i: 0, depth: 0 }.parse_fragment()?;
+    if let Some(r) = fragment.replaces.first() {
+        return Err(Error::at(r.pos.line, "`replace` swaps in a declaration for one an earlier file made, and a spec in one file has no earlier file"));
+    }
+    let mut s = fragment.spec;
     expand_templates(&mut s)?;
     Ok(s)
+}
+
+pub(crate) fn parse_fragment(src: &[u8], first_line: usize) -> Result<Fragment, Error> {
+    Parser { toks: lex_from(src, first_line)?, i: 0, depth: 0 }.parse_fragment()
+}
+
+/// What one file declares, before it joins the files before it and its templates are expanded.
+#[derive(Debug, Default)]
+pub(crate) struct Fragment {
+    pub(crate) spec: Spec,
+    pub(crate) replaces: Vec<Replace>,
+    pub(crate) singles: Vec<(Kind, Pos)>,
+}
+
+/// A declaration written `replace <declaration>`: the `index`-th of its kind in the file.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Replace {
+    pub(crate) kind: Kind,
+    pub(crate) index: usize,
+    pub(crate) pos: Pos,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Topology,
+    Vocabulary,
+    Subject,
+    Object,
+    Template,
+    Procedures,
+    Ungoverned,
+    FieldScopes,
+    RoleStore,
+    Grant,
+    Claims,
+    Definers,
+    Tables,
+    Identifiers,
+    External,
+}
+
+impl Kind {
+    fn of(keyword: &str) -> Option<Kind> {
+        Some(match keyword {
+            "topology" => Kind::Topology,
+            "vocabulary" => Kind::Vocabulary,
+            "subject" => Kind::Subject,
+            "object" => Kind::Object,
+            "template" => Kind::Template,
+            "procedures" => Kind::Procedures,
+            "ungoverned" => Kind::Ungoverned,
+            "fieldscopes" => Kind::FieldScopes,
+            "rolestore" => Kind::RoleStore,
+            "grant" => Kind::Grant,
+            "claims" => Kind::Claims,
+            "definers" => Kind::Definers,
+            "tables" => Kind::Tables,
+            "identifiers" => Kind::Identifiers,
+            "external" => Kind::External,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            Kind::Topology => "topology",
+            Kind::Vocabulary => "vocabulary",
+            Kind::Subject => "subject",
+            Kind::Object => "object",
+            Kind::Template => "template",
+            Kind::Procedures => "procedures",
+            Kind::Ungoverned => "ungoverned",
+            Kind::FieldScopes => "fieldscopes",
+            Kind::RoleStore => "rolestore",
+            Kind::Grant => "grant",
+            Kind::Claims => "claims",
+            Kind::Definers => "definers",
+            Kind::Tables => "tables",
+            Kind::Identifiers => "identifiers",
+            Kind::External => "external",
+        }
+    }
+
+    pub(crate) fn single(self) -> bool {
+        matches!(self, Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers)
+    }
+
+    fn declared(self, s: &Spec) -> usize {
+        match self {
+            Kind::Vocabulary => s.vocabs.len(),
+            Kind::Subject => s.subjects.len(),
+            Kind::Object => s.objects.len(),
+            Kind::Template => s.templates.len(),
+            Kind::Procedures => s.procedures.len(),
+            Kind::Ungoverned => s.ungoverned.len(),
+            Kind::FieldScopes => s.field_scopes.len(),
+            Kind::RoleStore => s.role_stores.len(),
+            Kind::Grant => s.grants.len(),
+            Kind::External => s.externals.len(),
+            Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers => 0,
+        }
+    }
 }
 
 fn non_empty(s: String) -> Option<String> {
@@ -25,6 +161,7 @@ fn non_empty(s: String) -> Option<String> {
 struct Parser {
     toks: Vec<Token>,
     i: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -53,7 +190,7 @@ impl Parser {
     }
 
     fn err(&self, msg: impl AsRef<str>) -> Error {
-        Error::new(format!("line {}: {}", self.line(), msg.as_ref()))
+        Error::at(self.line(), msg.as_ref())
     }
 
     fn got(&self) -> String {
@@ -94,15 +231,29 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_spec(&mut self) -> PResult<Spec> {
-        let mut s = Spec::default();
+    fn parse_fragment(&mut self) -> PResult<Fragment> {
+        let mut f = Fragment::default();
         while self.peek() != Tok::Eof {
             if self.peek() != Tok::Ident {
                 return Err(self.err(format!("expected a declaration keyword, got {}", self.got())));
             }
-            self.parse_decl(&mut s)?;
+            let pos = self.pos();
+            let replace = self.accept_kw("replace");
+            if replace && self.peek() != Tok::Ident {
+                return Err(self.err(format!("expected a declaration keyword after `replace`, got {}", self.got())));
+            }
+            let kind = Kind::of(&self.cur().lit);
+            let index = kind.map_or(0, |k| k.declared(&f.spec));
+            self.parse_decl(&mut f.spec)?;
+            let kind = kind.expect("parse_decl refuses a keyword that names no declaration");
+            if kind.single() {
+                f.singles.push((kind, pos));
+            }
+            if replace {
+                f.replaces.push(Replace { kind, index, pos });
+            }
         }
-        Ok(s)
+        Ok(f)
     }
 
     fn parse_decl(&mut self, s: &mut Spec) -> PResult<()> {
@@ -114,42 +265,15 @@ impl Parser {
                 }
                 s.topology = Some(t);
             }
-            "vocabulary" => {
-                let v = self.parse_vocabulary()?;
-                s.vocabs.push(v);
-            }
-            "subject" => {
-                let sub = self.parse_subject()?;
-                s.subjects.push(sub);
-            }
-            "object" => {
-                let o = self.parse_object()?;
-                s.objects.push(o);
-            }
-            "template" => {
-                let t = self.parse_template()?;
-                s.templates.push(t);
-            }
-            "procedures" => {
-                let pr = self.parse_procedures()?;
-                s.procedures.push(pr);
-            }
-            "ungoverned" => {
-                let u = self.parse_ungoverned()?;
-                s.ungoverned.push(u);
-            }
-            "fieldscopes" => {
-                let fs = self.parse_field_scopes()?;
-                s.field_scopes.push(fs);
-            }
-            "rolestore" => {
-                let rs = self.parse_role_store()?;
-                s.role_stores.push(rs);
-            }
-            "grant" => {
-                let g = self.parse_grant()?;
-                s.grants.push(g);
-            }
+            "vocabulary" => s.vocabs.push(self.parse_vocabulary()?),
+            "subject" => s.subjects.push(self.parse_subject()?),
+            "object" => s.objects.push(self.parse_object()?),
+            "template" => s.templates.push(self.parse_template()?),
+            "procedures" => s.procedures.push(self.parse_procedures()?),
+            "ungoverned" => s.ungoverned.push(self.parse_ungoverned()?),
+            "fieldscopes" => s.field_scopes.push(self.parse_field_scopes()?),
+            "rolestore" => s.role_stores.push(self.parse_role_store()?),
+            "grant" => s.grants.push(self.parse_grant()?),
             "claims" => {
                 let c = self.parse_claims()?;
                 if s.claims.is_some() {
@@ -157,24 +281,8 @@ impl Parser {
                 }
                 s.claims = Some(c);
             }
-            "definers" => {
-                self.advance();
-                self.expect_kw("schema")?;
-                let sch = self.string()?;
-                if s.definer_schema.is_some() {
-                    return Err(self.err("duplicate definers block"));
-                }
-                s.definer_schema = non_empty(sch);
-            }
-            "tables" => {
-                self.advance();
-                self.expect_kw("schema")?;
-                let sch = self.string()?;
-                if s.table_schema.is_some() {
-                    return Err(self.err("duplicate tables block"));
-                }
-                s.table_schema = non_empty(sch);
-            }
+            "definers" => s.definer_schema = self.parse_schema_decl(s.definer_schema.is_some(), "duplicate definers block")?,
+            "tables" => s.table_schema = self.parse_schema_decl(s.table_schema.is_some(), "duplicate tables block")?,
             "identifiers" => {
                 self.advance();
                 let t = self.ident()?;
@@ -187,6 +295,19 @@ impl Parser {
             other => return Err(self.err(format!("unknown declaration {}", quote(other)))),
         }
         Ok(())
+    }
+
+    fn parse_schema_decl(&mut self, declared: bool, duplicate: &str) -> PResult<Option<String>> {
+        self.advance();
+        self.expect_kw("schema")?;
+        let sch = self.string()?;
+        if declared {
+            return Err(self.err(duplicate));
+        }
+        if !sch.is_empty() && !is_plain_identifier(&sch) {
+            return Err(self.err(format!("schema {} is not a plain identifier: use letters, digits and _, not starting with a digit", quote(&sch))));
+        }
+        Ok(non_empty(sch))
     }
 
     fn parse_external(&mut self, s: &mut Spec) -> PResult<()> {
@@ -235,13 +356,7 @@ impl Parser {
                 continue;
             }
             if self.accept_kw("parents") {
-                loop {
-                    lv.parents.push(self.ident()?);
-                    if self.peek() != Tok::Comma {
-                        break;
-                    }
-                    self.advance();
-                }
+                lv.parents.extend(self.ident_list()?);
                 continue;
             }
             if self.accept_kw("virtual") {
@@ -366,43 +481,45 @@ impl Parser {
         sub.name = self.ident()?;
         self.expect(Tok::LBrace)?;
         while self.peek() != Tok::RBrace && self.peek() != Tok::Eof {
-            if self.accept_kw("anchor") {
-                sub.anchor = Some(self.ident()?);
-            } else if self.accept_kw("reach") {
-                if self.accept_kw("via") {
-                    self.expect_kw("grant")?;
-                    sub.reach = Some("grant".to_string());
-                    sub.reach_grant = Some(self.ident()?);
-                } else {
-                    sub.reach = Some(self.ident()?);
-                }
-            } else if self.accept_kw("identifies") {
-                sub.identifies = Some(self.ident()?);
-                if self.accept_kw("via") {
-                    self.parse_subject_membership(&mut sub)?;
-                }
-            } else if self.accept_kw("roles") {
-                if self.accept_kw("configurable") {
-                    sub.roles = Some(self.ident()?);
-                } else if self.accept_kw("none") {
-                    sub.roles_none = true;
-                } else {
-                    return Err(self.err(format!(
-                        "expected 'configurable <vocab>' or 'none' after roles, got {}",
-                        self.got()
-                    )));
-                }
-            } else if self.accept_kw("binds") {
-                sub.binds = Some(self.ident()?);
-            } else if self.accept_kw("transient") {
-                sub.transient = true;
-                sub.transient_set = self.accept_kw("set");
-            } else {
-                return Err(self.err(format!("unexpected {} in subject {}", self.got(), quote(&sub.name))));
-            }
+            self.parse_subject_clause(&mut sub)?;
         }
         self.expect(Tok::RBrace)?;
         Ok(sub)
+    }
+
+    fn parse_subject_clause(&mut self, sub: &mut Subject) -> PResult<()> {
+        if self.accept_kw("anchor") {
+            sub.anchor = Some(self.ident()?);
+        } else if self.accept_kw("reach") {
+            if self.accept_kw("via") {
+                self.expect_kw("grant")?;
+                sub.reach = Some("grant".to_string());
+                sub.reach_grant = Some(self.ident()?);
+            } else {
+                sub.reach = Some(self.ident()?);
+            }
+        } else if self.accept_kw("identifies") {
+            sub.identifies = Some(self.ident()?);
+            if self.accept_kw("via") {
+                self.parse_subject_membership(sub)?;
+            }
+        } else if self.accept_kw("roles") {
+            if self.accept_kw("configurable") {
+                sub.roles = Some(self.ident()?);
+            } else if self.accept_kw("none") {
+                sub.roles_none = true;
+            } else {
+                return Err(self.err(format!("expected 'configurable <vocab>' or 'none' after roles, got {}", self.got())));
+            }
+        } else if self.accept_kw("binds") {
+            sub.binds = Some(self.ident()?);
+        } else if self.accept_kw("transient") {
+            sub.transient = true;
+            sub.transient_set = self.accept_kw("set");
+        } else {
+            return Err(self.err(format!("unexpected {} in subject {}", self.got(), quote(&sub.name))));
+        }
+        Ok(())
     }
 
     fn parse_subject_membership(&mut self, sub: &mut Subject) -> PResult<()> {
@@ -433,14 +550,7 @@ impl Parser {
         if self.accept_kw("pk") {
             if self.peek() == Tok::LParen {
                 self.advance();
-                loop {
-                    o.pk_cols.push(self.ident()?);
-                    if self.peek() == Tok::Comma {
-                        self.advance();
-                        continue;
-                    }
-                    break;
-                }
+                o.pk_cols.extend(self.ident_list()?);
                 self.expect(Tok::RParen)?;
             } else {
                 o.pk = Some(self.ident()?);
@@ -450,7 +560,7 @@ impl Parser {
             o.level = Some(self.ident()?);
         }
         self.expect_kw("scoped")?;
-        let (chain, wildcards, verbs) = self.parse_level_chain()?;
+        let LevelChain { chain, wildcards, verbs_by_level: verbs } = self.parse_level_chain()?;
         o.scoped = chain;
         o.scope_wildcards = wildcards;
         o.scope_wildcard_verbs = verbs;
@@ -461,54 +571,60 @@ impl Parser {
 
     fn parse_object_body(&mut self, o: &mut Object) -> PResult<()> {
         while self.peek() != Tok::RBrace && self.peek() != Tok::Eof {
-            if self.is_kw("relation") {
-                let r = self.parse_relation()?;
-                o.relations.push(r);
-            } else if self.is_kw("permission") {
-                let pm = self.parse_object_perm()?;
-                o.perms.push(pm);
-            } else if self.is_kw("require") {
-                let rq = self.parse_object_require()?;
-                o.requires.push(rq);
-            } else if self.is_kw("gate") {
-                let g = self.parse_gate()?;
-                o.gates.push(g);
-            } else if self.is_kw("field") {
-                let f = self.parse_field_rule(o)?;
-                o.fields.push(f);
-            } else if self.is_kw("export") {
-                self.parse_permission_export(o)?;
-            } else if self.is_kw("reach") {
-                self.parse_grant_use(o)?;
-            } else if self.is_kw("admit") {
-                self.parse_admit(o)?;
-            } else if self.is_kw("use") {
-                self.advance();
-                if o.use_template.is_some() {
-                    return Err(self.err(format!("object {} declares `use` more than once", quote(&o.name))));
-                }
-                o.use_template = Some(self.ident()?);
-            } else if self.is_kw("omit") {
-                self.advance();
-                o.omit.push(self.ident()?);
-            } else if self.is_kw("track") {
-                self.advance();
-                let what = self.ident()?;
-                match what.as_str() {
-                    "owner" => o.track_owner = true,
-                    "visibility" => o.track_visibility = true,
-                    _ => {
-                        return Err(self.err(format!(
-                            "object {}: `track` expects `owner` or `visibility`, got {}",
-                            quote(&o.name),
-                            quote(&what)
-                        )));
-                    }
-                }
-            } else if self.is_kw("fields") {
-                self.parse_fields_decl(o)?;
-            } else {
-                return Err(self.err(format!("unexpected {} in object {}", self.got(), quote(&o.name))));
+            self.parse_object_clause(o)?;
+        }
+        Ok(())
+    }
+
+    fn parse_object_clause(&mut self, o: &mut Object) -> PResult<()> {
+        if self.is_kw("relation") {
+            let r = self.parse_relation()?;
+            o.relations.push(r);
+        } else if self.is_kw("permission") {
+            let pm = self.parse_object_perm()?;
+            o.perms.push(pm);
+        } else if self.is_kw("require") {
+            let rq = self.parse_object_require()?;
+            o.requires.push(rq);
+        } else if self.is_kw("gate") {
+            let g = self.parse_gate()?;
+            o.gates.push(g);
+        } else if self.is_kw("field") {
+            let f = self.parse_field_rule(o)?;
+            o.fields.push(f);
+        } else if self.is_kw("export") {
+            self.parse_permission_export(o)?;
+        } else if self.is_kw("reach") {
+            self.parse_grant_use(o)?;
+        } else if self.is_kw("admit") {
+            self.parse_admit(o)?;
+        } else if self.is_kw("use") {
+            self.advance();
+            if o.use_template.is_some() {
+                return Err(self.err(format!("object {} declares `use` more than once", quote(&o.name))));
+            }
+            o.use_template = Some(self.ident()?);
+        } else if self.is_kw("omit") {
+            self.advance();
+            o.omit.push(self.ident()?);
+        } else if self.is_kw("track") {
+            self.parse_track(o)?;
+        } else if self.is_kw("fields") {
+            self.parse_fields_decl(o)?;
+        } else {
+            return Err(self.err(format!("unexpected {} in object {}", self.got(), quote(&o.name))));
+        }
+        Ok(())
+    }
+
+    fn parse_track(&mut self, o: &mut Object) -> PResult<()> {
+        self.advance();
+        let what = self.ident()?;
+        match what.as_str() {
+            "owner" => o.track_owner = true,
+            "visibility" => o.track_visibility = true,
+            _ => {
+                return Err(self.err(format!("object {}: `track` expects `owner` or `visibility`, got {}", quote(&o.name), quote(&what))));
             }
         }
         Ok(())
@@ -588,11 +704,7 @@ impl Parser {
         let mut perms = Vec::new();
         while self.peek() != Tok::RBrace && self.peek() != Tok::Eof {
             if !self.is_kw("permission") {
-                return Err(self.err(format!(
-                    "template {}: only permission lines are allowed, got {}",
-                    quote(&name),
-                    self.got()
-                )));
+                return Err(self.err(format!("template {}: only permission lines are allowed, got {}", quote(&name), self.got())));
             }
             perms.push(self.parse_object_perm()?);
         }
@@ -600,29 +712,22 @@ impl Parser {
         Ok(Template { name, perms, pos })
     }
 
-    fn parse_level_chain(&mut self) -> PResult<(Vec<String>, Vec<String>, BTreeMap<String, Vec<String>>)> {
+    fn parse_level_chain(&mut self) -> PResult<LevelChain> {
         let mut chain = Vec::new();
         let mut wildcards = Vec::new();
         let mut verbs_by_level = BTreeMap::new();
         loop {
             let nm = self.ident()?;
             chain.push(nm.clone());
-            if self.accept_kw("wildcard") {
+            let wildcard = self.accept_kw("wildcard");
+            if wildcard {
                 wildcards.push(nm.clone());
-                if self.accept_kw("confers") {
-                    let mut verbs = Vec::new();
-                    loop {
-                        verbs.push(self.ident()?);
-                        if self.peek() != Tok::Comma {
-                            break;
-                        }
-                        self.advance();
-                    }
-                    verbs_by_level.insert(nm, verbs);
-                }
+            }
+            if wildcard && self.accept_kw("confers") {
+                verbs_by_level.insert(nm, self.ident_list()?);
             }
             if self.peek() != Tok::Gt {
-                return Ok((chain, wildcards, verbs_by_level));
+                return Ok(LevelChain { chain, wildcards, verbs_by_level });
             }
             self.advance();
         }
@@ -647,10 +752,7 @@ impl Parser {
             } else if self.accept_kw("association") {
                 kind = Some(RelationKind::Association);
             } else {
-                return Err(self.err(format!(
-                    "expected 'composition' or 'association' after kind, got {}",
-                    self.got()
-                )));
+                return Err(self.err(format!("expected 'composition' or 'association' after kind, got {}", self.got())));
             }
         }
         Ok(Relation { name, types, repr, kind, pos })
@@ -659,15 +761,7 @@ impl Parser {
     fn parse_table_cols(&mut self) -> PResult<(String, Vec<String>)> {
         let tbl = self.ident()?;
         self.expect(Tok::LParen)?;
-        let mut cols = Vec::new();
-        loop {
-            cols.push(self.ident()?);
-            if self.peek() == Tok::Comma {
-                self.advance();
-                continue;
-            }
-            break;
-        }
+        let cols = self.ident_list()?;
         self.expect(Tok::RParen)?;
         Ok((tbl, cols))
     }
@@ -730,10 +824,7 @@ impl Parser {
     fn parse_repr_closure(&mut self) -> PResult<Repr> {
         let (closure, clo_cols) = self.parse_table_cols()?;
         if clo_cols.len() != 2 {
-            return Err(self.err(format!(
-                "via closure needs a closure table with 2 columns (ancestor, descendant), got {}",
-                clo_cols.len()
-            )));
+            return Err(self.err(format!("via closure needs a closure table with 2 columns (ancestor, descendant), got {}", clo_cols.len())));
         }
         let mut base = None;
         let mut base_cols = vec![String::new(), String::new()];
@@ -770,10 +861,7 @@ impl Parser {
     fn parse_repr_group(&mut self) -> PResult<Repr> {
         let (closure, clo_cols) = self.parse_table_cols()?;
         if clo_cols.len() != 2 {
-            return Err(self.err(format!(
-                "via group needs a closure table with 2 columns (group, member), got {}",
-                clo_cols.len()
-            )));
+            return Err(self.err(format!("via group needs a closure table with 2 columns (group, member), got {}", clo_cols.len())));
         }
         self.expect_kw("edge")?;
         let (edge, edge_cols) = self.parse_table_cols()?;
@@ -823,10 +911,7 @@ impl Parser {
     fn parse_repr_grant(&mut self) -> PResult<Repr> {
         let (table, cols) = self.parse_table_cols()?;
         if cols.len() != 4 {
-            return Err(self.err(format!(
-                "via grant needs 4 columns (record, kind, principal, access), got {}",
-                cols.len()
-            )));
+            return Err(self.err(format!("via grant needs 4 columns (record, kind, principal, access), got {}", cols.len())));
         }
         let mut vg = ViaGrant {
             table,
@@ -845,10 +930,7 @@ impl Parser {
             self.expect_kw("closure")?;
             let (clo, clo_cols) = self.parse_table_cols()?;
             if clo_cols.len() != 2 {
-                return Err(self.err(format!(
-                    "grant group closure needs 2 columns (group, member), got {}",
-                    clo_cols.len()
-                )));
+                return Err(self.err(format!("grant group closure needs 2 columns (group, member), got {}", clo_cols.len())));
             }
             self.expect_kw("edge")?;
             let (edge, edge_cols) = self.parse_table_cols()?;
@@ -897,18 +979,16 @@ impl Parser {
             self.advance();
             layers.push(self.ident()?);
         }
-        let mut pm = Perm { verb, tree, layers, maps: None, guard: None, self_check: None, predicate_only: false, pos };
+        let mut pm = Perm { verb, tree, layers, maps: None, guard: None, self_check: None, predicate_only: false, blind: false, pos };
         if self.accept_kw("maps") {
             match self.peek() {
                 Tok::Ident | Tok::PermKey => pm.maps = Some(self.advance().lit),
                 _ => {
-                    return Err(self.err(format!(
-                        "expected a table-op or permission after maps, got {}",
-                        self.got()
-                    )));
+                    return Err(self.err(format!("expected a table-op or permission after maps, got {}", self.got())));
                 }
             }
         }
+        pm.blind = self.accept_kw("blind");
         if self.accept_kw("predicate") {
             pm.predicate_only = true;
         }
@@ -946,8 +1026,10 @@ impl Parser {
             self.advance();
             kids.push(self.parse_perm_and()?);
         }
-        if kids.len() == 1 {
-            return Ok(kids.pop().unwrap());
+        if kids.len() == 1
+            && let Some(only) = kids.pop()
+        {
+            return Ok(only);
         }
         Ok(PermNode::Or(kids))
     }
@@ -959,8 +1041,10 @@ impl Parser {
             self.advance();
             kids.push(self.parse_perm_unary()?);
         }
-        if kids.len() == 1 {
-            return Ok(kids.pop().unwrap());
+        if kids.len() == 1
+            && let Some(only) = kids.pop()
+        {
+            return Ok(only);
         }
         Ok(PermNode::And(kids))
     }
@@ -976,8 +1060,13 @@ impl Parser {
 
     fn parse_perm_primary(&mut self) -> PResult<PermNode> {
         if self.peek() == Tok::LParen {
+            if self.depth == MAX_NESTING {
+                return Err(self.err(format!("parentheses nest more than {MAX_NESTING} deep")));
+            }
             self.advance();
+            self.depth += 1;
             let n = self.parse_perm_union()?;
+            self.depth -= 1;
             self.expect(Tok::RParen)?;
             return Ok(n);
         }
@@ -1012,10 +1101,7 @@ impl Parser {
         let ident = match self.peek() {
             Tok::Ident | Tok::PermKey => self.advance().lit,
             _ => {
-                return Err(self.err(format!(
-                    "expected a relation, capability, or @builtin term, got {}",
-                    self.got()
-                )));
+                return Err(self.err(format!("expected a relation, capability, or @builtin term, got {}", self.got())));
             }
         };
         let mut walk_verb = None;
@@ -1024,6 +1110,17 @@ impl Parser {
             walk_verb = Some(self.ident()?);
         }
         Ok(Term { kind: TermKind::Ref { ident, walk_verb }, pos })
+    }
+
+    fn parse_app_scope_excludes(&mut self) -> PResult<Vec<String>> {
+        if self.peek() != Tok::LParen {
+            return Ok(Vec::new());
+        }
+        self.advance();
+        self.expect_kw("exclude")?;
+        let rels = self.ident_list()?;
+        self.expect(Tok::RParen)?;
+        Ok(rels)
     }
 
     fn parse_term_builtin(&mut self, name: String) -> PResult<Builtin> {
@@ -1035,22 +1132,7 @@ impl Parser {
                 }
                 Builtin::Session(rel)
             }
-            "app_scope" => {
-                let mut rels = Vec::new();
-                if self.peek() == Tok::LParen {
-                    self.advance();
-                    self.expect_kw("exclude")?;
-                    loop {
-                        rels.push(self.ident()?);
-                        if self.peek() != Tok::Comma {
-                            break;
-                        }
-                        self.advance();
-                    }
-                    self.expect(Tok::RParen)?;
-                }
-                Builtin::AppScope(rels)
-            }
+            "app_scope" => Builtin::AppScope(self.parse_app_scope_excludes()?),
             "kind" => {
                 self.expect(Tok::LParen)?;
                 let val = self.string()?;
@@ -1089,10 +1171,7 @@ impl Parser {
                 let perm = match self.peek() {
                     Tok::PermKey | Tok::Str => self.advance().lit,
                     _ => {
-                        return Err(self.err(format!(
-                            "@holds needs a permission verb (`@holds(<domain>:<verb>)`), got {}",
-                            self.got()
-                        )));
+                        return Err(self.err(format!("@holds needs a permission verb (`@holds(<domain>:<verb>)`), got {}", self.got())));
                     }
                 };
                 self.expect(Tok::RParen)?;
@@ -1167,47 +1246,52 @@ impl Parser {
         rs.name = self.ident()?;
         self.expect(Tok::LBrace)?;
         while self.peek() != Tok::RBrace && self.peek() != Tok::Eof {
-            if self.accept_kw("assignments") {
-                rs.assignments = Some(self.ident()?);
-            } else if self.accept_kw("kind") {
-                rs.kind_col = Some(self.ident()?);
-                self.expect(Tok::Eq)?;
-                rs.kind_val = non_empty(self.string()?);
-            } else if self.accept_kw("subject") {
-                rs.subject_col = Some(self.ident()?);
-            } else if self.accept_kw("scope") {
-                while self.peek() == Tok::Ident && !role_store_keyword(&self.cur().lit) {
-                    rs.scope_cols.push(self.advance().lit);
-                }
-            } else if self.accept_kw("plane") {
-                rs.plane = Some(self.ident()?);
-            } else if self.accept_kw("rolejoin") {
-                rs.role_col = Some(self.ident()?);
-                rs.roles_table = Some(self.ident()?);
-                rs.roles_id = Some(self.ident()?);
-                rs.key_col = Some(self.ident()?);
-            } else if self.accept_kw("revoked") {
-                rs.revoked_col = Some(self.ident()?);
-                if self.accept_kw("by") {
-                    rs.revoked_by_col = Some(self.ident()?);
-                }
-            } else if self.accept_kw("permissions") {
-                rs.perms_col = Some(self.ident()?);
-            } else if self.accept_kw("pk") {
-                rs.id_col = Some(self.ident()?);
-            } else if self.accept_kw("granted") {
-                rs.granted_at_col = Some(self.ident()?);
-                if self.accept_kw("by") {
-                    rs.granted_by_col = Some(self.ident()?);
-                }
-            } else if self.accept_kw("column") {
-                rs.extra_cols.push(self.ident()?);
-            } else {
-                return Err(self.err(format!("unexpected {} in rolestore", self.got())));
-            }
+            self.parse_role_store_clause(&mut rs)?;
         }
         self.expect(Tok::RBrace)?;
         Ok(rs)
+    }
+
+    fn parse_role_store_clause(&mut self, rs: &mut RoleStore) -> PResult<()> {
+        if self.accept_kw("assignments") {
+            rs.assignments = Some(self.ident()?);
+        } else if self.accept_kw("kind") {
+            rs.kind_col = Some(self.ident()?);
+            self.expect(Tok::Eq)?;
+            rs.kind_val = non_empty(self.string()?);
+        } else if self.accept_kw("subject") {
+            rs.subject_col = Some(self.ident()?);
+        } else if self.accept_kw("scope") {
+            while self.peek() == Tok::Ident && !role_store_keyword(&self.cur().lit) {
+                rs.scope_cols.push(self.advance().lit);
+            }
+        } else if self.accept_kw("plane") {
+            rs.plane = Some(self.ident()?);
+        } else if self.accept_kw("rolejoin") {
+            rs.role_col = Some(self.ident()?);
+            rs.roles_table = Some(self.ident()?);
+            rs.roles_id = Some(self.ident()?);
+            rs.key_col = Some(self.ident()?);
+        } else if self.accept_kw("revoked") {
+            rs.revoked_col = Some(self.ident()?);
+            if self.accept_kw("by") {
+                rs.revoked_by_col = Some(self.ident()?);
+            }
+        } else if self.accept_kw("permissions") {
+            rs.perms_col = Some(self.ident()?);
+        } else if self.accept_kw("pk") {
+            rs.id_col = Some(self.ident()?);
+        } else if self.accept_kw("granted") {
+            rs.granted_at_col = Some(self.ident()?);
+            if self.accept_kw("by") {
+                rs.granted_by_col = Some(self.ident()?);
+            }
+        } else if self.accept_kw("column") {
+            rs.extra_cols.push(self.ident()?);
+        } else {
+            return Err(self.err(format!("unexpected {} in rolestore", self.got())));
+        }
+        Ok(())
     }
 
     fn parse_claims(&mut self) -> PResult<ClaimsAccessor> {
@@ -1250,7 +1334,7 @@ impl Parser {
         Ok(g)
     }
 
-    fn parse_operation_list(&mut self) -> PResult<Vec<String>> {
+    fn ident_list(&mut self) -> PResult<Vec<String>> {
         let mut ops = Vec::new();
         loop {
             ops.push(self.ident()?);
@@ -1277,7 +1361,7 @@ impl Parser {
                 continue;
             }
             if self.accept_kw("confers") {
-                let verbs = self.parse_operation_list()?;
+                let verbs = self.ident_list()?;
                 g.verbs.extend(verbs);
                 continue;
             }
@@ -1337,7 +1421,7 @@ impl Parser {
             return Err(self.err(format!("reach {} needs `unscoped`, `bound <level>` or `via <grant>`", u.grant)));
         }
         if self.accept_kw("for") {
-            u.ops = self.parse_operation_list()?;
+            u.ops = self.ident_list()?;
         }
         o.reach_uses.push(u);
         Ok(())
@@ -1346,7 +1430,7 @@ impl Parser {
     fn parse_admit(&mut self, o: &mut Object) -> PResult<()> {
         let pos = self.pos();
         self.advance();
-        let ops = self.parse_operation_list()?;
+        let ops = self.ident_list()?;
         self.expect(Tok::Eq)?;
         let tree = self.parse_perm_union()?;
         o.admits.push(Admit { ops, tree, pos });
@@ -1381,13 +1465,10 @@ impl Parser {
 }
 
 fn role_store_keyword(s: &str) -> bool {
-    matches!(
-        s,
-        "assignments" | "kind" | "subject" | "scope" | "plane" | "rolejoin" | "revoked" | "permissions" | "pk" | "granted" | "column"
-    )
+    matches!(s, "assignments" | "kind" | "subject" | "scope" | "plane" | "rolejoin" | "revoked" | "permissions" | "pk" | "granted" | "column")
 }
 
-fn expand_templates(s: &mut Spec) -> Result<(), Error> {
+pub(crate) fn expand_templates(s: &mut Spec) -> Result<(), Error> {
     let mut by_name: HashMap<String, usize> = HashMap::new();
     for (i, t) in s.templates.iter().enumerate() {
         if by_name.contains_key(&t.name) {
@@ -1403,32 +1484,18 @@ fn expand_templates(s: &mut Spec) -> Result<(), Error> {
             continue;
         };
         let Some(&ti) = by_name.get(&use_name) else {
-            return Err(Error::new(format!(
-                "object {} uses unknown template {}",
-                quote(&o.name),
-                quote(&use_name)
-            )));
+            return Err(Error::new(format!("object {} uses unknown template {}", quote(&o.name), quote(&use_name))));
         };
         let t = &s.templates[ti];
         let tmpl_verbs: HashSet<&str> = t.perms.iter().map(|p| p.verb.as_str()).collect();
         for v in &o.omit {
             if !tmpl_verbs.contains(v.as_str()) {
-                return Err(Error::new(format!(
-                    "object {} omits verb {} which template {} does not define",
-                    quote(&o.name),
-                    quote(v),
-                    quote(&use_name)
-                )));
+                return Err(Error::new(format!("object {} omits verb {} which template {} does not define", quote(&o.name), quote(v), quote(&use_name))));
             }
         }
         let omit: HashSet<&str> = o.omit.iter().map(String::as_str).collect();
         let own: HashSet<&str> = o.perms.iter().map(|p| p.verb.as_str()).collect();
-        let mut merged: Vec<Perm> = t
-            .perms
-            .iter()
-            .filter(|pm| !omit.contains(pm.verb.as_str()) && !own.contains(pm.verb.as_str()))
-            .cloned()
-            .collect();
+        let mut merged: Vec<Perm> = t.perms.iter().filter(|pm| !omit.contains(pm.verb.as_str()) && !own.contains(pm.verb.as_str())).cloned().collect();
         merged.append(&mut o.perms);
         o.perms = merged;
     }

@@ -1,4 +1,7 @@
+#![expect(clippy::print_stdout, clippy::print_stderr, reason = "a test harness reports by printing")]
+
 use demesne_parity::{api, corpus, dsn, fuzz, goast, oracle, runner};
+use std::fmt::Write as _;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -75,63 +78,68 @@ struct Args {
 }
 
 fn parse_args(argv: &[String]) -> Result<Args, String> {
-    let mut a = Args { go_tag: "v0.93.1".into(), go_cli: None, rust_cli: None, out: PathBuf::new(), extra: Vec::new(), only: None, show: 20 };
+    let mut parsed = Args { go_tag: "v0.93.1".into(), go_cli: None, rust_cli: None, out: PathBuf::new(), extra: Vec::new(), only: None, show: 20 };
     let mut i = 0;
     while i < argv.len() {
         let v = argv.get(i + 1).cloned().ok_or_else(|| format!("{} needs a value", argv[i]))?;
         match argv[i].as_str() {
-            "--go-tag" => a.go_tag = v,
-            "--go-cli" => a.go_cli = Some(PathBuf::from(v)),
-            "--rust-cli" => a.rust_cli = Some(PathBuf::from(v)),
-            "--out" => a.out = PathBuf::from(v),
-            "--only" => a.only = Some(v),
-            "--show" => a.show = v.parse().map_err(|_| "--show takes a number")?,
+            "--go-tag" => parsed.go_tag = v,
+            "--go-cli" => parsed.go_cli = Some(PathBuf::from(v)),
+            "--rust-cli" => parsed.rust_cli = Some(PathBuf::from(v)),
+            "--out" => parsed.out = PathBuf::from(v),
+            "--only" => parsed.only = Some(v),
+            "--show" => parsed.show = v.parse().map_err(|e| format!("--show takes a number: {e}"))?,
             "--extra" => {
                 let (p, d) = v.split_once('=').ok_or("--extra takes <prefix>=<dir>")?;
-                a.extra.push((p.to_string(), PathBuf::from(d)));
+                parsed.extra.push((p.to_string(), PathBuf::from(d)));
             }
             other => return Err(format!("unknown flag {other}")),
         }
         i += 2;
     }
-    if a.out.as_os_str().is_empty() {
+    if parsed.out.as_os_str().is_empty() {
         return Err("--out is required".into());
     }
-    Ok(a)
+    Ok(parsed)
 }
 
-fn repo_root() -> PathBuf {
-    let out = Command::new("git").args(["rev-parse", "--show-toplevel"]).output().expect("git");
-    PathBuf::from(String::from_utf8(out.stdout).unwrap().trim())
+fn repo_root() -> Result<PathBuf, String> {
+    let out = Command::new("git").args(["rev-parse", "--show-toplevel"]).output().map_err(|e| format!("git rev-parse: {e}"))?;
+    if !out.status.success() {
+        return Err("demesne-parity runs inside the demesne checkout".into());
+    }
+    let top = String::from_utf8(out.stdout).map_err(|e| format!("git rev-parse: {e}"))?;
+    Ok(PathBuf::from(top.trim()))
 }
 
-fn dump_rust_lib(entries: &[corpus::Entry], out: &Path) {
+fn write(path: &Path, contents: impl AsRef<[u8]>) -> Result<(), String> {
+    fs::write(path, contents).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn dump_rust_lib(entries: &[corpus::Entry], out: &Path) -> Result<(), String> {
     runner::parallel(entries, |e| {
         let dir = out.join(&e.id);
-        fs::create_dir_all(&dir).unwrap();
-        let src = fs::read(&e.path).unwrap();
+        fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+        let src = fs::read(&e.path).map_err(|err| format!("{}: {err}", e.path.display()))?;
         let spec = match demesne_syntax::parse_bytes(&src) {
             Ok(s) => s,
-            Err(err) => {
-                fs::write(dir.join("ast.json"), format!("parse error: {err}\n")).unwrap();
-                return;
-            }
+            Err(err) => return write(&dir.join("ast.json"), format!("parse error: {err}\n")),
         };
-        fs::write(dir.join("ast.json"), demesne_gocompat::json::marshal(&goast::spec(&spec)) + "\n").unwrap();
+        write(&dir.join("ast.json"), demesne_gocompat::json::marshal(&goast::spec(&spec)) + "\n")?;
         if demesne_emit_sql::validate(&spec).is_err() {
-            return;
+            return Ok(());
         }
         let oracle = match oracle::build_oracle_entry(&spec) {
             Ok(v) => demesne_gocompat::json::marshal_indent(&v, "", "  ") + "\n",
             Err(e) => format!("error: {e}\n"),
         };
-        fs::write(dir.join("oracle.json"), oracle).unwrap();
-        fs::write(dir.join("api.txt"), api::api_dump(&spec)).unwrap();
-    });
+        write(&dir.join("oracle.json"), oracle)?;
+        write(&dir.join("api.txt"), api::api_dump(&spec))
+    })
 }
 
-fn run(a: Args) -> Result<bool, String> {
-    let root = repo_root();
+fn run(a: &Args) -> Result<bool, String> {
+    let root = repo_root()?;
     let mut entries = corpus::collect(&root);
     for (prefix, dir) in &a.extra {
         corpus::add_dir(&mut entries, prefix, dir);
@@ -142,51 +150,57 @@ fn run(a: Args) -> Result<bool, String> {
     fs::create_dir_all(&go).map_err(|e| e.to_string())?;
     fs::create_dir_all(&rust).map_err(|e| e.to_string())?;
     let list = a.out.join("list.tsv");
-    runner::write_list(&entries, &list);
+    runner::write_list(&entries, &list)?;
 
     let status = Command::new(root.join("scripts/parity/go-dump.sh"))
-        .args([a.go_tag.as_str(), list.to_str().unwrap(), go.to_str().unwrap()])
+        .arg(&a.go_tag)
+        .arg(&list)
+        .arg(&go)
         .env("DEMESNE_PARITY_ORACLE_SPECS", a.out.join("oracle-specs"))
         .status()
         .map_err(|e| e.to_string())?;
     if !status.success() {
         return Err("the Go dump failed".into());
     }
-    dump_rust_lib(&entries, &rust);
+    dump_rust_lib(&entries, &rust)?;
     if let Some(cli) = &a.go_cli {
-        runner::dump_cli(cli, &entries, &go);
+        runner::dump_cli(cli, &entries, &go)?;
     }
     if let Some(cli) = &a.rust_cli {
-        runner::dump_cli(cli, &entries, &rust);
+        runner::dump_cli(cli, &entries, &rust)?;
     }
 
-    let mut nondeterministic = 0usize;
-    if let Some(gocli) = &a.go_cli {
-        let by_id: std::collections::HashMap<&str, &corpus::Entry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
-        sum_retry(&mut nondeterministic, gocli, &by_id, &go, &rust);
-    }
+    let nondeterministic = match &a.go_cli {
+        Some(gocli) => {
+            let by_id: std::collections::HashMap<&str, &corpus::Entry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
+            sum_retry(gocli, &by_id, &go, &rust)?
+        }
+        None => 0,
+    };
     let only = a.only.clone();
     let filter = move |k: &str| only.as_deref().is_none_or(|o| k.contains(o));
-    let sum = runner::compare(&go, &rust, Some(&filter));
+    let sum = runner::compare(&go, &rust, Some(&filter))?;
     let mut report = String::new();
     if nondeterministic > 0 {
-        report.push_str(&format!("go-nondeterministic outputs reconciled by rerun: {nondeterministic}\n"));
+        writeln!(report, "go-nondeterministic outputs reconciled by rerun: {nondeterministic}").expect("fmt::Write for String never fails");
     }
-    report.push_str(&format!(
-        "specs {}  outputs {}  zero-diff {}  differ {}  missing-in-rust {}\n",
+    writeln!(
+        report,
+        "specs {}  outputs {}  zero-diff {}  differ {}  missing-in-rust {}",
         entries.len(),
         sum.outputs,
         sum.identical,
         sum.mismatches.len(),
         sum.missing_rust
-    ));
+    )
+    .expect("fmt::Write for String never fails");
     for (kind, (n, ok)) in &sum.by_output {
-        report.push_str(&format!("  {kind:<28} {ok:>6}/{n}\n"));
+        writeln!(report, "  {kind:<28} {ok:>6}/{n}").expect("fmt::Write for String never fails");
     }
     fs::write(a.out.join("report.txt"), {
         let mut full = report.clone();
         for m in &sum.mismatches {
-            full.push_str(&format!("\nDIFF {}\n  {}\n", m.key, m.detail));
+            write!(full, "\nDIFF {}\n  {}\n", m.key, m.detail).expect("fmt::Write for String never fails");
         }
         full
     })
@@ -198,28 +212,25 @@ fn run(a: Args) -> Result<bool, String> {
     Ok(sum.mismatches.is_empty() && sum.missing_rust == 0)
 }
 
-fn sum_retry(
-    count: &mut usize,
-    gocli: &Path,
-    by_id: &std::collections::HashMap<&str, &corpus::Entry>,
-    go: &Path,
-    rust: &Path,
-) {
-    let pre = runner::compare(go, rust, None);
+fn sum_retry(gocli: &Path, by_id: &std::collections::HashMap<&str, &corpus::Entry>, go: &Path, rust: &Path) -> Result<usize, String> {
+    let mut count = 0;
+    let pre = runner::compare(go, rust, None)?;
     for m in pre.mismatches {
         let Some((id, file)) = m.key.rsplit_once('/') else { continue };
         let Some(name) = file.strip_prefix("cli-").and_then(|f| f.strip_suffix(".txt")) else { continue };
         let (Some(entry), Some(out)) = (by_id.get(id), runner::CLI_OUTPUTS.iter().find(|c| c.name == name)) else { continue };
-        let want = fs::read(rust.join(&m.key)).unwrap();
+        let want_path = rust.join(&m.key);
+        let want = fs::read(&want_path).map_err(|e| format!("{}: {e}", want_path.display()))?;
         for _ in 0..10 {
             let again = runner::run_cli(gocli, &entry.path, out.args);
             if again == want {
-                fs::write(go.join(&m.key), &again).unwrap();
-                *count += 1;
+                write(&go.join(&m.key), &again)?;
+                count += 1;
                 break;
             }
         }
     }
+    Ok(count)
 }
 
 fn fuzz_cmd(argv: &[String]) -> Result<(), String> {
@@ -231,9 +242,9 @@ fn fuzz_cmd(argv: &[String]) -> Result<(), String> {
     while i + 1 < argv.len() {
         let v = &argv[i + 1];
         match argv[i].as_str() {
-            "--seed" => seed = v.parse().map_err(|_| "--seed takes a number")?,
-            "--count" => count = v.parse().map_err(|_| "--count takes a number")?,
-            "--mutate" => mutate = v.parse().map_err(|_| "--mutate takes a number")?,
+            "--seed" => seed = v.parse().map_err(|e| format!("--seed takes a number: {e}"))?,
+            "--count" => count = v.parse().map_err(|e| format!("--count takes a number: {e}"))?,
+            "--mutate" => mutate = v.parse().map_err(|e| format!("--mutate takes a number: {e}"))?,
             "--out" => out = PathBuf::from(v),
             other => return Err(format!("unknown flag {other}")),
         }
@@ -245,7 +256,7 @@ fn fuzz_cmd(argv: &[String]) -> Result<(), String> {
         let s = seed.wrapping_mul(1_000_003).wrapping_add(n as u64);
         fs::write(out.join(format!("gen-{seed}-{n:05}.demesne")), fuzz::generate(s)).map_err(|e| e.to_string())?;
     }
-    let base = corpus::collect(&repo_root());
+    let base = corpus::collect(&repo_root()?);
     let mut r = fuzz::Rng::new(seed ^ 0xA5A5);
     for n in 0..mutate {
         let e = &base[r.below(base.len())];
@@ -258,12 +269,18 @@ fn fuzz_cmd(argv: &[String]) -> Result<(), String> {
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match argv.first().map(String::as_str) {
-        Some("corpus") => {
-            for e in corpus::collect(&repo_root()) {
-                println!("{}\t{}", e.id, e.path.display());
+        Some("corpus") => match repo_root() {
+            Ok(root) => {
+                for e in corpus::collect(&root) {
+                    println!("{}\t{}", e.id, e.path.display());
+                }
+                ExitCode::SUCCESS
             }
-            ExitCode::SUCCESS
-        }
+            Err(e) => {
+                eprintln!("demesne-parity: {e}");
+                ExitCode::from(2)
+            }
+        },
         Some("fuzz") => match fuzz_cmd(&argv[1..]) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -275,15 +292,15 @@ fn main() -> ExitCode {
             let rows: Vec<String> = runner::CLI_OUTPUTS
                 .iter()
                 .map(|c| {
-                    let args: Vec<String> = c.args.iter().map(|a| format!("{a:?}")).collect();
-                    format!("{{\"name\":{:?},\"args\":[{}]}}", c.name, args.join(","))
+                    let quoted: Vec<String> = c.args.iter().map(|a| format!("{a:?}")).collect();
+                    format!("{{\"name\":{:?},\"args\":[{}]}}", c.name, quoted.join(","))
                 })
                 .collect();
             println!("[{}]", rows.join(","));
             ExitCode::SUCCESS
         }
         Some("dsn-one") => {
-            print!("{}", demesne_postgres::parse_config_dump(argv.get(1).map(String::as_str).unwrap_or("")));
+            print!("{}", demesne_postgres::parse_config_dump(argv.get(1).map_or("", String::as_str)));
             ExitCode::SUCCESS
         }
         Some("dsn") => match dsn_cmd(&argv[1..]) {
@@ -294,7 +311,7 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        Some("run") => match parse_args(&argv[1..]).and_then(run) {
+        Some("run") => match parse_args(&argv[1..]).and_then(|a| run(&a)) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::from(1),
             Err(e) => {

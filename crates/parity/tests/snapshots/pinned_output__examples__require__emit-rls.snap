@@ -1,0 +1,32 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+DROP POLICY IF EXISTS invitations_insert ON public.invitations;
+CREATE POLICY invitations_insert ON public.invitations FOR INSERT TO authenticated
+    WITH CHECK ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.admin_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, NULL, 'invitations:write'))));
+
+DROP POLICY IF EXISTS invitations_insert_require ON public.invitations;
+CREATE POLICY invitations_insert_require ON public.invitations AS RESTRICTIVE FOR INSERT TO authenticated
+    WITH CHECK (auth.invitation_projects_in_tenant(tenant_id, project_ids));
+
+DROP POLICY IF EXISTS invitations_select ON public.invitations;
+CREATE POLICY invitations_select ON public.invitations FOR SELECT TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.admin_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (current_setting('request.jwt.claims', true)::json ->> 'sub'))));
+
+DROP POLICY IF EXISTS invitations_update ON public.invitations;
+CREATE POLICY invitations_update ON public.invitations FOR UPDATE TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.admin_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (current_setting('request.jwt.claims', true)::json ->> 'sub'))))
+    WITH CHECK ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.admin_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (current_setting('request.jwt.claims', true)::json ->> 'sub'))));
+
+DROP POLICY IF EXISTS invitations_update_require ON public.invitations;
+CREATE POLICY invitations_update_require ON public.invitations AS RESTRICTIVE FOR UPDATE TO authenticated
+    USING (invited_by = (current_setting('request.jwt.claims', true)::json ->> 'sub'))
+    WITH CHECK (invited_by = (current_setting('request.jwt.claims', true)::json ->> 'sub'));
+
+
+--- stderr ---
+
+--- end ---

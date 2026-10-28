@@ -1,0 +1,88 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+DROP POLICY IF EXISTS allowances_delete ON public.allowances;
+CREATE POLICY allowances_delete ON public.allowances FOR DELETE TO authenticated
+    USING (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')));
+
+DROP POLICY IF EXISTS allowances_insert ON public.allowances;
+CREATE POLICY allowances_insert ON public.allowances FOR INSERT TO authenticated
+    WITH CHECK (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')));
+
+DROP POLICY IF EXISTS allowances_select ON public.allowances;
+CREATE POLICY allowances_select ON public.allowances FOR SELECT TO authenticated
+    USING ((estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')));
+
+DROP POLICY IF EXISTS allowances_update ON public.allowances;
+CREATE POLICY allowances_update ON public.allowances FOR UPDATE TO authenticated
+    USING (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')))
+    WITH CHECK (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')));
+
+DROP POLICY IF EXISTS assets_insert ON public.assets;
+CREATE POLICY assets_insert ON public.assets FOR INSERT TO authenticated
+    WITH CHECK (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id')));
+
+DROP POLICY IF EXISTS assets_select ON public.assets;
+CREATE POLICY assets_select ON public.assets FOR SELECT TO authenticated
+    USING (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((folder_id IS NULL OR folder_id = (current_setting('request.jwt.claims', true)::json ->> 'folder_id')) OR folder_id IN (SELECT auth.paths_reach_set((current_setting('request.jwt.claims', true)::json ->> 'folder_id'))) OR (current_setting('request.jwt.claims', true)::json ->> 'view_mode') = 'all')));
+
+DROP POLICY IF EXISTS assets_update ON public.assets;
+CREATE POLICY assets_update ON public.assets FOR UPDATE TO authenticated
+    USING (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id')))
+    WITH CHECK (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id')));
+
+DROP POLICY IF EXISTS blueprints_select ON public.blueprints;
+CREATE POLICY blueprints_select ON public.blueprints FOR SELECT TO authenticated
+    USING (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((folder_id IS NULL OR folder_id = (current_setting('request.jwt.claims', true)::json ->> 'folder_id')) OR folder_id IN (SELECT auth.paths_up_reach_set((current_setting('request.jwt.claims', true)::json ->> 'folder_id'))) OR (current_setting('request.jwt.claims', true)::json ->> 'view_mode') = 'all')));
+
+DROP POLICY IF EXISTS blueprints_update ON public.blueprints;
+CREATE POLICY blueprints_update ON public.blueprints FOR UPDATE TO authenticated
+    USING (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id')))
+    WITH CHECK (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id')));
+
+DROP POLICY IF EXISTS entries_select ON public.entries;
+CREATE POLICY entries_select ON public.entries FOR SELECT TO authenticated
+    USING (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.catalog_can_bound_for_select(catalog_id)))));
+
+DROP POLICY IF EXISTS entries_update ON public.entries;
+CREATE POLICY entries_update ON public.entries FOR UPDATE TO authenticated
+    USING (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.catalog_can_bound(catalog_id)))))
+    WITH CHECK (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.catalog_can_bound(catalog_id)))));
+
+DROP POLICY IF EXISTS folders_delete ON public.folders;
+CREATE POLICY folders_delete ON public.folders FOR DELETE TO authenticated
+    USING ((((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id))))));
+
+DROP POLICY IF EXISTS folders_insert ON public.folders;
+CREATE POLICY folders_insert ON public.folders FOR INSERT TO authenticated
+    WITH CHECK ((((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((current_setting('request.jwt.claims', true)::json ->> 'folder_id'), parent_id))))));
+
+DROP POLICY IF EXISTS folders_select ON public.folders;
+CREATE POLICY folders_select ON public.folders FOR SELECT TO authenticated
+    USING ((((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id))))));
+
+DROP POLICY IF EXISTS folders_update ON public.folders;
+CREATE POLICY folders_update ON public.folders FOR UPDATE TO authenticated
+    USING ((((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id))))))
+    WITH CHECK ((((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id))))));
+
+DROP POLICY IF EXISTS ledgers_select ON public.ledgers;
+CREATE POLICY ledgers_select ON public.ledgers FOR SELECT TO authenticated
+    USING (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')));
+
+DROP POLICY IF EXISTS spaces_select ON public.spaces;
+CREATE POLICY spaces_select ON public.spaces FOR SELECT TO authenticated
+    USING ((estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) AND id = (current_setting('request.jwt.claims', true)::json ->> 'space_id'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')));
+
+DROP POLICY IF EXISTS spaces_update ON public.spaces;
+CREATE POLICY spaces_update ON public.spaces FOR UPDATE TO authenticated
+    USING (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')))
+    WITH CHECK (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')));
+
+
+--- stderr ---
+
+--- end ---

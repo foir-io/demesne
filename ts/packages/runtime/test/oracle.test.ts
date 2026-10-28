@@ -1,6 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import {
   claimsSetSQL,
   setRoleSQL,
@@ -18,6 +16,7 @@ import {
   levelGrants,
   resourceAccess,
 } from "../src/index.js";
+import oracleJson from "./generated/oracle.json" with { type: "json" };
 
 interface OracleCase {
   kind: string;
@@ -29,9 +28,7 @@ interface SpecEntry {
   cases: OracleCase[];
 }
 
-const oracle = JSON.parse(
-  readFileSync(fileURLToPath(new URL("./generated/oracle.json", import.meta.url)), "utf8"),
-) as Record<string, SpecEntry>;
+const oracle = oracleJson as unknown as Record<string, SpecEntry>;
 
 function appObj(proj: any, name: unknown): any {
 
@@ -99,6 +96,8 @@ function runCase(proj: any, c: OracleCase): unknown {
       return resourceAccess.listGrantsSQL(proj.resourceAccess[i.object]);
     case "resourceAccess.accessorsSQL":
       return resourceAccess.accessorsSQL(proj.resourceAccess[i.object]);
+    case "resourceAccess.admitsSQL":
+      return resourceAccess.admitsSQL(proj.resourceAccess[i.object]);
     case "resourceAccess.listGrantsArgs":
       return resourceAccess.listGrantsArgs(proj.resourceAccess[i.object], "rec1");
     case "resourceAccess.grantInsert":

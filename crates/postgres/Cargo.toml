@@ -5,25 +5,28 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+readme = "README.md"
 repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
 demesne-model.workspace = true
-postgres = "0.19.14"
-tokio-postgres-rustls = "0.14"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rustls-native-certs = "0.8"
-webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["alloc", "std"] }
+demesne-emit-sql.workspace = true
+demesne-runtime.workspace = true
+postgres.workspace = true
+tokio-postgres-rustls.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+webpki.workspace = true
 demesne-gocompat.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", default-features = false, features = ["user"] }
+nix.workspace = true
 
 [dev-dependencies]
 demesne-syntax.workspace = true
-demesne-runtime.workspace = true
-demesne-emit-sql.workspace = true
 
 [lints]
 workspace = true

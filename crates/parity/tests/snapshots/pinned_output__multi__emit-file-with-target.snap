@@ -1,0 +1,11 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, \"\", &args)"
+---
+exit: 1
+--- stdout ---
+
+--- stderr ---
+demesne: --file picks one file's share of the SQL; --target and --profile emit the whole spec, so give them the files it is made of
+
+--- end ---

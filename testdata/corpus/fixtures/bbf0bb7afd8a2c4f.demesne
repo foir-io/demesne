@@ -1,0 +1,73 @@
+topology {
+  level tenant
+  level org parent tenant
+}
+tables schema "data"
+
+vocabulary staff {
+  permission docs:publish
+  permission content:delete
+  preset tenant_role0 @ tenant = docs:publish
+  preset org_role1 @ org = content:delete
+  rank tenant_role0 > org_role1
+}
+
+grant support at tenant
+  via edge support_grants(grantee_id, tenant_id)
+  active revoked_at expires expires_at
+  scope org on org_id missing allow
+
+subject admin { anchor tenant; reach descendants; identifies sub; roles configurable staff; binds admin }
+subject customer { anchor org; reach self; identifies customer_id; roles none; binds owner }
+
+object doc {
+  table docs
+  scoped tenant
+  permission view = @claim("tier", "gold") @rls maps select
+}
+
+object record {
+  table records
+  scoped tenant wildcard > org
+  relation owner: customer via owner_id
+  relation team: customer via group team_closure(group_id, member_id) edge team_edges(member_id, group_id) on team_id
+  permission view = @claim("tier", "gold") + @session @rls maps select
+  permission edit = owner and not @scoped @rls maps update blind
+  permission create = @claim("tier", "gold") @rls maps insert
+  permission remove = team + team @rls maps delete blind
+  permission audit = @kind("service") @check
+  fields { owner staff }
+  field secret { read = owner write = owner column secret_col }
+}
+
+object asset {
+  table assets
+  scoped tenant > org
+  relation owner: customer via owner_id
+  relation lineage: customer via closure folder_closure(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id
+  permission view = @self(created_by) + owner @rls maps select
+}
+
+object note {
+  table notes
+  level org
+  scoped tenant > org
+  relation owner: customer via owner_id
+  relation team: customer via group team_closure(group_id, member_id) edge team_edges(member_id, group_id) on team_id materialized
+  relation lineage: customer via closure folder_closure(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id
+  relation grantee: customer via grant note_grants(record_id, principal_kind, principal_id, access)
+  permission view = lineage + grantee:read @rls maps select
+  permission edit = @kind("admin") @rls maps update blind
+  permission create = mode visibility = "public" @rls maps insert
+  require edit = @self(created_by)
+}
+
+object board {
+  table boards
+  level org
+  scoped tenant wildcard > org
+  relation owner: customer via owner_id
+  permission view = @self(created_by) + owner @rls maps select guard status <> "archived"
+  permission edit = @self(created_by) @rls maps update blind
+  require edit = @self(created_by)
+}

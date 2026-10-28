@@ -1,0 +1,11 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+ok: 2 objects, 3 levels, 6 policies, 1 reachability grants
+
+--- stderr ---
+
+--- end ---

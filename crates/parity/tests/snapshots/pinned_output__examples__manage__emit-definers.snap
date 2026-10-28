@@ -1,0 +1,30 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+CREATE OR REPLACE FUNCTION auth.member_perm_implied_by(p_perm text)
+RETURNS text[]
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE((SELECT m.impliers FROM (VALUES ('platform:manage', ARRAY['platform:manage']::text[]), ('tenant:manage', ARRAY['platform:manage', 'tenant:manage']::text[]), ('project:manage', ARRAY['platform:manage', 'project:manage', 'tenant:manage']::text[]), ('billing:read', ARRAY['billing:read', 'platform:manage', 'tenant:manage']::text[]), ('billing:write', ARRAY['billing:write', 'platform:manage', 'tenant:manage']::text[]), ('invitations:read', ARRAY['invitations:read', 'platform:manage', 'tenant:manage']::text[]), ('invitations:write', ARRAY['invitations:write', 'platform:manage', 'tenant:manage']::text[]), ('records:read', ARRAY['platform:manage', 'project:manage', 'records:read', 'tenant:manage']::text[]), ('records:write', ARRAY['platform:manage', 'project:manage', 'records:write', 'tenant:manage']::text[]), ('content:read', ARRAY['content:read', 'platform:manage', 'project:manage', 'tenant:manage']::text[]), ('content:publish', ARRAY['content:publish', 'platform:manage', 'project:manage', 'tenant:manage']::text[])) AS m(perm, impliers) WHERE m.perm = p_perm), ARRAY[p_perm]::text[]);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.member_has_perm(user_id text, check_tenant_id text, check_project_id text, p_perm text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM role_assignments ra JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'user' AND ra.user_id = user_id AND (ra.tenant_id IS NULL OR ra.tenant_id = check_tenant_id) AND (ra.project_id IS NULL OR ra.project_id = check_project_id) AND ra.revoked_at IS NULL AND r.permissions::text[] && auth.member_perm_implied_by(p_perm));
+$$;
+
+
+--- stderr ---
+
+--- end ---

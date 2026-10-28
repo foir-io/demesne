@@ -1,19 +1,11 @@
-
-
-import { Decision } from "./decision.js";
+import type { Decision } from "./decision.js";
+import { run, runAuthorize } from "./engine.js";
 import type { Pdp } from "./types.js";
 
 export function authorize(pdp: Pdp, procedure: string, holds: (perm: string) => boolean): Decision {
-  const perm = pdp.policy[procedure];
-  if (perm !== undefined) {
-    return holds(perm) ? Decision.Allow : Decision.Deny;
-  }
-  return Decision.NotGoverned;
+  return runAuthorize(pdp, procedure, holds) as Decision;
 }
 
 export function composeCan(pointGoverned: boolean, pointAllow: boolean, pdp: Decision): Decision {
-  if (!pointGoverned && pdp === Decision.NotGoverned) return Decision.NotGoverned;
-  if (pointGoverned && !pointAllow) return Decision.Deny;
-  if (pdp === Decision.Deny) return Decision.Deny;
-  return Decision.Allow;
+  return run("pdp.composeCan", { pointGoverned, pointAllow, pdp });
 }

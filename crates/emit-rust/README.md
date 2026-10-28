@@ -53,4 +53,4 @@ let can_edit_sql: &str = authz::objects::note::checks::EDIT;
 | `claims_contract()` | `claims::CONTRACT: &[&str]` |
 | `claims_contract_entries()` | `claims::CONTRACT_ENTRIES: &[ClaimEntry]` |
 
-An empty rolestore name means the spec's first rolestore, as in the Go library; the item takes that store's name. `resource_access` refuses an object whose readers its enumeration cannot all name, as Go's `ResourceAccessSurface` does; `conditional_resource_access` emits it with the `conditional` flag set. `check` refuses a capability (`@pdp`) verb and a verb without a `@check` layer.
+An empty rolestore name means the spec's first rolestore; the item takes that store's name. `resource_access` refuses an object whose readers its enumeration cannot all name, as the runtime's `ResourceAccessSurface` does; `conditional_resource_access` emits it with the `conditional` flag set. `check` refuses a capability (`@pdp`) verb and a verb without a `@check` layer.

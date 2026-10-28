@@ -1,0 +1,5 @@
+---
+source: crates/model/tests/spec_ext.rs
+expression: "s.point_check_sql(\"doc\").expect(\"doc has a single-column key\")"
+---
+SELECT EXISTS (SELECT 1 FROM docs WHERE id = $1)

@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
@@ -33,6 +34,7 @@ pub struct Case {
     pub dsn: String,
 }
 
+#[must_use]
 pub fn parse_cases(text: &str) -> Vec<Case> {
     let mut out: Vec<Case> = Vec::new();
     for line in text.split('\n') {
@@ -56,6 +58,11 @@ pub fn parse_cases(text: &str) -> Vec<Case> {
     out
 }
 
+/// Parses each connection-string case in a clean child process and returns the results.
+///
+/// # Errors
+///
+/// The current executable cannot be found or a child cannot be run.
 pub fn dump_cases(cases: &[Case], work: &Path) -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut out = String::new();
@@ -74,11 +81,12 @@ pub fn dump_cases(cases: &[Case], work: &Path) -> Result<String, String> {
         if !o.status.success() {
             return Err(format!("dsn-one {}: {}", c.name, String::from_utf8_lossy(&o.stderr)));
         }
-        out.push_str(&format!("--- {}\n{}", c.name, String::from_utf8_lossy(&o.stdout)));
+        write!(out, "--- {}\n{}", c.name, String::from_utf8_lossy(&o.stdout)).expect("fmt::Write for String never fails");
     }
     Ok(out)
 }
 
+#[must_use]
 pub fn split_dump(text: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for line in text.split_inclusive('\n') {

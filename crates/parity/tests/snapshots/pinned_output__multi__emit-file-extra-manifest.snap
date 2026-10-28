@@ -1,0 +1,70 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, \"\", &args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.acl_grants_doc(text, text, text)",
+    "auth.acl_grants_note(text, text, text)",
+    "auth.acl_manage(text, text)",
+    "auth.doc_can_edit(text)",
+    "auth.doc_can_view(text)",
+    "auth.doc_readable(text, text, text, text)",
+    "auth.docs_accessors(text)",
+    "auth.docs_admits(text, jsonb)",
+    "auth.note_can_edit(text)",
+    "auth.notes_accessors(text)",
+    "auth.notes_admits(text, jsonb)",
+    "auth.support_grants_reach(text, text)",
+    "auth.support_grants_reach_set(text)"
+  ],
+  "policies": [
+    {
+      "table": "public.acl",
+      "name": "acl_delete"
+    },
+    {
+      "table": "public.acl",
+      "name": "acl_insert"
+    },
+    {
+      "table": "public.acl",
+      "name": "acl_select"
+    },
+    {
+      "table": "public.acl",
+      "name": "acl_update"
+    },
+    {
+      "table": "public.docs",
+      "name": "docs_select"
+    },
+    {
+      "table": "public.docs",
+      "name": "docs_update"
+    },
+    {
+      "table": "public.notes",
+      "name": "notes_select"
+    },
+    {
+      "table": "public.notes",
+      "name": "notes_update"
+    }
+  ],
+  "triggers": [],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.acl",
+    "public.docs",
+    "public.notes"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

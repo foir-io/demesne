@@ -1,6 +1,9 @@
+use std::fmt::Write as _;
+#[derive(Debug)]
 pub struct Rng(u64);
 
 impl Rng {
+    #[must_use]
     pub fn new(seed: u64) -> Self {
         Rng(seed ^ 0x9E37_79B9_7F4A_7C15)
     }
@@ -13,8 +16,9 @@ impl Rng {
         z ^ (z >> 31)
     }
 
+    #[expect(clippy::missing_panics_doc, reason = "the expect converts a remainder below n back to usize, which cannot fail")]
     pub fn below(&mut self, n: usize) -> usize {
-        if n == 0 { 0 } else { (self.next_u64() % n as u64) as usize }
+        if n == 0 { 0 } else { usize::try_from(self.next_u64() % n as u64).expect("a remainder below n fits in usize") }
     }
 
     pub fn chance(&mut self, pct: u64) -> bool {
@@ -32,6 +36,7 @@ struct Lvl {
     col: String,
 }
 
+#[expect(clippy::struct_excessive_bools, reason = "independent switches recording what the generated spec declares so far")]
 struct World {
     levels: Vec<Lvl>,
     perms: Vec<String>,
@@ -54,6 +59,7 @@ const VERBS: [&str; 6] = ["read", "write", "publish", "delete", "manage", "share
 const OBJECT_POOL: [&str; 8] = ["doc", "record", "asset", "note", "board", "file", "ticket", "page"];
 const OPS: [(&str, &str); 4] = [("view", "select"), ("edit", "update"), ("create", "insert"), ("remove", "delete")];
 
+#[must_use]
 pub fn generate(seed: u64) -> String {
     let mut r = Rng::new(seed);
     let mut w = World {
@@ -74,16 +80,17 @@ pub fn generate(seed: u64) -> String {
     let mut out = String::new();
     topology(&mut r, &mut w, &mut out);
     if r.chance(15) {
-        out.push_str(&format!("definers schema \"{}\"\n", r.pick(&["authz", "kernel", "sec"])));
+        writeln!(out, "definers schema \"{}\"", r.pick(&["authz", "kernel", "sec"])).expect("fmt::Write for String never fails");
     }
     if r.chance(15) {
-        out.push_str(&format!("tables schema \"{}\"\n", r.pick(&["app", "data"])));
+        writeln!(out, "tables schema \"{}\"", r.pick(&["app", "data"])).expect("fmt::Write for String never fails");
     }
     if r.chance(10) {
         out.push_str("identifiers uuid\n");
     }
     if r.chance(15) {
-        out.push_str(&format!("claims via \"{}\" {}\n", r.pick(&["request.jwt.claims", "app.claims"]), r.pick(&["json", "jsonb"])));
+        writeln!(out, "claims via \"{}\" {}", r.pick(&["request.jwt.claims", "app.claims"]), r.pick(&["json", "jsonb"]))
+            .expect("fmt::Write for String never fails");
     }
     vocabularies(&mut r, &mut w, &mut out);
     rolestore(&mut r, &mut w, &mut out);
@@ -95,8 +102,8 @@ pub fn generate(seed: u64) -> String {
     }
     if r.chance(40) && !w.perms.is_empty() {
         out.push_str("\nprocedures staff {\n");
-        for i in 0..1 + r.below(3) {
-            out.push_str(&format!("  api.v1.Service/Call{i} -> {}\n", r.pick(&w.perms)));
+        for i in 0..=r.below(3) {
+            writeln!(out, "  api.v1.Service/Call{i} -> {}", r.pick(&w.perms)).expect("fmt::Write for String never fails");
         }
         out.push_str("}\n");
         if r.chance(50) {
@@ -120,15 +127,15 @@ fn topology(r: &mut Rng, w: &mut World, out: &mut String) {
         let name = pool.remove(r.below(pool.len())).to_string();
         let mut line = format!("  level {name}");
         if let Some(p) = &prev {
-            line.push_str(&format!(" parent {p}"));
+            write!(line, " parent {p}").expect("fmt::Write for String never fails");
         }
         let mut col = format!("{name}_id");
         if r.chance(8) {
             col = format!("{name}_ref");
-            line.push_str(&format!(" col {col}"));
+            write!(line, " col {col}").expect("fmt::Write for String never fails");
         }
         if r.chance(6) {
-            line.push_str(&format!(" claim {name}_claim"));
+            write!(line, " claim {name}_claim").expect("fmt::Write for String never fails");
         }
         out.push_str(&line);
         out.push('\n');
@@ -157,7 +164,7 @@ fn vocabularies(r: &mut Rng, w: &mut World, out: &mut String) {
             if r.chance(30) {
                 line.push_str(" implies *");
             } else {
-                line.push_str(&format!(" implies {}", perms[r.below(i)]));
+                write!(line, " implies {}", perms[r.below(i)]).expect("fmt::Write for String never fails");
             }
         }
         out.push_str(&line);
@@ -182,12 +189,12 @@ fn vocabularies(r: &mut Rng, w: &mut World, out: &mut String) {
             }
             items.join(" + ")
         };
-        out.push_str(&format!("  preset {name} @ {lvl} = {body}\n"));
+        writeln!(out, "  preset {name} @ {lvl} = {body}").expect("fmt::Write for String never fails");
         presets.push((name, lvl));
     }
     if presets.len() > 1 && r.chance(40) {
         let names: Vec<&str> = presets.iter().map(|(n, _)| n.as_str()).collect();
-        out.push_str(&format!("  rank {}\n", names.join(" > ")));
+        writeln!(out, "  rank {}", names.join(" > ")).expect("fmt::Write for String never fails");
     }
     out.push_str("}\n");
     if r.chance(40) {
@@ -208,7 +215,7 @@ fn rolestore(r: &mut Rng, w: &mut World, out: &mut String) {
     if r.chance(80) {
         out.push_str("  kind principal_kind = \"staff\"\n");
     }
-    out.push_str(&format!("  subject principal_id\n  scope {}\n  rolejoin role_id roles id key\n", cols.join(" ")));
+    write!(out, "  subject principal_id\n  scope {}\n  rolejoin role_id roles id key\n", cols.join(" ")).expect("fmt::Write for String never fails");
     if r.chance(85) {
         out.push_str("  revoked revoked_at");
         if r.chance(30) {
@@ -245,12 +252,12 @@ fn grants(r: &mut Rng, w: &mut World, out: &mut String) {
             line.push_str(" expires expires_at");
         }
         if r.chance(40) {
-            line.push_str(&format!(" confers {}", r.pick(&["select", "select, update", "select, insert, update, delete"])));
+            write!(line, " confers {}", r.pick(&["select", "select, update", "select, insert, update, delete"])).expect("fmt::Write for String never fails");
         }
-        let idx = reals.iter().position(|(n, _)| *n == lvl).unwrap();
+        let idx = reals.iter().position(|(n, _)| *n == lvl).expect("lvl was picked from reals");
         if idx + 1 < reals.len() && r.chance(40) {
             let (sl, sc) = &reals[idx + 1];
-            line.push_str(&format!("\n  scope {sl} on {sc} missing {}", r.pick(&["allow", "deny"])));
+            write!(line, "\n  scope {sl} on {sc} missing {}", r.pick(&["allow", "deny"])).expect("fmt::Write for String never fails");
         }
         out.push_str(&line);
         out.push('\n');
@@ -258,7 +265,7 @@ fn grants(r: &mut Rng, w: &mut World, out: &mut String) {
     }
     if r.chance(15) {
         let (lvl, _) = r.pick(&reals).clone();
-        out.push_str(&format!("grant overview at {lvl} via claim view_mode = \"all\" confers select\n"));
+        writeln!(out, "grant overview at {lvl} via claim view_mode = \"all\" confers select").expect("fmt::Write for String never fails");
         w.claim_grants.push("overview".into());
     }
 }
@@ -269,26 +276,31 @@ fn subjects(r: &mut Rng, w: &mut World, out: &mut String) {
     if r.chance(85) {
         let anchor = reals[0].clone();
         let roles = if w.has_store || r.chance(50) { "configurable staff" } else { "none" };
-        out.push_str(&format!("subject admin {{ anchor {anchor}; reach descendants; identifies sub; roles {roles}; binds admin }}\n"));
+        writeln!(out, "subject admin {{ anchor {anchor}; reach descendants; identifies sub; roles {roles}; binds admin }}")
+            .expect("fmt::Write for String never fails");
         w.has_admin = true;
     }
-    let leaf = reals.last().unwrap().clone();
-    out.push_str(&format!(
-        "subject customer {{ anchor {leaf}; reach self; identifies customer_id; roles {}; binds owner }}\n",
+    let leaf = reals.last().expect("every generated topology has a real level").clone();
+    writeln!(
+        out,
+        "subject customer {{ anchor {leaf}; reach self; identifies customer_id; roles {}; binds owner }}",
         if !w.has_member_vocab || r.chance(50) { "none" } else { "configurable member" }
-    ));
-    w.owner_anchor = leaf.clone();
+    )
+    .expect("fmt::Write for String never fails");
+    w.owner_anchor.clone_from(&leaf);
     if let Some((g, _)) = w.edge_grants.first()
         && w.levels.first().is_some_and(|l| l.is_virtual)
     {
-        out.push_str(&format!("subject operator {{ anchor platform; reach via grant {g}; identifies sub; roles none }}\n"));
+        writeln!(out, "subject operator {{ anchor platform; reach via grant {g}; identifies sub; roles none }}").expect("fmt::Write for String never fails");
         w.grant_reached = true;
     }
     if r.chance(12) {
-        out.push_str(&format!(
-            "subject visitor {{ anchor {leaf}; reach self; identifies visitor_id; roles none; transient{} }}\n",
+        writeln!(
+            out,
+            "subject visitor {{ anchor {leaf}; reach self; identifies visitor_id; roles none; transient{} }}",
             if r.chance(30) { " set" } else { "" }
-        ));
+        )
+        .expect("fmt::Write for String never fails");
         w.has_transient = true;
     }
 }
@@ -336,90 +348,18 @@ fn object(r: &mut Rng, w: &mut World, out: &mut String, i: usize) {
     let level_entity = leaf_idx > 0 && r.chance(15);
     let mut body = format!("\nobject {name} {{\n  table {table}\n");
     if level_entity {
-        body.push_str(&format!("  level {leaf}\n"));
+        writeln!(body, "  level {leaf}").expect("fmt::Write for String never fails");
     }
-    let scoped: Vec<String> = reals[..=leaf_idx]
-        .iter()
-        .enumerate()
-        .map(|(j, (n, _))| if j < leaf_idx && r.chance(10) { format!("{n} wildcard") } else { n.clone() })
-        .collect();
-    body.push_str(&format!("  scoped {}\n", scoped.join(" > ")));
-    let mut rels: Vec<(String, String)> = Vec::new();
-    if leaf == w.owner_anchor && r.chance(75) {
-        if r.chance(25) {
-            body.push_str("  relation owner: customer via owner_id where owner_kind = \"customer\"\n");
-        } else {
-            body.push_str("  relation owner: customer via owner_id\n");
-        }
-        rels.push(("owner".into(), "column".into()));
-    }
-    if w.has_transient && leaf == w.owner_anchor && r.chance(30) {
-        body.push_str("  relation guest: visitor via visitor_id\n");
-        rels.push(("guest".into(), "column".into()));
-    }
-    if r.chance(3) && leaf == w.owner_anchor {
-        body.push_str(&format!("  relation editor: customer via edge {name}_acl({name}_id, customer_id)\n"));
-        rels.push(("editor".into(), "edge".into()));
-    }
-    if w.has_store && w.has_admin && r.chance(35) {
-        body.push_str("  relation member: admin via role\n");
-        rels.push(("member".into(), "role".into()));
-    }
-    if leaf == w.owner_anchor && r.chance(15) {
-        let mat = if r.chance(40) { " materialized" } else { "" };
-        body.push_str(&format!("  relation team: customer via group team_closure(group_id, member_id) edge team_edges(member_id, group_id) on team_id{mat}\n"));
-        rels.push(("team".into(), "group".into()));
-    }
-    if leaf == w.owner_anchor && r.chance(12) {
-        body.push_str("  relation lineage: customer via closure folder_closure(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id\n");
-        rels.push(("lineage".into(), "closure".into()));
-    }
-    if leaf == w.owner_anchor && r.chance(25) {
-        let disc = if r.chance(30) { format!(" where kind = \"{name}\"") } else { String::new() };
-        let tracked = if r.chance(30) { " tracked" } else { "" };
-        let asynch = if !tracked.is_empty() && r.chance(30) { " async" } else { "" };
-        body.push_str(&format!("  relation grantee: customer via grant {name}_grants(record_id, principal_kind, principal_id, access){disc}{tracked}{asynch}\n"));
-        rels.push(("grantee".into(), "grant".into()));
-    }
-    if let Some((other, other_leaf)) = w.objects.last()
-        && *other_leaf == leaf
-        && r.chance(20)
-    {
-        body.push_str(&format!("  relation parent: {other} via object {other}->view on {other}_id\n"));
-        rels.push(("parent".into(), "object".into()));
-    }
-    if r.chance(10) {
-        body.push_str(&format!("  relation link: {name} via composition {name}_links(child_id, parent_id)\n"));
-        rels.push(("link".into(), "composition".into()));
-    }
-    if w.has_store && w.has_admin && r.chance(10) {
-        body.push_str(&format!("  relation scope_member: admin via memberin {leaf}(@sub, {})\n", reals[leaf_idx].1));
-        rels.push(("scope_member".into(), "memberin".into()));
-    }
-    let n_ops = 1 + r.below(4);
-    for (verb, op) in OPS.iter().take(n_ops) {
-        let has_grantee = rels.iter().any(|(n, _)| n == "grantee");
-        let mut e = expr(r, &rels, w, &leaf);
-        if *op == "select" && has_grantee {
-            let enumerable: Vec<&String> =
-                rels.iter().filter(|(_, k)| matches!(k.as_str(), "column" | "grant" | "group" | "closure")).map(|(n, _)| n).collect();
-            e = format!("{} + grantee:read", r.pick(&enumerable));
-        }
-        if rels.iter().any(|(n, k)| n == "link" && k == "composition") && r.chance(50) {
-            e = format!("{e} + link");
-        }
-        let mut line = format!("  permission {verb} = {e} @rls maps {op}");
-        if r.chance(8) {
-            line.push_str(" guard status <> \"archived\"");
-        }
-        body.push_str(&line);
-        body.push('\n');
-    }
+    let scoped: Vec<String> =
+        reals[..=leaf_idx].iter().enumerate().map(|(j, (n, _))| if j < leaf_idx && r.chance(10) { format!("{n} wildcard") } else { n.clone() }).collect();
+    writeln!(body, "  scoped {}", scoped.join(" > ")).expect("fmt::Write for String never fails");
+    let relations = object_relations(r, w, &mut body, &name, &leaf, &reals[leaf_idx].1);
+    let n_ops = object_permissions(r, w, &mut body, &relations, &leaf);
     if r.chance(15) && !w.perms.is_empty() {
-        body.push_str(&format!("  permission publish = {} @pdp\n", r.pick(&w.perms)));
+        writeln!(body, "  permission publish = {} @pdp", r.pick(&w.perms)).expect("fmt::Write for String never fails");
     }
     if r.chance(10) {
-        body.push_str(&format!("  permission audit = {} @check\n", term(r, &rels, w, &leaf)));
+        writeln!(body, "  permission audit = {} @check", term(r, &relations, w, &leaf)).expect("fmt::Write for String never fails");
     }
     if n_ops >= 2 && r.chance(15) {
         body.push_str("  require edit = @self(created_by)\n");
@@ -441,6 +381,87 @@ fn object(r: &mut Rng, w: &mut World, out: &mut String, i: usize) {
     w.objects.push((name, leaf));
 }
 
+fn object_relations(r: &mut Rng, w: &World, body: &mut String, name: &str, leaf: &str, leaf_col: &str) -> Vec<(String, String)> {
+    let mut relations: Vec<(String, String)> = Vec::new();
+    if leaf == w.owner_anchor && r.chance(75) {
+        if r.chance(25) {
+            body.push_str("  relation owner: customer via owner_id where owner_kind = \"customer\"\n");
+        } else {
+            body.push_str("  relation owner: customer via owner_id\n");
+        }
+        relations.push(("owner".into(), "column".into()));
+    }
+    if w.has_transient && leaf == w.owner_anchor && r.chance(30) {
+        body.push_str("  relation guest: visitor via visitor_id\n");
+        relations.push(("guest".into(), "column".into()));
+    }
+    if r.chance(3) && leaf == w.owner_anchor {
+        writeln!(body, "  relation editor: customer via edge {name}_acl({name}_id, customer_id)").expect("fmt::Write for String never fails");
+        relations.push(("editor".into(), "edge".into()));
+    }
+    if w.has_store && w.has_admin && r.chance(35) {
+        body.push_str("  relation member: admin via role\n");
+        relations.push(("member".into(), "role".into()));
+    }
+    if leaf == w.owner_anchor && r.chance(15) {
+        let mat = if r.chance(40) { " materialized" } else { "" };
+        writeln!(body, "  relation team: customer via group team_closure(group_id, member_id) edge team_edges(member_id, group_id) on team_id{mat}")
+            .expect("fmt::Write for String never fails");
+        relations.push(("team".into(), "group".into()));
+    }
+    if leaf == w.owner_anchor && r.chance(12) {
+        body.push_str("  relation lineage: customer via closure folder_closure(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id\n");
+        relations.push(("lineage".into(), "closure".into()));
+    }
+    if leaf == w.owner_anchor && r.chance(25) {
+        let disc = if r.chance(30) { format!(" where kind = \"{name}\"") } else { String::new() };
+        let tracked = if r.chance(30) { " tracked" } else { "" };
+        let asynch = if !tracked.is_empty() && r.chance(30) { " async" } else { "" };
+        writeln!(body, "  relation grantee: customer via grant {name}_grants(record_id, principal_kind, principal_id, access){disc}{tracked}{asynch}")
+            .expect("fmt::Write for String never fails");
+        relations.push(("grantee".into(), "grant".into()));
+    }
+    if let Some((other, other_leaf)) = w.objects.last()
+        && *other_leaf == leaf
+        && r.chance(20)
+    {
+        writeln!(body, "  relation parent: {other} via object {other}->view on {other}_id").expect("fmt::Write for String never fails");
+        relations.push(("parent".into(), "object".into()));
+    }
+    if r.chance(10) {
+        writeln!(body, "  relation link: {name} via composition {name}_links(child_id, parent_id)").expect("fmt::Write for String never fails");
+        relations.push(("link".into(), "composition".into()));
+    }
+    if w.has_store && w.has_admin && r.chance(10) {
+        writeln!(body, "  relation scope_member: admin via memberin {leaf}(@sub, {leaf_col})").expect("fmt::Write for String never fails");
+        relations.push(("scope_member".into(), "memberin".into()));
+    }
+    relations
+}
+
+fn object_permissions(r: &mut Rng, w: &World, body: &mut String, relations: &[(String, String)], leaf: &str) -> usize {
+    let n_ops = 1 + r.below(4);
+    for (verb, op) in OPS.iter().take(n_ops) {
+        let has_grantee = relations.iter().any(|(n, _)| n == "grantee");
+        let mut e = expr(r, relations, w, leaf);
+        if *op == "select" && has_grantee {
+            let enumerable: Vec<&String> =
+                relations.iter().filter(|(_, k)| matches!(k.as_str(), "column" | "grant" | "group" | "closure")).map(|(n, _)| n).collect();
+            e = format!("{} + grantee:read", r.pick(&enumerable));
+        }
+        if relations.iter().any(|(n, k)| n == "link" && k == "composition") && r.chance(50) {
+            e = format!("{e} + link");
+        }
+        let mut line = format!("  permission {verb} = {e} @rls maps {op}");
+        if r.chance(8) {
+            line.push_str(" guard status <> \"archived\"");
+        }
+        body.push_str(&line);
+        body.push('\n');
+    }
+    n_ops
+}
+
 pub fn mutate(seed: u64, src: &str) -> String {
     let mut r = Rng::new(seed);
     let mut lines: Vec<String> = src.lines().map(String::from).collect();
@@ -452,7 +473,7 @@ pub fn mutate(seed: u64, src: &str) -> String {
         .filter(|t| t.len() > 2 && t.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
         .map(String::from)
         .collect();
-    for _ in 0..1 + r.below(3) {
+    for _ in 0..=r.below(3) {
         let i = r.below(lines.len());
         match r.below(6) {
             0 => {

@@ -1,0 +1,58 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.doc_acl_grants(text, text, text)",
+    "auth.docs_accessors_conditional(text)",
+    "auth.docs_admits(text, jsonb)",
+    "auth.has_org_role(text)",
+    "auth.is_root(text)",
+    "auth.is_tenant_staff(text, text)",
+    "auth.member_can_access_doc(text, text, text)",
+    "auth.staff_has_workspace_role(text, text, text)",
+    "auth.workspaces_accessors(text)",
+    "auth.workspaces_admits(text, jsonb)"
+  ],
+  "policies": [
+    {
+      "table": "public.docs",
+      "name": "docs_delete"
+    },
+    {
+      "table": "public.docs",
+      "name": "docs_insert"
+    },
+    {
+      "table": "public.docs",
+      "name": "docs_select"
+    },
+    {
+      "table": "public.docs",
+      "name": "docs_update"
+    },
+    {
+      "table": "public.workspaces",
+      "name": "workspaces_select"
+    },
+    {
+      "table": "public.workspaces",
+      "name": "workspaces_update"
+    }
+  ],
+  "triggers": [],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.docs",
+    "public.workspaces"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

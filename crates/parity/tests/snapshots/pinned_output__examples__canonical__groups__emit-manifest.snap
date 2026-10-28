@@ -1,0 +1,34 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.group_closure_member(text, text)",
+    "auth.group_closure_rebuild()"
+  ],
+  "policies": [
+    {
+      "table": "public.docs",
+      "name": "docs_select"
+    }
+  ],
+  "triggers": [
+    {
+      "table": "public.group_memberships",
+      "name": "group_closure_rebuild"
+    }
+  ],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.docs"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

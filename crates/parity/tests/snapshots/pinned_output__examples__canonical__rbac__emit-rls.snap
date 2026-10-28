@@ -1,0 +1,19 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+DROP POLICY IF EXISTS resources_select ON public.resources;
+CREATE POLICY resources_select ON public.resources FOR SELECT TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.staff_has_resource_role((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id) OR auth.staff_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'resource:write') OR auth.is_tenant_staff((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id))));
+
+DROP POLICY IF EXISTS resources_update ON public.resources;
+CREATE POLICY resources_update ON public.resources FOR UPDATE TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.staff_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'resource:write') OR auth.is_tenant_staff((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id))))
+    WITH CHECK ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.staff_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'resource:write') OR auth.is_tenant_staff((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id))));
+
+
+--- stderr ---
+
+--- end ---

@@ -1,0 +1,68 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+CREATE OR REPLACE FUNCTION auth.operator_perm_implied_by(p_perm text)
+RETURNS text[]
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE((SELECT m.impliers FROM (VALUES ('tenant:manage', ARRAY['tenant:manage']::text[]), ('content:read', ARRAY['content:read', 'tenant:manage']::text[]), ('content:write', ARRAY['content:write', 'tenant:manage']::text[]), ('billing:read', ARRAY['billing:read', 'tenant:manage']::text[])) AS m(perm, impliers) WHERE m.perm = p_perm), ARRAY[p_perm]::text[]);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.operator_has_perm(user_id text, check_tenant_id text, check_project_id text, p_perm text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM role_assignments ra JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'admin' AND ra.principal_id = user_id AND (ra.tenant_id IS NULL OR ra.tenant_id = check_tenant_id) AND (ra.project_id IS NULL OR ra.project_id = check_project_id) AND ra.revoked_at IS NULL AND r.permissions::text[] && auth.operator_perm_implied_by(p_perm));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.platform_has_perm(user_id text, p_perm text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM role_assignments ra JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'admin' AND ra.principal_id = user_id AND ra.tenant_id IS NULL AND ra.project_id IS NULL AND ra.revoked_at IS NULL AND p_perm = ANY(r.permissions));
+$$;
+
+
+ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.documents FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tenants FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS documents_select ON public.documents;
+CREATE POLICY documents_select ON public.documents FOR SELECT TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.operator_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:read') OR auth.operator_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:write'))));
+
+DROP POLICY IF EXISTS documents_update ON public.documents;
+CREATE POLICY documents_update ON public.documents FOR UPDATE TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.operator_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:write'))))
+    WITH CHECK ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.operator_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:write'))));
+
+DROP POLICY IF EXISTS tenants_delete ON public.tenants;
+CREATE POLICY tenants_delete ON public.tenants FOR DELETE TO authenticated
+    USING ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')));
+
+DROP POLICY IF EXISTS tenants_select ON public.tenants;
+CREATE POLICY tenants_select ON public.tenants FOR SELECT TO authenticated
+    USING ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')));
+
+DROP POLICY IF EXISTS tenants_update ON public.tenants;
+CREATE POLICY tenants_update ON public.tenants FOR UPDATE TO authenticated
+    USING ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')))
+    WITH CHECK ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')));
+
+
+--- stderr ---
+
+--- end ---

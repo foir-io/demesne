@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+readme = "README.md"
 repository.workspace = true
 publish = false
 
@@ -14,9 +17,13 @@ demesne-syntax.workspace = true
 demesne-runtime.workspace = true
 demesne-model.workspace = true
 demesne-emit-sql.workspace = true
-demesne-emit-go.workspace = true
 demesne-emit-ts.workspace = true
 demesne-postgres.workspace = true
+
+[dev-dependencies]
+demesne-cli.workspace = true
+insta.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

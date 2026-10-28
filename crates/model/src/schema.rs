@@ -1,6 +1,8 @@
-use crate::analysis::{SpecExt, contains};
-use demesne_gocompat::{quote, sort_slice};
-use demesne_syntax::*;
+use crate::SpecExt;
+use crate::analysis::contains;
+use crate::error::{Error, refuse_any};
+use demesne_gocompat::quote;
+use demesne_syntax::{ExternalArg, Finding, Grant, Object, Perm, Relation, Repr, RoleStore, Spec, Subject, Term};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,6 +10,13 @@ pub struct Column {
     pub name: String,
     pub data_type: String,
     pub nullable: bool,
+}
+
+/// Whether a column admits NULL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Nullability {
+    Nullable,
+    NotNull,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,50 +34,57 @@ pub struct Schema {
 }
 
 impl Schema {
+    #[must_use]
     pub fn new() -> Self {
         Schema::default()
     }
 
-    pub fn add_column(&mut self, table: &str, name: &str, data_type: &str, nullable: bool) {
-        self.tables.entry(table.to_string()).or_default().insert(
-            name.to_string(),
-            Column { name: name.to_string(), data_type: data_type.to_string(), nullable },
-        );
+    /// Adds a column to `table`, creating the table on its first column.
+    pub fn add_column(&mut self, table: &str, name: &str, data_type: &str, nullability: Nullability) {
+        let nullable = match nullability {
+            Nullability::Nullable => true,
+            Nullability::NotNull => false,
+        };
+        self.tables
+            .entry(table.to_string())
+            .or_default()
+            .insert(name.to_string(), Column { name: name.to_string(), data_type: data_type.to_string(), nullable });
     }
 
     pub fn add_foreign_key(&mut self, table: &str, column: &str, ref_table: &str, ref_column: &str) {
-        self.fks.push(ForeignKey {
-            table: table.into(),
-            column: column.into(),
-            ref_table: ref_table.into(),
-            ref_column: ref_column.into(),
-        });
+        self.fks.push(ForeignKey { table: table.into(), column: column.into(), ref_table: ref_table.into(), ref_column: ref_column.into() });
     }
 
+    #[must_use]
     pub fn has_table(&self, table: &str) -> bool {
         self.tables.contains_key(table)
     }
 
+    #[must_use]
     pub fn tables(&self) -> Vec<String> {
         let mut out: Vec<String> = self.tables.keys().cloned().collect();
         out.sort();
         out
     }
 
+    #[must_use]
     pub fn table_columns(&self, table: &str) -> Vec<&Column> {
         let mut cols: Vec<&Column> = self.tables.get(table).map(|m| m.values().collect()).unwrap_or_default();
         cols.sort_by(|a, b| a.name.cmp(&b.name));
         cols
     }
 
+    #[must_use]
     pub fn foreign_keys(&self) -> &[ForeignKey] {
         &self.fks
     }
 
+    #[must_use]
     pub fn column(&self, table: &str, col: &str) -> Option<&Column> {
         self.tables.get(table)?.get(col)
     }
 
+    #[must_use]
     pub fn has_column(&self, table: &str, col: &str) -> bool {
         self.column(table, col).is_some()
     }
@@ -85,19 +101,19 @@ impl Binder<'_> {
         if self.columns.is_some() {
             return true;
         }
-        if !self.sc.unwrap().has_table(table) {
+        if !self.sc.expect("a binder without a column map binds against a schema").has_table(table) {
             self.errs.push(format!("{ctx}: table {} not found in the database", quote(table)));
             return false;
         }
         true
     }
 
-    pub fn req_col(&mut self, table: &str, col: &str, ctx: &str) {
+    pub(crate) fn req_col(&mut self, table: &str, col: &str, ctx: &str) {
         if let Some(cols) = &mut self.columns {
             cols.entry(table.to_string()).or_default().insert(col.to_string());
             return;
         }
-        let sc = self.sc.unwrap();
+        let sc = self.sc.expect("a binder without a column map binds against a schema");
         if !sc.has_table(table) {
             self.errs.push(format!("{ctx}: table {} (for column {}) not found in the database", quote(table), quote(col)));
             return;
@@ -108,8 +124,8 @@ impl Binder<'_> {
     }
 }
 
-fn or(o: &Option<String>) -> &str {
-    o.as_deref().unwrap_or("")
+fn or(o: Option<&str>) -> &str {
+    o.unwrap_or("")
 }
 
 pub(crate) fn check_object_refs(s: &Spec, b: &mut Binder, o: &Object) {
@@ -189,8 +205,8 @@ fn check_relation_refs(b: &mut Binder, o: &Object, r: &Relation) {
             if let Some(base) = &c.base
                 && b.req_table(base, &rc)
             {
-                b.req_col(base, or(&c.base_id), &rc);
-                b.req_col(base, or(&c.base_parent), &rc);
+                b.req_col(base, or(c.base_id.as_deref()), &rc);
+                b.req_col(base, or(c.base_parent.as_deref()), &rc);
             }
         }
         Repr::Group(g) => {
@@ -235,8 +251,8 @@ fn is_array_data_type(dt: &str) -> bool {
 
 fn check_role_store_refs(s: &Spec, b: &mut Binder, rs: &RoleStore) {
     let rc = format!("rolestore {}", rs.name);
-    if b.req_table(or(&rs.assignments), &rc) {
-        let mut cols: Vec<&str> = vec![or(&rs.subject_col), or(&rs.role_col)];
+    if b.req_table(or(rs.assignments.as_deref()), &rc) {
+        let mut cols: Vec<&str> = vec![or(rs.subject_col.as_deref()), or(rs.role_col.as_deref())];
         if let Some(k) = &rs.kind_col {
             cols.push(k);
         }
@@ -245,17 +261,17 @@ fn check_role_store_refs(s: &Spec, b: &mut Binder, rs: &RoleStore) {
         }
         cols.extend(rs.scope_cols.iter().map(String::as_str));
         for c in cols {
-            b.req_col(or(&rs.assignments), c, &rc);
+            b.req_col(or(rs.assignments.as_deref()), c, &rc);
         }
     }
     let rrc = format!("{rc} roles");
-    if b.req_table(or(&rs.roles_table), &rrc) {
-        b.req_col(or(&rs.roles_table), or(&rs.roles_id), &rrc);
-        b.req_col(or(&rs.roles_table), or(&rs.key_col), &rrc);
+    if b.req_table(or(rs.roles_table.as_deref()), &rrc) {
+        b.req_col(or(rs.roles_table.as_deref()), or(rs.roles_id.as_deref()), &rrc);
+        b.req_col(or(rs.roles_table.as_deref()), or(rs.key_col.as_deref()), &rrc);
         if let Some(pc) = &rs.perms_col {
-            b.req_col(or(&rs.roles_table), pc, &rrc);
+            b.req_col(or(rs.roles_table.as_deref()), pc, &rrc);
             if s.uses_holds()
-                && let Some(col) = b.sc.and_then(|sc| sc.column(or(&rs.roles_table), pc))
+                && let Some(col) = b.sc.and_then(|sc| sc.column(or(rs.roles_table.as_deref()), pc))
                 && !is_array_data_type(&col.data_type)
             {
                 b.errs.push(format!(
@@ -301,7 +317,12 @@ fn check_subject_refs(b: &mut Binder, sub: &Subject) {
     }
 }
 
-pub fn validate_against(s: &Spec, sc: &Schema) -> Result<(), String> {
+/// Checks every table and column the spec names exists in `sc`.
+///
+/// # Errors
+///
+/// Every missing table or column, one finding each, in text order.
+pub fn validate_against(s: &Spec, sc: &Schema) -> Result<(), Error> {
     let mut b = Binder { columns: None, sc: Some(sc), errs: Vec::new() };
     for o in &s.objects {
         check_object_refs(s, &mut b, o);
@@ -315,8 +336,8 @@ pub fn validate_against(s: &Spec, sc: &Schema) -> Result<(), String> {
     for sub in &s.subjects {
         check_subject_refs(&mut b, sub);
     }
-    sort_slice(&mut b.errs, |a, c| a < c);
-    if b.errs.is_empty() { Ok(()) } else { Err(b.errs.join("\n")) }
+    b.errs.sort();
+    refuse_any(b.errs.into_iter().map(Finding::unplaced).collect(), ())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -326,6 +347,7 @@ pub struct TableCoverage {
     pub ungoverned: Vec<String>,
 }
 
+#[must_use]
 pub fn table_coverage(s: &Spec, db_tables: &[String]) -> TableCoverage {
     let governed: BTreeSet<&str> = s.objects.iter().map(|o| o.table.as_str()).collect();
     let mut referenced: BTreeSet<String> = BTreeSet::new();
@@ -335,8 +357,8 @@ pub fn table_coverage(s: &Spec, db_tables: &[String]) -> TableCoverage {
         }
     };
     for rs in &s.role_stores {
-        add(or(&rs.assignments));
-        add(or(&rs.roles_table));
+        add(or(rs.assignments.as_deref()));
+        add(or(rs.roles_table.as_deref()));
     }
     for g in &s.grants {
         add(g.table());
@@ -353,7 +375,7 @@ pub fn table_coverage(s: &Spec, db_tables: &[String]) -> TableCoverage {
                 Repr::Composition(c) => add(&c.table),
                 Repr::Closure(c) => {
                     add(&c.closure);
-                    add(or(&c.base));
+                    add(or(c.base.as_deref()));
                 }
                 Repr::Group(g) => {
                     add(&g.closure);
@@ -414,6 +436,15 @@ pub(crate) fn exported_row(s: &Spec, obj: &Object, pm: &Perm) -> Object {
     row
 }
 
+fn requirement_columns(s: &Spec, row: &Object, t: &Term) -> Vec<String> {
+    let mut cols: Vec<String> = [t.mode_col().unwrap_or(""), t.self_col(), t.row_col()].into_iter().filter(|c| !c.is_empty()).map(str::to_string).collect();
+    if !t.within_level().is_empty() {
+        cols.push(s.scope_col(row, t.within_level()));
+    }
+    cols.extend(t.external_args().iter().map(ExternalArg::col).filter(|c| !c.is_empty()).map(str::to_string));
+    cols
+}
+
 pub(crate) fn exported_columns(s: &Spec, row: &Object) -> BTreeSet<String> {
     let mut b = Binder { columns: Some(BTreeMap::new()), sc: None, errs: Vec::new() };
     check_object_refs(s, &mut b, row);
@@ -422,22 +453,10 @@ pub(crate) fn exported_columns(s: &Spec, row: &Object) -> BTreeSet<String> {
             b.req_col(&row.table, &g.col, "export guard");
         }
     }
-    for rq in &row.requires {
-        for t in rq.tree.leaves() {
-            for column in [t.mode_col().unwrap_or(""), t.self_col(), t.row_col()] {
-                if !column.is_empty() {
-                    b.req_col(&row.table, column, "export requirement");
-                }
-            }
-            if !t.within_level().is_empty() {
-                b.req_col(&row.table, &s.scope_col(row, t.within_level()), "export requirement");
-            }
-            for arg in t.external_args() {
-                if !arg.col().is_empty() {
-                    b.req_col(&row.table, arg.col(), "export requirement");
-                }
-            }
+    for t in row.requires.iter().flat_map(|rq| rq.tree.leaves()) {
+        for column in requirement_columns(s, row, t) {
+            b.req_col(&row.table, &column, "export requirement");
         }
     }
-    b.columns.unwrap().remove(&row.table).unwrap_or_default()
+    b.columns.expect("the coverage binder is built with a column map").remove(&row.table).unwrap_or_default()
 }

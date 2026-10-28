@@ -23,6 +23,7 @@ impl T {
         self.errors.borrow_mut().push(format!("{}: {}", self.name, msg.into()));
     }
 
+    #[expect(clippy::print_stderr, reason = "the harness logs its cell counts as Go's t.Logf does, so the two runs can be compared")]
     fn logf(&self, msg: impl Into<String>) {
         eprintln!("{}: {}", self.name, msg.into());
     }
@@ -48,7 +49,7 @@ impl T {
 }
 
 fn panic_text(p: &(dyn Any + Send)) -> String {
-    p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()
+    p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(std::string::ToString::to_string)).unwrap_or_default()
 }
 
 fn require_env(var: &str, why: &str) -> String {
@@ -91,9 +92,7 @@ struct ResolveInput {
 fn strings(v: Option<&Value>, what: &str) -> Option<Vec<String>> {
     match v {
         None | Some(Value::Null) => None,
-        Some(Value::Array(xs)) => {
-            Some(xs.iter().map(|x| x.as_str().map(String::from).unwrap_or_else(|| panic!("{what}: element {x:?} is not a string"))).collect())
-        }
+        Some(Value::Array(xs)) => Some(xs.iter().map(|x| x.as_str().map_or_else(|| panic!("{what}: element {x:?} is not a string"), String::from)).collect()),
         Some(other) => panic!("{what}: {other:?} is not an array of strings"),
     }
 }
@@ -145,9 +144,7 @@ fn load_resolve_matrix(spec: &str, resolver: &str) -> Vec<ResolveInput> {
             expect: strings(c.get("expect"), &format!("case {i} expect")),
         });
     }
-    if out.is_empty() {
-        panic!("oracle manifest {spec:?} carries no holds.resolve cases for resolver {resolver:?}");
-    }
+    assert!(!out.is_empty(), "oracle manifest {spec:?} carries no holds.resolve cases for resolver {resolver:?}");
     out
 }
 
@@ -248,7 +245,7 @@ fn run_holds_matrix(t: &T, url: &str, tgt: &MatrixTarget) {
     }
     let defs = demesne_emit_sql::Sql::new(&s).emit_definers().unwrap_or_else(|e| panic!("EmitDefiners: {e}"));
     let hr = s.holds_resolver(tgt.rolestore).unwrap_or_else(|e| panic!("HoldsResolver: {e}"));
-    let vocab: Vec<String> = hr.vocabulary().permissions.iter().map(|p| p.to_string()).collect();
+    let vocab: Vec<String> = hr.vocabulary().permissions.iter().map(std::string::ToString::to_string).collect();
     let scope_args = hr.selected_scope_cols().len();
 
     let mut found = false;
@@ -258,13 +255,9 @@ fn run_holds_matrix(t: &T, url: &str, tgt: &MatrixTarget) {
         }
         found = true;
         let got = d.sig.matches(',').count() + 1;
-        if got != scope_args + 2 {
-            panic!("{} takes {got} arguments, want {} (subject + {scope_args} scope + perm): {:?}", d.name, scope_args + 2, d.sig);
-        }
+        assert!(got == scope_args + 2, "{} takes {got} arguments, want {} (subject + {scope_args} scope + perm): {:?}", d.name, scope_args + 2, d.sig);
     }
-    if !found {
-        panic!("spec emits no definer {:?}", tgt.definer);
-    }
+    assert!(found, "spec emits no definer {:?}", tgt.definer);
 
     if let Err(e) = conn.batch_execute(&matrix_schema(&hr)) {
         panic!("schema: {e}");

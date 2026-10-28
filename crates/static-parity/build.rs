@@ -1,10 +1,11 @@
 use demesne_emit_rust::{Builder, Surface, emit_rust, item_path};
 use demesne_syntax::Spec;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 fn corpus(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for dir in ["examples", "testdata/corpus/fixtures", "testdata/corpus/foir", "testdata/parity/oracle"] {
+    for dir in ["examples", "testdata/corpus/fixtures", "testdata/parity/oracle"] {
         let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
         for e in rd.flatten() {
             let p = e.path();
@@ -65,6 +66,7 @@ fn registry_item(spec: &Spec, m: &str, w: &Surface) -> String {
         Surface::Session => format!("Item::Session(&{path})"),
         Surface::ClaimsContract => format!("Item::ClaimsContract({path})"),
         Surface::ClaimsContractEntries => format!("Item::ClaimsContractEntries({path})"),
+        other => unreachable!("candidates() yields only the surfaces above, not {other:?}"),
     }
 }
 
@@ -85,11 +87,13 @@ fn main() {
         }
         b.compile();
         let m = format!("spec_{i}");
-        mods.push_str(&format!("#[allow(dead_code)]\nmod {m} {{\n    include!(concat!(env!(\"OUT_DIR\"), \"/{m}.rs\"));\n}}\n"));
+        write!(mods, "#[allow(dead_code, unreachable_pub, reason = \"generated tables; the registry reads only the surfaces it compares\")]\nmod {m} {{\n    include!(concat!(env!(\"OUT_DIR\"), \"/{m}.rs\"));\n}}\n").expect("fmt::Write for String never fails");
         let items: Vec<String> = chosen.iter().map(|w| registry_item(&spec, &m, w)).collect();
         let rel = path.strip_prefix(&root).expect("under the repo root").display().to_string();
-        entries.push_str(&format!("        Entry {{ path: {rel:?}, items: vec![{}] }},\n", items.join(", ")));
+        writeln!(entries, "        Entry {{ path: {rel:?}, items: vec![{}] }},", items.join(", ")).expect("fmt::Write for String never fails");
     }
-    let index = format!("{mods}\npub fn registry() -> Vec<Entry> {{\n    vec![\n{entries}    ]\n}}\n");
+    let index = format!(
+        "{mods}\n#[allow(clippy::too_many_lines, clippy::must_use_candidate, reason = \"a generated registry of every compiled table\")]\npub fn registry() -> Vec<Entry> {{\n    vec![\n{entries}    ]\n}}\n"
+    );
     std::fs::write(PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR")).join("index.rs"), index).expect("write index.rs");
 }

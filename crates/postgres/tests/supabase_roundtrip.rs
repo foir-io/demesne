@@ -1,5 +1,5 @@
 use demesne_model::SpecExt;
-use demesne_runtime::{AppObjectSurface, Decision, compose_can, mint_claims_values_with_extra};
+use demesne_runtime::{AppObjectSurface, Decision, SettingLifetime, compose_can, mint_claims_values_with_extra};
 use postgres::{Client, Error, GenericClient, Transaction};
 use std::any::Any;
 use std::cell::RefCell;
@@ -36,7 +36,7 @@ impl T {
 }
 
 fn panic_text(p: &(dyn Any + Send)) -> String {
-    p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()
+    p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(std::string::ToString::to_string)).unwrap_or_default()
 }
 
 fn require_env(var: &str, why: &str) -> String {
@@ -66,17 +66,17 @@ struct Framework {
 }
 
 struct NoteAccess {
-    can_view_sql: String,
-    list_resources_sql: String,
-    check_many_sql: String,
+    can_view: String,
+    list_resources: String,
+    check_many: String,
 }
 
 impl Framework {
     fn new(spec: &demesne_syntax::Spec) -> Framework {
-        let claims_contract = spec.claims_contract().unwrap_or_else(|e| panic!("claims contract: {e}")).iter().map(|k| k.to_string()).collect();
+        let claims_contract = spec.claims_contract().unwrap_or_else(|e| panic!("claims contract: {e}")).clone();
         let surf = demesne_emit_sql::Sql::new(spec).emit_app_surface().unwrap_or_else(|e| panic!("EmitAppSurface: {e}"));
         let note = surf.object("note").unwrap_or_else(|| panic!("the app surface carries no note object"));
-        Framework { claims_contract, setup: spec.session().session_setup_sql(true), note: NoteAccess::new(note) }
+        Framework { claims_contract, setup: spec.session().session_setup_sql(SettingLifetime::Transaction), note: NoteAccess::new(note) }
     }
 
     fn mint(&self, member_ref: &str, org: &str, ws: &str) -> Result<String, demesne_runtime::Error> {
@@ -92,21 +92,21 @@ impl Framework {
 
 impl NoteAccess {
     fn new(o: &AppObjectSurface) -> NoteAccess {
-        let list_resources_sql = if o.flat_list_fn.is_empty() { o.list_resources_sql() } else { o.list_resources_fast_sql() };
-        NoteAccess { can_view_sql: o.check_sql(), list_resources_sql, check_many_sql: o.check_many_sql() }
+        let list_resources = if o.flat_list_fn.is_empty() { o.list_resources_sql() } else { o.list_resources_fast_sql() };
+        NoteAccess { can_view: o.check_sql(), list_resources, check_many: o.check_many_sql() }
     }
 
     fn can_view(&self, q: &mut impl GenericClient, id: &str) -> Result<Decision, Error> {
-        let ok: bool = q.query_one(self.can_view_sql.as_str(), &[&id])?.try_get(0)?;
-        Ok(compose_can(true, ok, Decision::NotGoverned))
+        let ok: bool = q.query_one(self.can_view.as_str(), &[&id])?.try_get(0)?;
+        Ok(compose_can(if ok { Decision::Allow } else { Decision::Deny }, Decision::NotGoverned))
     }
 
     fn list_resources(&self, q: &mut impl GenericClient, after: Option<&str>, limit: i64) -> Result<Vec<String>, Error> {
-        q.query(self.list_resources_sql.as_str(), &[&after, &limit])?.iter().map(|r| r.try_get(0)).collect()
+        q.query(self.list_resources.as_str(), &[&after, &limit])?.iter().map(|r| r.try_get(0)).collect()
     }
 
     fn check_many(&self, q: &mut impl GenericClient, ids: &[&str]) -> Result<Vec<String>, Error> {
-        q.query(self.check_many_sql.as_str(), &[&ids])?.iter().map(|r| r.try_get(0)).collect()
+        q.query(self.check_many.as_str(), &[&ids])?.iter().map(|r| r.try_get(0)).collect()
     }
 }
 
@@ -175,28 +175,10 @@ fn round_trip(t: &T, url: &str) {
 
     let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/supabase.demesne")).unwrap_or_else(|e| panic!("read spec: {e}"));
     let s = demesne_syntax::parse(&src).unwrap_or_else(|e| panic!("parse: {e}"));
-    let sql = demesne_emit_sql::Sql::new(&s);
-    let defs = sql.emit_definers().unwrap_or_else(|e| panic!("EmitDefiners: {e}"));
-    let rls = sql.emit_rls().unwrap_or_else(|e| panic!("EmitRLS: {e}"));
     let fw = Framework::new(&s);
 
     let _cleanup = Cleanup { url, sql: "drop table if exists public.note_acl, public.notes cascade; drop schema if exists demesne cascade;" };
-
-    for stmt in [
-        SCHEMA.to_string(),
-        demesne_emit_sql::definers_sql(&defs),
-        rls.enablement_sql(),
-        rls.policy_sql("authenticated"),
-        "grant execute on all functions in schema demesne to authenticated;".to_string(),
-        "insert into public.notes (note_pk, org_ref, ws_ref, owner_ref, visibility) values
-		 ('n1','o1','w1','m1','private'),('n2','o1','w1','m2','open'),
-		 ('n3','o1','w1','m2','private'),('n4','o2','w9','m1','private');"
-            .to_string(),
-    ] {
-        if let Err(e) = db.batch_execute(&stmt) {
-            panic!("apply DDL/seed: {e}\n--- stmt ---\n{stmt}");
-        }
-    }
+    install(&mut db, &s);
 
     let mut can_view = |member: &str, org: &str, ws: &str, id: &str| -> Decision {
         session(&fw, &mut db, member, org, ws, |q| fw.note.can_view(q, id).unwrap_or_else(|e| panic!("CanView({id}): {e}")))
@@ -240,8 +222,33 @@ fn round_trip(t: &T, url: &str) {
         }
     });
 
+    check_pgx_session(t, &fw, url);
+}
+
+fn install(db: &mut Client, s: &demesne_syntax::Spec) {
+    let sql = demesne_emit_sql::Sql::new(s);
+    let defs = sql.emit_definers().unwrap_or_else(|e| panic!("EmitDefiners: {e}"));
+    let rls = sql.emit_rls().unwrap_or_else(|e| panic!("EmitRLS: {e}"));
+    for stmt in [
+        SCHEMA.to_string(),
+        demesne_emit_sql::definers_sql(&defs),
+        rls.enablement_sql(),
+        rls.policy_sql("authenticated"),
+        "grant execute on all functions in schema demesne to authenticated;".to_string(),
+        "insert into public.notes (note_pk, org_ref, ws_ref, owner_ref, visibility) values
+		 ('n1','o1','w1','m1','private'),('n2','o1','w1','m2','open'),
+		 ('n3','o1','w1','m2','private'),('n4','o2','w9','m1','private');"
+            .to_string(),
+    ] {
+        if let Err(e) = db.batch_execute(&stmt) {
+            panic!("apply DDL/seed: {e}\n--- stmt ---\n{stmt}");
+        }
+    }
+}
+
+fn check_pgx_session(t: &T, fw: &Framework, url: &str) {
     let mut pool = demesne_postgres::connect(url).unwrap_or_else(|e| panic!("pgxpool: {e}"));
-    pgx_session(&fw, &mut pool, "m1", "o1", "w1", |q| {
+    pgx_session(fw, &mut pool, "m1", "o1", "w1", |q| {
         match fw.note.can_view(q, "n1") {
             Ok(Decision::Allow) => {}
             other => t.errorf(format!("pgx m1 CanView(n1) = {other:?}; want allow")),

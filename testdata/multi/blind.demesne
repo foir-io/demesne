@@ -1,0 +1,8 @@
+object ledger {
+  table  ledgers
+  scoped tenant > workspace
+  relation owner:   member via owner_id
+  relation grantee: member via grant ledger_acl(ledger_id, principal_kind, principal_id, access)
+  permission view   = owner @rls maps select
+  permission delete = owner + grantee:delete @rls maps delete blind
+}

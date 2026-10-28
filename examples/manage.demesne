@@ -40,6 +40,6 @@ subject member {
 object record {
   table  records
   scoped tenant > project
-  permission view = @holds(records:read)  @rls maps select
+  permission view = @holds(records:read) + @holds(records:write)  @rls maps select
   permission edit = @holds(records:write) @rls maps update
 }

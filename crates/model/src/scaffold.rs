@@ -1,6 +1,7 @@
+use crate::error::Error;
 use crate::schema::Schema;
-use demesne_gocompat::sort_slice;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScaffoldOptions {
@@ -38,18 +39,18 @@ fn compute_depth(
     }
     depth.insert(c.to_string(), 0);
     let mut best = String::new();
-    let mut best_d: i64 = -1;
+    let mut best_d: Option<usize> = None;
     for r in g.fk_out.get(c).into_iter().flatten() {
         if !is_level.contains_key(r) || r == c {
             continue;
         }
-        let d = compute_depth(r, g, is_level, depth, parent) as i64;
-        if d > best_d || (d == best_d && *r < best) {
-            best = r.clone();
-            best_d = d;
+        let d = compute_depth(r, g, is_level, depth, parent);
+        if best_d.is_none_or(|b| d > b) {
+            best.clone_from(r);
+            best_d = Some(d);
         }
     }
-    let d = if best.is_empty() { 0 } else { (best_d + 1) as usize };
+    let d = best_d.map_or(0, |b| b + 1);
     if !best.is_empty() {
         parent.insert(c.to_string(), best);
     }
@@ -58,8 +59,7 @@ fn compute_depth(
 }
 
 fn scope_path(sc: &Schema, t: &str, kept: &[String], level_name: &BTreeMap<String, String>, parent: &BTreeMap<String, String>) -> Vec<String> {
-    let has: BTreeSet<&str> =
-        kept.iter().filter(|c| sc.has_column(t, &format!("{}_id", level_name[*c]))).map(|c| level_name[c].as_str()).collect();
+    let has: BTreeSet<&str> = kept.iter().filter(|c| sc.has_column(t, &format!("{}_id", level_name[*c]))).map(|c| level_name[c].as_str()).collect();
     let mut path: Vec<String> = Vec::new();
     for c in kept {
         let ln = &level_name[c];
@@ -77,33 +77,51 @@ fn scope_path(sc: &Schema, t: &str, kept: &[String], level_name: &BTreeMap<Strin
     path
 }
 
-pub fn scaffold(sc: &Schema, opts: ScaffoldOptions) -> Result<String, String> {
-    let threshold = if opts.min_container_refs == 0 { 3 } else { opts.min_container_refs };
-    let g = build_graph(sc);
-    let mut level_name: BTreeMap<String, String> = BTreeMap::new();
+fn name_containers(g: &FkGraph, threshold: usize) -> BTreeMap<String, String> {
+    let mut level_name = BTreeMap::new();
     for (c, refs) in &g.refs_to {
         if refs.len() < threshold {
             continue;
         }
         let mut best = String::new();
-        let mut best_n: i64 = -1;
-        for (col, n) in &g.col_into[c] {
-            let n = *n as i64;
-            if n > best_n || (n == best_n && *col < best) {
-                best = col.clone();
-                best_n = n;
+        let mut best_n: Option<usize> = None;
+        for (col, &n) in &g.col_into[c] {
+            if best_n.is_none_or(|b| n > b) {
+                best.clone_from(col);
+                best_n = Some(n);
             }
         }
         let name = best.strip_suffix("_id").unwrap_or(&best).to_string();
-        if name.is_empty() {
-            continue;
+        if !name.is_empty() {
+            level_name.insert(c.clone(), name);
         }
-        level_name.insert(c.clone(), name);
     }
+    level_name
+}
+
+fn scoped_object(t: &str, path: &[String]) -> String {
+    let mut b = format!("object {t} {{\n  table  {t}\n  scoped {}\n", path.join(" > "));
+    b.push_str("  permission view   = @scoped @rls maps select\n");
+    b.push_str("  permission edit   = @scoped @rls maps update\n");
+    b.push_str("  permission create = @scoped @rls maps insert\n");
+    b.push_str("  permission delete = @scoped @rls maps delete\n");
+    b.push_str("}\n\n");
+    b
+}
+
+/// Drafts a `.demesne` spec from a database schema's foreign keys.
+///
+/// # Errors
+///
+/// No table is referenced by enough others to be a tenancy container.
+pub fn scaffold(sc: &Schema, opts: ScaffoldOptions) -> Result<String, Error> {
+    let threshold = if opts.min_container_refs == 0 { 3 } else { opts.min_container_refs };
+    let g = build_graph(sc);
+    let level_name = name_containers(&g, threshold);
     if level_name.is_empty() {
-        return Err(format!(
+        return Err(Error::unplaced(format!(
             "scaffold: no tenancy container found (no table referenced by >= {threshold} others via FK) — supply foreign keys, or lower MinContainerRefs"
-        ));
+        )));
     }
     let mut depth = BTreeMap::new();
     let mut parent = BTreeMap::new();
@@ -111,8 +129,8 @@ pub fn scaffold(sc: &Schema, opts: ScaffoldOptions) -> Result<String, String> {
         compute_depth(c, &g, &level_name, &mut depth, &mut parent);
     }
     let mut roots: Vec<String> = level_name.keys().filter(|c| !parent.contains_key(*c)).cloned().collect();
-    let refs_len = |c: &String| g.refs_to.get(c).map(BTreeSet::len).unwrap_or(0);
-    sort_slice(&mut roots, |a, b| if refs_len(a) != refs_len(b) { refs_len(a) > refs_len(b) } else { a < b });
+    let refs_len = |c: &String| g.refs_to.get(c).map_or(0, BTreeSet::len);
+    roots.sort_by(|a, b| refs_len(b).cmp(&refs_len(a)).then_with(|| a.cmp(b)));
     let chosen = roots[0].clone();
     let mut in_tree: BTreeSet<String> = BTreeSet::new();
     let mut dropped: Vec<String> = Vec::new();
@@ -128,14 +146,10 @@ pub fn scaffold(sc: &Schema, opts: ScaffoldOptions) -> Result<String, String> {
         }
     }
     let mut kept: Vec<String> = in_tree.iter().cloned().collect();
-    sort_slice(&mut kept, |a, b| if depth[a] != depth[b] { depth[a] < depth[b] } else { level_name[a] < level_name[b] });
+    kept.sort_by(|a, b| (depth[a], &level_name[a], a).cmp(&(depth[b], &level_name[b], b)));
 
     let tables = sc.tables();
-    let mut b = format!(
-        "// Demesne starter spec — GENERATED by Scaffold from {} tables, {} foreign keys.\n",
-        tables.len(),
-        sc.foreign_keys().len()
-    );
+    let mut b = format!("// Demesne starter spec — GENERATED by Scaffold from {} tables, {} foreign keys.\n", tables.len(), sc.foreign_keys().len());
     b.push_str("// THIS IS A DRAFT. Every line is a heuristic guess from the FK graph — review it.\n");
     b.push_str("// Enforcement here is CONTAINMENT-ONLY (@scoped): a row is visible iff its scope\n");
     b.push_str("// columns match the session. Add owner axes, roles, descriptors, and subjects to\n");
@@ -144,14 +158,14 @@ pub fn scaffold(sc: &Schema, opts: ScaffoldOptions) -> Result<String, String> {
     b.push_str("topology {\n");
     for c in &kept {
         match parent.get(c).filter(|p| in_tree.contains(*p)) {
-            Some(p) => b.push_str(&format!("  level {} parent {}\n", level_name[c], level_name[p])),
-            None => b.push_str(&format!("  level {}\n", level_name[c])),
+            Some(p) => writeln!(b, "  level {} parent {}", level_name[c], level_name[p]).expect("fmt::Write for String never fails"),
+            None => writeln!(b, "  level {}", level_name[c]).expect("fmt::Write for String never fails"),
         }
     }
     b.push_str("}\n");
     if !dropped.is_empty() {
         dropped.sort();
-        b.push_str(&format!("// Other container(s) not in the chosen tree (would fork the root): {}\n", dropped.join(", ")));
+        writeln!(b, "// Other container(s) not in the chosen tree (would fork the root): {}", dropped.join(", ")).expect("fmt::Write for String never fails");
     }
     b.push('\n');
     let mut unscoped: Vec<String> = Vec::new();
@@ -159,19 +173,14 @@ pub fn scaffold(sc: &Schema, opts: ScaffoldOptions) -> Result<String, String> {
         let path = scope_path(sc, t, &kept, &level_name, &parent);
         if path.is_empty() {
             unscoped.push(t.clone());
-            continue;
+        } else {
+            b.push_str(&scoped_object(t, &path));
         }
-        b.push_str(&format!("object {t} {{\n  table  {t}\n  scoped {}\n", path.join(" > ")));
-        b.push_str("  permission view   = @scoped @rls maps select\n");
-        b.push_str("  permission edit   = @scoped @rls maps update\n");
-        b.push_str("  permission create = @scoped @rls maps insert\n");
-        b.push_str("  permission delete = @scoped @rls maps delete\n");
-        b.push_str("}\n\n");
     }
     if !unscoped.is_empty() {
         let suffix = if unscoped.len() > 20 { format!(", … (+{} more)", unscoped.len() - 20) } else { String::new() };
         let shown: Vec<&str> = unscoped.iter().take(20).map(String::as_str).collect();
-        b.push_str(&format!("// Not scaffolded (no tenancy scope columns found): {}{}\n", shown.join(", "), suffix));
+        writeln!(b, "// Not scaffolded (no tenancy scope columns found): {}{}", shown.join(", "), suffix).expect("fmt::Write for String never fails");
     }
     Ok(b)
 }

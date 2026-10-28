@@ -1,11 +1,6 @@
-# Go
-*.test
-*.out
 /bin/
 /dist/
 coverage.*
-go.work.sum
-/cmd/demesne/demesne
 
 # npm release staging (generated from target/distrib at release time)
 /npm/dist/
@@ -18,5 +13,6 @@ go.work.sum
 # VS Code extension build artifact
 *.vsix
 
-.claude/
+.claude/*
+!.claude/skills/
 target/

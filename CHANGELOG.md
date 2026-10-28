@@ -1,5 +1,593 @@
 # Changelog
 
+## v1.0.0
+
+
+### Breaking: a write that the select permission can't see is refused
+
+Postgres applies an UPDATE or DELETE only to rows the SELECT policies show.
+A caller a write permission admits but the select permission doesn't is
+matched against no rows, so the statement changes nothing and reports
+success. `validate` (and every command that loads a spec) now refuses such a
+spec, naming each write term that reaches past select:
+
+```
+line 25: permission note.edit maps update, and its term `grantee:write` admits
+callers the select permission note.view does not reach; Postgres applies an
+UPDATE only to rows the SELECT policy shows, so for those callers it changes
+nothing and reports success: …
+```
+
+The check compares each write disjunct, its object's subjects' own reach, and
+each `admit update`/`admit delete` arm with the select permission, with each
+side's `require` applied. A term passes when select reaches every caller it
+admits:
+
+- the same term in select, or one the vocabulary says it implies
+  (`@holds(records:write)` reaches `@holds(records:read)` when
+  `records:write implies records:read`);
+- a borrowed write verb (`record->edit`), when the borrowed object's own write
+  passes this check against its select;
+- a composition's write arm, when its object's other write terms pass.
+
+Terms that select reaches but its `require` refuses are reported together, once
+per permission. To keep a write that is meant to run without reading, mark the
+permission `blind` (`permission purge = … @rls maps delete blind`): the finding
+becomes a warning on stderr, and the spec validates. `blind` on a permission
+that doesn't map update or delete under `@rls` is refused.
+
+The check expands each side into alternatives, and stops at 512. A write whose
+own predicate, select permission, `require` or subjects' reach expands past
+that is refused rather than passed unchecked, and `blind` keeps it as a
+warning.
+
+To adopt: reach the writers in the select permission (add the write terms, or
+an implication such as `x:write implies x:read`), or mark deliberate blind
+writes `blind`. The examples were changed this way: `agnostic` and `example`
+reach `grantee:write` and `grantee:delete` in `view`, `manage`, `planes` and
+`canonical/rbac` name the write permission in `view`.
+
+### Breaking: the accessor listing names every reader its select admits
+
+`<table>_accessors` used to leave out a select disjunct it couldn't reverse,
+so the listing under-reported who can read a row. Every disjunct that admits
+callers is now in it:
+
+- **Principals, as rows of `<table>_accessors`:**
+  - `@holds(p)`: each assignee whose role grants `p` at the row's scope,
+    source `holds`;
+  - a role relation, and `@session(role)`: each holder of a role for the
+    object's level, source `role`.
+- **Conditions, as rows of `<table>_accessors_conditional`** (the object's
+  listing becomes conditional, as it did for `@claim`, `mode` and
+  `@app_scope`):
+  - `@kind("k")`: source `claim`, claim key `kind`, value `k`;
+  - `@self(col)`: source `claim`, the identity claim, value the row's `col`;
+  - `@session` and `@within(level)`: source `claim`, the level's scope claim,
+    value the row's scope column;
+  - `@within(level nullable)`: that row, plus one with source `scope` for a
+    row whose scope column is NULL (every caller in the row's scope);
+  - `@public`: source `public` (every caller).
+
+A select written as a tree (`and`, `not`) that holds one of the principal
+terms used to be refused as unenumerable; it now enumerates them.
+
+What adopters see: an object whose select names `@kind`, `@self`, `@session`,
+`@within` or `@public` now has `<table>_accessors_conditional` in place of
+`<table>_accessors`, and `ResourceAccessSurface` refuses it, as it refuses any
+conditional object; read it through `conditional_resource_access_surface` and
+decide what each condition means for the caller. Code that switches on
+`source` meets `holds`, `role`, `public` and `scope`.
+
+### Breaking: a conditional listing row carries every claim it requires
+
+`<table>_accessors_conditional` had room for one claim per row, in
+`via_claim_key` and `via_claim_value`, so a conjunction of conditions kept only
+its first claim. `@claim("tier", "gold") and @claim("region", "eu")` listed every
+caller with `tier = gold`. A `@kind`, `@session` or `@within` beside a claim, or
+beside a `mode`, was dropped. The listing named callers the policy refuses.
+
+The two columns are now `via_claim_keys text[]` and `via_claim_values text[]`.
+A row admits a caller whose request carries every key, each with the value at
+the same position. Identity rows, and conditional rows that need no claim, have
+NULL arrays.
+
+A conjunction of conditions lists one row that carries every `@claim`, `@kind`,
+`@session` and non-nullable `@within` in it. A conjunct no row can state is still
+dropped, so the listing may over-report and never under-reports: a negation,
+`@scoped`, a nullable `@within` or `@holds`. A conjunction of claim-side terms
+alone, such as `@kind("admin") and @session`, was refused as unlistable and now
+lists its row.
+
+What adopters change:
+
+- Before applying v1's SQL, drop each `<table>_accessors_conditional`: Postgres
+  can't change a function's return type with `CREATE OR REPLACE`, refuses, and
+  says so.
+- Read the two arrays in place of `via_claim_key` and `via_claim_value`, and
+  require every pair. A query that names the old columns fails rather than
+  reading half an answer.
+- In Rust, `demesne_model::ConditionalAdmission` carries `claims: Vec<ClaimMatch>`
+  in place of `claim_key`, `claim_val` and `claim_val_col`, and
+  `ConditionalExt::conditional_conjunction` takes the object.
+
+### Breaking: `<table>_admits` gives the exact answer, and the listing names candidates
+
+The accessor listing can't state every condition a select policy puts on a
+request: the containment every scoped policy starts with, a reach set from a
+grant or a closure, an `@external` predicate that takes a claim, or a claim
+beside a relation. It named the candidates and left those conditions out, so
+nothing answered "can this person read this row?" exactly.
+
+Every object with a listing and a select policy now also gets
+`auth.<table>_admits(p_id, p_claims jsonb) → boolean`. It runs the table's own
+select policy, `admit` arms included, and its `require view` policy, with
+`p_claims` as the request's claims, and puts the caller's claims back when it
+returns. Its answer is the database's, for every policy, reach sets and
+`@external` included.
+
+- It's emitted with `EXECUTE` revoked from PUBLIC: it answers for any claims,
+  so it can probe a row. Grant it to the role your trusted server code uses.
+  `demesne diff` reports it as changed when PUBLIC may execute it live.
+- `ResourceAccessSurface` gains `admits_fn` and `admits_sql()` (`admitsFn` and
+  `admitsSQL` in `@foir/demesne`), which returns
+  `SELECT auth.<table>_admits($1, $2::jsonb)`. The runtime refuses a projection
+  without `admitsFn`, so regenerate projections made before v1.
+
+The listing changes in three ways:
+
+- A row-side conjunct beside a relation (`@row`, `not @row` or `mode`) used to
+  be dropped. It now narrows the listing exactly: `(owner and @row(status,
+  "open"))` names the owner only on open rows.
+- `@holds` beside a relation narrows the principals of its own store's kind.
+  Principals of other kinds stay, so a request that carries two subjects'
+  claims is never left out.
+- A select `admit` arm was missing from the listing, so a caller only the arm
+  admits appeared nowhere. Each arm now adds a conditional row with the `admit`
+  source and the claims it states, and an object with one lists through
+  `<table>_accessors_conditional`. An arm belongs to the select policy and not
+  to the permission, so a `via object` borrow of the permission never reaches
+  it. When the arms are all that make the listing conditional, the object also
+  gets `<table>_<verb>_accessors`, the permission's readers alone, and a borrow
+  lists through it.
+
+What adopters change:
+
+- Apply the new functions, and grant `_admits` only where it's needed.
+- Read an object with a select `admit` arm through
+  `conditional_resource_access_surface`.
+- Treat the listing as the candidates, and ask `_admits` for the exact answer.
+- In Rust, `demesne_emit_sql::GenFn` gains `language` and `execute`, so a struct
+  literal needs both, or `..Default::default()`.
+
+### Breaking: objects that would overwrite each other's SQL on one table are refused
+
+Two objects on one table that both compile a policy for the same operation
+emit two policies with one name (`<table>_select`, say). Each
+`DROP POLICY IF EXISTS` and `CREATE POLICY` pair replaced the one before, so
+Postgres enforced only the last object's predicate, silently. Two objects that
+both `track` one table did the same to their changelog trigger, so only the
+last object's changes were logged. Two objects on one table with an `async`
+relation of the same name shared an async index name, so the last object's
+maintenance functions replaced the others' and filled their indexes from its
+grant table. `validate` now refuses all three and names the objects. A table
+can still carry several objects when only one of them compiles each policy
+and tracks the table, and the rest use `predicate` permissions.
+
+### Breaking: `diff` compares whole definitions, in both directions
+
+`diff` compared only policy names, and only on tables in `public`. A live
+policy with the right name and any predicate passed, even `USING (true)`. A
+hand-edited or superseded definer passed too, because definers weren't
+compared at all. Now `diff` compares the spec's whole SQL with the live
+database:
+
+- Policies: command, roles, permissive or restrictive, `USING` and
+  `WITH CHECK`.
+- Definers and other generated functions: their whole definition, through
+  `pg_get_functiondef`.
+- Triggers: their whole definition, through `pg_get_triggerdef`.
+- Orphans: a policy on a governed table, a function in a definer schema, or a
+  trigger calling one, that the spec doesn't generate. After a `migrate`, this
+  is the live-to-generated check that nothing was left behind.
+
+Postgres stores expressions in its own form, so each generated object is
+created as a temporary copy beside the live one and both are read back as
+Postgres prints them. The transaction is then rolled back. `diff` needs the
+`TEMP` privilege and a primary database, and it takes no lock on a live table.
+
+Each line names its object's kind, as in `MISSING  policy notes_select on
+public.notes`, where the old line read `MISSING  notes.notes_select`. There are
+two new kinds:
+
+- `CHANGED`: a live definition differs from the generated one.
+- `INVALID`: a generated statement doesn't compile against the live database.
+
+`--allow <file>` lists orphans to leave unreported, such as definers written
+by hand, one per line as their `ORPHAN` line names them. An entry that matches
+nothing live is reported as `STALE`. `demesne_postgres::drift` replaces
+`live_policy_surface` in the Rust API.
+
+### Breaking: `check` looks for schema traps around the governed tables
+
+`check` validated the spec, bound it to the live schema and checked the RLS
+role. It now also looks for three traps in the live schema that bypass or
+weaken the policies:
+
+- **A view that reads a governed table as its owner.** That is a view without
+  `security_invoker = true`, at any depth of views over views, or a
+  materialized view. If the owner bypasses RLS, every reader sees every row:
+  `check` prints `DANGER` and fails, as it does for a `BYPASSRLS` session role.
+  Otherwise it warns, because the policies judge the owner, not the reader.
+- **A unique index over a nullable topology or scope column without
+  `NULLS NOT DISTINCT`.** Rows where the column is NULL, the shared tier, never
+  conflict. Two things count as covering it: a partial unique index on the
+  other columns `WHERE col IS NULL`, or a unique index on some of the other
+  columns alone, such as the primary key in `(project_id, id)`.
+- **A policy comparison whose row column is wrapped** in COALESCE, NULLIF,
+  CASE, a cast through text, a function or an operator. The comparison can't
+  use an index on the column, so it runs row by row. This is read from each
+  policy's stored expression tree, so a bare comparison or a definer call isn't
+  flagged, and neither is anything inside a subquery.
+
+demesne's own policies raise none of these. `demesne_postgres::schema_traps`
+is the same check in the Rust API.
+
+### Breaking: v1 is Rust and TypeScript; Go stays on v0.93.1
+
+v1 generates no Go and ships no Go module. `demesne emit <spec> claims` and
+`demesne emit <spec> framework`, which printed Go, and `--target go` now say so
+and point to `--target ts`. The Go code generator is not published as a crate.
+
+The Go engine stays frozen at v0.93.1 on the `release/v0.93` branch, with its
+CLI and `pgx` modules, and Go programs keep using it. v1's root `go.mod` holds
+no Go code. It retracts v0.94.0 and v1.0.0 through v1.999.999, so `go get -u`
+and `@latest` keep Go users on v0.93.1, and it marks the module deprecated with
+a pointer to the CLI and `@foir/demesne`. A thin Go layer over the Rust
+runtime is planned as its own module.
+
+### Breaking: `@foir/demesne` runs demesne's Rust runtime, compiled to WebAssembly
+
+`@foir/demesne` was an 897-line TypeScript runtime written by hand beside the Go
+one, with `goCompat.ts` copying Go's sort and JSON escaping. It now runs
+`crates/runtime`, the same Rust runtime Rust adopters link, compiled to
+WebAssembly. The hand-written runtime and `goCompat.ts` are gone, so there is
+one implementation of every builder.
+
+- **The API is unchanged and still synchronous.** The default entry carries
+  the module's bytes and compiles them on import. Cloudflare Workers forbid
+  that, so the `workerd` export condition imports the `.wasm` file as a module
+  instead.
+- **Tested in each environment:**
+  - the 716 tests pass in Node, Deno, inside workerd and in headless Chrome;
+  - a packed tarball is bundled and run in all three;
+  - the example app's live-Postgres round trips pass on top of it.
+- **Size:** the module is 179 KB, everything the default entry loads is 95 KB
+  gzipped, and the package is 173 KB. A budget on every build holds the first
+  two under 200 KB and 105 KB.
+- **What changes for callers:**
+  - The Go-compatibility helpers `goCmp`, `goSort`, `goEncodeString` and
+    `goJSONStringify` are no longer exported.
+  - Error messages come from the runtime in Go's words, as in
+    `MintClaims: key(s) not in the claims contract: [...]` and
+    `BuildClaims: no subject "x" in the spec`. Each keeps the wording after its
+    prefix.
+  - Permissions and roles sort by UTF-8 bytes, exactly as Go does. The old
+    code compared UTF-16 code units, which differs only for characters beyond
+    the Basic Multilingual Plane.
+
+For the binding, `demesne-runtime` gains `build_claims` with `Principal`,
+`SubjectIdentity` and `LevelClaim`, projection parsers for claims, principals,
+the PDP and role assignments, and public `plane_depth`, `within_plane`,
+`expand_implications` and `active_predicate`.
+
+### Breaking: a `@self`, `@public` or grant term under `and` or `not` is refused
+
+This is a security fix. A `@self`, `@public` or `via grant` term admits its
+callers on its own wherever it is written, so the compiler ignored any `and` or
+`not` around it, and the policy was wider than the spec read:
+
+- `owner and @self(actor_col)` compiled as `owner + @self(actor_col)`;
+- `not @self(actor_col) and owner` admitted the very callers it reads as
+  excluding.
+
+`validate` now refuses such a term anywhere but the permission's top-level
+union, and shows what the permission compiled to:
+
+```
+line 16: permission invoice.view writes `@self(actor_col)` inside `owner and
+@self(actor_col)`, but a @self, @public or `via grant` term admits its callers
+on its own wherever it is written, so the permission compiles as `owner +
+@self(actor_col)`, wider than it reads: …
+```
+
+The Go engine at v0.93.1, and v0.94.0, compile these forms the same way;
+earlier Go releases weren't measured. The frozen Go line will not be patched,
+so if you wrote a spec for the Go engine, run v1's `validate` over it. No spec
+in demesne's corpus uses one of these forms.
+
+### Security: a quote in a spec string can no longer rewrite a policy
+
+A value written as a string in a spec reached the emitted SQL without its
+quotes doubled. That covered `@claim`, `@kind`, `@row`, `mode`, a `where` or
+`kind` discriminator, a guard, a membership's `active` value and the claims
+setting. Only a grant's claim value was escaped. So
+`@claim("tier", "x' OR true OR '")` passed `validate` and emitted a policy that
+admits every caller, and an apostrophe, as in `"O'Brien"`, broke the SQL.
+
+Every such value now reaches the SQL through `demesne_runtime::quote_literal`,
+which quotes as Postgres's `quote_literal` does: each quote is doubled, and a
+value holding a backslash is written as `E'…'` with its backslashes doubled, so
+it reads the same whatever `standard_conforming_strings` is set to. The
+runtime quotes the values in its projections the same way. A `tables schema`
+or `definers schema` that isn't a plain identifier is refused, because it lands
+where quoting can't help. A spec whose strings hold no quote or backslash emits
+exactly what it did.
+
+A test appends a quote, a backslash and quote, and a bare `OR` to every string
+in demesne's 373 specs, emits each, and checks that none reaches the SQL outside
+a literal under either setting of `standard_conforming_strings`.
+
+The Go engine at v0.93.1 emits the same SQL. With the Go engine, keep `'` and
+`\` out of spec strings.
+
+### Breaking: `@scoped` beside an ordinary term is refused
+
+Every ordinary term is already held to the row's scope, so `@scoped` in a
+union with one adds no one: `owner + @scoped` compiled to `owner`, though it
+reads as "the owner, or anyone in scope". `validate` now refuses it and says
+what it compiles to. Write `@scoped` alone to admit every caller in the row's
+scope, or drop it. `@scoped and owner` is accepted, and so are
+`@scoped + @self(…)` and `@scoped + via grant …`, which compile as written.
+
+### Breaking: the Rust crates return typed errors
+
+Every fallible function in the library crates returned `Result<_, String>`,
+so a caller could only branch on the message. Each crate now returns its own
+error type. Each one displays exactly the text the `String` held, so the CLI's
+output and every message are unchanged.
+
+| Crate | Error | What it tells a caller |
+| -- | -- | -- |
+| `demesne-syntax` | `Error`, `Finding` | where parsing stopped: `line()` and `message()` |
+| `demesne-model` | `Error` | `findings()`: each problem, with its line when it has one |
+| `demesne-emit-sql` | `Error`, `ManifestError` | `findings()` from `validate`, and a manifest or SQL it can't read |
+| `demesne-emit-go`, `demesne-emit-ts` | `Error` | the spec can't be rendered |
+| `demesne-emit-rust` | `Error` | `is_io()`, `is_spec()`, `is_surface()` |
+| `demesne-postgres` | `Error` | `is_connection_string()`, `is_connect()`, `is_query()`, `is_sql()` |
+| `demesne-runtime` | `Error` | `is_claims()`, `is_consistency()`, `is_vocabulary()`, `is_access()`, `is_capability_gate()` |
+| `demesne-gocompat` | `json::ParseError` | malformed JSON |
+
+`validate_warnings` returns `Finding`s. `Structure::Fatal` holds a
+`demesne_model::Error` and `Structure::Errors` a `Vec<Finding>`, and the
+`SpecExt` and `SurfaceExt` methods return `demesne_model::Error`. The
+`demesne-cli` library, which the binary and the WebAssembly build share, keeps
+message errors.
+
+To upgrade, use the accessors where you matched on a message, and call
+`to_string()` where you need the text.
+
+### Breaking: ten public enums can grow without a major version
+
+These enums are `#[non_exhaustive]`, so a match on one outside its crate needs
+a `_` arm:
+
+- `demesne_postgres::DriftKind` and `Severity`, which also displays as
+  `DANGER` or `warning`;
+- `demesne_emit_sql::Object`;
+- `demesne_emit_rust::Surface`;
+- `demesne_model::analysis::CostClass`;
+- `demesne_runtime::Consistency`, `ConsistencyLevel`, `AffordanceHint`,
+  `Freshness` and `AffordanceSource`.
+
+The rest stay exhaustive, so adding a variant to one is a major version:
+`demesne_runtime::Decision`, because code that authorizes must handle every
+outcome rather than fall into a `_` arm; the syntax tree's enums, because a
+grammar addition changes what every consumer of the tree must handle; and
+`Structure`, `ReachGrantRef` and `gocompat::json::Value`.
+
+### Breaking: each public Rust item has one path, and the spec traits are sealed
+
+Items that were reachable both at a crate's root and inside a module are now
+at the root only:
+
+- `demesne_syntax::ast::*` is `demesne_syntax::*`;
+- `demesne_model::analysis::{SpecExt, Principal, ReachGrantRef}`,
+  `conditional::{ConditionalExt, ConditionalAdmission}`, and everything in
+  `schema`, `surfaces` and `validate` are at `demesne_model::`.
+
+The helper functions stay in `demesne_model::analysis` and
+`demesne_model::conditional`. `validate::perm_positive` and
+`validate::row_term_admitting` are no longer public, and
+`SpecExt::runtime_vocab`, which only called `demesne_model::vocab::to_runtime`,
+is removed.
+
+`SpecExt` is sealed: `Spec` is its only implementation, and `SurfaceExt` and
+`ConditionalExt` are implemented for every `SpecExt` type, so they are sealed
+with it. A minor version can add a method to any of the three. To upgrade,
+import from the crate root. A type of your own can no longer implement
+`SpecExt`; hold a `Spec` and call the methods on it.
+
+### Breaking: deeply nested input is refused
+
+A permission or requirement whose parentheses nest more than 64 deep is a parse
+error on its line. JSON nested more than 128 deep, in the runtime's arguments
+or a migration manifest, is refused with Go's message, `invalid character '['
+exceeded max depth`. Go allows 10,000 levels; this parser runs out of stack in
+WebAssembly well before that.
+
+Both parsers recurse once per level, and nothing stopped them:
+
+- natively, a permission about 5,700 levels deep overflowed the stack and
+  aborted the process;
+- in WebAssembly, which has no stack guard, the compiler failed at about 1,500
+  levels and the runtime at about 50,000, and every later call on that module
+  failed too, valid ones included, until it was reloaded.
+
+Real specs nest a few levels, and the runtime's arguments two or three.
+`demesne_syntax::MAX_NESTING` and `demesne_gocompat::json::MAX_DEPTH` name the
+limits.
+
+### Breaking: runtime and schema calls name their choice instead of taking a `bool`
+
+- `Session::set_role_sql`, `claims_set_sql` and `session_setup_sql` take a
+  `SettingLifetime` in place of `local: bool`. `Transaction` is `SET LOCAL`
+  and `set_config(…, true)`; `Session` is `SET` and `set_config(…, false)`.
+  On a pooled connection, `Transaction` keeps the role and the caller's claims
+  from reaching the next caller to use the connection.
+- `compose_can(point, pdp)` takes the row's point check as a `Decision`:
+  `NotGoverned` when no row check governs the call, otherwise `Allow` or
+  `Deny`. The old `point_governed, point_allow` pair could be swapped without
+  a compile error, and two of its four combinations meant the same thing. The
+  order of the two arguments no longer matters.
+- `compose_affordance` takes `IndexAnswer::Allowed` or `IndexAnswer::Denied`.
+- `Schema::add_column` takes `Nullability::Nullable` or `Nullability::NotNull`.
+
+The TypeScript runtime and the generated TypeScript are unchanged.
+
+### Breaking: the runtime refuses an argument or projection of the wrong type
+
+`@foir/demesne`'s operations, and the decoders in `demesne_runtime::projection`,
+read a missing or mistyped field as empty, `false` or zero. Two of those
+readings widened access:
+
+- `composeCan` read a decision it didn't recognise, such as `"DENY"`, as
+  ungoverned, so a call the PDP denied came back allowed;
+- a PDP projection dropped a procedure whose permission wasn't a string, so the
+  procedure read as ungoverned.
+
+Others chose without saying so. A missing `local` chose a connection-wide
+`SET ROLE`. A list holding `null`, such as a scope read from a NULL column, lost
+that element and shifted the positions after it.
+
+Each operation now throws an error that names the operation and the field, such
+as `demesne runtime: holds.scopeContains: assignment must be an array of
+strings`, and each decoder returns an error whose `is_input()` is true. Every
+field the TypeScript types require is required. A vocabulary's
+`implications`, a preset's `level` and a resolver's `plane` are optional, and
+`planeDepth` is required beside `plane`. A caller passing what the TypeScript
+types declare sees no change. One passing `null` for a NULL scope column
+passes `""`, the runtime's wildcard, instead.
+
+In `demesne_gocompat::json`, `Value::entries` and `Value::string_list`, which
+skipped what didn't fit, are replaced by `as_object`, `as_strings` and
+`as_string_map`, which return `None` instead.
+
+### Migrations drop what a spec stops emitting
+
+`emit all` writes `CREATE OR REPLACE` for the current surface only. So a
+definer, policy or trigger that a spec renamed or removed stayed in the
+database, still callable and still answering, and nothing generated could see
+it. Two new emit kinds close this:
+
+- `demesne emit <spec> manifest` prints a JSON record of everything the SQL
+  creates:
+  - functions, by identity signature;
+  - policies, triggers and indexes, each with its table;
+  - tables;
+  - the tables it enables RLS on.
+- `demesne emit <spec> migrate <manifest.json>` prints `emit all`, then drops
+  everything that manifest records and this spec no longer emits:
+  - Each drop names its object exactly: a function by its argument types,
+    since `DROP FUNCTION IF EXISTS f(text)` does nothing on `f(text, text)`.
+  - The order is triggers, policies, indexes, then functions, all after the
+    creates, so no retained object still depends on what is dropped.
+  - A final check re-queries the catalogs and raises if anything it dropped
+    survived, which includes an overload of a dropped function's name. The
+    migration then fails whole.
+  - Tables are not dropped, as they hold data. RLS stays enabled and forced on
+    a table that is no longer governed, so it fails closed. A comment names
+    each.
+
+`Sql::manifest`, `Sql::migration` and `Manifest` are the same in the
+`demesne-emit-sql` API, and `Sql::write_all_sql` is the `emit all` text.
+
+### A spec can be written in several files
+
+Several `.demesne` files can be compiled as one model, given in order, as in
+`demesne validate core.demesne extra.demesne`. Each file may refer to what the
+files before it declare. Split where each prefix still validates, a spec emits
+what its text emits in one file: a property test splits every valid corpus spec
+at each declaration where the prefix validates, and checks that the files emit
+the same objects. A spec in one file emits exactly what it did.
+
+- Findings name their file, as in `extra.demesne:12: …`. A spec in one file
+  still reports `line 12: …`.
+- `emit <files> --file <file>` prints that file's share of the SQL: what its
+  prefix adds or changes, then drops of what the prefix before it had. A later
+  file that changes a function, such as a `@store_manage` dispatch gaining an
+  object, writes it again, and its `CREATE OR REPLACE` replaces the earlier
+  body. `--file` takes `all`, `manifest` and `migrate`.
+- A later file may write `replace` before a declaration, to take the place of
+  an earlier file's declaration of the same kind and name.
+- `check`, `diff` and `coverage` take several files too.
+- In Rust: `demesne_syntax::parse_files` and `SpecFiles`,
+  `demesne_emit_sql::validate_files`, `validate_files_warnings`, `file_sql` and
+  `file_migration`, `Finding::file`, and `Builder::spec` in `demesne-emit-rust`.
+  The compiler's WebAssembly build gains `diagnostics_files`.
+
+### VS Code validates specs as you type
+
+The VS Code extension had only a grammar. It now runs the compiler, built to
+WebAssembly from `crates/wasm`, over each open `.demesne` file after a 200 ms
+pause in typing. It underlines every parse and validation error on the line
+it names, in `demesne validate`'s words, and shows a valid spec's warnings,
+such as a `blind` write. The compiler build gains a `diagnostics` export
+returning each finding's severity, line and message as JSON. A spec in several
+files is checked as one when the `demesne.specs` setting lists its files, and
+each finding shows in the file it names.
+
+### Fixes to behaviour carried over from the Go engine
+
+- **Permission implications under a custom definer schema.** A rolestore
+  whose vocabulary has `implies` emitted a holds definer that called
+  `auth.<rolestore>_perm_implied_by`, while the function itself was created
+  in the declared definer schema. Without an `auth` schema the call failed;
+  with one, it could reach another spec's function. It now calls the function
+  the SQL creates. A new test re-emits every corpus spec under a custom
+  definer schema and checks every call to a generated function names it.
+- **Accessor refusals name the real definer schema.** The two refusals for a
+  select permission whose readers can't be listed named
+  `auth.<table>_accessors` whatever the definer schema was.
+- **Definers are created after the functions they call.** They were written
+  in spec order, so when an object borrowed from one written later in the
+  spec, its listing came before the function it calls, and Postgres refused
+  the SQL with `function … does not exist`. Each generated function now
+  follows every generated function it calls, and SQL with no such call keeps
+  its order. A new test checks this for every corpus spec.
+- **Breaking: multi-host URLs follow libpq.** Each host keeps its own port. A
+  host without one takes the default port (`PGPORT`, or 5432), and an empty
+  host takes the default host. Two cases change:
+  - A URL whose last host had no port, such as `postgres://h1:5432,h2/db`,
+    was refused. It now connects.
+  - A host without a port borrowed the first port given. So
+    `postgres://h1,h2,h3:5009/db` put all three hosts on 5009, and now puts
+    only `h3` there.
+
+  IPv6 hosts can be listed too. A single `port=` in keyword/value form still
+  serves every host.
+- **A `min_protocol_version` the server can't meet is refused by name.** The
+  message read `server protocol version too low: %!w(<nil>)`.
+- The example app's Supabase golden is labelled `supabase.demesne`, not
+  `roundtrip.demesne`.
+
+### Output order no longer depends on Go's sort
+
+Lists in the output (policies, triggers, async indexes, field grants and
+scaffold levels) are ordered by an explicit total order, each with a
+tie-breaker on a unique key, instead of by a reproduction of Go's unstable
+`sort.Slice`. The order differed only when two entries tied, and every tie a
+valid spec could reach was one of the overwrites above, so no valid spec's
+output changes. `demesne-gocompat` no longer carries the sort.
+
+### Validation messages show each term as written
+
+A term in an error message is printed as the spec writes it, with its
+arguments: `@claim("tier", "gold")`, `@kind("member")`, `@session(workspace)`,
+`@app_scope(exclude owner)` and `mode visibility = "open"`, where earlier
+messages printed `@claim`, `@kind`, `@session`, `@app_scope` and nothing for
+a `mode` term.
+
 ## v0.94.0
 
 ### The compiler, CLI and runtime are Rust, and their output is unchanged
@@ -10,7 +598,7 @@ support and the CLI. Every output is byte-identical to v0.93.1: the SQL
 (definers, policies, enablement, triggers, closure, changelog, async, require
 and the Supabase profile), the emitted Go and TypeScript, both framework
 modules, `oracle.json` and the claims contract. That was checked over every
-example, every spec the Go test suites parse, Fóir's spec and 10,800 fuzzed
+example, every spec the Go test suites parse and 10,800 fuzzed
 specs, and the runtime passes `oracle.json`.
 
 The Go engine stays at v0.93.x. It is the full Go library for anyone who uses
@@ -1039,13 +1627,12 @@ rejection counted *every* vocabulary, including ones that back no rolestore at
 all. Such a vocabulary can never be the answer — it names no candidate — so it
 could only ever turn a well-defined resolution into a compile error.
 
-This bit the first real two-rolestore spec. Foir declares `vocabulary admin`
-(backed by `rolestore admin`) and `vocabulary customer` (an API-key scope set,
-backed by nothing), and the two share five permission names — `files:read`,
-`files:write`, `files:delete`, `operations:read`, `operations:execute` — because
-they name the same actions on the same data at different planes. Adding a second
-rolestore made `@holds(operations:read)` fail to compile at three existing sites
-that were correct and unchanged.
+This bit the first real spec with two rolestores. One vocabulary backed a
+rolestore, and a second, a scope set for API keys, backed nothing. The two
+shared several permission names, because they named the same actions on the
+same data at different planes. Adding a second rolestore made `@holds` on one of
+those permissions fail to compile at existing sites that were correct and
+unchanged.
 
 Ambiguity between two *rolestore-backed* vocabularies is still a compile error,
 and so is a vocabulary backing two rolestores. Single-rolestore specs are

@@ -1,0 +1,23 @@
+[package]
+name = "demesne-runtime-wasm"
+description = "demesne's runtime as WebAssembly, for the @foir/demesne npm package: each operation takes its projection and inputs as JSON and returns JSON."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+demesne-gocompat.workspace = true
+demesne-runtime.workspace = true
+wasm-bindgen.workspace = true
+
+[lints]
+workspace = true

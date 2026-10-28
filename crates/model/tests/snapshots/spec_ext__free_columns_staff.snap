@@ -1,0 +1,9 @@
+---
+source: crates/model/tests/spec_ext.rs
+expression: s.free_columns(subject)
+---
+Ok(
+    [
+        "workspace_id",
+    ],
+)

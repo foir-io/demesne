@@ -1,0 +1,141 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, \"\", &args)"
+---
+exit: 0
+--- stdout ---
+CREATE OR REPLACE FUNCTION auth.support_grants_reach(user_id text, check_tenant_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM support_grants WHERE holder_id = user_id AND tenant_id = check_tenant_id);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.support_grants_reach_set(user_id text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT tenant_id FROM support_grants WHERE holder_id = user_id;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.acl_grants_doc(p_member_id text, p_doc_id text, p_access text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM acl WHERE resource_id = p_doc_id AND resource_type = 'doc' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.docs_accessors(p_id text)
+RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT 'owner'::text AS source, 'member'::text AS principal_kind, owner_id AS principal_id, 'write'::text AS access
+    FROM docs WHERE id = p_id AND owner_id IS NOT NULL
+  UNION ALL
+  SELECT 'grant'::text, principal_kind, principal_id, access
+    FROM acl WHERE resource_id = p_id AND resource_type = 'doc'
+$$;
+
+CREATE OR REPLACE FUNCTION auth.docs_admits(p_id text, p_claims jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+DECLARE
+  prior text := current_setting('request.jwt.claims', true);
+  admitted boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', p_claims::text, true);
+  admitted := EXISTS (SELECT 1 FROM docs WHERE id = p_id AND (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'read') OR auth.acl_grants_doc((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
+  PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
+  RETURN admitted;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION auth.docs_admits(text, jsonb) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION auth.doc_can_edit(p_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_id AND (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.acl_manage(p_type text, p_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT (CASE p_type WHEN 'doc' THEN auth.doc_can_edit(p_id) ELSE false END);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.doc_readable(check_doc_id text, row_tenant_id text, row_workspace_id text, row_owner_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'read') OR auth.acl_grants_doc((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write'))) FROM (SELECT check_doc_id AS id, row_tenant_id AS tenant_id, row_workspace_id AS workspace_id, row_owner_id AS owner_id) AS docs;
+$$;
+
+
+ALTER TABLE public.acl ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.acl FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.docs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.docs FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS acl_delete ON public.acl;
+CREATE POLICY acl_delete ON public.acl FOR DELETE TO authenticated
+    USING (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (auth.acl_manage(resource_type, resource_id))));
+
+DROP POLICY IF EXISTS acl_insert ON public.acl;
+CREATE POLICY acl_insert ON public.acl FOR INSERT TO authenticated
+    WITH CHECK (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (auth.acl_manage(resource_type, resource_id))));
+
+DROP POLICY IF EXISTS acl_select ON public.acl;
+CREATE POLICY acl_select ON public.acl FOR SELECT TO authenticated
+    USING (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (auth.acl_manage(resource_type, resource_id))));
+
+DROP POLICY IF EXISTS acl_update ON public.acl;
+CREATE POLICY acl_update ON public.acl FOR UPDATE TO authenticated
+    USING (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (auth.acl_manage(resource_type, resource_id))))
+    WITH CHECK (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (auth.acl_manage(resource_type, resource_id))));
+
+DROP POLICY IF EXISTS docs_select ON public.docs;
+CREATE POLICY docs_select ON public.docs FOR SELECT TO authenticated
+    USING (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'read') OR auth.acl_grants_doc((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write'))));
+
+DROP POLICY IF EXISTS docs_update ON public.docs;
+CREATE POLICY docs_update ON public.docs FOR UPDATE TO authenticated
+    USING (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write'))))
+    WITH CHECK (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write'))));
+
+
+--- stderr ---
+
+--- end ---

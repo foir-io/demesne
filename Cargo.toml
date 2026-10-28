@@ -3,35 +3,87 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.94.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.99"
 license = "Apache-2.0"
 repository = "https://github.com/foir-io/demesne"
+keywords = ["authorization", "rls", "postgres", "rebac", "access-control"]
+categories = ["authentication", "database", "compilers"]
 homepage = "https://github.com/foir-io/demesne"
 
 [workspace.dependencies]
-demesne-gocompat = { path = "crates/gocompat", version = "0.94.0" }
-demesne-syntax = { path = "crates/syntax", version = "0.94.0" }
-demesne-runtime = { path = "crates/runtime", version = "0.94.0" }
-demesne-model = { path = "crates/model", version = "0.94.0" }
-demesne-cli = { path = "crates/cli", version = "0.94.0", default-features = false }
-demesne-emit-sql = { path = "crates/emit-sql", version = "0.94.0" }
-demesne-emit-go = { path = "crates/emit-go", version = "0.94.0" }
-demesne-emit-rust = { path = "crates/emit-rust", version = "0.94.0" }
-demesne-emit-ts = { path = "crates/emit-ts", version = "0.94.0" }
-demesne-postgres = { path = "crates/postgres", version = "0.94.0" }
+demesne-gocompat = { path = "crates/gocompat", version = "1.0.0" }
+demesne-syntax = { path = "crates/syntax", version = "1.0.0" }
+demesne-runtime = { path = "crates/runtime", version = "1.0.0" }
+demesne-model = { path = "crates/model", version = "1.0.0" }
+demesne-cli = { path = "crates/cli", version = "1.0.0", default-features = false }
+demesne-emit-sql = { path = "crates/emit-sql", version = "1.0.0" }
+demesne-emit-rust = { path = "crates/emit-rust", version = "1.0.0" }
+demesne-emit-ts = { path = "crates/emit-ts", version = "1.0.0" }
+demesne-postgres = { path = "crates/postgres", version = "1.0.0" }
+insta = { version = "1.49.0", default-features = false }
+nix = { version = "0.30", default-features = false, features = ["user"] }
+postgres = "0.19.14"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+sha2 = "0.11.1"
+tokio-postgres-rustls = "0.14"
+wasm-bindgen = "0.2"
+webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["alloc", "std"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+unreachable_pub = "warn"
+missing_debug_implementations = "warn"
+ambiguous_negative_literals = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unused_lifetimes = "warn"
 
 [workspace.lints.clippy]
-too_many_arguments = "allow"
-type_complexity = "allow"
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+multiple_crate_versions = "allow"
+literal_string_with_formatting_args = "allow"
+allow_attributes_without_reason = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+if_then_some_else_none = "warn"
+map_err_ignore = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+semicolon_outside_block = "warn"
+too_long_first_doc_paragraph = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
+unwrap_used = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+strip = true
 
 [profile.dist]
 inherits = "release"

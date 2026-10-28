@@ -1,0 +1,5 @@
+---
+source: crates/model/tests/spec_ext.rs
+expression: "composite.point_check_sql(\"acl\").expect_err(\"acl's key has three columns\").to_string()"
+---
+PointCheckSQL: object "acl" has a composite primary key ([resource_id principal_id access]) — no single-column row identity to point-check

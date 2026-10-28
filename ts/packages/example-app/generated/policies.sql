@@ -12,13 +12,13 @@ AS $$
 $$;
 
 CREATE OR REPLACE FUNCTION auth.notes_accessors_conditional(p_id text)
-RETURNS TABLE(source text, principal_kind text, principal_id text, access text, via_claim_key text, via_claim_value text)
+RETURNS TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text AS via_claim_key, NULL::text AS via_claim_value
+  SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text[] AS via_claim_keys, NULL::text[] AS via_claim_values
     FROM (
   SELECT 'owner'::text AS source, 'member'::text AS principal_kind, owner_ref AS principal_id, 'write'::text AS access
     FROM notes WHERE note_pk = p_id AND owner_ref IS NOT NULL
@@ -27,9 +27,30 @@ AS $$
     FROM note_acl WHERE note_ref = p_id
     ) b(source, principal_kind, principal_id, access)
   UNION ALL
-  SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text, NULL::text
+  SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text[], NULL::text[]
     FROM notes WHERE note_pk = p_id AND visibility = 'open'
 $$;
+
+CREATE OR REPLACE FUNCTION auth.notes_admits(p_id text, p_claims jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+DECLARE
+  prior text := current_setting('request.jwt.claims', true);
+  admitted boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', p_claims::text, true);
+  admitted := EXISTS (SELECT 1 FROM notes WHERE note_pk = p_id AND ((org_ref = (current_setting('request.jwt.claims', true)::json ->> 'org') AND ws_ref = (current_setting('request.jwt.claims', true)::json ->> 'ws') AND (owner_ref = (current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR visibility = 'open' OR auth.note_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_ref'), notes.note_pk, 'read')))));
+  PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
+  RETURN admitted;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION auth.notes_admits(text, jsonb) FROM PUBLIC;
 
 
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;

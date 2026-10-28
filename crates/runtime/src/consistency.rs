@@ -2,6 +2,7 @@ use crate::Error;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConsistencyLevel {
     MinimizeLatency,
     AtLeastAsFresh,
@@ -9,6 +10,7 @@ pub enum ConsistencyLevel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Consistency {
     MinimizeLatency,
     AtLeastAsFresh(Zookie),
@@ -16,6 +18,7 @@ pub enum Consistency {
 }
 
 impl Consistency {
+    #[must_use]
     pub fn level(&self) -> ConsistencyLevel {
         match self {
             Consistency::MinimizeLatency => ConsistencyLevel::MinimizeLatency,
@@ -31,19 +34,35 @@ pub struct Zookie {
 }
 
 impl Zookie {
+    #[must_use]
     pub fn from_xid(xid: u64) -> Self {
         Zookie { xid }
     }
 
+    /// Parses a zookie from its decimal transaction-id form.
+    ///
+    /// # Errors
+    ///
+    /// Text that is not an unsigned 64-bit decimal integer, including a leading `+`.
     pub fn parse(s: &str) -> Result<Self, Error> {
         if s.starts_with('+') {
-            return Err(Error::new(format!("invalid zookie {}: strconv.ParseUint: parsing {}: invalid syntax", demesne_gocompat::quote(s), demesne_gocompat::quote(s))));
+            return Err(Error::consistency(format!(
+                "invalid zookie {}: strconv.ParseUint: parsing {}: invalid syntax",
+                demesne_gocompat::quote(s),
+                demesne_gocompat::quote(s)
+            )));
         }
         s.parse::<u64>().map(Zookie::from_xid).map_err(|e| {
-            Error::new(format!("invalid zookie {}: strconv.ParseUint: parsing {}: {}", demesne_gocompat::quote(s), demesne_gocompat::quote(s), go_parse_error(&e)))
+            Error::consistency(format!(
+                "invalid zookie {}: strconv.ParseUint: parsing {}: {}",
+                demesne_gocompat::quote(s),
+                demesne_gocompat::quote(s),
+                go_parse_error(&e)
+            ))
         })
     }
 
+    #[must_use]
     pub fn reflects(&self, writer: Zookie) -> bool {
         self.xid > writer.xid
     }
@@ -62,11 +81,13 @@ impl fmt::Display for Zookie {
     }
 }
 
+#[must_use]
 pub fn zookie_now_sql() -> &'static str {
     "SELECT pg_current_xact_id()::text"
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AffordanceHint {
     Unknown,
     Likely,
@@ -74,6 +95,7 @@ pub enum AffordanceHint {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Freshness {
     Unknown,
     Stale,
@@ -82,6 +104,7 @@ pub enum Freshness {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AffordanceSource {
     AsyncIndex,
     Floor,
@@ -96,13 +119,29 @@ pub struct Affordance {
 }
 
 impl Affordance {
+    #[must_use]
     pub fn render(&self) -> bool {
         self.hint == AffordanceHint::Likely
     }
 }
 
-pub fn compose_affordance(allowed: bool, as_of: Zookie, c: Consistency) -> Affordance {
-    let hint = if allowed { AffordanceHint::Likely } else { AffordanceHint::Unlikely };
+/// What the asynchronous index answered for a caller and a permission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IndexAnswer {
+    Allowed,
+    Denied,
+}
+
+/// Turns the asynchronous index's answer into a UI affordance, judged against the freshness asked for.
+///
+/// An index that hasn't caught up with an `AtLeastAsFresh` zookie gives no hint. The affordance is
+/// a hint for rendering, never a substitute for enforcement.
+#[must_use]
+pub fn compose_affordance(answer: IndexAnswer, as_of: Zookie, c: Consistency) -> Affordance {
+    let hint = match answer {
+        IndexAnswer::Allowed => AffordanceHint::Likely,
+        IndexAnswer::Denied => AffordanceHint::Unlikely,
+    };
     if let Consistency::AtLeastAsFresh(z) = c {
         if !as_of.reflects(z) {
             return Affordance { hint: AffordanceHint::Unknown, as_of, freshness: Freshness::Stale, source: AffordanceSource::AsyncIndex };

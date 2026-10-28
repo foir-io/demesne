@@ -11,4 +11,5 @@ windows-archive = ".zip"
 checksum = "sha256"
 include = ["NOTICE"]
 pr-run-mode = "plan"
+tag-namespace = "v"
 publish-jobs = ["./publish-npm"]

@@ -1,15 +1,9 @@
-// Demesne — the reusable RLS-compiled ReBAC + topology authorization engine.
-//
-// Borrow Zanzibar's declarative schema; reject its runtime. Demesne compiles one
-// platform-agnostic spec (the §8.2 grammar) into BOTH a Postgres RLS policy set
-// (Layer 1 — row reachability, the moat: authorization lives in the database)
-// and a Go policy-decision point (Layer 2 — verb capability), plus the JWT
-// claims contract and the SECURITY DEFINER kernel the policies call.
-//
-// This module is PURE: standard library only, no platform dependencies. A
-// platform's actual spec, the generated migrations, and the differential-
-// equivalence oracle (generated == live pg_policies/pg_proc) live in the
-// platform repo, where the database is — verification belongs where it can run.
+// Deprecated: demesne's Go engine is frozen at v0.93.1, and v1 and later are Rust. From Go, use v0.93.1; otherwise use the demesne CLI or @foir/demesne.
 module github.com/foir-io/demesne
 
 go 1.26.1
+
+retract (
+	v0.94.0 // Published in error.
+	[v1.0.0, v1.999.999] // Rust releases, which carry no Go code.
+)

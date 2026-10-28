@@ -1,0 +1,59 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+-- ===== Closure maintenance (via closure / via group) =====
+-- COST: each of these triggers write-amplifies the base table — a change
+-- fans out to the transitive closure. This is the explicit, opt-in price of
+-- O(1) indexed reachability (`via closure`) / membership (`via group`).
+
+CREATE OR REPLACE FUNCTION auth.folder_closure_maintain()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    INSERT INTO folder_closure (ancestor_id, descendant_id) VALUES (NEW.id, NEW.id) ON CONFLICT DO NOTHING;
+    IF NEW.parent_id IS NOT NULL THEN
+      INSERT INTO folder_closure (ancestor_id, descendant_id)
+        SELECT c.ancestor_id, NEW.id FROM folder_closure c WHERE c.descendant_id = NEW.parent_id
+        ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NEW;
+  ELSIF (TG_OP = 'DELETE') THEN
+    DELETE FROM folder_closure WHERE descendant_id = OLD.id OR ancestor_id = OLD.id;
+    RETURN OLD;
+  ELSIF (TG_OP = 'UPDATE') THEN
+    IF (NEW.parent_id IS DISTINCT FROM OLD.parent_id) THEN
+      DELETE FROM folder_closure
+        WHERE descendant_id IN (SELECT descendant_id FROM folder_closure WHERE ancestor_id = NEW.id)
+          AND ancestor_id IN (SELECT ancestor_id FROM folder_closure WHERE descendant_id = NEW.id AND ancestor_id <> NEW.id);
+      IF NEW.parent_id IS NOT NULL THEN
+        INSERT INTO folder_closure (ancestor_id, descendant_id)
+          SELECT p.ancestor_id, sub.descendant_id
+            FROM (SELECT ancestor_id FROM folder_closure WHERE descendant_id = NEW.parent_id) p
+            CROSS JOIN (SELECT descendant_id FROM folder_closure WHERE ancestor_id = NEW.id) sub
+          ON CONFLICT DO NOTHING;
+      END IF;
+    END IF;
+    RETURN NEW;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS folder_closure_maintain_ins ON public.folders;
+CREATE TRIGGER folder_closure_maintain_ins AFTER INSERT ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.folder_closure_maintain();
+DROP TRIGGER IF EXISTS folder_closure_maintain_upd ON public.folders;
+CREATE TRIGGER folder_closure_maintain_upd AFTER UPDATE ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.folder_closure_maintain();
+DROP TRIGGER IF EXISTS folder_closure_maintain_del ON public.folders;
+CREATE TRIGGER folder_closure_maintain_del AFTER DELETE ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.folder_closure_maintain();
+
+
+--- stderr ---
+
+--- end ---

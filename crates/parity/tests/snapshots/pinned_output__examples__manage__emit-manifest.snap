@@ -1,0 +1,33 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.member_has_perm(text, text, text, text)",
+    "auth.member_perm_implied_by(text)"
+  ],
+  "policies": [
+    {
+      "table": "public.records",
+      "name": "records_select"
+    },
+    {
+      "table": "public.records",
+      "name": "records_update"
+    }
+  ],
+  "triggers": [],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.records"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

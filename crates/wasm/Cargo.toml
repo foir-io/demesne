@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+readme = "README.md"
 repository.workspace = true
 homepage.workspace = true
 publish = false
@@ -14,16 +17,13 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 demesne-cli = { workspace = true, default-features = false }
+demesne-gocompat.workspace = true
 demesne-syntax.workspace = true
 demesne-emit-sql.workspace = true
-wasm-bindgen = "0.2"
+wasm-bindgen.workspace = true
 
 [dev-dependencies]
 demesne-cli = { workspace = true, default-features = false }
 
-[lints.rust]
-unsafe_code = "deny"
-
-[lints.clippy]
-too_many_arguments = "allow"
-type_complexity = "allow"
+[lints]
+workspace = true

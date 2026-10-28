@@ -1,8 +1,9 @@
-use demesne_cli::{OsFiles, Out, R, finish, load_spec, need, run_pure};
+use demesne_cli::{Files, OsFiles, Out, R, finish, load_specs, need, run_pure, spec_args, strip_flag};
 use demesne_emit_sql::Sql;
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_syntax::Spec;
+use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
@@ -36,8 +37,8 @@ fn dsn_arg(args: &[String], i: usize) -> Result<String, String> {
 }
 
 fn introspect(dsn: &str) -> Result<(demesne_model::Schema, demesne_postgres::IntrospectMeta, postgres::Client), String> {
-    let mut client = demesne_postgres::connect(dsn)?;
-    let (sc, meta) = demesne_postgres::introspect(&mut client)?;
+    let mut client = demesne_postgres::connect(dsn).map_err(|e| e.to_string())?;
+    let (sc, meta) = demesne_postgres::introspect(&mut client).map_err(|e| e.to_string())?;
     Ok((sc, meta, client))
 }
 
@@ -62,10 +63,11 @@ fn cmd_scaffold(out: &mut Out, args: &[String]) -> R {
     if interactive {
         return scaffold_interactive(out, &sc);
     }
-    out.print(&demesne_model::scaffold::scaffold(&sc, Default::default())?);
+    out.print(&demesne_model::scaffold::scaffold(&sc, demesne_model::scaffold::ScaffoldOptions::default()).map_err(|e| e.to_string())?);
     Ok(())
 }
 
+#[expect(clippy::print_stderr, reason = "the interactive scaffold asks its questions on stderr, as the Go CLI does")]
 fn scaffold_interactive(out: &mut Out, sc: &demesne_model::Schema) -> R {
     use std::io::BufRead;
     let stdin = io::stdin();
@@ -81,16 +83,16 @@ fn scaffold_interactive(out: &mut Out, sc: &demesne_model::Schema) -> R {
     let role = ask("RLS connection role", "authenticated");
     let def_schema = ask("definer (function) schema", "auth");
     let tbl_schema = ask("governed-table schema", "public");
-    let body = demesne_model::scaffold::scaffold(sc, Default::default())?;
+    let body = demesne_model::scaffold::scaffold(sc, demesne_model::scaffold::ScaffoldOptions::default()).map_err(|e| e.to_string())?;
     let mut b = String::new();
     if role != "authenticated" {
-        b.push_str(&format!("claims via \"request.jwt.claims\" json role {role}\n"));
+        writeln!(b, "claims via \"request.jwt.claims\" json role {role}").expect("fmt::Write for String never fails");
     }
     if def_schema != "auth" {
-        b.push_str(&format!("definers schema {}\n", quote(&def_schema)));
+        writeln!(b, "definers schema {}", quote(&def_schema)).expect("fmt::Write for String never fails");
     }
     if tbl_schema != "public" {
-        b.push_str(&format!("tables schema {}\n", quote(&tbl_schema)));
+        writeln!(b, "tables schema {}", quote(&tbl_schema)).expect("fmt::Write for String never fails");
     }
     if !b.is_empty() {
         b.push('\n');
@@ -101,7 +103,7 @@ fn scaffold_interactive(out: &mut Out, sc: &demesne_model::Schema) -> R {
         if !cov.ungoverned.is_empty() {
             b.push_str("\n// ── Ungoverned tables (no object → no RLS). Model each, or delete this block. ──\n");
             for t in &cov.ungoverned {
-                b.push_str(&format!("// object {t} {{ table {t}; scoped <levels>; use contained }}\n"));
+                writeln!(b, "// object {t} {{ table {t}; scoped <levels>; use contained }}").expect("fmt::Write for String never fails");
             }
         }
     }
@@ -111,10 +113,13 @@ fn scaffold_interactive(out: &mut Out, sc: &demesne_model::Schema) -> R {
 
 fn cmd_check(out: &mut Out, args: &[String]) -> R {
     need(args, 1, "<spec.demesne>")?;
-    let s = load_spec(&OsFiles, &args[0])?;
-    let dsn = dsn_arg(args, 1)?;
+    let (paths, rest) = spec_args(args);
+    let loaded = load_specs(&OsFiles, &paths)?;
+    out.warn_loaded(&paths, &loaded);
+    let s = loaded.spec();
+    let dsn = dsn_arg(&rest, 0)?;
     let (sc, _, mut client) = introspect(&dsn)?;
-    demesne_model::validate_against(&s, &sc).map_err(|e| format!("spec does not bind to the live schema:\n{e}"))?;
+    demesne_model::validate_against(s, &sc).map_err(|e| format!("spec does not bind to the live schema:\n{e}"))?;
     out.print("ok: spec is valid AND binds to the live schema (every referenced table/column exists)\n");
     let role = s.session().role;
     match demesne_postgres::role_bypasses_rls(&mut client, &role) {
@@ -129,7 +134,49 @@ fn cmd_check(out: &mut Out, args: &[String]) -> R {
         }
         Ok((true, false)) => out.print(&format!("ok: the RLS connection role {} is not BYPASSRLS\n", quote(&role))),
     }
-    report_global_assignments(out, &s, &mut client);
+    report_global_assignments(out, s, &mut client);
+    report_schema_traps(out, s, &mut client)
+}
+
+fn report_schema_traps(out: &mut Out, s: &Spec, client: &mut postgres::Client) -> R {
+    let mut sql = String::new();
+    let governed: Vec<String> =
+        match Sql::new(s).write_all_sql(&mut sql).map_err(|e| e.to_string()).and_then(|()| demesne_emit_sql::objects(&sql).map_err(|e| e.to_string())) {
+            Ok(objs) => objs.into_iter().filter_map(|(o, _)| if let demesne_emit_sql::Object::Rls(t) = o { Some(t) } else { None }).collect(),
+            Err(e) => {
+                out.print(&format!("warning: could not look for schema traps, as the spec's SQL does not compile: {e}\n"));
+                return Ok(());
+            }
+        };
+    let schema = s.table_schema();
+    let mut scope: Vec<(String, String)> = Vec::new();
+    for obj in &s.objects {
+        for lvl in obj.scoped.iter().filter(|l| !s.level_is_virtual(l)) {
+            scope.push((format!("{schema}.{}", obj.table), s.scope_col(obj, lvl)));
+        }
+    }
+    for rs in &s.role_stores {
+        if let Some(t) = &rs.assignments {
+            scope.extend(rs.scope_cols.iter().map(|c| (format!("{schema}.{t}"), c.clone())));
+        }
+    }
+    let traps = match demesne_postgres::schema_traps(client, &governed, &scope) {
+        Ok(t) => t,
+        Err(e) => {
+            out.print(&format!("warning: could not look for schema traps: {e}\n"));
+            return Ok(());
+        }
+    };
+    if traps.is_empty() {
+        out.print("ok: no schema traps: views over governed tables read as their caller, unique indexes constrain NULL scope rows, and policies compare bare columns\n");
+    }
+    for t in &traps {
+        out.print(&format!("{}: {}\n", t.severity, t.message));
+    }
+    let dangers = traps.iter().filter(|t| t.severity == demesne_postgres::Severity::Danger).count();
+    if dangers > 0 {
+        return Err(format!("{dangers} schema trap(s) let rows past the policies"));
+    }
     Ok(())
 }
 
@@ -151,7 +198,7 @@ fn report_global_assignments(out: &mut Out, s: &Spec, client: &mut postgres::Cli
             continue;
         }
         if r.assignments == hr.assignments && r.kind_val == hr.kind_val {
-            plane = rs.name.clone();
+            plane.clone_from(&rs.name);
             break;
         }
     }
@@ -174,10 +221,13 @@ fn report_global_assignments(out: &mut Out, s: &Spec, client: &mut postgres::Cli
 fn cmd_coverage(out: &mut Out, args: &[String]) -> R {
     let (exit_code, args) = strip_bool_flag(args, "exit-code");
     need(&args, 1, "<spec.demesne>")?;
-    let s = load_spec(&OsFiles, &args[0])?;
-    let dsn = dsn_arg(&args, 1)?;
+    let (paths, rest) = spec_args(&args);
+    let loaded = load_specs(&OsFiles, &paths)?;
+    out.warn_loaded(&paths, &loaded);
+    let s = loaded.spec();
+    let dsn = dsn_arg(&rest, 0)?;
     let (sc, _, _) = introspect(&dsn)?;
-    let cov = demesne_model::table_coverage(&s, &sc.tables());
+    let cov = demesne_model::table_coverage(s, &sc.tables());
     out.print(&format!(
         "{} governed (RLS), {} referenced (policy-free stores), {} UNGOVERNED\n",
         cov.governed.len(),
@@ -185,9 +235,7 @@ fn cmd_coverage(out: &mut Out, args: &[String]) -> R {
         cov.ungoverned.len()
     ));
     for t in &cov.ungoverned {
-        out.print(&format!(
-            "UNGOVERNED  {t} — no object in the spec, so no RLS. Model it with an object, or confirm it is intentionally exempt.\n"
-        ));
+        out.print(&format!("UNGOVERNED  {t} — no object in the spec, so no RLS. Model it with an object, or confirm it is intentionally exempt.\n"));
     }
     if cov.ungoverned.is_empty() {
         out.print("ok: every live table is governed by an object or referenced as a policy-free store\n");
@@ -202,38 +250,36 @@ fn cmd_coverage(out: &mut Out, args: &[String]) -> R {
 }
 
 fn cmd_diff(out: &mut Out, args: &[String]) -> R {
-    use std::collections::BTreeSet;
     let (exit_code, args) = strip_bool_flag(args, "exit-code");
+    let (allow_path, args) = strip_flag(&args, "allow", "");
     need(&args, 1, "<spec.demesne>")?;
-    let s = load_spec(&OsFiles, &args[0])?;
-    let dsn = dsn_arg(&args, 1)?;
-    let res = Sql::new(&s).emit_rls()?;
-    let gen_set: BTreeSet<String> = res.policies.iter().map(|p| format!("{}.{}", p.table, p.name)).collect();
-    let governed: Vec<String> =
-        res.policies.iter().map(|p| p.table.clone()).collect::<BTreeSet<_>>().into_iter().collect();
-    let mut client = demesne_postgres::connect(&dsn)?;
-    let live = demesne_postgres::live_policy_surface(&mut client, &governed)?;
-    let missing: Vec<&String> = gen_set.iter().filter(|k| !live.contains(*k)).collect();
-    let orphan: Vec<&String> = live.iter().filter(|k| !gen_set.contains(*k)).collect();
-    for m in &missing {
-        out.print(&format!("MISSING  {m} — generated but not present live (apply it)\n"));
+    let (paths, rest) = spec_args(&args);
+    let loaded = load_specs(&OsFiles, &paths)?;
+    out.warn_loaded(&paths, &loaded);
+    let s = loaded.spec();
+    let dsn = dsn_arg(&rest, 0)?;
+    let mut sql = String::new();
+    Sql::new(s).write_all_sql(&mut sql).map_err(|e| e.to_string())?;
+    let allow: Vec<String> = if allow_path.is_empty() {
+        Vec::new()
+    } else {
+        String::from_utf8_lossy(&OsFiles.read(&allow_path)?).lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
+    };
+    let mut client = demesne_postgres::connect(&dsn).map_err(|e| e.to_string())?;
+    let d = demesne_postgres::drift(&mut client, &sql, &allow).map_err(|e| e.to_string())?;
+    for f in &d.findings {
+        out.print(&format!("{:<8} {} — {}\n", f.kind.label(), f.object, f.detail));
     }
-    for o in &orphan {
-        out.print(&format!("ORPHAN   {o} — live on a governed table but not generated (remove it, or model it)\n"));
+    if d.findings.is_empty() {
+        out.print(&format!("in sync: {} policies, {} functions and {} triggers match the spec, with no orphans\n", d.policies, d.functions, d.triggers));
     }
-    if missing.is_empty() && orphan.is_empty() {
-        out.print(&format!(
-            "in sync: {} generated policies all present, no orphans across {} governed tables\n",
-            gen_set.len(),
-            governed.len()
-        ));
-    }
-    if exit_code && missing.len() + orphan.len() > 0 {
-        return Err(format!(
-            "policy drift: {} generated-but-missing, {} orphan — the live database is not the spec's; the spec must be the only source of policy",
-            missing.len(),
-            orphan.len()
-        ));
+    if exit_code && !d.findings.is_empty() {
+        let mut counts: std::collections::BTreeMap<demesne_postgres::DriftKind, usize> = std::collections::BTreeMap::new();
+        for f in &d.findings {
+            *counts.entry(f.kind).or_default() += 1;
+        }
+        let summary: Vec<String> = counts.iter().map(|(k, n)| format!("{n} {}", k.label().to_lowercase())).collect();
+        return Err(format!("drift: {} — the live database is not the spec's; the spec must be the only source of policy", summary.join(", ")));
     }
     Ok(())
 }

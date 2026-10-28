@@ -154,9 +154,8 @@ dependencies = [
 
 [[package]]
 name = "demesne-cli"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
- "demesne-emit-go",
  "demesne-emit-sql",
  "demesne-emit-ts",
  "demesne-gocompat",
@@ -168,19 +167,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "demesne-emit-go"
-version = "0.94.0"
-dependencies = [
- "demesne-emit-sql",
- "demesne-gocompat",
- "demesne-model",
- "demesne-runtime",
- "demesne-syntax",
-]
-
-[[package]]
 name = "demesne-emit-rust"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-sql",
  "demesne-model",
@@ -190,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-emit-sql"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-gocompat",
  "demesne-model",
@@ -200,9 +188,8 @@ dependencies = [
 
 [[package]]
 name = "demesne-emit-ts"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
- "demesne-emit-go",
  "demesne-emit-sql",
  "demesne-gocompat",
  "demesne-model",
@@ -212,22 +199,23 @@ dependencies = [
 
 [[package]]
 name = "demesne-gocompat"
-version = "0.94.0"
+version = "1.0.0"
 
 [[package]]
 name = "demesne-model"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-gocompat",
  "demesne-runtime",
  "demesne-syntax",
+ "insta",
 ]
 
 [[package]]
 name = "demesne-parity"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
- "demesne-emit-go",
+ "demesne-cli",
  "demesne-emit-sql",
  "demesne-emit-ts",
  "demesne-gocompat",
@@ -235,11 +223,13 @@ dependencies = [
  "demesne-postgres",
  "demesne-runtime",
  "demesne-syntax",
+ "insta",
+ "sha2",
 ]
 
 [[package]]
 name = "demesne-postgres"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-sql",
  "demesne-gocompat",
@@ -256,14 +246,23 @@ dependencies = [
 
 [[package]]
 name = "demesne-runtime"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-gocompat",
 ]
 
 [[package]]
+name = "demesne-runtime-wasm"
+version = "1.0.0"
+dependencies = [
+ "demesne-gocompat",
+ "demesne-runtime",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "demesne-static-parity"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-emit-rust",
  "demesne-emit-sql",
@@ -274,17 +273,18 @@ dependencies = [
 
 [[package]]
 name = "demesne-syntax"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-gocompat",
 ]
 
 [[package]]
 name = "demesne-wasm"
-version = "0.94.0"
+version = "1.0.0"
 dependencies = [
  "demesne-cli",
  "demesne-emit-sql",
+ "demesne-gocompat",
  "demesne-syntax",
  "wasm-bindgen",
 ]
@@ -325,10 +325,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "errno"
+version = "0.3.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
+
+[[package]]
+name = "fastrand"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "find-msvc-tools"
@@ -425,6 +441,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "insta"
+version = "1.49.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67d3d2e287e4b86c10b3f3b641033d1f89b74bdb39d05f34952e2b9a6fe21cd"
+dependencies = [
+ "once_cell",
+ "similar",
+ "tempfile",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -449,6 +476,12 @@ checksum = "61ff90caf6077a803a240f62fdbe88645a890bbca49ef8174c3cb0404362171d"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "linux-raw-sys"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "lock_api"
@@ -696,6 +729,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustix"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+dependencies = [
+ "bitflags",
+ "errno",
+ "libc",
+ "linux-raw-sys",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rustls"
 version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -832,6 +878,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
 name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -906,6 +958,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.3",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

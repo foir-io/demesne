@@ -1,0 +1,57 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.asset_acl_grants(text, text, text)",
+    "auth.assets_accessors_conditional(text)",
+    "auth.assets_admits(text, jsonb)",
+    "auth.crew_has_space_role(text, text, text)",
+    "auth.is_ops(text)",
+    "auth.is_tenant_crew(text, text)",
+    "auth.member_can_access_asset(text, text, text)",
+    "auth.spaces_accessors(text)",
+    "auth.spaces_admits(text, jsonb)"
+  ],
+  "policies": [
+    {
+      "table": "public.assets",
+      "name": "assets_delete"
+    },
+    {
+      "table": "public.assets",
+      "name": "assets_insert"
+    },
+    {
+      "table": "public.assets",
+      "name": "assets_select"
+    },
+    {
+      "table": "public.assets",
+      "name": "assets_update"
+    },
+    {
+      "table": "public.spaces",
+      "name": "spaces_select"
+    },
+    {
+      "table": "public.spaces",
+      "name": "spaces_update"
+    }
+  ],
+  "triggers": [],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.assets",
+    "public.spaces"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

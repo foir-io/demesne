@@ -50,11 +50,28 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
    `check` fails loudly if the spec references a table or column your database
    doesn't have — a typo, a missing migration, or drift.
 
-4. Emit the generated SQL and apply it as a normal migration:
+   It also looks for schema traps around the tables the spec governs:
+
+   - A view over a governed table without `security_invoker = true` reads as
+     its owner, at any depth of views over views, and so does a materialized
+     view. If the owner bypasses RLS, every reader sees every row, so `check`
+     fails. Otherwise it warns, because the policies judge the owner, not the
+     reader.
+   - A unique index over a nullable topology or scope column, without
+     `NULLS NOT DISTINCT`, lets rows where that column is NULL repeat. That is
+     the shared tier. A partial unique index on the other columns, `WHERE col IS
+     NULL`, covers it instead.
+   - A policy that compares a row column through COALESCE, NULLIF, CASE, a
+     cast, a function or an operator can't use an index on the column, so it
+     runs row by row.
+
+4. Emit the generated SQL and apply it as a normal migration, and record what it
+   creates:
 
    ```
-   demesne emit authz.demesne all > 0001_authz.sql   # definers + policies + triggers
-   # review it, then run it in your migration tool
+   demesne emit authz.demesne all      > 0001_authz.sql        # definers + policies + triggers
+   demesne emit authz.demesne manifest > authz.manifest.json   # every object that SQL creates
+   # review it, run it in your migration tool, and commit the manifest beside it
    ```
 
    Demesne owns one layer: the idempotent policies, definers, closure triggers,
@@ -66,16 +83,61 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 
    Tables, columns, indexes, and `GRANT`s stay in your own migrations.
 
+   When the spec changes, write the next migration from the last manifest:
+
+   ```
+   demesne emit authz.demesne migrate authz.manifest.json > 0002_authz.sql
+   demesne emit authz.demesne manifest > authz.manifest.json
+   ```
+
+   `CREATE OR REPLACE` alone never removes anything, so a definer, policy or
+   trigger the spec renamed or removed would stay live and keep answering.
+   `migrate` writes the whole current SQL, then drops each object the manifest
+   records and the spec no longer emits:
+
+   - Each drop names the object exactly. A function is named by its argument
+     types, because `DROP FUNCTION IF EXISTS f(text)` succeeds, doing nothing,
+     when the live function is `f(text, text)`.
+   - It ends by re-querying the catalogs. If anything it dropped is still there,
+     under another signature say, the migration raises and changes nothing.
+   - It never drops a table, since tables hold data. It never disables RLS on a
+     table that is no longer governed, so that table fails closed. A comment
+     names each one for you to act on.
+
+   No manifest yet? Make one from the spec your database was last migrated with:
+   `demesne emit old.demesne manifest`.
+
 5. Verify drift any time:
 
    ```
    demesne diff authz.demesne "$DATABASE_URL"
    ```
 
-   `diff` reports two kinds of drift: a generated policy that's missing from the
-   live database, and an orphan policy that's live on a governed table but not
-   generated. A permissive orphan is an open path; a missing `_require` policy is
-   a floor that has quietly stopped being enforced.
+   `diff` compares the spec's SQL with the live database in both directions:
+
+   - `MISSING`: a generated policy, definer, trigger or governed table that isn't
+     live.
+   - `CHANGED`: a live policy whose command, roles, permissive or restrictive
+     kind, `USING` or `WITH CHECK` differs from the generated one, or a definer
+     or trigger whose definition differs.
+   - `INVALID`: a generated statement that doesn't compile against the live
+     database, for example one calling a function that isn't there.
+   - `ORPHAN`: a policy live on a governed table, a function live in a definer
+     schema, or a trigger calling one, that the spec doesn't generate.
+
+   A permissive orphan is an open path. A missing or changed `_require` policy
+   is a floor that has quietly stopped being enforced.
+
+   Postgres stores a policy's expression in its own form, so `diff` creates each
+   generated object as a temporary copy, reads both sides back as Postgres
+   prints them, and rolls back. It needs the `TEMP` privilege and a primary, not
+   a hot standby, and it takes no lock on your tables.
+
+   For definers you write by hand in a definer schema, list each one in a file,
+   one per line, exactly as its `ORPHAN` line names it (`function
+   auth.my_helper(text)`), and pass `--allow <file>`. An entry that matches
+   nothing live is reported as `STALE`, so the list can't outlive what it
+   excuses. `--exit-code` fails on any of these.
 
 ---
 
@@ -84,15 +146,17 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 | command | needs a DB | what it does |
 |---|---|---|
 | `demesne validate <spec>` | no | parse + validate the spec |
-| `demesne emit <spec> [rls\|definers\|triggers\|claims\|pdp\|all]` | no | print the generated SQL/Go |
+| `demesne emit <spec> [rls\|definers\|enablement\|triggers\|pdp\|all]` | no | print the generated SQL; `--target ts` prints TypeScript |
 | `demesne introspect <dsn>` | yes | summarise the live schema |
 | `demesne scaffold [-i] <dsn>` | yes | generate a starter spec from the schema (`-i`: interactive — asks for the RLS role + definer/table schemas, lists ungoverned tables as TODO stubs) |
-| `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, AND verify the RLS role is not `BYPASSRLS` |
-| `demesne diff <spec> <dsn>` | yes | generated-vs-live policy drift (on governed tables) |
+| `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, verify the RLS role is not `BYPASSRLS`, and look for schema traps |
+| `demesne diff <spec> <dsn>` | yes | generated-vs-live drift both ways: policies, definers, triggers, orphans |
 | `demesne coverage <spec> <dsn>` | yes | list live tables with NO governing object (ungoverned → no RLS) — the drift/gap check |
 
-`<dsn>` defaults to `$DATABASE_URL`. The engine package never touches a database;
-only the CLI links a Postgres driver, for the live-database subcommands.
+`<dsn>` defaults to `$DATABASE_URL`. Every `<spec>` may be several files, given in
+order; see [A spec in several files](#a-spec-in-several-files). The engine package
+never touches a database; only the CLI links a Postgres driver, for the
+live-database subcommands.
 
 Editor support: a VS Code syntax-highlighting extension for `.demesne` lives in
 `editors/vscode/` (a TextMate grammar, no build step).
@@ -263,12 +327,17 @@ path that cleans up rows which predate it.
 
 Claim-side builtins (`@kind`, `@session`, `@app_scope`, `@within`, `@scoped`,
 `@holds`, `@claim`) compose inside intersections: `(@kind("admin") and grantee:read)`
-enforces both in the emitted policy. The reverse accessor enumeration treats a
-claim-side conjunct as neutral — it drops the conjunct and may over-report,
-never under-report, because the forward RLS still enforces it — and refuses,
-fail-closed, when a conjunction leaves no relational term to enumerate. A `mode`
-conjunct is dropped on the same argument: it tests the row rather than the
-request, but it narrows just the same. A
+enforces both in the emitted policy. Beside a relational term, the reverse
+accessor enumeration lists the relation's principals as candidates and leaves a
+claim-side conjunct to `<table>_admits` (below), which decides which of them a
+given request admits. A row-side conjunct, `@row`, `not @row` or a `mode`, tests
+the row rather than the request, so the listing applies it: the relation's
+principals are listed only on rows where it holds. `@holds` narrows the listing
+too, but only the principals of its own store's kind, so a request carrying more
+than one subject's claims is never left out. A conjunction with no relational
+term is one conditional row instead (below), which carries every claim it
+requires, and the enumeration refuses, fail-closed, only a conjunction in which
+no term can be listed at all. A
 `@public`, `@open`, or `@self` conjunct still refuses: the first two would mean
 "everyone", and `@self` binds a row column to the caller's claim, which the
 enumerator cannot reverse.
@@ -282,7 +351,7 @@ A permission can also gate on what the caller *holds*: `@holds(docs:publish)`
 means "the caller's admin role confers `docs:publish` at this row's scope" and
 compiles to a generated `<admin>_has_perm` definer matching the verb against the
 rolestore's materialized `permissions` array (`p_perm = ANY(...)`). It scopes
-like the Go `HoldsResolver`: an assignment left NULL at a scope level is a
+like the runtime's holds resolver: an assignment left NULL at a scope level is a
 wildcard at that level, so a tenant-wide assignment reaches every project and an
 assignment left NULL at the *root* level is global — it reaches every tenant.
 That root NULL is how a platform-wide scope is expressed; there is no separate
@@ -311,10 +380,10 @@ so the term would be quietly ignored. That is a refusal, not a warning.
 
 #### Which side it lands on is the whole story
 
-On a **conjunct** a claim narrows, and the reverse accessor enumeration treats it
-as neutral exactly like its claim-side siblings: the conjunct is dropped, the
-listing may over-report and can never under-report, and the forward policy still
-enforces it.
+On a **conjunct** a claim narrows. Beside a relational term, the listing names
+the relation's principals as candidates and leaves the claim to
+`<table>_admits`, like its claim-side siblings. Beside only other conditions, it
+joins their conditional row as one more claim the caller must carry.
 
 On a **disjunct** it does the opposite. It admits callers no other branch
 admits, and unlike a relational term it names no subject that can be read back
@@ -345,12 +414,16 @@ gets
 
 ```
 auth.<table>_accessors_conditional(p_id)
-  → (source, principal_kind, principal_id, access, via_claim_key, via_claim_value)
+  → (source, principal_kind, principal_id, access, via_claim_keys text[], via_claim_values text[])
 ```
 
-which is the identity rows it always had, widened with two null columns, plus one
-row per admission that names nobody. Each carries a **NULL principal id**, the
-`source` that admitted it, and for a claim the key and value.
+which is the identity rows it always had, widened with two NULL array columns,
+plus one row per admission that names nobody. Each carries a **NULL principal
+id**, the `source` that admitted it, and the claims a caller's request must
+carry to be admitted: every one of them, the i-th key with the i-th value. A
+value read from the row, such as a scope column under `@within`, is that column's
+value. A row that needs no claim, such as `@public` or a `mode` on its own, has
+NULL arrays.
 
 Where the term carries a test against the **row**, the row is anchored on it and
 appears only when it actually holds — a `mode` row shows up on a public row and
@@ -369,27 +442,32 @@ code that acknowledges it. A NULL in the column you were going to read is neithe
 
 A conjunction of ONLY such terms — `(@app_scope(exclude admin_owner) and
 @kind("service"))` — is one conditional admission rather than a refusal. The
-`source` comes from the term that admits, the others qualify it, and every
-row-side condition is ANDed into the anchor. A conjunction carrying a
+`source` comes from the term that admits, or is `claim` when every term is a
+claim. The others qualify it: each `@claim`, `@kind`, `@session` and
+non-nullable `@within` is one more entry in the row's claims, and every
+row-side condition is ANDed into the anchor. A conjunct no single row can
+state, such as a negated claim, `@scoped`, a nullable `@within` or `@holds`, is
+dropped: the row admits more callers than the conjunction does, never fewer, and
+`<table>_admits` decides the rest. A conjunction carrying a
 *relational* term is untouched: it is enumerable, and folding it would lose the
 subjects it can name.
 
 A **negated** claim is the mirror case and is simply dropped. `and not
 @claim(…)` narrows, and dropping any conjunct can only add names to the listing,
-so the enumeration over-reports and stays sound while the forward policy goes on
-enforcing it. Reversing it would be meaningless anyway — "everyone who does not
+so the listing names candidates the claim may refuse, and `<table>_admits`
+refuses them. Reversing it would be meaningless anyway — "everyone who does not
 carry the claim" is no more enumerable than everyone who does. This is not
 extended to the other claim-side builtins: `@app_scope` *gates* the role branch,
 so negating it is not a conjunct that lifts out cleanly, and `not @app_scope`
 still fails closed.
 
-Two consequences follow. A `via object` **borrow** of a conditional object is
-refused at validation: the borrow compiles to a call to the other object's plain
-enumerator, and taking the identity half while losing the claim is the failure
-this is meant to prevent. And in the Go runtime, `ResourceAccessSurface` refuses
-a conditional object and names the alternative —
-`ConditionalResourceAccessSurface`, which returns the same surface over the
-conditional function, reports `IsConditional()`, and whose `AccessorsSQL()`
+Two consequences follow. A `via object` **borrow** of a permission that lists
+conditionally is refused at validation: the borrow compiles to a call to the
+other object's plain enumerator, and taking the identity half while losing the
+claim is the failure this is meant to prevent. And in the runtime, `resource_access_surface` refuses
+a conditional object and names the alternative,
+`conditional_resource_access_surface`, which returns the same surface over the
+conditional function, reports `is_conditional()`, and whose `accessors_sql()`
 selects the claim columns. A caller written against the conditional constructor
 stays correct if a claim is added to the spec later.
 
@@ -402,6 +480,59 @@ belong to the object rather than to the expression, so both shapes pick them up
 from the same tail. A composition on a disjunct is added by that tail; one
 nested inside an `and` refuses, because a union arm added afterwards is not an
 intersection.
+
+#### The listing names candidates; `<table>_admits` decides
+
+The listing answers "who could read this row?", and it never names fewer
+principals than the policy admits. It can't state every condition a policy puts
+on the request: the containment every scoped policy starts with, a reach set
+from a grant or a closure, an `@external` predicate that takes a claim, a claim
+beside a relation. So for every object with a listing and a select policy, the
+definers also include
+
+```
+auth.<table>_admits(p_id, p_claims jsonb) → boolean
+```
+
+It answers whether a request carrying `p_claims` would see the row. It runs the
+table's own select policy, `admit` arms included, and its `require view`
+policy, with `p_claims` set as the request's claims for the length of the call;
+the caller's own claims are back in place when it returns. It runs the compiled
+predicate itself, so its answer is the database's, and there is no second
+evaluator to drift from it. It is `STRICT`: a NULL id or NULL claims returns
+NULL.
+
+Use the two together. List the candidates, build each one's claims the way your
+session code mints them, and ask `_admits` about each. In the runtime,
+`ResourceAccessSurface::admits_sql()` (`admitsSQL` in `@foir/demesne`) returns
+`SELECT auth.<table>_admits($1, $2::jsonb)`: bind the row's key and the claims
+as JSON text.
+
+`_admits` answers for any claims, so it can probe a row its caller can't read:
+whether the row exists, and whatever its policy tests. It is emitted with
+`EXECUTE` revoked from PUBLIC; grant it only to the role your trusted server
+code uses. If your definer schema has default privileges that grant execute on
+new functions, as an exposed schema on Supabase often does, revoke it from
+those roles too. `demesne diff` reports it as changed when PUBLIC may execute
+it live.
+
+A select `admit` arm adds a conditional row to the listing, with the `admit`
+source and the claims and row conditions the arm states. A conjunct no row can
+state, such as a relation confined by a claim, is left out of that row, so the
+row admits more callers than the arm does, never fewer.
+
+An arm belongs to the select policy, not to the select permission, so a
+`via object` borrow of the permission never reaches it. When the arms are all
+that make an object's listing conditional, the object also gets
+
+```
+auth.<table>_<verb>_accessors(p_id)
+  → (source, principal_kind, principal_id, access)
+```
+
+which lists the permission's readers alone, and a borrow of the permission
+lists through it. `<table>_accessors_conditional` reads it and adds the arm
+rows, and `<table>_accessors` is still not emitted.
 
 ### `@row`: narrow a term to rows with a value
 
@@ -429,11 +560,11 @@ that mode is open to everyone the term is scoped to, the mode column is what
 surface lets a row be set to. `@row` is none of those. It reads any column,
 changes nothing about how the object is tracked or shared, and only narrows.
 
-In the accessor listing a row term beside a relation is dropped, as a `mode`
-conjunct is: the listing may over-report and never under-reports, and the
-policy goes on enforcing it. Beside a claim or another term that makes the
-listing conditional, it is exact: the conditional row appears only where the
-row term holds.
+In the accessor listing a row term beside a relation narrows it exactly, as a
+`mode` conjunct does: the relation's principals are listed only on rows where
+the term holds. Beside a claim or another term that makes the listing
+conditional, it is exact the same way: the conditional row appears only where
+the row term holds.
 
 ### `transient`: a subject that stands for one request
 
@@ -597,8 +728,8 @@ assigned — and the **scope** is the subtree it carries that authority over. A
 `project:manage` role assigned at tenant scope therefore reaches every project
 in that tenant but still confers no `billing:*`.
 
-The closure is compiled into all three surfaces from the one declaration: the
-Go and TypeScript `Resolve` expand a held permission into its closure, and the
+The closure is compiled into every surface from the one declaration: the
+runtime's `resolve` (Rust, and TypeScript through WebAssembly) expands a held permission into its closure, and the
 SQL definer tests the role's array against a generated
 `<admin>_perm_implied_by(p_perm)` reverse closure with an array overlap. A NULL
 `permissions` column fails closed.
@@ -612,9 +743,9 @@ serves exactly as a table does, and `ValidateAgainst` binds it from whatever
 `information_schema` reports, which does not distinguish the two.
 
 That is the supported way to apply an admission rule the **database** must also
-honour. The `AssignmentsSQL` + `ResolveHeld` seam is a Go read path; the emitted
-definers run inside Postgres, where no Go filter reaches. A rule applied only in
-Go therefore holds in the session and the PDP while every RLS branch ignores it —
+honour. The `assignmentsSQL` + `resolveHeld` seam is an application read path; the
+emitted definers run inside Postgres, where no application filter reaches. A rule applied
+only in the application therefore holds in the session and the PDP while every RLS branch ignores it —
 the two planes disagree, and nothing in the generated artefacts says so. Naming a
 filtered relation here applies the rule to both at once, and to any definer a
 later spec change adds:
@@ -624,8 +755,8 @@ rolejoin role_id roles_active id key
 ```
 
 with `roles_active` a view over the role table carrying whatever the adopter's
-policy is — a `disabled_at IS NULL`, a tenant partition, an RP scope. The engine
-still bakes in none of it; it just stops being a Go-only choice where to put it.
+policy is — a `disabled_at IS NULL`, a tenant partition, an RP scope. Demesne
+still bakes in none of it; it just stops being an application-only choice where to put it.
 
 **If the underlying table has RLS, create the view `WITH (security_invoker =
 true)`.** A view otherwise runs with its *owner's* rights, and a migration role is
@@ -633,7 +764,8 @@ usually a superuser or carries `BYPASSRLS` — so a default view reads the base
 table with RLS switched off, and anything granted `SELECT` on it reads across
 every tenant. Under `security_invoker` the view is exactly as reachable as the
 table it wraps, and a SECURITY DEFINER function still sees every row, because
-inside one the querying role is the function's owner.
+inside one the querying role is the function's owner. `demesne check` finds the
+views that miss it.
 
 A spec can declare more than one rolestore, and `@holds` resolves to **the
 rolestore whose vocabulary declares the permission** — not to whichever
@@ -666,7 +798,7 @@ rolestore platform {
 `plane` names the deepest level an assignment in this rolestore may carry.
 Levels at or above it keep the wildcard-on-NULL matching described above; every
 scope column *below* it is **pinned `IS NULL`**, in the emitted definer, in the
-assignment fetch, and in the Go and TypeScript `Resolve`. Pinning is not the
+assignment fetch, and in the runtime's `resolve`. Pinning is not the
 same as omitting the columns: with `plane platform` (the virtual root) the
 generated check takes no scope argument at all and reads
 
@@ -759,119 +891,122 @@ in the spec but kept as separate physical stores, never one generic tuple table.
 ## The runtime glue
 
 Enforcement lives in the database, but your app still needs a little runtime: to
-mint claims, enforce verbs, and answer point-checks. The engine ships these as
-pure helpers, and none of them re-evaluate policy in app code.
+mint claims, enforce verbs, and answer point-checks. The `demesne-runtime` crate ships these
+as pure helpers, built from a spec through `SpecExt` and `SurfaceExt` in `demesne-model`, and
+none of them re-evaluate policy in app code. `@foir/demesne` has the same functions for
+TypeScript, in camelCase (`buildClaims`, `mintClaimsFor`, `sessionSetupSQL`, `authorize`,
+`resolve`, …), built from the projection `demesne emit <spec> --target ts` writes.
 
 - **The session and claims wrapper** takes a principal to an in-force RLS session
   without hand-mapping field names.
-  - `Spec.ClaimsContractEntries()` — the structured claims contract. Each key
+  - `spec.claims_contract_entries()` — the structured claims contract. Each key
     comes with its source: the topology level whose scope id feeds it, and/or the
-    subjects whose `identifies` feeds it. `ClaimsContract()` returns the flat list
+    subjects whose `identifies` feeds it. `claims_contract()` returns the flat list
     of keys.
-  - `Spec.BuildClaims(Principal{Subject, ID, Scopes})` — maps a principal's typed
+  - `spec.build_claims(&Principal { subject, id, scopes })` — maps a principal's typed
     inputs onto the contract. The inputs are which subject it is, that subject's
     id, and the scope id per topology level. The subject id maps to its
     `identifies` key, and each scope id to that level's claim key. Add a contract
     key to the spec and it flows through with no code change. A principal that also
     carries non-contract keys adds them to the returned map before minting.
-  - `Spec.MintClaims(values)` / `Spec.MintClaimsFor(principal)` plus
-    `Spec.ClaimsSetSQL(local)` — render the validated `request.jwt.claims` blob and
-    the `set_config` statement that installs it. `MintClaimsFor` is `BuildClaims`
-    then `MintClaims`.
-  - `Spec.SetRoleSQL(local)` / `Spec.SessionSetupSQL(local)` — the statement
+  - `spec.mint_claims(&values)` / `spec.mint_claims_for(&principal)` plus
+    `spec.session().claims_set_sql(lifetime)` — render the validated `request.jwt.claims` blob and
+    the `set_config` statement that installs it. `mint_claims_for` is
+    `build_claims` then `mint_claims`.
+  - `session.set_role_sql(lifetime)` / `session.session_setup_sql(lifetime)` — the statement
     sequence that opens an RLS session: `SET [LOCAL] ROLE <role>`, then the claims
     `set_config`. Run them in order in your transaction; the second binds the
     minted blob to `$1`. The RLS role is spec-declared via `claims … role <r>` and
-    defaults to `authenticated`.
-- `PDP.Authorize(procedure, holds) → Allow | Deny | NotGoverned` — the verb gate at
-  your request boundary, for the verb permissions RLS can't see.
-- `Spec.HoldsResolver(rolestore)` — the holds resolver. It produces the `holds`
-  callback `PDP.Authorize` takes, so you never hand-write "given a principal and
+    defaults to `authenticated`. On a pooled connection pass
+    `SettingLifetime::Transaction`, so the role and claims end with the transaction.
+- `pdp.authorize(procedure, holds) → Allow | Deny | NotGoverned`, on a `Pdp` from
+  `demesne_model::pdp::emit_pdp` — the verb gate at your request boundary, for the verb permissions RLS can't see.
+- `spec.holds_resolver(rolestore)` — the holds resolver. It produces the `holds`
+  callback `authorize` takes, so you never hand-write "given a principal and
   scope, what permissions do they hold?".
-  - `HoldsResolver.AssignmentsSQL()` builds the active-assignment read: every role
+  - `HoldsResolver::assignments_sql()` builds the active-assignment read: every role
     a principal holds across all scopes (`$1` is the principal id; filters on kind,
     subject, and not-revoked). You execute it — under the principal's claims, or as
-    a trusted read for another subject. The engine never runs it. Adopter-specific
+    a trusted read for another subject. The runtime never runs it. Adopter-specific
     admission rules stay your policy: a disabled role, or a client- or RP-scoped
-    grant. Compose them around this read; the engine bakes in none.
+    grant. Compose them around this read; the runtime bakes in none.
 
-    This seam governs the **Go** plane only. The same spec also emits SECURITY
-    DEFINER bodies that join the rolestore's role relation, and no Go filter
-    reaches inside those, so an admission rule applied only here holds in the PDP
+    This seam governs the **application** plane only. The same spec also emits SECURITY
+    DEFINER bodies that join the rolestore's role relation, and no application
+    filter reaches inside those, so an admission rule applied only here holds in the PDP
     and is ignored by every RLS branch. A rule that must hold on **both** planes
     belongs in the relation the spec names — see *A rolestore's role relation may
     be a view* below.
-  - `HoldsResolver.Resolve(rows, scope) → EffectivePerms` folds those rows into the
+  - `HoldsResolver::resolve(rows, scope) → EffectivePerms` folds those rows into the
     effective permission set at a query scope. It keeps each assignment whose scope
     contains the query and unions their permissions. The root column is a strict
     tenancy boundary: a grant pinned deeper covers that subtree, so a higher-level
     grant answers a lower-level query but never the reverse. This boundary is
-    derived from the rolestore's scope columns. `EffectivePerms.Holds` is the
-    `PDP.Authorize` callback. A role's permissions come from a materialized
+    derived from the rolestore's scope columns. `EffectivePerms::holds` is the
+    `authorize` callback. A role's permissions come from a materialized
     `permissions` column when the rolestore declares one, so operator-configured
     custom roles resolve verbatim; otherwise they come from expanding the role key
     through the vocabulary.
-  - `Vocabulary.PresetPermissions(name)` — expands a preset into a flat permission
+  - `Vocabulary::preset_permissions(name)` — expands a preset into a flat permission
     set, handling `*`, nested preset refs, and fail-closed on cycles. The same logic
-    seeds or validates a materialized `permissions` column. `RankOf` and
-    `PresetsAtOrAbove` expose the rank ladder for delegation.
-- `demesne.ResolveRoles(assignments, scope) → EffectiveRoles` — the role-tier read,
-  the sibling of the holds resolver. `Resolve` answers "what permissions does this
-  principal hold here?"; `ResolveRoles` answers "what role tiers does it hold here?",
+    seeds or validates a materialized `permissions` column. `rank_of` and
+    `presets_at_or_above` expose the rank ladder for delegation.
+- `resolve_roles(assignments, scope) → EffectiveRoles` — the role-tier read,
+  the sibling of the holds resolver. `resolve` answers "what permissions does this
+  principal hold here?"; `resolve_roles` answers "what role tiers does it hold here?",
   which a wildcard role (`owner = *`) or a global plane role can't be read off the
   permission set. It reads the same assignment rows, keeping each role key whose scope
   contains the query. A role granted at an empty scope is a global plane role, held in
   every scope: the same boundary the generated `has_<plane>_role` definer enforces.
-  `EffectiveRoles.Holds` reports membership of one role key. `NewEffectiveRoles(keys...)`
+  `EffectiveRoles::holds` reports membership of one role key. `EffectiveRoles::new(keys)`
   builds the set straight from a session when you already know the held keys and don't
   need a database read.
-- `Spec.RoleAssignmentSurface(rolestore)` — the control-plane write side of the
+- `spec.role_assignment_surface(rolestore)` — the control-plane write side of the
   rolestore, the dual of the holds resolver's read. It generates the assign,
   revoke, and list statements so you never hand-write them.
-  - `AssignInsert(id, subject, role, scope, grantedBy)` — the `INSERT … RETURNING`
+  - `assign_insert(id, subject, role, scope, granted_by, extra)` — the `INSERT … RETURNING`
     that confers a role at a scope (kind inlined; scope and grantor bound).
-  - `RevokeSQL()` — the idempotent soft-revoke: `UPDATE <revoked> = now()[,
+  - `revoke_sql()` — the idempotent soft-revoke: `UPDATE <revoked> = now()[,
     <revoked_by>] WHERE <pk> = $1 AND <revoked> IS NULL`.
-  - `ListForRoleSQL()` / `ListForPrincipalSQL()` — the by-role audit view and the
+  - `list_for_role_sql()` / `list_for_principal_sql()` — the by-role audit view and the
     by-principal active view, joined to the role's key and permissions.
 
-  Each builds SQL plus ordered args you execute under `WithRLS`. The
-  `role_assignments` table's own RLS denies an out-of-scope write, so the engine
+  Each builds SQL plus ordered args you execute under the caller's session. The
+  `role_assignments` table's own RLS denies an out-of-scope write, so the runtime
   never re-checks it. The audit columns (`pk`, `granted … by`, `revoked … by`) are
   optional rolestore declarations. The intersection-cap delegation guard — "can't
   grant a role you don't hold" — is a separate primitive.
-- `Vocabulary.CapGrant(held, requested) → DelegationCap{Allowed, Unknown, Excess}`
+- `Vocabulary::cap_grant(held, requested) → DelegationCap { allowed, unknown, excess }`
   — the delegation cap, the "you can't grant a permission you don't hold" guard
-  when authoring or assigning a role. `Unknown` is the requested perms outside the
-  vocabulary (fail-closed); `Excess` is the valid perms the grantor doesn't hold.
+  when authoring or assigning a role. `unknown` is the requested perms outside the
+  vocabulary (fail-closed); `excess` is the valid perms the grantor doesn't hold.
   It composes with the holds resolver: pass the grantor's
-  `EffectivePerms.Permissions()` as `held`. It owns only the intersection and
-  validity. The rest is adopter glue you wrap around it: a rank floor (via `RankOf`
-  / `PresetsAtOrAbove`), a higher-plane bypass, and the principal-kind check.
-- `Spec.Vocabularies()` and `Spec.ExpandedPresets(rolestore)` — the introspection
+  `EffectivePerms::permissions()` as `held`. It owns only the intersection and
+  validity. The rest is adopter glue you wrap around it: a rank floor (via `rank_of`
+  / `presets_at_or_above`), a higher-plane bypass, and the principal-kind check.
+- `spec.vocabs` and `spec.expanded_presets(rolestore)` — the introspection
   read for a role-management or permission-admin UI built from the compiled spec, the
-  single source of the vocabulary, with nothing re-declared. `Vocabularies()` returns
-  every declared vocabulary and its permissions in declaration order, and marks each
-  parameterized permission: one that carries the open `*` model segment (`docs:read:*`)
-  rather than a concrete one (`docs:read`), so a picker can split the model segment
-  itself. `ExpandedPresets(rolestore)` resolves each preset of that rolestore's bound
+  single source of the vocabulary, with nothing re-declared. `spec.vocabs` holds
+  every declared vocabulary and its permissions in declaration order. A permission that
+  carries the open `*` model segment (`docs:read:*`) rather than a concrete one
+  (`docs:read`) is parameterized, so a picker can split the model segment itself.
+  `expanded_presets(rolestore)` resolves each preset of that rolestore's bound
   vocabulary to a flat permission set. It expands both `+` preset references and the
-  `= *` wildcard to the full vocabulary, reusing the `PresetPermissions` logic and the
-  same rolestore-to-vocabulary binding the generated `Holds` surface uses. Each
-  permission list is sorted. The map is unordered, so sort its keys for a stable
-  display. A vocabulary with no presets yields an empty map. It returns generic data
+  `= *` wildcard to the full vocabulary, reusing the `preset_permissions` logic and the
+  same rolestore-to-vocabulary binding the generated `holds` surface uses. Each
+  permission list is sorted, and the map is ordered by preset name. A vocabulary with no presets yields an empty map. It returns generic data
   only: which permissions exist, which are parameterized, and what each preset resolves
   to. It never decides what any of that means; the bucketing, labeling, and layout are
-  your UI's job, not the engine's.
-- `Spec.GrantSurface(name)` — the control-plane write side of a `grant … via edge`
+  your UI's job, not the runtime's.
+- `spec.grant_surface(name)` — the control-plane write side of a `grant … via edge`
   store (operator or impersonation reach), the dual of the reach definer.
-  - `GrantInsert(id, grantee, level, grantedBy, expiresAt, extra)` — issue a grant,
+  - `grant_insert(id, grantee, level, granted_by, expires_at, extra)` — issue a grant,
     so the grantee reaches that level node. Declared extra columns (`column <col>`)
     are written from `extra` and projected back, so a response echoing them isn't
     emptied.
-  - `RevokeSQL()` — soft-revoke (stamp the active column) when the grant is
+  - `revoke_sql()` — soft-revoke (stamp the active column) when the grant is
     revocable, otherwise a hard `DELETE`. Idempotent.
-  - `ListSQL()` — grants with three optional filters: `$1` grantee, `$2` level,
+  - `list_sql()` — grants with three optional filters: `$1` grantee, `$2` level,
     `$3` active-only. The active predicate is built from the grant's own active and
     expiry columns — the same conjuncts the reach definer uses — so reads and writes
     agree.
@@ -880,79 +1015,80 @@ pure helpers, and none of them re-evaluate policy in app code.
   edge exposes no app-role write policy, so a self-grant is impossible. The audit
   and extra columns (`pk`, `granted by`, `revoked by`, `created`, `column <col>`)
   are optional grant declarations.
-- `Spec.PointCheckSQL(object)` — a read-check query you run under the principal's
+- `spec.point_check_sql(object)` — a read-check query you run under the principal's
   claims. The database answers "can this principal see this row?" through the real
   policy. Use it for UI affordances, never as a substitute for enforcement.
 
 ---
 
-## The typed app framework (`emit … framework`)
+## The typed app framework (`emit … --target ts framework`)
 
-Above the runtime glue, Demesne can generate the typed Go your app is built on.
-The generated package gives you:
+Above the runtime glue, Demesne can generate the typed TypeScript your app is built on.
+The generated module gives you:
 
-- a `Claims` struct and the session envelope;
-- per-object `Can<Verb>(ctx, q, id)` methods;
-- `Caps(held)` — a typed boolean per verb-gate permission, for UI affordances;
-- `RoleTiers(held)` — a typed boolean per role tier, plane and scoped, for UI affordances;
-- scoped query builders, `ListResources` and `CheckMany`;
-- a per-rolestore holds resolver;
-- a reusable `Check(ctx, q, object, verb, id)`;
-- an HTTP `CheckHandler`.
+- a `Claims` interface, `mint`, and `sessionSetupSQL` for the session envelope;
+- per-object `canView` and `canEdit`, plus `listResources` and `checkMany`;
+- `can<Verb>(held)` for verb permissions, and `caps(held)` — a typed boolean per verb-gate permission, for UI affordances;
+- `roleTiers(held)` — a typed boolean per role tier, plane and scoped, for UI affordances;
+- a per-rolestore holds resolver (`holds`, `holdsRoles`);
+- a reusable `check(q, object, verb, id)`;
+- `checkHandler`, a framework-agnostic `Request` → `Response` entry point.
 
-The generated package imports the engine and references `demesne.Querier`
-directly. The engine owns the composition rules, so the typed surface stays a thin
-wrapper. Everything runs under the caller's claims, and the database decides: the
-generated check delegates to the same compiled predicate the RLS policy enforces.
+The generated module imports `@foir/demesne`, which runs demesne's Rust runtime compiled to
+WebAssembly, in Node, Workers and the browser. Everything runs under the caller's claims, and
+the database decides: the generated check delegates to the same compiled predicate the RLS
+policy enforces.
 
-Generate it from your own code, not the CLI. Call `Spec.EmitFramework(pkg)` from
-your generator behind a `//go:generate` directive. Don't depend on the CLI binary:
-`cmd/demesne` is a separate nested module with a local `replace`, so
-`go run …/cmd/demesne@v0.59.0` won't resolve for a consumer. The engine API is the
-right seam:
+Generate it with the `demesne` CLI, and add the runtime to your package:
 
-```go
-//go:generate go run ./internal/gen
-// internal/gen/main.go:
-src, _ := spec.EmitFramework("authz")   // gofmt'd, deterministic
-os.WriteFile("internal/authz/authz.go", []byte(src), 0o644)
+```
+demesne emit authz.demesne --target ts framework > src/authz.ts   # deterministic
+npm install @foir/demesne
 ```
 
-**Wiring a connection.** Adapt your driver to `demesne.Querier`. Use
-`demesne.FromSQL(db)` for `database/sql`, or
-`github.com/foir-io/demesne/pgx`.`FromPgx(pool)` for pgx — a separate module, so
-the engine stays stdlib-pure. Run the generated `Can<Verb>` inside a transaction
-that has already run `SessionSetupSQL` and the `Claims.Mint()` result.
+The output is the same for the same spec and CLI version, so commit it and let CI
+regenerate it to check for drift.
+
+A Rust application builds the same surface from the crates: `demesne-emit-rust` writes the
+spec's static tables from `build.rs`, and `demesne-runtime` runs them.
+
+v1 generates no Go. The Go engine is frozen at v0.93.1 on the `release/v0.93` branch, where
+`Spec.EmitFramework(pkg)` still generates the Go package; a Go application stays on it.
+
+**Wiring a connection.** The module declares a `Querier` with one method,
+`query(text, params) → { rows }`, which a node-postgres `Client` or `Pool` already satisfies.
+Run the generated `can<Verb>` inside a transaction that has already run `sessionSetupSQL(true)`
+and bound the `mint(claims)` result.
 
 **A few sharp edges.**
 
 - *Composite primary keys.* An object with `pk (a, b, …)` has no single-column row
-  identity, so it gets no `Can`, `ListResources`, or `CheckMany`. The generated
-  code lists it in a banner. Check those rows through a related object or your own
+  identity, so it gets no `can`, `listResources`, or `checkMany`. The generated code
+  lists it in a banner. Check those rows through a related object or your own
   predicate.
-- *Admission filters.* `Holds` bakes in the generic active-assignment read. When
+- *Admission filters.* `holds` bakes in the generic active-assignment read. When
   you need adopter filters such as disabled roles or scoped grants, use the
-  `AssignmentsSQL` + `ResolveHeld` seam instead: run your own filtered read, then
-  resolve. That covers the Go plane. If the same rule must also hold under RLS,
+  `assignmentsSQL` + `resolveHeld` seam instead: run your own filtered read, then
+  resolve. That covers the application plane. If the same rule must also hold under RLS,
   put it in the relation `rolejoin` names rather than in the read — the emitted
-  definers join that relation and cannot see a Go filter.
-- *Extra claims.* `Claims.Extra` carries deployment claims the spec's contract
+  definers join that relation and cannot see an application filter.
+- *Extra claims.* `Claims.extra` carries deployment claims the spec's contract
   doesn't model.
 - *Which verbs get a row check.* Only `select` (read) and `update` (edit) get one,
-  and the reusable `Check` covers those. `@pdp` verbs decide on held permissions —
-  call `Can<Verb>(held)`, or read `Caps(held)` for a boolean; passing one to `Check`
-  returns a capability-gate error, never a silent `NotGoverned`. Insert and delete
+  and the reusable `check` covers those. `@pdp` verbs decide on held permissions —
+  call `can<Verb>(held)`, or read `caps(held)` for a boolean; passing one to `check`
+  throws a capability-gate error, never a silent "ungoverned". Insert and delete
   have no pre-flight check.
-- *Two affordance axes.* `Caps(held)` answers the verb axis: can this principal
-  publish? `RoleTiers(held)` answers the role-tier axis: is this principal a platform
+- *Two affordance axes.* `caps(held)` answers the verb axis: can this principal
+  publish? `roleTiers(held)` answers the role-tier axis: is this principal a platform
   admin, or a tenant owner? A wildcard role or a global plane membership can't be read
   off the verb set, so the two stay separate accessors over separate held sets. Both
-  are UI hints; the floor still decides. `RoleTiers` reads a held-roles set
-  (`EffectiveRoles`), resolved by the generated `HoldsRoles` / `ResolveHeldRoles`, or
-  built from a session with `demesne.NewEffectiveRoles`. A preset at a `virtual` level
+  are UI hints; the floor still decides. `roleTiers` reads a held-roles set
+  (`EffectiveRoles`), resolved by the generated `holdsRoles` / `resolveHeldRoles`, or
+  built from a session with `newEffectiveRoles`. A preset at a `virtual` level
   is a plane role and lists first; the rolestore's scoped presets follow.
-- *Multiple rolestores.* The holds surface is suffixed per rolestore (`HoldsStaff`,
-  `HoldsOps`, …). A `@pdp` verb whose permission no rolestore vocabulary covers is
+- *Multiple rolestores.* The holds surface is suffixed per rolestore (`holdsStaff`,
+  `holdsOps`, …). A `@pdp` verb whose permission no rolestore vocabulary covers is
   flagged in a banner: nothing can produce its `held`, so resolve it yourself or
   add a rolestore.
 
@@ -1139,6 +1275,73 @@ as a boolean function over parameters in place of the row's columns. A
 hand-written move function can then ask whether the caller may write the folder
 at its destination with the same predicate the policy enforces, rather than a
 second copy of it. Every row column the predicate reads must be bound.
+
+## A spec in several files
+
+A spec can be split into files, given in order:
+
+```sh
+demesne validate core.demesne extra.demesne
+```
+
+The files compile as one model, as if each file's text ran on from the file
+before it, so a spec split into files emits what the same text emits as one
+file. Each file may refer to what the files before it declare, and never to what
+a later file declares. The files are applied in order: the spec made of a file
+and the files before it, its prefix, is what a database holds once the files up
+to it are applied, so every prefix has to validate on its own.
+
+A finding names its file, as in `extra.demesne:12: permission note.view
+references unknown relation "nobody"`. A finding that belongs to no line names
+the last file of the prefix it was found in. A spec in one file still reports
+`line 12: …`.
+
+`--file` prints one file's share of the SQL:
+
+```sh
+demesne emit core.demesne extra.demesne --file core.demesne  > core.sql
+demesne emit core.demesne extra.demesne --file extra.demesne > extra.sql
+```
+
+A file's share is what its prefix creates that the prefix before it does not,
+or creates differently, followed by the drops of what the prefix before it
+creates and this prefix no longer does. The first file's share is its whole SQL.
+Applied in order, the shares leave the database holding what the whole spec's
+SQL creates. When a later file changes something an earlier file created, the
+later file writes it again: a `@store_manage` dispatch gains its arm in the
+file that adds an object to the grant table, and its `CREATE OR REPLACE`
+replaces the earlier body; a policy a later subject's reach widens is written
+again with it.
+
+`--file` takes the emit kinds `all`, `manifest` and `migrate`. The manifest is
+the prefix's: what the database holds once the files up to the one named are
+applied, which is what the next `migrate` of that file compares with. Every
+other kind, and `--target ts` with it, covers the files given, so a build that
+ships fewer files passes fewer.
+
+### `replace`
+
+A later file may write `replace` before a declaration. It takes the place of the
+earlier files' declaration of the same kind and name:
+
+```demesne
+replace grant support at tenant via edge support_grants(holder_id, tenant_id) active ended_at
+```
+
+Any declaration can be replaced: an object, a subject, a grant, a vocabulary, a
+rolestore, a template, an external predicate, a `procedures`, `ungoverned` or
+`fieldscopes` block, and the declarations a spec makes once (`topology`,
+`claims`, `definers`, `tables` and `identifiers`). A replacement needs an
+earlier declaration to replace, so a spec in one file refuses `replace`. Without
+it, a later file can't declare again what the spec declares once, or an external
+predicate an earlier file declares.
+
+From Rust, `demesne_syntax::parse_files` compiles the files into `SpecFiles`,
+whose `prefix(k)` and `spec()` are ordinary specs, and
+`demesne_emit_sql::validate_files`, `file_sql` and `file_migration` validate and
+emit them. A build script adds files with `Builder::spec`. The compiler's
+WebAssembly build has `diagnostics_files`, and `@foir/demesne` runs the
+TypeScript emitted for the files given like any other.
 
 ## What it is not
 

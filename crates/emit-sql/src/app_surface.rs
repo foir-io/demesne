@@ -1,12 +1,33 @@
 use crate::Sql;
+use crate::error::Error;
 use demesne_model::SpecExt;
 use demesne_model::analysis::relation_is_async;
 use demesne_model::conditional::accessor_tree_op;
-use demesne_runtime::{AppCheck, AppCheckSurface, AppObjectSurface, owned};
-use demesne_syntax::*;
+use demesne_runtime::{AppCheck, AppCheckSurface, AppObjectSurface, owned, quote_literal};
+use demesne_syntax::{Object, Repr};
 
 impl Sql<'_> {
-    pub fn emit_app_surface(&self) -> Result<AppCheckSurface, String> {
+    fn app_checks(&self, o: &Object) -> Result<Vec<AppCheck>, String> {
+        let mut checks = Vec::new();
+        for pm in o.perms.iter().filter(|pm| pm.has_layer("check")) {
+            let sql = self.perm_point_check_sql(o, pm).map_err(|e| format!("EmitAppSurface: {}.{} @check point-check: {e}", o.name, pm.verb))?;
+            if !sql.is_empty() {
+                checks.push(AppCheck { verb: owned(pm.verb.clone()), check_sql: owned(sql) });
+            }
+        }
+        Ok(checks)
+    }
+
+    /// Builds the application check surface: each point-checkable object's check, list and edit SQL.
+    ///
+    /// # Errors
+    ///
+    /// The spec declares no objects, or an object's predicates cannot be compiled.
+    pub fn emit_app_surface(&self) -> Result<AppCheckSurface, Error> {
+        self.app_surface().map_err(Error::unplaced)
+    }
+
+    fn app_surface(&self) -> Result<AppCheckSurface, String> {
         if self.s.objects.is_empty() {
             return Err("EmitAppSurface: the spec declares no objects".into());
         }
@@ -16,19 +37,7 @@ impl Sql<'_> {
                 continue;
             }
             let edit_sql = self.edit_point_check_sql(o).map_err(|e| format!("EmitAppSurface: {} edit point-check: {e}", o.name))?;
-            let mut checks = Vec::new();
-            for pm in &o.perms {
-                if !pm.has_layer("check") {
-                    continue;
-                }
-                let sql = self
-                    .perm_point_check_sql(o, pm)
-                    .map_err(|e| format!("EmitAppSurface: {}.{} @check point-check: {e}", o.name, pm.verb))?;
-                if sql.is_empty() {
-                    continue;
-                }
-                checks.push(AppCheck { verb: owned(pm.verb.clone()), check_sql: owned(sql) });
-            }
+            let checks = self.app_checks(o)?;
             objects.push(AppObjectSurface {
                 object: owned(o.name.clone()),
                 table: owned(o.table.clone()),
@@ -62,11 +71,11 @@ impl Sql<'_> {
     fn async_check_sql(&self, o: &Object) -> String {
         let Some(rel) = o.relations.iter().find(|r| relation_is_async(r)) else { return String::new() };
         let Some(cust) = o.scoped.last().and_then(|l| self.s.owner_subject(l)) else { return String::new() };
-        let kind = rel.types.first().map(String::as_str).unwrap_or("");
+        let kind = rel.types.first().map_or("", String::as_str);
         format!(
-            "SELECT allowed, as_of::text FROM {}_affordance($1, '{}', {})",
+            "SELECT allowed, as_of::text FROM {}_affordance($1, {}, {})",
             self.s.async_index_base(&o.table, &rel.name),
-            kind,
+            quote_literal(kind),
             self.id_claim(cust.identifies())
         )
     }

@@ -1,14 +1,16 @@
+use crate::error::Error;
+use crate::plan::{check_accessor_collisions, orphan_pdp_verbs, role_tier_fields, row_check_sql, vocab_caps_tree};
 use crate::{projections, ts_json, ts_str};
-use demesne_emit_go::{check_accessor_collisions, orphan_pdp_verbs, role_tier_fields, vocab_caps_tree};
 use demesne_emit_sql::Sql;
 use demesne_gocompat::json::Value;
 use demesne_gocompat::{go_export, unexport};
 use demesne_model::{SpecExt, SurfaceExt};
 use demesne_runtime::{AppObjectSurface, HoldsResolver};
-use demesne_syntax::*;
+use demesne_syntax::{Object, Perm, RoleStore, Spec, Vocabulary};
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
-type R<T> = Result<T, String>;
+type R<T> = Result<T, Error>;
 
 struct Check {
     object: String,
@@ -17,6 +19,7 @@ struct Check {
 }
 
 #[derive(Default)]
+#[expect(clippy::struct_excessive_bools, reason = "each flag is an independent import the module may need")]
 struct Needs {
     compose: bool,
     resolve: bool,
@@ -35,6 +38,11 @@ struct Gen<'a> {
     need: Needs,
 }
 
+/// Emits the typed TypeScript framework module for a spec.
+///
+/// # Errors
+///
+/// The claims contract or app surface cannot be built, or generated names collide.
 pub fn emit_framework_ts(s: &Spec) -> R<String> {
     let contract = s.claims_contract()?;
     let surf = Sql::new(s).emit_app_surface()?;
@@ -103,8 +111,8 @@ impl Gen<'_> {
         if self.need.resolve_roles {
             values.push("resolveRoles");
         }
-        values.sort();
-        head.push_str(&format!("import {{ {} }} from \"@foir/demesne\";\n", values.join(", ")));
+        values.sort_unstable();
+        writeln!(head, "import {{ {} }} from \"@foir/demesne\";", values.join(", ")).expect("fmt::Write for String never fails");
         let mut types = Vec::new();
         if self.need.eff {
             types.push("EffectivePerms");
@@ -119,8 +127,8 @@ impl Gen<'_> {
             types.push("RoleAssignment");
         }
         if !types.is_empty() {
-            types.sort();
-            head.push_str(&format!("import type {{ {} }} from \"@foir/demesne\";\n", types.join(", ")));
+            types.sort_unstable();
+            writeln!(head, "import type {{ {} }} from \"@foir/demesne\";", types.join(", ")).expect("fmt::Write for String never fails");
         }
         head.push_str("\nexport { Decision };\n\n");
         head + &self.b
@@ -187,22 +195,7 @@ impl Gen<'_> {
                 self.pdp_checks.push(Check { object: o.object.to_string(), verb: pm.verb.clone(), method: String::new() });
                 continue;
             }
-            let sql = if pm.maps() == "select" {
-                o.check_sql()
-            } else if pm.maps() == "update" {
-                if o.edit_check_sql.is_empty() {
-                    continue;
-                }
-                o.edit_check_sql.to_string()
-            } else if pm.has_layer("check") {
-                let sql = o.check_verb_sql(&pm.verb);
-                if sql.is_empty() {
-                    continue;
-                }
-                sql.to_string()
-            } else {
-                continue;
-            };
+            let Some(sql) = row_check_sql(o, pm) else { continue };
             self.need.compose = true;
             parts.push(row_can(&method, &sql));
             self.checks.push(Check { object: o.object.to_string(), verb: pm.verb.clone(), method: format!("{name}.{method}") });
@@ -233,9 +226,7 @@ impl Gen<'_> {
         self.w(&format!(
             "export function resolveHeld{suffix}(assignments: RoleAssignment[], scope: string[]): EffectivePerms {{\n  return resolve(holdsResolver{suffix}, assignments, scope);\n}}\n\n"
         ));
-        self.w(&format!(
-            "export async function holds{suffix}(q: Querier, principalId: string, scope: string[]): Promise<EffectivePerms> {{\n"
-        ));
+        self.w(&format!("export async function holds{suffix}(q: Querier, principalId: string, scope: string[]): Promise<EffectivePerms> {{\n"));
         self.assignment_rows(suffix, &r);
         self.w(&format!("  return resolveHeld{suffix}(assignments, scope);\n}}\n\n"));
         Ok(())
@@ -246,9 +237,7 @@ impl Gen<'_> {
         self.w("  const assignments: RoleAssignment[] = rows.map((row) => ({\n");
         self.w(&format!("    scope: {},\n", scope_expr(suffix, r)));
         self.w(&format!("    roleKey: String(row[holdsResolver{suffix}.keyCol]),\n"));
-        self.w(&format!(
-            "    permissions: holdsResolver{suffix}.permsCol !== \"\" ? (row[holdsResolver{suffix}.permsCol] as string[]) : [],\n"
-        ));
+        self.w(&format!("    permissions: holdsResolver{suffix}.permsCol !== \"\" ? (row[holdsResolver{suffix}.permsCol] as string[]) : [],\n"));
         self.w("  }));\n");
     }
 
@@ -304,9 +293,7 @@ impl Gen<'_> {
         self.w(&format!(
             "export function resolveHeldRoles{suffix}(assignments: RoleAssignment[], scope: string[]): EffectiveRoles {{\n  return resolveRoles(assignments, scope);\n}}\n\n"
         ));
-        self.w(&format!(
-            "export async function holdsRoles{suffix}(q: Querier, principalId: string, scope: string[]): Promise<EffectiveRoles> {{\n"
-        ));
+        self.w(&format!("export async function holdsRoles{suffix}(q: Querier, principalId: string, scope: string[]): Promise<EffectiveRoles> {{\n"));
         self.assignment_rows(suffix, &r);
         self.w(&format!("  return resolveHeldRoles{suffix}(assignments, scope);\n}}\n\n"));
         Ok(())
@@ -342,9 +329,9 @@ fn pdp_can(method: &str, pm: &Perm) -> String {
     let mut b = format!("  {method}(held: EffectivePerms): Decision {{\n");
     for t in pm.tree.leaves() {
         if !t.ident().is_empty() {
-            b.push_str(&format!("    if (!held.holds({})) return Decision.Deny;\n", ts_str(t.ident())));
+            writeln!(b, "    if (!held.holds({})) return Decision.Deny;", ts_str(t.ident())).expect("fmt::Write for String never fails");
         } else if t.builtin() == "holds" && !t.holds_perm().is_empty() {
-            b.push_str(&format!("    if (!held.holds({})) return Decision.Deny;\n", ts_str(t.holds_perm())));
+            writeln!(b, "    if (!held.holds({})) return Decision.Deny;", ts_str(t.holds_perm())).expect("fmt::Write for String never fails");
         }
     }
     b.push_str("    return Decision.Allow;\n  },\n");

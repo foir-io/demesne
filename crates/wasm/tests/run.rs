@@ -7,13 +7,16 @@ fn files(path: &str) -> BTreeMap<String, Vec<u8>> {
 }
 
 fn args(a: &[&str]) -> Vec<String> {
-    a.iter().map(|s| s.to_string()).collect()
+    a.iter().map(ToString::to_string).collect()
 }
 
 #[test]
 fn run_matches_the_native_cli_on_a_pure_command() {
     let o = run_native(&args(&["validate", "spec.demesne"]), files("spec.demesne"));
-    assert_eq!((o.code, String::from_utf8_lossy(&o.stdout).as_ref(), o.stderr.as_slice()), (0, "ok: 2 objects, 3 levels, 6 policies, 1 reachability grants\n", &b""[..]));
+    assert_eq!(
+        (o.code, String::from_utf8_lossy(&o.stdout).as_ref(), o.stderr.as_slice()),
+        (0, "ok: 2 objects, 3 levels, 6 policies, 1 reachability grants\n", &b""[..])
+    );
 }
 
 #[test]
@@ -29,4 +32,13 @@ fn a_live_command_says_it_needs_the_native_cli() {
         assert_eq!(o.code, 1);
         assert!(String::from_utf8_lossy(&o.stderr).contains("needs a database connection"), "{cmd}");
     }
+}
+
+#[test]
+fn run_emits_one_file_of_a_spec_in_several() {
+    let read = |n: &str| std::fs::read(format!("{}/../../testdata/multi/{n}", env!("CARGO_MANIFEST_DIR"))).expect("the fixture reads");
+    let fs: BTreeMap<String, Vec<u8>> = ["base.demesne", "extra.demesne", "last.demesne"].iter().map(|n| ((*n).to_string(), read(n))).collect();
+    let o = run_native(&args(&["emit", "base.demesne", "extra.demesne", "last.demesne", "--file", "last.demesne"]), fs);
+    assert_eq!(o.code, 0, "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("DROP FUNCTION IF EXISTS auth.doc_readable(text, text, text, text);"));
 }

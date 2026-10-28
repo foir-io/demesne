@@ -1,0 +1,66 @@
+topology {
+  level platform virtual
+  level space parent platform
+  level team parent space
+}
+
+vocabulary staff {
+  permission billing:manage
+  permission billing:read
+  permission self:share implies billing:manage
+  permission media:share
+  preset space_role0 @ space = billing:manage
+  preset team_role1 @ team = billing:read
+  preset platform_role2 @ platform = self:share
+}
+
+rolestore staff {
+  assignments role_assignments
+  kind principal_kind = "staff"
+  subject principal_id
+  scope space_id team_id
+  rolejoin role_id roles id key
+  revoked revoked_at
+  permissions perms
+  granted granted_at by granted_by
+}
+
+grant support at space
+  via edge support_grants(grantee_id, space_id)
+  active revoked_at confers select
+
+subject admin { anchor space; reach descendants; identifies sub; roles configurable staff; binds admin }
+subject customer { anchor team; reach self; identifies customer_id; roles none; binds owner }
+subject operator { anchor platform; reach via grant support; identifies sub; roles none }
+
+object doc {
+  table docs
+  scoped space > team
+  relation member: admin via role
+  relation grantee: customer via grant doc_grants(record_id, principal_kind, principal_id, access)
+  relation scope_member: admin via memberin team(@sub, team_id)
+  permission view = grantee + grantee:read @rls maps select
+  permission edit = member @rls maps update blind
+  permission create = @app_scope @rls maps insert
+}
+
+object record {
+  table records
+  scoped space
+  relation member: admin via role
+  relation scope_member: admin via memberin space(@sub, space_id)
+  permission view = @claim("tier", "gold") + scope_member @rls maps select
+  permission edit = member @rls maps update blind guard status <> "archived"
+  permission create = @holds(billing:read) and @kind("staff") @rls maps insert
+}
+
+object asset {
+  table assets
+  scoped space > team
+  relation owner: customer via owner_id
+  relation member: admin via role
+  permission view = @claim("tier", "gold") @rls maps select
+  permission edit = @kind("admin") and not @claim("tier", "gold") @rls maps update blind
+  permission create = @kind("admin") @rls maps insert
+  permission remove = via grant support + @self(created_by) @rls maps delete blind
+}

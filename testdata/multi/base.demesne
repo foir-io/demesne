@@ -1,0 +1,28 @@
+topology {
+  level tenant
+  level workspace parent tenant
+}
+
+grant support at tenant via edge support_grants(holder_id, tenant_id)
+
+subject staff  { anchor tenant; reach via grant support; identifies sub; roles none }
+subject member { anchor workspace; reach self; identifies member_id; roles none; binds owner }
+
+object acl_entry {
+  table  acl
+  scoped tenant > workspace
+  permission view   = @store_manage @rls maps select
+  permission create = @store_manage @rls maps insert
+  permission edit   = @store_manage @rls maps update
+  permission delete = @store_manage @rls maps delete
+}
+
+object doc {
+  table  docs
+  scoped tenant > workspace
+  relation owner:   member via owner_id
+  relation grantee: member via grant acl(resource_id, principal_kind, principal_id, access) where resource_type = "doc"
+  permission view = owner + grantee:read + grantee:write @rls maps select
+  permission edit = owner + grantee:write @rls maps update
+  export view as doc_readable(id text as check_doc_id, tenant_id text as row_tenant_id, workspace_id text as row_workspace_id, owner_id text as row_owner_id)
+}

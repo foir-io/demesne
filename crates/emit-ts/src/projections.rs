@@ -1,3 +1,4 @@
+use crate::error::Error;
 use demesne_gocompat::json::Value;
 use demesne_model::SpecExt;
 use demesne_runtime as rt;
@@ -15,21 +16,19 @@ fn obj(fields: Vec<(&str, Value)>) -> Value {
     Value::Struct(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
 }
 
-pub fn claims(sp: &Spec) -> Result<Value, String> {
+/// Projects the spec's session and claims contract into the shape `@foir/demesne` reads.
+///
+/// # Errors
+///
+/// The topology has no single root, or a level is unreachable from it.
+pub fn claims(sp: &Spec) -> Result<Value, Error> {
     let session = sp.session();
     let contract = sp.claims_contract()?;
     let entries = sp.claims_contract_entries()?;
-    let te: Vec<Value> = entries
-        .iter()
-        .map(|e| obj(vec![("key", s(&e.key)), ("level", s(&e.level)), ("subjects", strs(&e.subjects))]))
-        .collect();
-    let subs: Vec<Value> =
-        sp.subjects.iter().map(|sub| obj(vec![("name", s(&sub.name)), ("identifies", s(sub.identifies()))])).collect();
-    let levels: Vec<Value> = sp
-        .levels()
-        .iter()
-        .map(|l| obj(vec![("name", s(&l.name)), ("claimKey", s(&l.claim_key())), ("virtual", Value::Bool(l.is_virtual))]))
-        .collect();
+    let te: Vec<Value> = entries.iter().map(|e| obj(vec![("key", s(&e.key)), ("level", s(&e.level)), ("subjects", strs(&e.subjects))])).collect();
+    let subs: Vec<Value> = sp.subjects.iter().map(|sub| obj(vec![("name", s(&sub.name)), ("identifies", s(sub.identifies()))])).collect();
+    let levels: Vec<Value> =
+        sp.levels().iter().map(|l| obj(vec![("name", s(&l.name)), ("claimKey", s(&l.claim_key())), ("virtual", Value::Bool(l.is_virtual))])).collect();
     Ok(obj(vec![
         ("setting", s(&session.setting)),
         ("cast", s(&session.cast)),
@@ -41,6 +40,7 @@ pub fn claims(sp: &Spec) -> Result<Value, String> {
     ]))
 }
 
+#[must_use]
 pub fn app_object(o: &rt::AppObjectSurface) -> Value {
     obj(vec![
         ("object", s(&o.object)),
@@ -52,21 +52,19 @@ pub fn app_object(o: &rt::AppObjectSurface) -> Value {
     ])
 }
 
+#[must_use]
 pub fn pdp(p: &rt::Pdp) -> Value {
     let map = |m: &[(rt::Str, rt::Str)]| Value::Map(m.iter().map(|(k, v)| (k.to_string(), Value::str(v.as_ref()))).collect());
     obj(vec![("emitSite", s(&p.emit_site)), ("policy", map(&p.policy)), ("ungoverned", map(&p.ungoverned))])
 }
 
+#[must_use]
 pub fn vocab(v: &rt::Vocabulary) -> Value {
-    let presets: Vec<Value> =
-        v.presets.iter().map(|p| obj(vec![("name", s(&p.name)), ("star", Value::Bool(p.star)), ("set", strs(&p.set))])).collect();
+    let presets: Vec<Value> = v.presets.iter().map(|p| obj(vec![("name", s(&p.name)), ("star", Value::Bool(p.star)), ("set", strs(&p.set))])).collect();
     let mut fields = vec![("name", s(&v.name)), ("permissions", strs(&v.permissions))];
     if !v.implications.is_empty() {
-        let ims: Vec<Value> = v
-            .implications
-            .iter()
-            .map(|im| obj(vec![("perm", s(&im.perm)), ("star", Value::Bool(im.star)), ("set", strs(&im.set))]))
-            .collect();
+        let ims: Vec<Value> =
+            v.implications.iter().map(|im| obj(vec![("perm", s(&im.perm)), ("star", Value::Bool(im.star)), ("set", strs(&im.set))])).collect();
         fields.push(("implications", Value::Array(ims)));
     }
     fields.push(("presets", Value::Array(presets)));
@@ -74,6 +72,7 @@ pub fn vocab(v: &rt::Vocabulary) -> Value {
     obj(fields)
 }
 
+#[must_use]
 pub fn holds(r: &rt::HoldsResolver) -> Value {
     let mut fields = vec![
         ("assignments", s(&r.assignments)),
@@ -98,6 +97,7 @@ pub fn holds(r: &rt::HoldsResolver) -> Value {
     obj(fields)
 }
 
+#[must_use]
 pub fn role_assign(r: &rt::RoleAssignmentSurface) -> Value {
     obj(vec![
         ("assignments", s(&r.assignments)),
@@ -119,6 +119,7 @@ pub fn role_assign(r: &rt::RoleAssignmentSurface) -> Value {
     ])
 }
 
+#[must_use]
 pub fn grant(g: &rt::GrantSurface) -> Value {
     obj(vec![
         ("name", s(&g.name)),
@@ -136,6 +137,7 @@ pub fn grant(g: &rt::GrantSurface) -> Value {
     ])
 }
 
+#[must_use]
 pub fn res_access(r: &rt::ResourceAccessSurface) -> Value {
     let set = |xs: &[rt::Str]| Value::strings(xs);
     obj(vec![
@@ -153,6 +155,7 @@ pub fn res_access(r: &rt::ResourceAccessSurface) -> Value {
         ("discrimCol", s(&r.discrim_col)),
         ("discrimVal", s(&r.discrim_val)),
         ("accessorFn", s(&r.accessor_fn)),
+        ("admitsFn", s(&r.admits_fn)),
         ("accessorsConditional", Value::Bool(r.conditional)),
     ])
 }

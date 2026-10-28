@@ -1,0 +1,15 @@
+---
+source: crates/model/tests/binding.rs
+expression: "refusals(&spec(path), &Schema::new()).join(\"\\n\")"
+---
+grant ancestors: table "paths" not found in the database
+grant descendants: table "paths" not found in the database
+grant support: table "approvals" not found in the database
+object allowance: table "allowances" not found in the database
+object asset: table "assets" not found in the database
+object blueprint: table "blueprints" not found in the database
+object catalog: table "catalogs" not found in the database
+object entry: table "entries" not found in the database
+object folder: table "folders" not found in the database
+object ledger: table "ledgers" not found in the database
+object space: table "spaces" not found in the database

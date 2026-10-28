@@ -50,7 +50,7 @@ impl T {
 }
 
 fn panic_text(p: &(dyn Any + Send)) -> String {
-    p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()
+    p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(std::string::ToString::to_string)).unwrap_or_default()
 }
 
 fn require_env(var: &str, why: &str) -> String {
@@ -151,7 +151,7 @@ impl<'c> Db<'_, 'c> {
 
 fn want_ids(t: &T, what: &str, got: &[String], want: &[&str]) {
     let mut want: Vec<&str> = want.to_vec();
-    want.sort();
+    want.sort_unstable();
     if got.join(",") != want.join(",") {
         t.errorf(format!("{what}: got {got:?}, want {want:?}"));
     }

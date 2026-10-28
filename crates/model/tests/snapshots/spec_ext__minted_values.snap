@@ -1,0 +1,5 @@
+---
+source: crates/model/tests/spec_ext.rs
+expression: "s.mint_claims(&values).expect(\"the values mint\")"
+---
+{"sub":"u1","tenant_id":"t1"}

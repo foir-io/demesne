@@ -32,10 +32,12 @@ fn lookup<'a>(entries: &'a [(Str, Str)], key: &str) -> Option<&'a str> {
 }
 
 impl Pdp {
+    #[must_use]
     pub fn permission(&self, procedure: &str) -> Option<&str> {
         lookup(&self.policy, procedure)
     }
 
+    #[must_use]
     pub fn ungoverned_reason(&self, procedure: &str) -> Option<&str> {
         lookup(&self.ungoverned, procedure)
     }
@@ -49,23 +51,24 @@ impl Pdp {
     }
 }
 
+#[must_use]
 pub fn capability_gate_err(object: &str, verb: &str) -> Error {
-    Error::new(format!(
+    Error::capability_gate(format!(
         "{object}.{verb} is a capability (@pdp) verb with no row-level check — resolve held permissions and call Can{}(held) on the {} object",
         go_export(verb),
         go_export(object)
     ))
 }
 
-pub fn compose_can(point_governed: bool, point_allow: bool, pdp: Decision) -> Decision {
-    if !point_governed && pdp == Decision::NotGoverned {
-        return Decision::NotGoverned;
+/// Combines a row's point check with the PDP's decision for the same call.
+///
+/// Either one denying denies. Neither governing the call leaves it ungoverned. Anything else
+/// allows. The order of the two arguments doesn't matter.
+#[must_use]
+pub fn compose_can(point: Decision, pdp: Decision) -> Decision {
+    match (point, pdp) {
+        (Decision::Deny, _) | (_, Decision::Deny) => Decision::Deny,
+        (Decision::NotGoverned, Decision::NotGoverned) => Decision::NotGoverned,
+        (Decision::Allow, Decision::Allow | Decision::NotGoverned) | (Decision::NotGoverned, Decision::Allow) => Decision::Allow,
     }
-    if point_governed && !point_allow {
-        return Decision::Deny;
-    }
-    if pdp == Decision::Deny {
-        return Decision::Deny;
-    }
-    Decision::Allow
 }

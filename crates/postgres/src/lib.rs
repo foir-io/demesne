@@ -1,13 +1,19 @@
-#![doc = "Live-database support for demesne: introspection into a `Schema`, the policy surface `diff` compares, the global-assignment audit and the RLS role check."]
+#![doc = "Live-database support for demesne: introspection into a `Schema`, the drift `diff` reports, the schema traps, the global-assignment audit and the RLS role check."]
 
 mod connect;
+mod drift;
 mod dsn;
+mod error;
 mod goerr;
+mod lint;
 
 pub use connect::connect;
+pub use drift::{Drift, DriftKind, Finding, drift};
 pub use dsn::parse_config_dump;
+pub use error::Error;
+pub use lint::{Severity, Trap, schema_traps};
 
-use demesne_model::Schema;
+use demesne_model::{Nullability, Schema};
 use postgres::Client;
 use std::collections::BTreeSet;
 
@@ -18,6 +24,7 @@ pub struct IntrospectMeta {
     pub fks: usize,
 }
 
+#[must_use]
 pub fn query_error(e: &postgres::Error) -> String {
     if let Some(db) = e.as_db_error() {
         return format!("{}: {} (SQLSTATE {})", db.severity(), db.message(), db.code().code());
@@ -32,7 +39,16 @@ pub fn query_error(e: &postgres::Error) -> String {
     out
 }
 
-pub fn introspect(client: &mut Client) -> Result<(Schema, IntrospectMeta), String> {
+/// Reads the `public` schema's tables, columns, keys and foreign keys.
+///
+/// # Errors
+///
+/// A catalog query fails.
+pub fn introspect(client: &mut Client) -> Result<(Schema, IntrospectMeta), Error> {
+    read_schema(client).map_err(Error::query)
+}
+
+fn read_schema(client: &mut Client) -> Result<(Schema, IntrospectMeta), String> {
     let mut sc = Schema::new();
     let mut meta = IntrospectMeta::default();
     let mut tables = BTreeSet::new();
@@ -45,7 +61,7 @@ pub fn introspect(client: &mut Client) -> Result<(Schema, IntrospectMeta), Strin
         .map_err(|e| query_error(&e))?;
     for row in rows {
         let (table, col, typ, nullable): (String, String, String, bool) = (row.get(0), row.get(1), row.get(2), row.get(3));
-        sc.add_column(&table, &col, &typ, nullable);
+        sc.add_column(&table, &col, &typ, if nullable { Nullability::Nullable } else { Nullability::NotNull });
         meta.columns += 1;
         tables.insert(table);
     }
@@ -70,7 +86,16 @@ pub fn introspect(client: &mut Client) -> Result<(Schema, IntrospectMeta), Strin
     Ok((sc, meta))
 }
 
-pub fn role_bypasses_rls(client: &mut Client, role: &str) -> Result<(bool, bool), String> {
+/// Returns whether `role` exists and, if it does, whether it bypasses row-level security.
+///
+/// # Errors
+///
+/// The catalog query fails.
+pub fn role_bypasses_rls(client: &mut Client, role: &str) -> Result<(bool, bool), Error> {
+    read_role_bypass(client, role).map_err(Error::query)
+}
+
+fn read_role_bypass(client: &mut Client, role: &str) -> Result<(bool, bool), String> {
     let rows = client.query("SELECT rolbypassrls FROM pg_roles WHERE rolname = $1", &[&role]).map_err(|e| query_error(&e))?;
     match rows.first() {
         Some(row) => Ok((true, row.get(0))),
@@ -78,22 +103,16 @@ pub fn role_bypasses_rls(client: &mut Client, role: &str) -> Result<(bool, bool)
     }
 }
 
-pub fn count_global_assignments(client: &mut Client, query: &str) -> Result<i64, String> {
-    let row = client.query_one(&format!("SELECT count(*) FROM ({query}) q"), &[]).map_err(|e| query_error(&e))?;
-    Ok(row.get(0))
+/// Counts the rows `query` returns.
+///
+/// # Errors
+///
+/// The query fails.
+pub fn count_global_assignments(client: &mut Client, query: &str) -> Result<i64, Error> {
+    read_global_assignments(client, query).map_err(Error::query)
 }
 
-pub fn live_policy_surface(client: &mut Client, governed: &[String]) -> Result<BTreeSet<String>, String> {
-    let tset: BTreeSet<&str> = governed.iter().map(String::as_str).collect();
-    let rows = client
-        .query("SELECT tablename::text, policyname::text FROM pg_policies WHERE schemaname = 'public'", &[])
-        .map_err(|e| query_error(&e))?;
-    let mut out = BTreeSet::new();
-    for row in rows {
-        let (table, pol): (String, String) = (row.get(0), row.get(1));
-        if tset.contains(table.as_str()) {
-            out.insert(format!("{table}.{pol}"));
-        }
-    }
-    Ok(out)
+fn read_global_assignments(client: &mut Client, query: &str) -> Result<i64, String> {
+    let row = client.query_one(&format!("SELECT count(*) FROM ({query}) q"), &[]).map_err(|e| query_error(&e))?;
+    Ok(row.get(0))
 }

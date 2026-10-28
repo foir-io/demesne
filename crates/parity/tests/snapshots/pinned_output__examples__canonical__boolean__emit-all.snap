@@ -1,0 +1,18 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+
+ALTER TABLE public.resources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.resources FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS resources_select ON public.resources;
+CREATE POLICY resources_select ON public.resources FOR SELECT TO authenticated
+    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND team_id = (current_setting('request.jwt.claims', true)::json ->> 'team_id') AND ((viewer_id = (current_setting('request.jwt.claims', true)::json ->> 'uid')) AND (member_id = (current_setting('request.jwt.claims', true)::json ->> 'uid')) AND ((banned_id = (current_setting('request.jwt.claims', true)::json ->> 'uid')) IS NOT TRUE))));
+
+
+--- stderr ---
+
+--- end ---

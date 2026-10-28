@@ -1,0 +1,16 @@
+---
+source: crates/model/tests/binding.rs
+expression: "table_coverage(&s, &db)"
+---
+TableCoverage {
+    governed: [
+        "documents",
+    ],
+    referenced: [
+        "folder_closure",
+        "folders",
+    ],
+    ungoverned: [
+        "unrelated_log",
+    ],
+}

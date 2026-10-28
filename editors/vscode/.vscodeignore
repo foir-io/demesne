@@ -1,2 +1,8 @@
 .vscodeignore
 *.vsix
+test/**
+integration/**
+node_modules/**
+.vscode-test/**
+.gitignore
+wasm/*.d.ts

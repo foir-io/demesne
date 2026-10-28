@@ -11,6 +11,9 @@ export function pgCtlAvailable(): boolean {
     execFileSync("initdb", ["--version"], { stdio: "ignore" });
     return true;
   } catch {
+    if (process.env["DEMESNE_REQUIRE_PG"]) {
+      throw new Error("DEMESNE_REQUIRE_PG is set, but initdb and pg_ctl are not on PATH");
+    }
     return false;
   }
 }

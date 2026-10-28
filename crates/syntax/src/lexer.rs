@@ -68,6 +68,10 @@ fn is_ident(c: u8) -> bool {
     is_ident_start(c) || c.is_ascii_digit()
 }
 
+pub(crate) fn is_plain_identifier(s: &str) -> bool {
+    s.bytes().next().is_some_and(is_ident_start) && s.bytes().all(is_ident)
+}
+
 struct Lexer<'a> {
     src: &'a [u8],
     pos: usize,
@@ -75,7 +79,11 @@ struct Lexer<'a> {
 }
 
 pub(crate) fn lex(src: &[u8]) -> Result<Vec<Token>, Error> {
-    let mut l = Lexer { src, pos: 0, line: 1 };
+    lex_from(src, 1)
+}
+
+pub(crate) fn lex_from(src: &[u8], first_line: usize) -> Result<Vec<Token>, Error> {
+    let mut l = Lexer { src, pos: 0, line: first_line };
     let mut toks = Vec::new();
     loop {
         let t = l.next()?;
@@ -127,23 +135,20 @@ impl Lexer<'_> {
                 if self.peek_at(1) == b'>' {
                     self.tok(Tok::Arrow, "->", line, 2)
                 } else {
-                    return Err(Error::new(format!("line {line}: unexpected '-' (expected '->')")));
+                    return Err(Error::at(line, "unexpected '-' (expected '->')"));
                 }
             }
             b'<' => {
                 if self.peek_at(1) == b'>' {
                     self.tok(Tok::Ne, "<>", line, 2)
                 } else {
-                    return Err(Error::new(format!("line {line}: unexpected '<' (expected '<>')")));
+                    return Err(Error::at(line, "unexpected '<' (expected '<>')"));
                 }
             }
             b'"' => return self.lex_string(),
             c if is_ident_start(c) => self.lex_run(),
             c => {
-                return Err(Error::new(format!(
-                    "line {line}: unexpected character {}",
-                    quote(&char::from(c).to_string())
-                )));
+                return Err(Error::at(line, format!("unexpected character {}", quote(&char::from(c).to_string()))));
             }
         };
         Ok(t)
@@ -179,10 +184,7 @@ impl Lexer<'_> {
             let c = self.src[self.pos];
             if c == b'"' {
                 self.pos += 1;
-                let lit = String::from_utf8(b).map_err(|_| {
-                    Error::new(format!("line {line}: string literal is not valid UTF-8"))
-                })?;
-                return Ok(Token { kind: Tok::Str, lit, line });
+                return string_token(b, line);
             }
             if c == b'\n' {
                 break;
@@ -195,7 +197,7 @@ impl Lexer<'_> {
             b.push(c);
             self.pos += 1;
         }
-        Err(Error::new(format!("line {line}: unterminated string")))
+        Err(Error::at(line, "unterminated string"))
     }
 
     fn lex_run(&mut self) -> Token {
@@ -203,33 +205,16 @@ impl Lexer<'_> {
         let mut b = String::new();
         while self.pos < self.src.len() {
             let c = self.src[self.pos];
-            if is_ident(c) {
-                b.push(c as char);
-                self.pos += 1;
-                continue;
-            }
-            if c == b'.' || c == b'/' {
-                if is_ident(self.peek_at(1)) {
-                    b.push(c as char);
-                    self.pos += 1;
-                    continue;
-                }
+            let joins = is_ident(c) || (matches!(c, b'.' | b'/' | b':') && is_ident(self.peek_at(1)));
+            if !joins {
                 break;
             }
-            if c == b':' {
-                let n = self.peek_at(1);
-                if is_ident(n) {
-                    b.push(':');
-                    self.pos += 1;
-                    continue;
-                }
-                if n == b'*' {
-                    b.push_str(":*");
-                    self.pos += 2;
-                }
-                break;
-            }
-            break;
+            b.push(c as char);
+            self.pos += 1;
+        }
+        if self.peek_at(0) == b':' && self.peek_at(1) == b'*' {
+            b.push_str(":*");
+            self.pos += 2;
         }
         if self.peek_at(0) == b'[' && self.peek_at(1) == b']' {
             b.push_str("[]");
@@ -244,4 +229,11 @@ impl Lexer<'_> {
         };
         Token { kind, lit: b, line }
     }
+}
+
+fn string_token(b: Vec<u8>, line: usize) -> Result<Token, Error> {
+    let Ok(lit) = String::from_utf8(b) else {
+        return Err(Error::at(line, "string literal is not valid UTF-8"));
+    };
+    Ok(Token { kind: Tok::Str, lit, line })
 }

@@ -1,0 +1,11 @@
+---
+source: crates/model/tests/spec_ext.rs
+expression: s.build_claims(&staff)
+---
+Ok(
+    {
+        "sub": "u1",
+        "tenant_id": "t1",
+        "workspace_id": "w1",
+    },
+)

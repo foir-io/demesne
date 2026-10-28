@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
@@ -18,6 +20,7 @@ impl Value {
         Value::Array(xs.iter().map(|s| Value::Str(s.as_ref().to_string())).collect())
     }
 
+    #[must_use]
     pub fn nullable_strings<S: AsRef<str>>(xs: Option<&[S]>) -> Value {
         match xs {
             None => Value::Null,
@@ -29,7 +32,7 @@ impl Value {
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
 pub fn write_string(dst: &mut String, s: &str) {
-    write_string_opts(dst, s, true)
+    write_string_opts(dst, s, true);
 }
 
 pub fn write_string_opts(dst: &mut String, s: &str, escape_html: bool) {
@@ -61,10 +64,12 @@ fn push_u00(dst: &mut String, b: u8) {
     dst.push(HEX[(b & 0xF) as usize] as char);
 }
 
+#[must_use]
 pub fn marshal(v: &Value) -> String {
     marshal_opts(v, true)
 }
 
+#[must_use]
 pub fn marshal_opts(v: &Value, escape_html: bool) -> String {
     let mut out = String::new();
     write_compact(&mut out, v, escape_html);
@@ -98,10 +103,12 @@ fn sorted(entries: &[(String, Value)]) -> Vec<(&str, &Value)> {
     v
 }
 
+#[must_use]
 pub fn marshal_indent(v: &Value, prefix: &str, indent: &str) -> String {
     marshal_indent_opts(v, prefix, indent, true)
 }
 
+#[must_use]
 pub fn marshal_indent_opts(v: &Value, prefix: &str, indent: &str, escape_html: bool) -> String {
     let mut out = String::new();
     write_indented(&mut out, v, prefix, indent, 0, escape_html);
@@ -135,20 +142,14 @@ fn write_indented(out: &mut String, v: &Value, prefix: &str, indent: &str, depth
             out.push(']');
         }
         Value::Struct(fields) => {
-            write_object(out, fields.iter().map(|(k, v)| (k.as_str(), v)), Some((prefix, indent)), depth, h)
+            write_object(out, fields.iter().map(|(k, v)| (k.as_str(), v)), Some((prefix, indent)), depth, h);
         }
         Value::Map(entries) => write_object(out, sorted(entries).into_iter(), Some((prefix, indent)), depth, h),
         other => write_compact(out, other, h),
     }
 }
 
-fn write_object<'a>(
-    out: &mut String,
-    fields: impl Iterator<Item = (&'a str, &'a Value)>,
-    pretty: Option<(&str, &str)>,
-    depth: usize,
-    h: bool,
-) {
+fn write_object<'a>(out: &mut String, fields: impl Iterator<Item = (&'a str, &'a Value)>, pretty: Option<(&str, &str)>, depth: usize, h: bool) {
     let fields: Vec<_> = fields.collect();
     if fields.is_empty() {
         out.push_str("{}");
@@ -159,18 +160,15 @@ fn write_object<'a>(
         if i > 0 {
             out.push(',');
         }
-        match pretty {
-            Some((prefix, indent)) => {
-                newline(out, prefix, indent, depth + 1);
-                write_string_opts(out, k, h);
-                out.push_str(": ");
-                write_indented(out, v, prefix, indent, depth + 1, h);
-            }
-            None => {
-                write_string_opts(out, k, h);
-                out.push(':');
-                write_compact(out, v, h);
-            }
+        if let Some((prefix, indent)) = pretty {
+            newline(out, prefix, indent, depth + 1);
+            write_string_opts(out, k, h);
+            out.push_str(": ");
+            write_indented(out, v, prefix, indent, depth + 1, h);
+        } else {
+            write_string_opts(out, k, h);
+            out.push(':');
+            write_compact(out, v, h);
         }
     }
     if let Some((prefix, indent)) = pretty {
@@ -179,20 +177,49 @@ fn write_object<'a>(
     out.push('}');
 }
 
-pub fn parse(src: &str) -> Result<Value, String> {
-    let mut p = Parser { b: src.as_bytes(), i: 0 };
+/// The deepest [`parse`] lets arrays and objects nest.
+///
+/// The parser recurses once per level, so a limit keeps hostile input from exhausting the stack.
+/// That matters most in WebAssembly, which has no stack guard: an overflow there leaves the
+/// module unusable for every later call. Go's `encoding/json` allows 10,000 levels; this parser
+/// overflows the stack in WebAssembly well before that, so it follows `serde_json`'s default of 128.
+pub const MAX_DEPTH: usize = 128;
+
+/// Parses one JSON document into a [`Value`], keeping object keys in source order.
+///
+/// # Errors
+///
+/// Malformed JSON, an integer outside `i64`, arrays and objects nested deeper than
+/// [`MAX_DEPTH`], or bytes after the document.
+pub fn parse(src: &str) -> Result<Value, ParseError> {
+    let mut p = Parser { b: src.as_bytes(), i: 0, depth: 0 };
     p.ws();
-    let v = p.value()?;
+    let v = p.value().map_err(|message| ParseError { message })?;
     p.ws();
     if p.i != p.b.len() {
-        return Err(format!("json: trailing data at byte {}", p.i));
+        return Err(ParseError { message: format!("json: trailing data at byte {}", p.i) });
     }
     Ok(v)
 }
 
+/// JSON that [`parse`] refuses, with Go's `encoding/json`-style message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError {
+    message: String,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 struct Parser<'a> {
     b: &'a [u8],
     i: usize,
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -222,66 +249,79 @@ impl Parser<'_> {
 
     fn value(&mut self) -> Result<Value, String> {
         match self.b.get(self.i) {
-            Some(b'{') => {
-                self.i += 1;
-                let mut out = Vec::new();
-                self.ws();
-                if self.b.get(self.i) == Some(&b'}') {
-                    self.i += 1;
-                    return Ok(Value::Map(out));
-                }
-                loop {
-                    self.ws();
-                    let k = self.string()?;
-                    self.ws();
-                    self.eat(b':')?;
-                    self.ws();
-                    let v = self.value()?;
-                    out.push((k, v));
-                    self.ws();
-                    if self.b.get(self.i) == Some(&b',') {
-                        self.i += 1;
-                        continue;
-                    }
-                    self.eat(b'}')?;
-                    return Ok(Value::Map(out));
-                }
-            }
-            Some(b'[') => {
-                self.i += 1;
-                let mut out = Vec::new();
-                self.ws();
-                if self.b.get(self.i) == Some(&b']') {
-                    self.i += 1;
-                    return Ok(Value::Array(out));
-                }
-                loop {
-                    self.ws();
-                    out.push(self.value()?);
-                    self.ws();
-                    if self.b.get(self.i) == Some(&b',') {
-                        self.i += 1;
-                        continue;
-                    }
-                    self.eat(b']')?;
-                    return Ok(Value::Array(out));
-                }
-            }
+            Some(&c @ (b'{' | b'[')) => self.nested(c),
             Some(b'"') => Ok(Value::Str(self.string()?)),
             Some(b't') => self.lit("true", Value::Bool(true)),
             Some(b'f') => self.lit("false", Value::Bool(false)),
             Some(b'n') => self.lit("null", Value::Null),
-            Some(c) if *c == b'-' || c.is_ascii_digit() => {
-                let start = self.i;
-                self.i += 1;
-                while self.i < self.b.len() && (self.b[self.i].is_ascii_digit()) {
-                    self.i += 1;
-                }
-                let text = std::str::from_utf8(&self.b[start..self.i]).unwrap();
-                text.parse::<i64>().map(Value::Int).map_err(|e| format!("json: {e}"))
-            }
+            Some(c) if *c == b'-' || c.is_ascii_digit() => self.number(),
             _ => Err(format!("json: unexpected byte at {}", self.i)),
         }
+    }
+
+    fn nested(&mut self, open: u8) -> Result<Value, String> {
+        if self.depth == MAX_DEPTH {
+            return Err(format!("json: invalid character {:?} exceeded max depth", char::from(open)));
+        }
+        self.depth += 1;
+        let v = if open == b'{' { self.object() } else { self.array() }?;
+        self.depth -= 1;
+        Ok(v)
+    }
+
+    fn object(&mut self) -> Result<Value, String> {
+        self.i += 1;
+        let mut out = Vec::new();
+        self.ws();
+        if self.b.get(self.i) == Some(&b'}') {
+            self.i += 1;
+            return Ok(Value::Map(out));
+        }
+        loop {
+            self.ws();
+            let k = self.string()?;
+            self.ws();
+            self.eat(b':')?;
+            self.ws();
+            let v = self.value()?;
+            out.push((k, v));
+            self.ws();
+            if self.b.get(self.i) != Some(&b',') {
+                self.eat(b'}')?;
+                return Ok(Value::Map(out));
+            }
+            self.i += 1;
+        }
+    }
+
+    fn array(&mut self) -> Result<Value, String> {
+        self.i += 1;
+        let mut out = Vec::new();
+        self.ws();
+        if self.b.get(self.i) == Some(&b']') {
+            self.i += 1;
+            return Ok(Value::Array(out));
+        }
+        loop {
+            self.ws();
+            out.push(self.value()?);
+            self.ws();
+            if self.b.get(self.i) != Some(&b',') {
+                self.eat(b']')?;
+                return Ok(Value::Array(out));
+            }
+            self.i += 1;
+        }
+    }
+
+    fn number(&mut self) -> Result<Value, String> {
+        let start = self.i;
+        self.i += 1;
+        while self.i < self.b.len() && self.b[self.i].is_ascii_digit() {
+            self.i += 1;
+        }
+        let text = std::str::from_utf8(&self.b[start..self.i]).expect("the scanned number holds only ASCII bytes");
+        text.parse::<i64>().map(Value::Int).map_err(|e| format!("json: {e}"))
     }
 
     fn string(&mut self) -> Result<String, String> {
@@ -292,48 +332,56 @@ impl Parser<'_> {
             self.i += 1;
             match c {
                 b'"' => return Ok(out),
-                b'\\' => {
-                    let e = *self.b.get(self.i).ok_or("json: bad escape")?;
-                    self.i += 1;
-                    match e {
-                        b'"' => out.push('"'),
-                        b'\\' => out.push('\\'),
-                        b'/' => out.push('/'),
-                        b'b' => out.push('\u{8}'),
-                        b'f' => out.push('\u{c}'),
-                        b'n' => out.push('\n'),
-                        b'r' => out.push('\r'),
-                        b't' => out.push('\t'),
-                        b'u' => {
-                            let hex = std::str::from_utf8(&self.b[self.i..self.i + 4]).map_err(|e| e.to_string())?;
-                            self.i += 4;
-                            let mut cp = u32::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
-                            if (0xD800..0xDC00).contains(&cp) && self.b[self.i..].starts_with(b"\\u") {
-                                let lo = u32::from_str_radix(std::str::from_utf8(&self.b[self.i + 2..self.i + 6]).unwrap(), 16)
-                                    .map_err(|e| e.to_string())?;
-                                self.i += 6;
-                                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                            }
-                            out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
-                        }
-                        _ => return Err("json: bad escape".into()),
-                    }
-                }
+                b'\\' => out.push(self.escape()?),
                 _ => {
                     let start = self.i - 1;
-                    let mut end = self.i;
-                    while end < self.b.len() && self.b[end] != b'"' && self.b[end] != b'\\' {
-                        end += 1;
-                    }
+                    let end = self.b[self.i..].iter().position(|&b| b == b'"' || b == b'\\').map_or(self.b.len(), |n| self.i + n);
                     out.push_str(std::str::from_utf8(&self.b[start..end]).map_err(|e| e.to_string())?);
                     self.i = end;
                 }
             }
         }
     }
+
+    fn escape(&mut self) -> Result<char, String> {
+        let e = *self.b.get(self.i).ok_or("json: bad escape")?;
+        self.i += 1;
+        Ok(match e {
+            b'"' => '"',
+            b'\\' => '\\',
+            b'/' => '/',
+            b'b' => '\u{8}',
+            b'f' => '\u{c}',
+            b'n' => '\n',
+            b'r' => '\r',
+            b't' => '\t',
+            b'u' => self.unicode_escape()?,
+            _ => return Err("json: bad escape".into()),
+        })
+    }
+
+    fn hex4(&self, at: usize) -> Result<u32, String> {
+        let hex = self.b.get(at..at + 4).ok_or("json: truncated \\u escape")?;
+        u32::from_str_radix(std::str::from_utf8(hex).map_err(|e| e.to_string())?, 16).map_err(|e| e.to_string())
+    }
+
+    fn unicode_escape(&mut self) -> Result<char, String> {
+        let mut cp = self.hex4(self.i)?;
+        self.i += 4;
+        if (0xD800..0xDC00).contains(&cp)
+            && self.b[self.i..].starts_with(b"\\u")
+            && let Ok(lo) = self.hex4(self.i + 2)
+            && (0xDC00..0xE000).contains(&lo)
+        {
+            self.i += 6;
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+        }
+        Ok(char::from_u32(cp).unwrap_or('\u{FFFD}'))
+    }
 }
 
 impl Value {
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&Value> {
         match self {
             Value::Map(e) | Value::Struct(e) => e.iter().find(|(k, _)| k == key).map(|(_, v)| v),
@@ -341,6 +389,7 @@ impl Value {
         }
     }
 
+    #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::Str(s) => Some(s),
@@ -348,6 +397,7 @@ impl Value {
         }
     }
 
+    #[must_use]
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Value::Bool(b) => Some(*b),
@@ -355,6 +405,7 @@ impl Value {
         }
     }
 
+    #[must_use]
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             Value::Int(i) => Some(*i),
@@ -362,6 +413,7 @@ impl Value {
         }
     }
 
+    #[must_use]
     pub fn as_array(&self) -> Option<&[Value]> {
         match self {
             Value::Array(a) => Some(a),
@@ -369,15 +421,25 @@ impl Value {
         }
     }
 
-    pub fn entries(&self) -> &[(String, Value)] {
+    /// Returns an object's members in order, or `None` for anything but an object.
+    #[must_use]
+    pub fn as_object(&self) -> Option<&[(String, Value)]> {
         match self {
-            Value::Map(e) | Value::Struct(e) => e,
-            _ => &[],
+            Value::Map(e) | Value::Struct(e) => Some(e),
+            _ => None,
         }
     }
 
-    pub fn string_list(&self) -> Vec<String> {
-        self.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default()
+    /// Returns the elements of an array of strings, or `None` for anything else, including an array that holds a non-string.
+    #[must_use]
+    pub fn as_strings(&self) -> Option<Vec<String>> {
+        self.as_array()?.iter().map(|v| v.as_str().map(String::from)).collect()
+    }
+
+    /// Returns the members of an object whose values are all strings, or `None` for anything else.
+    #[must_use]
+    pub fn as_string_map(&self) -> Option<Vec<(String, String)>> {
+        self.as_object()?.iter().map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
     }
 }
 

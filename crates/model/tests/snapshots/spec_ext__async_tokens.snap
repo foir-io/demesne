@@ -1,0 +1,7 @@
+---
+source: crates/model/tests/spec_ext.rs
+expression: "spec(\"testdata/corpus/fixtures/38555e21822ea082.demesne\").async_surface_tokens()"
+---
+[
+    "auth.docs_grantee_async",
+]

@@ -58,9 +58,9 @@ describe("activePredicate degrades gracefully", () => {
     expect(levelGrants.activePredicate(fullGrant, "ig.")).toBe("ig.revoked_at IS NULL AND ig.expires_at > now()");
   });
   it("revoked-only / expiry-only / neither", () => {
-    const revokedOnly = { activeCol: "revoked_at", expiresCol: "" } as GrantSurface;
-    const expiryOnly = { activeCol: "", expiresCol: "expires_at" } as GrantSurface;
-    const neither = { activeCol: "", expiresCol: "" } as GrantSurface;
+    const revokedOnly: GrantSurface = { ...fullGrant, activeCol: "revoked_at", expiresCol: "" };
+    const expiryOnly: GrantSurface = { ...fullGrant, activeCol: "", expiresCol: "expires_at" };
+    const neither: GrantSurface = { ...fullGrant, activeCol: "", expiresCol: "" };
     expect(levelGrants.activePredicate(revokedOnly, "")).toBe("revoked_at IS NULL");
     expect(levelGrants.activePredicate(expiryOnly, "")).toBe("expires_at > now()");
     expect(levelGrants.activePredicate(neither, "")).toBe("TRUE");

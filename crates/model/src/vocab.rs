@@ -5,6 +5,7 @@ fn l(v: &[String]) -> rt::Strs {
     rt::owned_list(v.iter().cloned())
 }
 
+#[must_use]
 pub fn to_runtime(v: &Vocabulary) -> rt::Vocabulary {
     rt::Vocabulary {
         name: rt::owned(v.name.clone()),
@@ -18,12 +19,7 @@ pub fn to_runtime(v: &Vocabulary) -> rt::Vocabulary {
         presets: v
             .presets
             .iter()
-            .map(|p| rt::Preset {
-                name: rt::owned(p.name.clone()),
-                level: rt::owned(p.level.clone().unwrap_or_default()),
-                set: l(&p.set),
-                star: p.star,
-            })
+            .map(|p| rt::Preset { name: rt::owned(p.name.clone()), level: rt::owned(p.level.clone().unwrap_or_default()), set: l(&p.set), star: p.star })
             .collect::<Vec<_>>()
             .into(),
         rank: l(&v.rank),

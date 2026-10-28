@@ -1,3 +1,4 @@
+use demesne_gocompat::quote;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -5,8 +6,8 @@ pub struct Pos {
     pub line: usize,
 }
 
-fn or_empty(s: &Option<String>) -> &str {
-    s.as_deref().unwrap_or("")
+fn or_empty(s: Option<&str>) -> &str {
+    s.unwrap_or("")
 }
 
 #[derive(Debug, Clone, Default)]
@@ -29,10 +30,22 @@ pub struct Spec {
 }
 
 impl Spec {
+    /// Every relation in the spec with the object that declares it, in declaration order.
+    pub fn relations(&self) -> impl Iterator<Item = (&Object, &Relation)> {
+        self.objects.iter().flat_map(|o| o.relations.iter().map(move |r| (o, r)))
+    }
+
+    /// Every leaf term of every permission, with its object and permission, in declaration order.
+    pub fn perm_terms(&self) -> impl Iterator<Item = (&Object, &Perm, &Term)> {
+        self.objects.iter().flat_map(|o| o.perm_terms().map(move |(pm, t)| (o, pm, t)))
+    }
+
+    #[must_use]
     pub fn id_type(&self) -> &str {
         self.identifiers.as_deref().unwrap_or("text")
     }
 
+    #[must_use]
     pub fn id_cast(&self) -> String {
         match self.id_type() {
             "text" => String::new(),
@@ -40,18 +53,22 @@ impl Spec {
         }
     }
 
+    #[must_use]
     pub fn definer_schema(&self) -> &str {
         self.definer_schema.as_deref().unwrap_or("auth")
     }
 
+    #[must_use]
     pub fn table_schema(&self) -> &str {
         self.table_schema.as_deref().unwrap_or("public")
     }
 
+    #[must_use]
     pub fn levels(&self) -> &[Level] {
-        self.topology.as_ref().map(|t| t.levels.as_slice()).unwrap_or(&[])
+        self.topology.as_ref().map_or(&[], |t| t.levels.as_slice())
     }
 
+    #[must_use]
     pub fn external_by_name(&self, name: &str) -> Option<&External> {
         self.externals.iter().find(|e| e.name == name)
     }
@@ -88,38 +105,47 @@ pub struct Grant {
 }
 
 impl Grant {
+    #[must_use]
     pub fn confers(&self, op: &str) -> bool {
         self.verbs.is_empty() || self.verbs.iter().any(|v| v == op)
     }
 
+    #[must_use]
     pub fn grant_pk(&self) -> &str {
         self.id_col.as_deref().unwrap_or("id")
     }
 
+    #[must_use]
     pub fn definer_base(&self) -> &str {
         self.named.as_deref().unwrap_or_else(|| self.table())
     }
 
+    #[must_use]
     pub fn table(&self) -> &str {
-        or_empty(&self.table)
+        or_empty(self.table.as_deref())
     }
 
+    #[must_use]
     pub fn grantee_col(&self) -> &str {
-        or_empty(&self.grantee_col)
+        or_empty(self.grantee_col.as_deref())
     }
 
+    #[must_use]
     pub fn level_col(&self) -> &str {
-        or_empty(&self.level_col)
+        or_empty(self.level_col.as_deref())
     }
 
+    #[must_use]
     pub fn claim_key(&self) -> &str {
-        or_empty(&self.claim_key)
+        or_empty(self.claim_key.as_deref())
     }
 
+    #[must_use]
     pub fn claim_value(&self) -> &str {
-        or_empty(&self.claim_value)
+        or_empty(self.claim_value.as_deref())
     }
 
+    #[must_use]
     pub fn has_scope(&self, level: &str) -> bool {
         self.scopes.iter().any(|s| s.level == level)
     }
@@ -166,6 +192,7 @@ pub struct RoleStore {
 }
 
 impl RoleStore {
+    #[must_use]
     pub fn assignment_pk(&self) -> &str {
         self.id_col.as_deref().unwrap_or("id")
     }
@@ -188,14 +215,17 @@ pub struct Level {
 }
 
 impl Level {
+    #[must_use]
     pub fn is_root(&self) -> bool {
         self.parents.is_empty()
     }
 
+    #[must_use]
     pub fn scope_column(&self) -> String {
         self.scope_col.clone().unwrap_or_else(|| format!("{}_id", self.name))
     }
 
+    #[must_use]
     pub fn claim_key(&self) -> String {
         self.claim_key.clone().unwrap_or_else(|| format!("{}_id", self.name))
     }
@@ -245,28 +275,34 @@ pub struct Subject {
 }
 
 impl Subject {
+    #[must_use]
     pub fn anchor(&self) -> &str {
-        or_empty(&self.anchor)
+        or_empty(self.anchor.as_deref())
     }
 
+    #[must_use]
     pub fn reach(&self) -> &str {
-        or_empty(&self.reach)
+        or_empty(self.reach.as_deref())
     }
 
+    #[must_use]
     pub fn identifies(&self) -> &str {
-        or_empty(&self.identifies)
+        or_empty(self.identifies.as_deref())
     }
 
+    #[must_use]
     pub fn roles(&self) -> &str {
-        or_empty(&self.roles)
+        or_empty(self.roles.as_deref())
     }
 
+    #[must_use]
     pub fn reach_grant(&self) -> &str {
-        or_empty(&self.reach_grant)
+        or_empty(self.reach_grant.as_deref())
     }
 
+    #[must_use]
     pub fn binds(&self) -> &str {
-        or_empty(&self.binds)
+        or_empty(self.binds.as_deref())
     }
 }
 
@@ -330,18 +366,27 @@ pub struct Object {
 }
 
 impl Object {
+    /// Every leaf term of this object's permissions, with its permission, in declaration order.
+    pub fn perm_terms(&self) -> impl Iterator<Item = (&Perm, &Term)> {
+        self.perms.iter().flat_map(|pm| pm.tree.leaves().into_iter().map(move |t| (pm, t)))
+    }
+
+    #[must_use]
     pub fn is_level_entity(&self) -> bool {
         self.level.is_some()
     }
 
+    #[must_use]
     pub fn level(&self) -> &str {
-        or_empty(&self.level)
+        or_empty(self.level.as_deref())
     }
 
+    #[must_use]
     pub fn scope_is_wildcard(&self, level: &str) -> bool {
         self.scope_wildcards.iter().any(|w| w == level)
     }
 
+    #[must_use]
     pub fn scope_is_wildcard_for(&self, level: &str, op: &str) -> bool {
         if !self.scope_is_wildcard(level) {
             return false;
@@ -352,24 +397,27 @@ impl Object {
         }
     }
 
+    #[must_use]
     pub fn pk(&self) -> &str {
         self.pk.as_deref().unwrap_or("id")
     }
 
+    #[must_use]
     pub fn point_checkable(&self) -> bool {
         self.pk_cols.is_empty()
     }
 
+    #[must_use]
     pub fn require_for(&self, verb: &str) -> Option<&Require> {
         self.requires.iter().find(|r| r.verb == verb)
     }
 
+    #[must_use]
     pub fn grant_use(&self, grant: &str, op: &str) -> Option<&GrantUse> {
-        self.reach_uses
-            .iter()
-            .find(|u| u.grant == grant && (u.ops.is_empty() || u.ops.iter().any(|o| o == op)))
+        self.reach_uses.iter().find(|u| u.grant == grant && (u.ops.is_empty() || u.ops.iter().any(|o| o == op)))
     }
 
+    #[must_use]
     pub fn owner_changelog_cols(&self) -> Option<(&str, &str)> {
         self.relations.iter().find_map(|r| match &r.repr {
             Repr::Column(vc) => vc.discrim_col.as_deref().map(|d| (vc.column.as_str(), d)),
@@ -377,6 +425,7 @@ impl Object {
         })
     }
 
+    #[must_use]
     pub fn mode_changelog_col(&self) -> Option<&str> {
         self.perms.iter().find_map(|pm| pm.tree.leaves().into_iter().find_map(|t| t.mode_col()))
     }
@@ -389,6 +438,7 @@ pub enum RelationKind {
 }
 
 impl RelationKind {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             RelationKind::Composition => "composition",
@@ -475,6 +525,7 @@ pub struct ViaObject {
 }
 
 impl ViaObject {
+    #[must_use]
     pub fn function_name(&self) -> String {
         match &self.op {
             Some(op) => format!("{}_can_{}_for_{}", self.object, self.verb, op),
@@ -510,6 +561,7 @@ pub enum ArgSrc {
 }
 
 impl ArgSrc {
+    #[must_use]
     pub fn claim(&self) -> &str {
         match self {
             ArgSrc::Claim(c) => c,
@@ -517,6 +569,7 @@ impl ArgSrc {
         }
     }
 
+    #[must_use]
     pub fn col(&self) -> &str {
         match self {
             ArgSrc::Col(c) => c,
@@ -543,22 +596,27 @@ pub struct Perm {
     pub guard: Option<Guard>,
     pub self_check: Option<String>,
     pub predicate_only: bool,
+    pub blind: bool,
     pub pos: Pos,
 }
 
 impl Perm {
+    #[must_use]
     pub fn expr(&self) -> Vec<&Term> {
         self.tree.leaves()
     }
 
+    #[must_use]
     pub fn layer_tag(&self) -> String {
         format!("@{}", self.layers.join(","))
     }
 
+    #[must_use]
     pub fn maps(&self) -> &str {
-        or_empty(&self.maps)
+        or_empty(self.maps.as_deref())
     }
 
+    #[must_use]
     pub fn has_layer(&self, layer: &str) -> bool {
         self.layers.iter().any(|l| l == layer)
     }
@@ -573,6 +631,19 @@ pub enum PermNode {
 }
 
 impl PermNode {
+    /// Renders the expression as it is written in a spec, bracketing a union inside `and` or `not`.
+    #[must_use]
+    pub fn display(&self) -> String {
+        let operand = |n: &PermNode| if matches!(n, PermNode::Or(_)) { format!("({})", n.display()) } else { n.display() };
+        match self {
+            PermNode::Leaf(t) => t.display(),
+            PermNode::Not(k) => format!("not {}", operand(k)),
+            PermNode::And(kids) => kids.iter().map(operand).collect::<Vec<_>>().join(" and "),
+            PermNode::Or(kids) => kids.iter().map(PermNode::display).collect::<Vec<_>>().join(" + "),
+        }
+    }
+
+    #[must_use]
     pub fn op(&self) -> &'static str {
         match self {
             PermNode::Leaf(_) => "leaf",
@@ -582,6 +653,7 @@ impl PermNode {
         }
     }
 
+    #[must_use]
     pub fn leaves(&self) -> Vec<&Term> {
         let mut out = Vec::new();
         self.collect_leaves(&mut out);
@@ -596,6 +668,7 @@ impl PermNode {
         }
     }
 
+    #[must_use]
     pub fn kids(&self) -> Vec<&PermNode> {
         match self {
             PermNode::Leaf(_) => Vec::new(),
@@ -604,14 +677,17 @@ impl PermNode {
         }
     }
 
+    #[must_use]
     pub fn nil() -> PermNode {
         PermNode::Or(Vec::new())
     }
 
+    #[must_use]
     pub fn is_nil(&self) -> bool {
         matches!(self, PermNode::Or(kids) if kids.is_empty())
     }
 
+    #[must_use]
     pub fn term(&self) -> Option<&Term> {
         match self {
             PermNode::Leaf(t) => Some(t),
@@ -635,6 +711,7 @@ pub enum ExternalArg {
 }
 
 impl ExternalArg {
+    #[must_use]
     pub fn col(&self) -> &str {
         match self {
             ExternalArg::Col(c) => c,
@@ -642,6 +719,7 @@ impl ExternalArg {
         }
     }
 
+    #[must_use]
     pub fn claim(&self) -> &str {
         match self {
             ExternalArg::Claim(c) => c,
@@ -649,6 +727,7 @@ impl ExternalArg {
         }
     }
 
+    #[must_use]
     pub fn lit(&self) -> &str {
         match self {
             ExternalArg::Lit(l) => l,
@@ -665,6 +744,7 @@ pub struct Require {
 }
 
 impl Require {
+    #[must_use]
     pub fn expr(&self) -> Vec<&Term> {
         self.tree.leaves()
     }
@@ -677,6 +757,7 @@ pub enum GuardOp {
 }
 
 impl GuardOp {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             GuardOp::Eq => "=",
@@ -722,6 +803,25 @@ pub enum Builtin {
 }
 
 impl Builtin {
+    /// Renders the builtin as it is written in a spec, with its arguments.
+    #[must_use]
+    pub fn display(&self) -> String {
+        match self {
+            Builtin::Session(Some(rel)) => format!("@session({rel})"),
+            Builtin::AppScope(rels) if !rels.is_empty() => format!("@app_scope(exclude {})", rels.join(", ")),
+            Builtin::Kind(v) => format!("@kind({})", quote(v)),
+            Builtin::Claim { key, val } => format!("@claim({}, {})", quote(key), quote(val)),
+            Builtin::SelfCol(c) => format!("@self({c})"),
+            Builtin::Within { level, nullable: true } => format!("@within({level} nullable)"),
+            Builtin::Within { level, nullable: false } => format!("@within({level})"),
+            Builtin::Holds(p) => format!("@holds({p})"),
+            Builtin::External { func, .. } => format!("@external({func})"),
+            Builtin::Row { col, val } => format!("@row({col}, {})", quote(val)),
+            Builtin::Session(None) | Builtin::AppScope(_) | Builtin::Other(_) => format!("@{}", self.name()),
+        }
+    }
+
+    #[must_use]
     pub fn name(&self) -> &str {
         match self {
             Builtin::Session(_) => "session",
@@ -746,6 +846,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn ident(&self) -> &str {
         match &self.kind {
             TermKind::Ref { ident, .. } => ident,
@@ -753,6 +854,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn walk_verb(&self) -> &str {
         match &self.kind {
             TermKind::Ref { walk_verb: Some(v), .. } => v,
@@ -761,9 +863,10 @@ impl Term {
     }
 
     pub fn builtin(&self) -> &str {
-        self.builtin_ref().map(Builtin::name).unwrap_or("")
+        self.builtin_ref().map_or("", Builtin::name)
     }
 
+    #[must_use]
     pub fn session_rel(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::Session(Some(r))) => r,
@@ -771,6 +874,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn exclude_rels(&self) -> &[String] {
         match self.builtin_ref() {
             Some(Builtin::AppScope(rels)) => rels,
@@ -778,6 +882,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn mode_col(&self) -> Option<&str> {
         match &self.kind {
             TermKind::Mode { col, .. } => Some(col),
@@ -785,6 +890,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn mode_val(&self) -> &str {
         match &self.kind {
             TermKind::Mode { val, .. } => val,
@@ -792,6 +898,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn mode_scope(&self) -> &str {
         match &self.kind {
             TermKind::Mode { scope: Some(s), .. } => s,
@@ -799,6 +906,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn grant_ref(&self) -> &str {
         match &self.kind {
             TermKind::Grant(g) => g,
@@ -806,6 +914,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn kind_val(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::Kind(v)) => v,
@@ -813,6 +922,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn self_col(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::SelfCol(c)) => c,
@@ -820,6 +930,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn claim_key(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::Claim { key, .. }) => key,
@@ -827,6 +938,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn claim_val(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::Claim { val, .. }) => val,
@@ -834,6 +946,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn row_col(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::Row { col, .. }) => col,
@@ -841,6 +954,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn row_val(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::Row { val, .. }) => val,
@@ -848,6 +962,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn within_level(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::Within { level, .. }) => level,
@@ -855,10 +970,12 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn within_nullable(&self) -> bool {
         matches!(self.builtin_ref(), Some(Builtin::Within { nullable: true, .. }))
     }
 
+    #[must_use]
     pub fn holds_perm(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::Holds(p)) => p,
@@ -866,6 +983,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn external_fn(&self) -> &str {
         match self.builtin_ref() {
             Some(Builtin::External { func, .. }) => func,
@@ -873,6 +991,7 @@ impl Term {
         }
     }
 
+    #[must_use]
     pub fn external_args(&self) -> &[ExternalArg] {
         match self.builtin_ref() {
             Some(Builtin::External { args, .. }) => args,
@@ -880,21 +999,16 @@ impl Term {
         }
     }
 
+    /// Renders the term as it is written in a spec, with its arguments.
+    #[must_use]
     pub fn display(&self) -> String {
         match &self.kind {
             TermKind::Grant(g) => format!("via grant {g}"),
-            TermKind::Builtin(b) => match b {
-                Builtin::SelfCol(c) => format!("@self({c})"),
-                Builtin::Within { level, nullable: true } => format!("@within({level} nullable)"),
-                Builtin::Within { level, nullable: false } => format!("@within({level})"),
-                Builtin::Holds(p) => format!("@holds({p})"),
-                Builtin::External { func, .. } => format!("@external({func})"),
-                Builtin::Row { col, val } => format!("@row({col}, \"{val}\")"),
-                other => format!("@{}", other.name()),
-            },
+            TermKind::Builtin(b) => b.display(),
             TermKind::Ref { ident, walk_verb: Some(v) } => format!("{ident}->{v}"),
             TermKind::Ref { ident, walk_verb: None } => ident.clone(),
-            TermKind::Mode { .. } => String::new(),
+            TermKind::Mode { col, val, scope: None } => format!("mode {col} = {}", quote(val)),
+            TermKind::Mode { col, val, scope: Some(s) } => format!("mode {col} = {} for {s}", quote(val)),
         }
     }
 }
@@ -907,6 +1021,7 @@ pub struct Admit {
 }
 
 impl Admit {
+    #[must_use]
     pub fn perm(&self, op: &str) -> Perm {
         Perm {
             verb: "admit".to_string(),
@@ -916,6 +1031,7 @@ impl Admit {
             guard: None,
             self_check: None,
             predicate_only: false,
+            blind: false,
             pos: self.pos,
         }
     }
@@ -937,6 +1053,7 @@ pub struct ExportParameter {
 }
 
 impl ExportParameter {
+    #[must_use]
     pub fn name(&self) -> String {
         self.name.clone().unwrap_or_else(|| format!("p_{}", self.column))
     }
