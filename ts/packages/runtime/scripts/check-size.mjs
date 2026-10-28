@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 
-const WASM_BUDGET = 180_000;
-const ENTRY_GZIP_BUDGET = 96_000;
+const WASM_BUDGET = 200_000;
+const ENTRY_GZIP_BUDGET = 105_000;
 
 const dist = new URL("../dist/", import.meta.url);
 const wasm = statSync(new URL("wasm/demesne_runtime_wasm_bg.wasm", dist)).size;

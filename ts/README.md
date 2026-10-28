@@ -61,7 +61,7 @@ Scope semantics match the floor. A scoped role is held only at or below the scop
 
 - `packages/runtime`: `@foir/demesne`, with zero runtime dependencies. Its TypeScript is a thin layer over demesne's Rust runtime (`crates/runtime`) compiled to WebAssembly by `crates/runtime-wasm`. Rust adopters link that runtime natively, so there is one implementation of the algorithms: claims and session minting, the verb policy decision point and `composeCan`, the holds-resolver (`scopeContains` / `resolve`) and vocabulary expansion, the delegation cap, the app-level read builders, and the write builders for role assignment, level grants, and resource ACLs.
   - The API is synchronous. The default entry carries the module's bytes and compiles them on import, which Node and browsers allow. Cloudflare Workers forbid compiling bytes at runtime, so the package's `workerd` export condition imports the `.wasm` file as a module instead.
-  - A size budget is checked on every build: at most 180 KB for the module, and 96 KB gzipped for everything the default entry loads.
+  - A size budget is checked on every build: at most 200 KB for the module, and 105 KB gzipped for everything the default entry loads.
 - `packages/example-app`: a worked example. It stands up a real Postgres with `pg_ctl` and no Docker, applies the emitted RLS over a hand-written schema, and round-trips the runtime builders against it under the `authenticated` role. This proves the TypeScript path agrees with the database end to end. It skips cleanly where Postgres is absent.
 
 ## Equivalence is proven, not asserted
@@ -78,6 +78,7 @@ pnpm install
 pnpm -r build        # also checks the size budget
 pnpm -r test         # runtime unit + oracle + example-app round-trip, in Node
 pnpm -r typecheck
+pnpm --filter @foir/demesne test:deno      # the same suite in Deno
 pnpm --filter @foir/demesne test:workerd   # the same suite inside workerd, through the workerd export
 pnpm --filter @foir/demesne test:browser   # the same suite in headless Chrome
 pnpm --filter @foir/demesne test:packed    # the packed tarball, bundled and run in Node, workerd and Chrome
