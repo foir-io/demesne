@@ -1,0 +1,11 @@
+object note {
+  table  notes
+  scoped tenant > workspace
+  relation owner:   member via owner_id
+  relation grantee: member via grant acl(resource_id, principal_kind, principal_id, access) where resource_type = "note"
+  relation on_doc:  doc via object doc->view on doc_id
+  permission view = owner + grantee:read + grantee:write + on_doc @rls maps select
+  permission edit = owner + grantee:write @rls maps update
+}
+
+replace grant support at tenant via edge support_grants(holder_id, tenant_id) active ended_at

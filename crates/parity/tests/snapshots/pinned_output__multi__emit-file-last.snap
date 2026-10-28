@@ -1,0 +1,28 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, \"\", &args)"
+---
+exit: 0
+--- stdout ---
+
+-- ===== Dropped since the previous manifest =====
+DROP FUNCTION IF EXISTS auth.doc_readable(text, text, text, text);
+DO $demesne$
+DECLARE
+  survivors text;
+BEGIN
+  SELECT string_agg(what, ', ' ORDER BY what) INTO survivors FROM (
+    SELECT 'function ' || p.oid::regprocedure::text AS what
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE (n.nspname, p.proname) IN (('auth'::name, 'doc_readable'::name))
+        AND p.oid <> ALL (array_remove(ARRAY[]::oid[], NULL))
+  ) s;
+  IF survivors IS NOT NULL THEN
+    RAISE EXCEPTION 'demesne: still present after the drops: %', survivors;
+  END IF;
+END
+$demesne$;
+
+--- stderr ---
+
+--- end ---

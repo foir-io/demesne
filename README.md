@@ -40,6 +40,10 @@ npx @foir/demesne-cli emit authz.demesne all > authz.sql   # policies, the SECUR
 npx @foir/demesne-cli emit authz.demesne --target ts framework > src/authz.ts   # the typed TypeScript surface
 ```
 
+A spec can also be split into several files, compiled as one model, with each
+file's share of the SQL emitted on its own (`emit <files> --file <file>`); see
+[GUIDE.md](GUIDE.md#a-spec-in-several-files).
+
 Or from Rust:
 
 ```rust

@@ -153,8 +153,10 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 | `demesne diff <spec> <dsn>` | yes | generated-vs-live drift both ways: policies, definers, triggers, orphans |
 | `demesne coverage <spec> <dsn>` | yes | list live tables with NO governing object (ungoverned → no RLS) — the drift/gap check |
 
-`<dsn>` defaults to `$DATABASE_URL`. The engine package never touches a database;
-only the CLI links a Postgres driver, for the live-database subcommands.
+`<dsn>` defaults to `$DATABASE_URL`. Every `<spec>` may be several files, given in
+order; see [A spec in several files](#a-spec-in-several-files). The engine package
+never touches a database; only the CLI links a Postgres driver, for the
+live-database subcommands.
 
 Editor support: a VS Code syntax-highlighting extension for `.demesne` lives in
 `editors/vscode/` (a TextMate grammar, no build step).
@@ -1273,6 +1275,73 @@ as a boolean function over parameters in place of the row's columns. A
 hand-written move function can then ask whether the caller may write the folder
 at its destination with the same predicate the policy enforces, rather than a
 second copy of it. Every row column the predicate reads must be bound.
+
+## A spec in several files
+
+A spec can be split into files, given in order:
+
+```sh
+demesne validate core.demesne extra.demesne
+```
+
+The files compile as one model, as if each file's text ran on from the file
+before it, so a spec split into files emits what the same text emits as one
+file. Each file may refer to what the files before it declare, and never to what
+a later file declares. The files are applied in order: the spec made of a file
+and the files before it, its prefix, is what a database holds once the files up
+to it are applied, so every prefix has to validate on its own.
+
+A finding names its file, as in `extra.demesne:12: permission note.view
+references unknown relation "nobody"`. A finding that belongs to no line names
+the last file of the prefix it was found in. A spec in one file still reports
+`line 12: …`.
+
+`--file` prints one file's share of the SQL:
+
+```sh
+demesne emit core.demesne extra.demesne --file core.demesne  > core.sql
+demesne emit core.demesne extra.demesne --file extra.demesne > extra.sql
+```
+
+A file's share is what its prefix creates that the prefix before it does not,
+or creates differently, followed by the drops of what the prefix before it
+creates and this prefix no longer does. The first file's share is its whole SQL.
+Applied in order, the shares leave the database holding what the whole spec's
+SQL creates. When a later file changes something an earlier file created, the
+later file writes it again: a `@store_manage` dispatch gains its arm in the
+file that adds an object to the grant table, and its `CREATE OR REPLACE`
+replaces the earlier body; a policy a later subject's reach widens is written
+again with it.
+
+`--file` takes the emit kinds `all`, `manifest` and `migrate`. The manifest is
+the prefix's: what the database holds once the files up to the one named are
+applied, which is what the next `migrate` of that file compares with. Every
+other kind, and `--target ts` with it, covers the files given, so a build that
+ships fewer files passes fewer.
+
+### `replace`
+
+A later file may write `replace` before a declaration. It takes the place of the
+earlier files' declaration of the same kind and name:
+
+```demesne
+replace grant support at tenant via edge support_grants(holder_id, tenant_id) active ended_at
+```
+
+Any declaration can be replaced: an object, a subject, a grant, a vocabulary, a
+rolestore, a template, an external predicate, a `procedures`, `ungoverned` or
+`fieldscopes` block, and the declarations a spec makes once (`topology`,
+`claims`, `definers`, `tables` and `identifiers`). A replacement needs an
+earlier declaration to replace, so a spec in one file refuses `replace`. Without
+it, a later file can't declare again what the spec declares once, or an external
+predicate an earlier file declares.
+
+From Rust, `demesne_syntax::parse_files` compiles the files into `SpecFiles`,
+whose `prefix(k)` and `spec()` are ordinary specs, and
+`demesne_emit_sql::validate_files`, `file_sql` and `file_migration` validate and
+emit them. A build script adds files with `Builder::spec`. The compiler's
+WebAssembly build has `diagnostics_files`, and `@foir/demesne` runs the
+TypeScript emitted for the files given like any other.
 
 ## What it is not
 

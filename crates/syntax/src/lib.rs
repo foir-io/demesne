@@ -2,6 +2,7 @@
 
 mod ast;
 mod error;
+mod files;
 mod lexer;
 mod parser;
 
@@ -12,4 +13,5 @@ pub use ast::{
     ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 pub use error::{Error, Finding};
+pub use files::{SpecFiles, parse_files};
 pub use parser::{MAX_NESTING, parse, parse_bytes};

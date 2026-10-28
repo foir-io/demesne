@@ -33,3 +33,12 @@ fn a_live_command_says_it_needs_the_native_cli() {
         assert!(String::from_utf8_lossy(&o.stderr).contains("needs a database connection"), "{cmd}");
     }
 }
+
+#[test]
+fn run_emits_one_file_of_a_spec_in_several() {
+    let read = |n: &str| std::fs::read(format!("{}/../../testdata/multi/{n}", env!("CARGO_MANIFEST_DIR"))).expect("the fixture reads");
+    let fs: BTreeMap<String, Vec<u8>> = ["base.demesne", "extra.demesne", "last.demesne"].iter().map(|n| ((*n).to_string(), read(n))).collect();
+    let o = run_native(&args(&["emit", "base.demesne", "extra.demesne", "last.demesne", "--file", "last.demesne"]), fs);
+    assert_eq!(o.code, 0, "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("DROP FUNCTION IF EXISTS auth.doc_readable(text, text, text, text);"));
+}

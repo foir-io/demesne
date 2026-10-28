@@ -502,6 +502,30 @@ it. Two new emit kinds close this:
 `Sql::manifest`, `Sql::migration` and `Manifest` are the same in the
 `demesne-emit-sql` API, and `Sql::write_all_sql` is the `emit all` text.
 
+### A spec can be written in several files
+
+Several `.demesne` files can be compiled as one model, given in order, as in
+`demesne validate core.demesne extra.demesne`. Each file may refer to what the
+files before it declare. Split where each prefix still validates, a spec emits
+what its text emits in one file: a property test splits every corpus spec that
+way and checks that the files emit the same objects. A spec in one file emits
+exactly what it did.
+
+- Findings name their file, as in `extra.demesne:12: …`. A spec in one file
+  still reports `line 12: …`.
+- `emit <files> --file <file>` prints that file's share of the SQL: what its
+  prefix adds or changes, then drops of what the prefix before it had. A later
+  file that changes a function, such as a `@store_manage` dispatch gaining an
+  object, writes it again, and its `CREATE OR REPLACE` replaces the earlier
+  body. `--file` takes `all`, `manifest` and `migrate`.
+- A later file may write `replace` before a declaration, to take the place of
+  an earlier file's declaration of the same kind and name.
+- `check`, `diff` and `coverage` take several files too.
+- In Rust: `demesne_syntax::parse_files` and `SpecFiles`,
+  `demesne_emit_sql::validate_files`, `validate_files_warnings`, `file_sql` and
+  `file_migration`, `Finding::file`, and `Builder::spec` in `demesne-emit-rust`.
+  The compiler's WebAssembly build gains `diagnostics_files`.
+
 ### VS Code validates specs as you type
 
 The VS Code extension had only a grammar. It now runs the compiler, built to

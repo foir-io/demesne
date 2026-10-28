@@ -20,6 +20,10 @@ impl Error {
         Error { repr: Repr::Findings(vec![Finding::unplaced(message)]) }
     }
 
+    pub(crate) fn of_findings(findings: Vec<Finding>) -> Self {
+        Error { repr: Repr::Findings(findings) }
+    }
+
     /// Returns every problem found, in the order they are reported.
     #[must_use]
     pub fn findings(&self) -> &[Finding] {

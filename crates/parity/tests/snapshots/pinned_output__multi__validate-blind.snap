@@ -1,0 +1,12 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, \"\", &args)"
+---
+exit: 0
+--- stdout ---
+ok: 3 objects, 2 levels, 8 policies, 3 reachability grants
+
+--- stderr ---
+warning: testdata/multi/blind.demesne:7: permission ledger.delete maps delete, and its term `grantee:delete` admits callers the select permission ledger.view does not reach; Postgres applies a DELETE only to rows the SELECT policy shows, so for those callers it changes nothing and reports success: kept as a warning because the permission is marked `blind`
+
+--- end ---

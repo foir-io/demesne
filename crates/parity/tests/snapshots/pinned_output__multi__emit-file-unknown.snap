@@ -1,0 +1,11 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, \"\", &args)"
+---
+exit: 1
+--- stdout ---
+
+--- stderr ---
+demesne: --file "nope.demesne" names none of the spec's files (testdata/multi/base.demesne, testdata/multi/extra.demesne, testdata/multi/last.demesne)
+
+--- end ---

@@ -1,4 +1,4 @@
-use demesne_wasm::diagnostics;
+use demesne_wasm::{diagnostics, diagnostics_files};
 
 fn spec(name: &str) -> String {
     std::fs::read_to_string(format!("{}/../../testdata/gaps/{name}", env!("CARGO_MANIFEST_DIR"))).expect("the fixture reads")
@@ -38,4 +38,13 @@ fn a_parse_error_and_an_unplaced_error_keep_their_text() {
         ),
         "{got}"
     );
+}
+
+#[test]
+fn a_finding_in_a_spec_of_several_files_names_its_file() {
+    let base = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/multi/base.demesne")).expect("the fixture reads");
+    let bad = "\nobject stray {\n  table strays\n  scoped tenant > workspace\n  relation owner: member via owner_id\n  permission view = nobody @rls maps select\n}\n";
+    let got = diagnostics_files(vec!["base.demesne".into(), "bad.demesne".into()], vec![base.clone(), bad.into()]);
+    assert!(got.starts_with(r#"[{"severity":"error","file":"bad.demesne","line":6,"message":"permission stray.view references unknown relation"#), "{got}");
+    assert_eq!(diagnostics_files(vec!["base.demesne".into()], vec![base]), "[]");
 }

@@ -1,4 +1,4 @@
-use demesne_cli::{Files, OsFiles, Out, R, finish, load_spec, need, run_pure, strip_flag};
+use demesne_cli::{Files, OsFiles, Out, R, finish, load_specs, need, run_pure, spec_args, strip_flag};
 use demesne_emit_sql::Sql;
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
@@ -113,11 +113,13 @@ fn scaffold_interactive(out: &mut Out, sc: &demesne_model::Schema) -> R {
 
 fn cmd_check(out: &mut Out, args: &[String]) -> R {
     need(args, 1, "<spec.demesne>")?;
-    let s = load_spec(&OsFiles, &args[0])?;
-    out.warn_spec(&args[0], &s);
-    let dsn = dsn_arg(args, 1)?;
+    let (paths, rest) = spec_args(args);
+    let loaded = load_specs(&OsFiles, &paths)?;
+    out.warn_loaded(&paths, &loaded);
+    let s = loaded.spec();
+    let dsn = dsn_arg(&rest, 0)?;
     let (sc, _, mut client) = introspect(&dsn)?;
-    demesne_model::validate_against(&s, &sc).map_err(|e| format!("spec does not bind to the live schema:\n{e}"))?;
+    demesne_model::validate_against(s, &sc).map_err(|e| format!("spec does not bind to the live schema:\n{e}"))?;
     out.print("ok: spec is valid AND binds to the live schema (every referenced table/column exists)\n");
     let role = s.session().role;
     match demesne_postgres::role_bypasses_rls(&mut client, &role) {
@@ -132,8 +134,8 @@ fn cmd_check(out: &mut Out, args: &[String]) -> R {
         }
         Ok((true, false)) => out.print(&format!("ok: the RLS connection role {} is not BYPASSRLS\n", quote(&role))),
     }
-    report_global_assignments(out, &s, &mut client);
-    report_schema_traps(out, &s, &mut client)
+    report_global_assignments(out, s, &mut client);
+    report_schema_traps(out, s, &mut client)
 }
 
 fn report_schema_traps(out: &mut Out, s: &Spec, client: &mut postgres::Client) -> R {
@@ -219,11 +221,13 @@ fn report_global_assignments(out: &mut Out, s: &Spec, client: &mut postgres::Cli
 fn cmd_coverage(out: &mut Out, args: &[String]) -> R {
     let (exit_code, args) = strip_bool_flag(args, "exit-code");
     need(&args, 1, "<spec.demesne>")?;
-    let s = load_spec(&OsFiles, &args[0])?;
-    out.warn_spec(&args[0], &s);
-    let dsn = dsn_arg(&args, 1)?;
+    let (paths, rest) = spec_args(&args);
+    let loaded = load_specs(&OsFiles, &paths)?;
+    out.warn_loaded(&paths, &loaded);
+    let s = loaded.spec();
+    let dsn = dsn_arg(&rest, 0)?;
     let (sc, _, _) = introspect(&dsn)?;
-    let cov = demesne_model::table_coverage(&s, &sc.tables());
+    let cov = demesne_model::table_coverage(s, &sc.tables());
     out.print(&format!(
         "{} governed (RLS), {} referenced (policy-free stores), {} UNGOVERNED\n",
         cov.governed.len(),
@@ -249,11 +253,13 @@ fn cmd_diff(out: &mut Out, args: &[String]) -> R {
     let (exit_code, args) = strip_bool_flag(args, "exit-code");
     let (allow_path, args) = strip_flag(&args, "allow", "");
     need(&args, 1, "<spec.demesne>")?;
-    let s = load_spec(&OsFiles, &args[0])?;
-    out.warn_spec(&args[0], &s);
-    let dsn = dsn_arg(&args, 1)?;
+    let (paths, rest) = spec_args(&args);
+    let loaded = load_specs(&OsFiles, &paths)?;
+    out.warn_loaded(&paths, &loaded);
+    let s = loaded.spec();
+    let dsn = dsn_arg(&rest, 0)?;
     let mut sql = String::new();
-    Sql::new(&s).write_all_sql(&mut sql).map_err(|e| e.to_string())?;
+    Sql::new(s).write_all_sql(&mut sql).map_err(|e| e.to_string())?;
     let allow: Vec<String> = if allow_path.is_empty() {
         Vec::new()
     } else {

@@ -90,6 +90,31 @@ pub fn diagnostics(source: &str) -> String {
     json::marshal(&Value::Array(found))
 }
 
+/// Returns every problem in a spec written in several files, as [`diagnostics`] does for a spec in one.
+///
+/// The result is a JSON array of `{"severity": "error" | "warning", "file": string | null, "line": number | null,
+/// "message": string}`. `names` and `sources` are the files' names and texts, in order. The file and line are the finding's own: a finding that belongs to
+/// no line names the last file of the prefix it was found in, and a parse problem with no line names no file.
+#[wasm_bindgen]
+#[must_use]
+#[expect(clippy::needless_pass_by_value, reason = "wasm-bindgen hands a JavaScript string array over only by value")]
+pub fn diagnostics_files(names: Vec<String>, sources: Vec<String>) -> String {
+    let found: Vec<Value> = match demesne_syntax::parse_files(names.iter().map(String::as_str).zip(sources.iter().map(String::as_bytes))) {
+        Err(e) => vec![in_file("error", e.finding())],
+        Ok(files) => match demesne_emit_sql::validate_files(&files) {
+            Err(e) => e.findings().iter().map(|f| in_file("error", f)).collect(),
+            Ok(()) => demesne_emit_sql::validate_files_warnings(&files).iter().map(|w| in_file("warning", w)).collect(),
+        },
+    };
+    json::marshal(&Value::Array(found))
+}
+
+fn in_file(severity: &str, f: &demesne_syntax::Finding) -> Value {
+    let Value::Struct(mut fields) = located(severity, f) else { unreachable!("located builds a struct") };
+    fields.insert(1, ("file".into(), f.file().map_or(Value::Null, Value::str)));
+    Value::Struct(fields)
+}
+
 fn located(severity: &str, f: &demesne_syntax::Finding) -> Value {
     let line = f.line().map_or(Value::Null, |n| Value::Int(i64::try_from(n).expect("a spec's line count fits in i64")));
     Value::Struct(vec![("severity".into(), Value::str(severity)), ("line".into(), line), ("message".into(), Value::str(f.message()))])

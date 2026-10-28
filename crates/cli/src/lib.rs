@@ -3,18 +3,20 @@
 use demesne_emit_sql::{Manifest, Sql, definers_sql};
 use demesne_gocompat::quote;
 use demesne_model::{SpecExt, pdp::emit_pdp};
-use demesne_syntax::Spec;
+use demesne_syntax::{Spec, SpecFiles};
 use std::io;
 
 pub const USAGE: &str = "demesne — RLS-compiled ReBAC authorization, point it at your database.
 
 USAGE:
-  demesne validate <spec.demesne>              parse + validate a spec
-  demesne emit     <spec.demesne> [kind]       print generated SQL
+  demesne validate <spec.demesne>...           parse + validate a spec
+  demesne emit     <spec.demesne>... [kind]    print generated SQL
                                                kind: rls|definers|enablement|triggers|pdp|all (default all)
                                                manifest: JSON record of every object the SQL creates
                                                migrate <manifest.json>: all, then exact drops of what that
                                                             manifest's surface had and this spec no longer emits
+                                               --file <spec.demesne>: one file's share of a spec in several
+                                                            files (kind all, manifest or migrate)
                                                --target ts: emit TypeScript (@foir/demesne)
                                                             kind: claims|pdp|projections|framework|all
                                                --profile supabase: emit the Supabase
@@ -32,6 +34,8 @@ USAGE:
   demesne coverage <spec.demesne> <dsn> [--exit-code]   ungoverned tables (no object → no RLS); --exit-code fails (exit 1) if any (CI guard)
   demesne version                              print the build version
 
+<spec.demesne>... is a spec in one file, or in several, given in order: each file may refer to what the
+files before it declare, and may `replace` a declaration of theirs.
 <dsn> may be omitted to use $DATABASE_URL. A Postgres connection string, e.g.
   postgres://user:pass@host:5432/db
 ";
@@ -56,6 +60,61 @@ impl Out {
             self.err.extend_from_slice(format!("warning: {path}: {w}\n").as_bytes());
         }
     }
+
+    /// Prints the warnings a loaded spec earns, each naming its file.
+    pub fn warn_loaded(&mut self, paths: &[String], loaded: &Loaded) {
+        match loaded {
+            Loaded::One(s) => self.warn_spec(&paths[0], s),
+            Loaded::Many(files) => {
+                for w in demesne_emit_sql::validate_files_warnings(files) {
+                    self.err.extend_from_slice(format!("warning: {w}\n").as_bytes());
+                }
+            }
+        }
+    }
+}
+
+/// A spec a command has loaded: written in one file, or in several compiled as one model.
+#[derive(Debug, Clone)]
+pub enum Loaded {
+    One(Box<Spec>),
+    Many(SpecFiles),
+}
+
+impl Loaded {
+    /// Returns the spec, of every file when it has several.
+    #[must_use]
+    pub fn spec(&self) -> &Spec {
+        match self {
+            Loaded::One(s) => s,
+            Loaded::Many(files) => files.spec(),
+        }
+    }
+}
+
+/// Splits a command's arguments into its spec files and the arguments after them.
+///
+/// The spec files are the first argument and every argument straight after it that ends in `.demesne`.
+#[must_use]
+pub fn spec_args(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let n = args.iter().skip(1).take_while(|a| a.ends_with(".demesne")).count() + usize::from(!args.is_empty());
+    (args[..n].to_vec(), args[n..].to_vec())
+}
+
+/// Reads, parses and validates a spec in one file or in several.
+///
+/// # Errors
+///
+/// A file cannot be read, or the spec does not parse or validate. A spec in several files validates one prefix at a
+/// time, and each finding names its file.
+pub fn load_specs(files: &dyn Files, paths: &[String]) -> Result<Loaded, String> {
+    if let [path] = paths {
+        return load_spec(files, path).map(|s| Loaded::One(Box::new(s)));
+    }
+    let texts = paths.iter().map(|p| files.read(p)).collect::<Result<Vec<_>, _>>()?;
+    let spec = demesne_syntax::parse_files(paths.iter().map(String::as_str).zip(texts.iter().map(Vec::as_slice))).map_err(|e| format!("parse: {e}"))?;
+    demesne_emit_sql::validate_files(&spec).map_err(|e| format!("validate: {e}"))?;
+    Ok(Loaded::Many(spec))
 }
 
 #[must_use]
@@ -160,9 +219,11 @@ pub fn need(args: &[String], n: usize, what: &str) -> R {
 
 fn cmd_validate(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
     need(args, 1, "<spec.demesne>")?;
-    let s = load_spec(files, &args[0])?;
-    out.warn_spec(&args[0], &s);
-    let rls = Sql::new(&s).emit_rls().map_err(|e| e.to_string())?;
+    let (paths, _) = spec_args(args);
+    let loaded = load_specs(files, &paths)?;
+    out.warn_loaded(&paths, &loaded);
+    let s = loaded.spec();
+    let rls = Sql::new(s).emit_rls().map_err(|e| e.to_string())?;
     out.print(&format!(
         "ok: {} objects, {} levels, {} policies, {} reachability grants\n",
         s.objects.len(),
@@ -200,20 +261,29 @@ pub fn strip_flag(args: &[String], name: &str, def: &str) -> (String, Vec<String
 fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
     let (target, args) = strip_flag(args, "target", "");
     let (profile, args) = strip_flag(&args, "profile", "");
+    let (file, args) = strip_flag(&args, "file", "");
     need(&args, 1, "<spec.demesne>")?;
-    let s = load_spec(files, &args[0])?;
-    out.warn_spec(&args[0], &s);
-    let kind = args.get(1).map_or("all", String::as_str);
+    let (paths, rest) = spec_args(&args);
+    let loaded = load_specs(files, &paths)?;
+    out.warn_loaded(&paths, &loaded);
+    let kind = rest.first().map_or("all", String::as_str);
+    if !file.is_empty() {
+        if !target.is_empty() || !profile.is_empty() {
+            return Err("--file picks one file's share of the SQL; --target and --profile emit the whole spec, so give them the files it is made of".into());
+        }
+        return emit_file(out, files, &paths, &loaded, &file, kind, &rest);
+    }
+    let s = loaded.spec();
     if !profile.is_empty() {
-        return emit_profile(out, &s, &profile);
+        return emit_profile(out, s, &profile);
     }
     match target.as_str() {
         "" => {}
-        "ts" => return emit_ts(out, &s, kind),
+        "ts" => return emit_ts(out, s, kind),
         "go" => return Err(NO_GO.to_string()),
         other => return Err(format!("unknown --target {} (ts)", quote(other))),
     }
-    let sql = Sql::new(&s);
+    let sql = Sql::new(s);
     match kind {
         "definers" => emit_definers_sql(out, &sql),
         "rls" | "policies" => emit_rls_sql(out, &sql),
@@ -223,21 +293,45 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
             Ok(())
         }
         "claims" | "framework" => Err(format!("emit kind {} generated Go. {NO_GO}", quote(kind))),
-        "pdp" => emit_pdp_report(out, &s),
+        "pdp" => emit_pdp_report(out, s),
         "all" => emit_all_sql(out, &sql),
         "manifest" => {
             out.print(&sql.manifest().map_err(|e| e.to_string())?.to_json());
             Ok(())
         }
         "migrate" => {
-            need(&args, 3, "<spec.demesne> migrate <previous manifest.json>")?;
-            let src = files.read(&args[2])?;
-            let previous = Manifest::from_json(&String::from_utf8_lossy(&src)).map_err(|e| format!("{}: {e}", args[2]))?;
-            out.print(&sql.migration(&previous).map_err(|e| e.to_string())?);
+            out.print(&sql.migration(&previous_manifest(files, &rest)?).map_err(|e| e.to_string())?);
             Ok(())
         }
         other => Err(format!("unknown emit kind {} (rls|definers|enablement|triggers|pdp|all|manifest|migrate)", quote(other))),
     }
+}
+
+fn previous_manifest(files: &dyn Files, rest: &[String]) -> Result<Manifest, String> {
+    let path = rest.get(1).ok_or("missing argument: <spec.demesne> migrate <previous manifest.json>")?;
+    let src = files.read(path)?;
+    Manifest::from_json(&String::from_utf8_lossy(&src)).map_err(|e| format!("{path}: {e}"))
+}
+
+fn emit_file(out: &mut Out, files: &dyn Files, paths: &[String], loaded: &Loaded, file: &str, kind: &str, rest: &[String]) -> R {
+    let k = paths.iter().position(|p| p == file).ok_or_else(|| format!("--file {} names none of the spec's files ({})", quote(file), paths.join(", ")))?;
+    let spec = match loaded {
+        Loaded::Many(spec) => spec.clone(),
+        Loaded::One(_) => {
+            let texts = paths.iter().map(|p| files.read(p)).collect::<Result<Vec<_>, _>>()?;
+            demesne_syntax::parse_files(paths.iter().map(String::as_str).zip(texts.iter().map(Vec::as_slice))).map_err(|e| format!("parse: {e}"))?
+        }
+    };
+    let text = match kind {
+        "all" => demesne_emit_sql::file_sql(&spec, k).map_err(|e| e.to_string())?,
+        "manifest" => Sql::new(spec.prefix(k)).manifest().map_err(|e| e.to_string())?.to_json(),
+        "migrate" => demesne_emit_sql::file_migration(&spec, k, &previous_manifest(files, rest)?).map_err(|e| e.to_string())?,
+        other => {
+            return Err(format!("--file takes the emit kinds all, manifest and migrate, and {} covers the whole spec: emit it without --file", quote(other)));
+        }
+    };
+    out.print(&text);
+    Ok(())
 }
 
 fn emit_profile(out: &mut Out, s: &Spec, profile: &str) -> R {

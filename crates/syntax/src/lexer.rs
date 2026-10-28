@@ -79,7 +79,11 @@ struct Lexer<'a> {
 }
 
 pub(crate) fn lex(src: &[u8]) -> Result<Vec<Token>, Error> {
-    let mut l = Lexer { src, pos: 0, line: 1 };
+    lex_from(src, 1)
+}
+
+pub(crate) fn lex_from(src: &[u8], first_line: usize) -> Result<Vec<Token>, Error> {
+    let mut l = Lexer { src, pos: 0, line: first_line };
     let mut toks = Vec::new();
     loop {
         let t = l.next()?;

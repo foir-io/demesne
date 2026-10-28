@@ -66,3 +66,35 @@ fn every_corpus_output_matches_the_checksum_manifest() {
     }
     insta::assert_snapshot!("corpus_checksums", manifest);
 }
+
+fn emit<'a>(files: &[&'a str], more: &[&'a str]) -> Vec<&'a str> {
+    [&["emit"][..], files, more].concat()
+}
+
+#[test]
+fn a_spec_in_several_files_matches_its_snapshots() {
+    let repo = repo();
+    let [base, extra, last, blind, previous] =
+        ["base.demesne", "extra.demesne", "last.demesne", "blind.demesne", "previous.json"].map(|n| format!("testdata/multi/{n}"));
+    let files = [base.as_str(), extra.as_str(), last.as_str()];
+    let runs: Vec<(&str, Vec<&str>)> = vec![
+        ("validate", [&["validate"][..], &files].concat()),
+        ("validate-out-of-order", vec!["validate", &extra, &base]),
+        ("validate-blind", vec!["validate", &base, &blind]),
+        ("emit-all", emit(&files, &[])),
+        ("emit-file-base", emit(&files, &["--file", &base])),
+        ("emit-file-extra", emit(&files, &["--file", &extra])),
+        ("emit-file-last", emit(&files, &["--file", &last])),
+        ("emit-file-extra-manifest", emit(&files, &["--file", &extra, "manifest"])),
+        ("emit-file-extra-migrate", vec!["emit", &base, &extra, "--file", &extra, "migrate", &previous]),
+        ("emit-migrate-one-file", vec!["emit", &base, "migrate", &previous]),
+        ("emit-file-one-file", vec!["emit", &base, "--file", &base]),
+        ("emit-file-unknown", emit(&files, &["--file", "nope.demesne"])),
+        ("emit-file-whole-kind", emit(&files, &["--file", &extra, "rls"])),
+        ("emit-file-with-target", emit(&files, &["--file", &extra, "--target", "ts"])),
+        ("ts-projections", emit(&files, &["--target", "ts", "projections"])),
+    ];
+    for (name, args) in runs {
+        insta::assert_snapshot!(format!("multi__{name}"), record(&repo, "", &args));
+    }
+}

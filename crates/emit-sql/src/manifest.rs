@@ -241,25 +241,67 @@ pub fn revoked_from_public(sql: &str) -> Vec<String> {
 fn read_objects(sql: &str) -> Result<Vec<(Object, String)>, String> {
     let mut out = Vec::new();
     for stmt in statements(sql) {
-        let words: Vec<&str> = stmt.split_whitespace().collect();
-        let object = match words.as_slice() {
-            ["CREATE", "OR", "REPLACE", "FUNCTION", ..] | ["CREATE", "FUNCTION", ..] => Object::Function(function_signature(&stmt)?),
-            ["CREATE", "POLICY", name, "ON", table, ..] => Object::Policy { table: (*table).to_string(), name: (*name).to_string() },
-            ["CREATE", "OR", "REPLACE", "TRIGGER", name, rest @ ..] | ["CREATE", "TRIGGER", name, rest @ ..] => {
-                Object::Trigger { table: target(rest, &stmt)?, name: (*name).to_string() }
-            }
-            ["CREATE", "UNIQUE", "INDEX", rest @ ..] | ["CREATE", "INDEX", rest @ ..] => {
-                let (table, name) = index_entry(rest, &stmt)?;
-                Object::Index { table, name }
-            }
-            ["CREATE", "TABLE", rest @ ..] => Object::Table(table_name(rest, &stmt)?),
-            ["ALTER", "TABLE", table, "ENABLE", "ROW", "LEVEL", "SECURITY"] => Object::Rls((*table).to_string()),
-            ["CREATE", ..] => return Err(format!("the manifest does not record this kind of object: {}", first_line(&stmt))),
-            _ => continue,
-        };
-        out.push((object, stmt));
+        if let Some(object) = object_of(&stmt)? {
+            out.push((object, stmt));
+        }
     }
     Ok(out)
+}
+
+fn object_of(stmt: &str) -> Result<Option<Object>, String> {
+    let words: Vec<&str> = stmt.split_whitespace().collect();
+    Ok(Some(match words.as_slice() {
+        ["CREATE", "OR", "REPLACE", "FUNCTION", ..] | ["CREATE", "FUNCTION", ..] => Object::Function(function_signature(stmt)?),
+        ["CREATE", "POLICY", name, "ON", table, ..] => Object::Policy { table: (*table).to_string(), name: (*name).to_string() },
+        ["CREATE", "OR", "REPLACE", "TRIGGER", name, rest @ ..] | ["CREATE", "TRIGGER", name, rest @ ..] => {
+            Object::Trigger { table: target(rest, stmt)?, name: (*name).to_string() }
+        }
+        ["CREATE", "UNIQUE", "INDEX", rest @ ..] | ["CREATE", "INDEX", rest @ ..] => {
+            let (table, name) = index_entry(rest, stmt)?;
+            Object::Index { table, name }
+        }
+        ["CREATE", "TABLE", rest @ ..] => Object::Table(table_name(rest, stmt)?),
+        ["ALTER", "TABLE", table, "ENABLE", "ROW", "LEVEL", "SECURITY"] => Object::Rls((*table).to_string()),
+        ["CREATE", ..] => return Err(format!("the manifest does not record this kind of object: {}", first_line(stmt))),
+        _ => return Ok(None),
+    }))
+}
+
+/// Splits `sql` into one unit per object, in script order: the statement that creates the object, with the `DROP … IF
+/// EXISTS` written before it and the `REVOKE` or `FORCE ROW LEVEL SECURITY` written after it.
+pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
+    let mut out: Vec<(Object, String)> = Vec::new();
+    let mut before = String::new();
+    for stmt in statements(sql) {
+        let words: Vec<&str> = stmt.split_whitespace().collect();
+        match words.as_slice() {
+            ["DROP", "POLICY" | "TRIGGER", "IF", "EXISTS", ..] => writeln!(before, "{stmt};").expect("fmt::Write for String never fails"),
+            ["REVOKE", "EXECUTE", "ON", "FUNCTION", ..] | ["ALTER", "TABLE", _, "FORCE", "ROW", "LEVEL", "SECURITY"] => {
+                let (_, unit) = out.last_mut().ok_or_else(|| format!("no object precedes {}", first_line(&stmt)))?;
+                writeln!(unit, "{stmt};").expect("fmt::Write for String never fails");
+            }
+            _ => {
+                let object = object_of(&stmt)?.ok_or_else(|| format!("a statement that belongs to no object: {}", first_line(&stmt)))?;
+                out.push((object, format!("{}{stmt};\n", std::mem::take(&mut before))));
+            }
+        }
+    }
+    if !before.is_empty() {
+        return Err(format!("no object follows {}", first_line(&before)));
+    }
+    Ok(out)
+}
+
+impl Manifest {
+    pub(crate) fn union(mut self, other: &Manifest) -> Manifest {
+        self.functions.extend(other.functions.iter().cloned());
+        self.policies.extend(other.policies.iter().cloned());
+        self.triggers.extend(other.triggers.iter().cloned());
+        self.indexes.extend(other.indexes.iter().cloned());
+        self.tables.extend(other.tables.iter().cloned());
+        self.rls.extend(other.rls.iter().cloned());
+        self
+    }
 }
 
 impl Sql<'_> {

@@ -3,14 +3,24 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct Builder {
-    spec: PathBuf,
+    specs: Vec<PathBuf>,
     wanted: Vec<Surface>,
     file_name: String,
 }
 
 impl Builder {
     pub fn new(spec: impl AsRef<Path>) -> Self {
-        Builder { spec: spec.as_ref().to_path_buf(), wanted: Vec::new(), file_name: "demesne.rs".into() }
+        Builder { specs: vec![spec.as_ref().to_path_buf()], wanted: Vec::new(), file_name: "demesne.rs".into() }
+    }
+
+    /// Adds a file after the files given so far, for a spec written in several files.
+    ///
+    /// The files compile as one model: each may refer to what the files before it declare, and may `replace` a
+    /// declaration of theirs. The surfaces are the whole spec's.
+    #[must_use]
+    pub fn spec(mut self, spec: impl AsRef<Path>) -> Self {
+        self.specs.push(spec.as_ref().to_path_buf());
+        self
     }
 
     #[must_use]
@@ -103,11 +113,18 @@ impl Builder {
     ///
     /// The spec cannot be read, parsed or validated, or a requested surface cannot be built.
     pub fn render(&self) -> Result<String, Error> {
-        let shown = self.spec.display();
-        let src = std::fs::read(&self.spec).map_err(|e| Error::io(format!("{shown}: {e}")))?;
-        let spec = demesne_syntax::parse_bytes(&src).map_err(|e| Error::spec(format!("{shown}: {e}")))?;
-        demesne_emit_sql::validate(&spec).map_err(|e| Error::spec(format!("{shown}: {e}")))?;
-        emit_rust(&spec, &self.wanted).map_err(|e| Error::surface(format!("{shown}:\n{e}")))
+        let names: Vec<String> = self.specs.iter().map(|p| p.display().to_string()).collect();
+        let texts =
+            self.specs.iter().zip(&names).map(|(p, shown)| std::fs::read(p).map_err(|e| Error::io(format!("{shown}: {e}")))).collect::<Result<Vec<_>, _>>()?;
+        if let ([shown], [src]) = (names.as_slice(), texts.as_slice()) {
+            let spec = demesne_syntax::parse_bytes(src).map_err(|e| Error::spec(format!("{shown}: {e}")))?;
+            demesne_emit_sql::validate(&spec).map_err(|e| Error::spec(format!("{shown}: {e}")))?;
+            return emit_rust(&spec, &self.wanted).map_err(|e| Error::surface(format!("{shown}:\n{e}")));
+        }
+        let files =
+            demesne_syntax::parse_files(names.iter().map(String::as_str).zip(texts.iter().map(Vec::as_slice))).map_err(|e| Error::spec(e.to_string()))?;
+        demesne_emit_sql::validate_files(&files).map_err(|e| Error::spec(e.to_string()))?;
+        emit_rust(files.spec(), &self.wanted).map_err(|e| Error::surface(format!("{}:\n{e}", names.join(", "))))
     }
 
     /// Renders the surfaces into `OUT_DIR` and tells cargo to rerun when the spec changes.
@@ -117,7 +134,9 @@ impl Builder {
     /// `OUT_DIR` is unset, rendering fails, or the file cannot be written.
     #[expect(clippy::print_stdout, reason = "build scripts talk to cargo through `cargo:` lines on stdout")]
     pub fn generate(self) -> Result<PathBuf, Error> {
-        println!("cargo:rerun-if-changed={}", self.spec.display());
+        for spec in &self.specs {
+            println!("cargo:rerun-if-changed={}", spec.display());
+        }
         let out_dir = std::env::var_os("OUT_DIR").ok_or_else(|| Error::io("OUT_DIR is unset; call this from build.rs"))?;
         let code = self.render()?;
         let path = Path::new(&out_dir).join(&self.file_name);

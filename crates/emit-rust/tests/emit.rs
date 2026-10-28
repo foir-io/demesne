@@ -93,3 +93,21 @@ fn builder_reports_a_spec_error_with_its_path() {
     assert!(Builder::new(&missing).render().expect_err("no such file").is_io());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn builder_reads_a_spec_in_several_files() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/multi");
+    let many = Builder::new(dir.join("base.demesne"))
+        .spec(dir.join("extra.demesne"))
+        .spec(dir.join("last.demesne"))
+        .resource_access("note")
+        .render()
+        .expect("the files render");
+    assert!(many.contains("notes_accessors"), "{many}");
+    let base = dir.join("base.demesne");
+    let later = Builder::new(&base).spec(dir.join("extra.demesne")).resource_access("note");
+    let err = Builder::new(dir.join("extra.demesne")).spec(&base).resource_access("note").render().expect_err("the second file comes first");
+    assert!(err.is_spec(), "{err:?}");
+    assert!(err.to_string().ends_with("extra.demesne:11: replace grant \"support\": no earlier file declares it"), "{err}");
+    later.render().expect("the files in order render");
+}

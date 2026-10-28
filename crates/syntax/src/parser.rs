@@ -5,7 +5,7 @@ use crate::ast::{
     Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant,
     ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
-use crate::lexer::{Tok, Token, is_plain_identifier, lex};
+use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -43,11 +43,115 @@ pub fn parse(src: &str) -> Result<Spec, Error> {
 /// Invalid UTF-8 in a literal, a lexical or syntax error, parentheses nested deeper than
 /// [`MAX_NESTING`], or a template that cannot be expanded.
 pub fn parse_bytes(src: &[u8]) -> Result<Spec, Error> {
-    let toks = lex(src)?;
-    let mut p = Parser { toks, i: 0, depth: 0 };
-    let mut s = p.parse_spec()?;
+    let fragment = Parser { toks: lex(src)?, i: 0, depth: 0 }.parse_fragment()?;
+    if let Some(r) = fragment.replaces.first() {
+        return Err(Error::at(r.pos.line, "`replace` swaps in a declaration for one an earlier file made, and a spec in one file has no earlier file"));
+    }
+    let mut s = fragment.spec;
     expand_templates(&mut s)?;
     Ok(s)
+}
+
+pub(crate) fn parse_fragment(src: &[u8], first_line: usize) -> Result<Fragment, Error> {
+    Parser { toks: lex_from(src, first_line)?, i: 0, depth: 0 }.parse_fragment()
+}
+
+/// What one file declares, before it joins the files before it and its templates are expanded.
+#[derive(Debug, Default)]
+pub(crate) struct Fragment {
+    pub(crate) spec: Spec,
+    pub(crate) replaces: Vec<Replace>,
+    pub(crate) singles: Vec<(Kind, Pos)>,
+}
+
+/// A declaration written `replace <declaration>`: the `index`-th of its kind in the file.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Replace {
+    pub(crate) kind: Kind,
+    pub(crate) index: usize,
+    pub(crate) pos: Pos,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Topology,
+    Vocabulary,
+    Subject,
+    Object,
+    Template,
+    Procedures,
+    Ungoverned,
+    FieldScopes,
+    RoleStore,
+    Grant,
+    Claims,
+    Definers,
+    Tables,
+    Identifiers,
+    External,
+}
+
+impl Kind {
+    fn of(keyword: &str) -> Option<Kind> {
+        Some(match keyword {
+            "topology" => Kind::Topology,
+            "vocabulary" => Kind::Vocabulary,
+            "subject" => Kind::Subject,
+            "object" => Kind::Object,
+            "template" => Kind::Template,
+            "procedures" => Kind::Procedures,
+            "ungoverned" => Kind::Ungoverned,
+            "fieldscopes" => Kind::FieldScopes,
+            "rolestore" => Kind::RoleStore,
+            "grant" => Kind::Grant,
+            "claims" => Kind::Claims,
+            "definers" => Kind::Definers,
+            "tables" => Kind::Tables,
+            "identifiers" => Kind::Identifiers,
+            "external" => Kind::External,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            Kind::Topology => "topology",
+            Kind::Vocabulary => "vocabulary",
+            Kind::Subject => "subject",
+            Kind::Object => "object",
+            Kind::Template => "template",
+            Kind::Procedures => "procedures",
+            Kind::Ungoverned => "ungoverned",
+            Kind::FieldScopes => "fieldscopes",
+            Kind::RoleStore => "rolestore",
+            Kind::Grant => "grant",
+            Kind::Claims => "claims",
+            Kind::Definers => "definers",
+            Kind::Tables => "tables",
+            Kind::Identifiers => "identifiers",
+            Kind::External => "external",
+        }
+    }
+
+    pub(crate) fn single(self) -> bool {
+        matches!(self, Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers)
+    }
+
+    fn declared(self, s: &Spec) -> usize {
+        match self {
+            Kind::Vocabulary => s.vocabs.len(),
+            Kind::Subject => s.subjects.len(),
+            Kind::Object => s.objects.len(),
+            Kind::Template => s.templates.len(),
+            Kind::Procedures => s.procedures.len(),
+            Kind::Ungoverned => s.ungoverned.len(),
+            Kind::FieldScopes => s.field_scopes.len(),
+            Kind::RoleStore => s.role_stores.len(),
+            Kind::Grant => s.grants.len(),
+            Kind::External => s.externals.len(),
+            Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers => 0,
+        }
+    }
 }
 
 fn non_empty(s: String) -> Option<String> {
@@ -127,15 +231,29 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_spec(&mut self) -> PResult<Spec> {
-        let mut s = Spec::default();
+    fn parse_fragment(&mut self) -> PResult<Fragment> {
+        let mut f = Fragment::default();
         while self.peek() != Tok::Eof {
             if self.peek() != Tok::Ident {
                 return Err(self.err(format!("expected a declaration keyword, got {}", self.got())));
             }
-            self.parse_decl(&mut s)?;
+            let pos = self.pos();
+            let replace = self.accept_kw("replace");
+            if replace && self.peek() != Tok::Ident {
+                return Err(self.err(format!("expected a declaration keyword after `replace`, got {}", self.got())));
+            }
+            let kind = Kind::of(&self.cur().lit);
+            let index = kind.map_or(0, |k| k.declared(&f.spec));
+            self.parse_decl(&mut f.spec)?;
+            let kind = kind.expect("parse_decl refuses a keyword that names no declaration");
+            if kind.single() {
+                f.singles.push((kind, pos));
+            }
+            if replace {
+                f.replaces.push(Replace { kind, index, pos });
+            }
         }
-        Ok(s)
+        Ok(f)
     }
 
     fn parse_decl(&mut self, s: &mut Spec) -> PResult<()> {
@@ -1350,7 +1468,7 @@ fn role_store_keyword(s: &str) -> bool {
     matches!(s, "assignments" | "kind" | "subject" | "scope" | "plane" | "rolejoin" | "revoked" | "permissions" | "pk" | "granted" | "column")
 }
 
-fn expand_templates(s: &mut Spec) -> Result<(), Error> {
+pub(crate) fn expand_templates(s: &mut Spec) -> Result<(), Error> {
     let mut by_name: HashMap<String, usize> = HashMap::new();
     for (i, t) in s.templates.iter().enumerate() {
         if by_name.contains_key(&t.name) {
