@@ -105,8 +105,12 @@ jobs:
         run: pnpm -r build
       - name: typecheck
         run: pnpm -r typecheck
+      - name: Postgres binaries
+        run: ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n 1 >> "$GITHUB_PATH"
       - name: test (Node)
         run: pnpm -r test
+        env:
+          DEMESNE_REQUIRE_PG: "1"
       - name: test in Deno
         run: pnpm --filter @foir/demesne test:deno
       - name: test in workerd
