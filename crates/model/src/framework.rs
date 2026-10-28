@@ -81,8 +81,7 @@ pub fn row_check_sql(o: &AppObjectSurface, pm: &Perm) -> Option<String> {
     let sql = match pm.maps() {
         "select" => return Some(o.check_sql()),
         "update" => o.edit_check_sql.to_string(),
-        _ if pm.has_layer("check") => o.check_verb_sql(&pm.verb).to_string(),
-        _ => return None,
+        _ => o.check_verb_sql(&pm.verb).to_string(),
     };
     (!sql.is_empty()).then_some(sql)
 }
@@ -167,20 +166,9 @@ pub fn role_tier_fields(s: &Spec, vocab: &Vocabulary) -> R<Vec<(String, String)>
         fields.push((exp, key.to_string()));
         Ok(())
     };
-    for v in &s.vocabs {
-        for p in &v.presets {
-            if let Some(level) = &p.level
-                && virt.contains(level)
-            {
-                add(&p.name)?;
-            }
-        }
-    }
-    for p in &vocab.presets {
-        match &p.level {
-            Some(level) if !virt.contains(level) => add(&p.name)?,
-            _ => {}
-        }
+    let virtual_presets = s.vocabs.iter().flat_map(|v| &v.presets).filter(|p| p.level.as_ref().is_some_and(|l| virt.contains(l)));
+    for p in virtual_presets.chain(vocab.presets.iter().filter(|p| p.level.is_some())) {
+        add(&p.name)?;
     }
     Ok(fields)
 }
