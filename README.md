@@ -17,7 +17,7 @@ Authorization usually lives in application code — a service you call, or `if` 
 Demesne moves the decision into Postgres, so access is a property of the data rather than a step in the request. One `.demesne` file compiles to two layers:
 
 - **Row-Level Security — the enforcement floor.** Demesne generates the policies and the trusted `SECURITY DEFINER` functions they call. Every query is filtered by the same rules, whether it comes from your app, a cron job, or a database console.
-- **A verb gate — for actions RLS can't see.** Some permissions aren't about rows ("can this user *publish*?"). For those, Demesne generates a TypeScript capability map, or a Rust one through its crates, that you check at the request boundary.
+- **A verb gate — for actions RLS can't see.** Some permissions aren't about rows ("can this user *publish*?"). For those, Demesne generates a TypeScript or Go capability map, or a Rust one through its crates, that you check at the request boundary.
 
 The same spec also produces the JWT claims your sessions carry. Change the spec, regenerate, and the database floor and the application code move together — nothing to hand-write and keep in sync.
 
@@ -38,6 +38,7 @@ From the command line:
 npx @foir/demesne-cli validate authz.demesne               # parse and check the spec
 npx @foir/demesne-cli emit authz.demesne all > authz.sql   # policies, the SECURITY DEFINER kernel, triggers
 npx @foir/demesne-cli emit authz.demesne --target ts framework > src/authz.ts   # the typed TypeScript surface
+npx @foir/demesne-cli emit authz.demesne --target go framework authz > authz/authz.go   # the typed Go surface
 ```
 
 A spec can also be split into several files, compiled as one model, with each
@@ -57,7 +58,7 @@ let pdp = demesne_model::pdp::emit_pdp(&spec)?; // the capability map
 let claims = spec.claims_contract()?;         // the JWT claims the policies read (SpecExt)
 ```
 
-TypeScript applications use `@foir/demesne`, which runs the same Rust runtime compiled to WebAssembly. Go applications stay on the Go engine, frozen at v0.93.1 on the `release/v0.93` branch.
+TypeScript applications use `@foir/demesne`, and Go applications the module [`github.com/foir-io/demesne/go`](go/README.md). Both run the same Rust runtime compiled to WebAssembly. The Go engine stays frozen at v0.93.1 on the `release/v0.93` branch.
 
 Adopting Demesne on an existing database is a short loop: introspect the schema, scaffold a starter spec, edit it, emit the SQL, apply it as a migration. [GUIDE.md](GUIDE.md) walks through it end to end.
 

@@ -1,4 +1,5 @@
 #![doc = "Byte-exact reproductions of the Go standard library behaviour demesne's output depends on: `strconv.Quote` and `encoding/json`'s encoder."]
+#![forbid(unsafe_code)]
 
 #[allow(clippy::unreadable_literal, reason = "generated from Go's strconv tables, which print the code points as plain integers")]
 mod isprint;

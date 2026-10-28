@@ -1,4 +1,5 @@
 #![doc = "Live-database support for demesne: introspection into a `Schema`, the drift `diff` reports, the schema traps, the global-assignment audit and the RLS role check."]
+#![forbid(unsafe_code)]
 
 mod connect;
 mod drift;

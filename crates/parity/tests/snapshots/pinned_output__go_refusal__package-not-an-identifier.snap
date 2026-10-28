@@ -1,0 +1,11 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, \"\", args)"
+---
+exit: 1
+--- stdout ---
+
+--- stderr ---
+demesne: "not-a-name" is not a Go package name
+
+--- end ---

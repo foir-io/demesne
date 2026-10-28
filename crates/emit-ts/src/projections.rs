@@ -1,8 +1,89 @@
 use crate::error::Error;
+use demesne_emit_sql::Sql;
 use demesne_gocompat::json::Value;
-use demesne_model::SpecExt;
+use demesne_gocompat::quote;
+use demesne_model::analysis::object_grant_edge;
+use demesne_model::pdp::emit_pdp;
+use demesne_model::{SpecExt, SurfaceExt};
 use demesne_runtime as rt;
 use demesne_syntax::Spec;
+
+/// Which surface a [`Projection`] holds, and so the runtime type that reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// The session and claims contract, read as `Claims`.
+    Claims,
+    /// Every object's read checks, read as a list of `AppObjectSurface`.
+    AppSurface,
+    /// Each emit site's policy decision point, read as a map of `Pdp`.
+    Pdp,
+    /// The rolestore's assignments and vocabulary, read as `HoldsResolver`.
+    HoldsResolver,
+    /// Where the rolestore's assignments are written, read as `RoleAssignmentSurface`.
+    RoleAssignment,
+    /// Each reach grant's edges, read as a map of `GrantSurface`.
+    Grants,
+    /// Each granted object's sharing, read as a map of `ResourceAccessSurface`.
+    ResourceAccess,
+}
+
+/// One surface of a spec, projected into the JSON shape the runtime reads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Projection {
+    pub shape: Shape,
+    pub value: Value,
+}
+
+/// Projects every surface a spec has, in the order a projection module declares them.
+///
+/// # Errors
+///
+/// The claims projection cannot be built, or a rolestore, grant or granted object the spec declares cannot be
+/// projected. Surfaces a spec cannot produce are left out.
+pub fn all(s: &Spec) -> Result<Vec<Projection>, Error> {
+    let mut out = Vec::new();
+    let mut add = |shape, value| out.push(Projection { shape, value });
+    add(Shape::Claims, claims(s).map_err(|e| Error::new(format!("projection claims: {e}")))?);
+    if let Ok(surf) = Sql::new(s).emit_app_surface() {
+        add(Shape::AppSurface, Value::Array(surf.objects.iter().map(app_object).collect()));
+    }
+    if let Ok(pdps) = emit_pdp(s)
+        && !pdps.is_empty()
+    {
+        add(Shape::Pdp, Value::Map(pdps.iter().map(|(k, p)| (k.clone(), pdp(p))).collect()));
+    }
+    if !s.role_stores.is_empty() {
+        let hr = s.holds_resolver("").map_err(|e| Error::new(format!("projection holdsResolver: {e}")))?;
+        add(Shape::HoldsResolver, holds(&hr));
+        let ra = s.role_assignment_surface("").map_err(|e| Error::new(format!("projection roleAssignment: {e}")))?;
+        add(Shape::RoleAssignment, role_assign(&ra));
+    }
+    if !s.grants.is_empty() {
+        let mut m = Vec::new();
+        for g in &s.grants {
+            if g.claim_key.is_some() {
+                continue;
+            }
+            let gs = s.grant_surface(&g.name).map_err(|e| Error::new(format!("projection grant {}: {e}", quote(&g.name))))?;
+            m.retain(|(k, _): &(String, Value)| k != &g.name);
+            m.push((g.name.clone(), grant(&gs)));
+        }
+        add(Shape::Grants, Value::Map(m));
+    }
+    let mut ram: Vec<(String, Value)> = Vec::new();
+    for o in &s.objects {
+        if object_grant_edge(o).is_none() {
+            continue;
+        }
+        let r = s.conditional_resource_access_surface(&o.name).map_err(|e| Error::new(format!("projection resourceAccess {}: {e}", quote(&o.name))))?;
+        ram.retain(|(k, _)| k != &o.name);
+        ram.push((o.name.clone(), res_access(&r)));
+    }
+    if !ram.is_empty() {
+        add(Shape::ResourceAccess, Value::Map(ram));
+    }
+    Ok(out)
+}
 
 fn s(v: &str) -> Value {
     Value::str(v)

@@ -1,9 +1,11 @@
 #![doc = "The demesne model: topology, the analysis every emitter shares, structural validation, schema binding, and the runtime surfaces a spec compiles to."]
+#![forbid(unsafe_code)]
 
 mod admission;
 pub mod analysis;
 pub mod conditional;
 mod error;
+pub mod framework;
 pub mod pdp;
 pub mod scaffold;
 mod schema;

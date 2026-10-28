@@ -6,6 +6,10 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+fn package(name: &str) -> demesne_emit_go::Package {
+    demesne_emit_go::Package::new(name).expect("the example's package name is a Go identifier")
+}
+
 fn load(name: &str) -> Spec {
     let src = std::fs::read_to_string(root().join("examples").join(name)).expect("the example exists");
     let s = demesne_syntax::parse(&src).expect("the example parses");
@@ -51,17 +55,22 @@ fn rust_regenerates_every_committed_golden() {
         (format!("{dir}/require/policies.sql"), roundtrip_ddl(&require, "require.demesne")),
         (format!("{dir}/framework.ts"), demesne_emit_ts::emit_framework_ts(&roundtrip).unwrap()),
         (format!("{dir}/exampleFramework.ts"), demesne_emit_ts::emit_framework_ts(&example).unwrap()),
+        ("go/example/notes/framework.go".into(), demesne_emit_go::emit_framework_go(&roundtrip, &package("notes")).unwrap()),
+        ("go/example/docs/framework.go".into(), demesne_emit_go::emit_framework_go(&example, &package("docs")).unwrap()),
+        ("go/example/projection/projection.go".into(), demesne_emit_go::emit_go(&roundtrip, &package("projection")).unwrap()),
     ];
     let mut stale = Vec::new();
     for (path, got) in &goldens {
         if std::env::var_os("UPDATE_ORACLE").is_some() {
-            std::fs::write(root().join(path), got).expect("the golden writes");
+            let path = root().join(path);
+            std::fs::create_dir_all(path.parent().expect("a golden sits in a directory")).expect("the golden's directory exists");
+            std::fs::write(path, got).expect("the golden writes");
         }
         let want = std::fs::read_to_string(root().join(path)).unwrap();
         if &want != got {
             stale.push(path.as_str());
         }
     }
-    assert_eq!(goldens.len(), 9);
+    assert_eq!(goldens.len(), 12);
     assert!(stale.is_empty(), "goldens differ: {stale:?}");
 }

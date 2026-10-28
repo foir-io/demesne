@@ -1,4 +1,5 @@
 #![doc = "The differential harness that proves demesne-rs byte-identical to the frozen Go engine."]
+#![forbid(unsafe_code)]
 
 pub mod api;
 pub mod corpus;

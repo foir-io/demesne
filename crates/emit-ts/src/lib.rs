@@ -1,18 +1,17 @@
 #![doc = "Emits demesne's TypeScript surface: the projection module consumed by @foir/demesne, the claims contract, PDP maps and the typed framework module."]
+#![forbid(unsafe_code)]
 
 mod error;
 mod framework;
-mod plan;
 pub mod projections;
 
 pub use error::Error;
 pub use framework::emit_framework_ts;
+pub use projections::{Projection, Shape};
 
-use demesne_emit_sql::Sql;
 use demesne_gocompat::json::{self, Value};
-use demesne_model::analysis::object_grant_edge;
-use demesne_model::pdp::{FieldAccess, emit_pdp};
-use demesne_model::{SpecExt, SurfaceExt};
+use demesne_model::SpecExt;
+use demesne_model::pdp::FieldAccess;
 use demesne_runtime::Pdp;
 use demesne_syntax::Spec;
 use std::collections::BTreeSet;
@@ -40,51 +39,21 @@ struct Decl {
 ///
 /// The claims projection cannot be built. Surfaces a spec cannot produce are left out.
 pub fn emit_ts(s: &Spec) -> Result<String, Error> {
-    let mut decls = Vec::new();
-    let cl = projections::claims(s).map_err(|e| Error::new(format!("EmitTS claims: {e}")))?;
-    decls.push(Decl { name: "claims", ty: "Claims", lit: ts_json(&cl, true) });
-    if let Ok(surf) = Sql::new(s).emit_app_surface() {
-        let objs: Vec<Value> = surf.objects.iter().map(projections::app_object).collect();
-        decls.push(Decl { name: "appSurface", ty: "AppObjectSurface[]", lit: ts_json(&Value::Array(objs), true) });
-    }
-    if let Ok(pdps) = emit_pdp(s)
-        && !pdps.is_empty()
-    {
-        let m = Value::Map(pdps.iter().map(|(k, p)| (k.clone(), projections::pdp(p))).collect());
-        decls.push(Decl { name: "pdp", ty: "Record<string, Pdp>", lit: ts_json(&m, true) });
-    }
-    if !s.role_stores.is_empty() {
-        let hr = s.holds_resolver("").map_err(|e| Error::new(format!("EmitTS holdsResolver: {e}")))?;
-        decls.push(Decl { name: "holdsResolver", ty: "HoldsResolver", lit: ts_json(&projections::holds(&hr), true) });
-        let ra = s.role_assignment_surface("").map_err(|e| Error::new(format!("EmitTS roleAssignment: {e}")))?;
-        decls.push(Decl { name: "roleAssignment", ty: "RoleAssignmentSurface", lit: ts_json(&projections::role_assign(&ra), true) });
-    }
-    if !s.grants.is_empty() {
-        let mut m = Vec::new();
-        for g in &s.grants {
-            if g.claim_key.is_some() {
-                continue;
-            }
-            let gs = s.grant_surface(&g.name).map_err(|e| Error::new(format!("EmitTS grant {}: {e}", demesne_gocompat::quote(&g.name))))?;
-            m.retain(|(k, _): &(String, Value)| k != &g.name);
-            m.push((g.name.clone(), projections::grant(&gs)));
-        }
-        decls.push(Decl { name: "grants", ty: "Record<string, GrantSurface>", lit: ts_json(&Value::Map(m), true) });
-    }
-    let mut ram: Vec<(String, Value)> = Vec::new();
-    for o in &s.objects {
-        if object_grant_edge(o).is_none() {
-            continue;
-        }
-        let r = s
-            .conditional_resource_access_surface(&o.name)
-            .map_err(|e| Error::new(format!("EmitTS resourceAccess {}: {e}", demesne_gocompat::quote(&o.name))))?;
-        ram.retain(|(k, _)| k != &o.name);
-        ram.push((o.name.clone(), projections::res_access(&r)));
-    }
-    if !ram.is_empty() {
-        decls.push(Decl { name: "resourceAccess", ty: "Record<string, ResourceAccessSurface>", lit: ts_json(&Value::Map(ram), true) });
-    }
+    let decls: Vec<Decl> = projections::all(s)?
+        .into_iter()
+        .map(|p| {
+            let (name, ty) = match p.shape {
+                Shape::Claims => ("claims", "Claims"),
+                Shape::AppSurface => ("appSurface", "AppObjectSurface[]"),
+                Shape::Pdp => ("pdp", "Record<string, Pdp>"),
+                Shape::HoldsResolver => ("holdsResolver", "HoldsResolver"),
+                Shape::RoleAssignment => ("roleAssignment", "RoleAssignmentSurface"),
+                Shape::Grants => ("grants", "Record<string, GrantSurface>"),
+                Shape::ResourceAccess => ("resourceAccess", "Record<string, ResourceAccessSurface>"),
+            };
+            Decl { name, ty, lit: ts_json(&p.value, true) }
+        })
+        .collect();
     Ok(render_module(&decls))
 }
 

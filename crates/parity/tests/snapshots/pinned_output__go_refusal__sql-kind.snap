@@ -1,0 +1,11 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, \"\", args)"
+---
+exit: 1
+--- stdout ---
+
+--- stderr ---
+demesne: emit kind "rls" is language-neutral SQL, so it has no Go target; emit it without --target go
+
+--- end ---

@@ -1,4 +1,5 @@
 #![doc = "demesne's compiler as WebAssembly. `run` is the CLI's pure commands over in-memory files, byte-identical to the native binary; `validate` parses and validates one spec."]
+#![forbid(unsafe_code)]
 
 use demesne_cli::{Files, LIVE_COMMANDS, Output, run_pure};
 use demesne_gocompat::json::{self, Value};

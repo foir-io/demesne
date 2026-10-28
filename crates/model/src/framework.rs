@@ -1,26 +1,33 @@
 use crate::error::Error;
+use crate::{SpecExt, topology};
 use demesne_gocompat::{go_export, quote};
-use demesne_model::SpecExt;
-use demesne_model::topology;
 use demesne_runtime::AppObjectSurface;
 use demesne_syntax::{Perm, Spec, Vocabulary};
 use std::collections::{HashMap, HashSet};
 
 type R<T> = Result<T, Error>;
 
-#[derive(Debug)]
-pub(crate) struct VocabField {
-    pub(crate) exp: String,
-    pub(crate) perm: String,
+/// One permission's field in a caps struct: the field's exported name and the permission it reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VocabField {
+    pub exp: String,
+    pub perm: String,
 }
 
-#[derive(Debug)]
-pub(crate) struct VocabDomain {
-    pub(crate) exp: String,
-    pub(crate) fields: Vec<VocabField>,
+/// One domain of a caps struct: the domain's exported name and a field per permission in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VocabDomain {
+    pub exp: String,
+    pub fields: Vec<VocabField>,
 }
 
-pub(crate) fn vocab_caps_tree(perms: &[String]) -> R<(Vec<VocabDomain>, Vec<String>)> {
+/// Groups a vocabulary's permissions into caps domains by their first segment, and returns the parameterized
+/// permissions, which have no static field, beside them.
+///
+/// # Errors
+///
+/// Two permissions export to the same domain and field name.
+pub fn vocab_caps_tree(perms: &[String]) -> R<(Vec<VocabDomain>, Vec<String>)> {
     let mut domains: Vec<VocabDomain> = Vec::new();
     let mut idx: HashMap<String, usize> = HashMap::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -37,7 +44,7 @@ pub(crate) fn vocab_caps_tree(perms: &[String]) -> R<(Vec<VocabDomain>, Vec<Stri
         let (dexp, fexp) = (go_export(seg0), go_export(rest));
         let key = format!("{dexp}.{fexp}");
         if !seen.insert(key) {
-            return Err(Error::new(format!("vocab caps: {} collides on {}.{}", quote(p), dexp, fexp)));
+            return Err(Error::unplaced(format!("vocab caps: {} collides on {}.{}", quote(p), dexp, fexp)));
         }
         let di = *idx.entry(dexp.clone()).or_insert_with(|| {
             domains.push(VocabDomain { exp: dexp.clone(), fields: Vec::new() });
@@ -48,7 +55,9 @@ pub(crate) fn vocab_caps_tree(perms: &[String]) -> R<(Vec<VocabDomain>, Vec<Stri
     Ok((domains, skipped))
 }
 
-pub(crate) fn orphan_pdp_verbs(s: &Spec) -> Vec<String> {
+/// Returns each capability verb whose permission no rolestore vocabulary covers, as `object.verb (needs "perm")`.
+#[must_use]
+pub fn orphan_pdp_verbs(s: &Spec) -> Vec<String> {
     let mut covered: HashSet<&str> = HashSet::new();
     for rs in &s.role_stores {
         if let Ok(v) = s.rolestore_vocab(rs) {
@@ -66,7 +75,9 @@ pub(crate) fn orphan_pdp_verbs(s: &Spec) -> Vec<String> {
     orphan
 }
 
-pub(crate) fn row_check_sql(o: &AppObjectSurface, pm: &Perm) -> Option<String> {
+/// Returns the SQL that checks one row for a verb, or `None` when the verb has no row-level check.
+#[must_use]
+pub fn row_check_sql(o: &AppObjectSurface, pm: &Perm) -> Option<String> {
     let sql = match pm.maps() {
         "select" => return Some(o.check_sql()),
         "update" => o.edit_check_sql.to_string(),
@@ -116,11 +127,16 @@ fn framework_reserved_names(s: &Spec) -> HashSet<String> {
     reserved
 }
 
-pub(crate) fn check_accessor_collisions(s: &Spec, objects: &[AppObjectSurface]) -> R<()> {
+/// Refuses an object whose generated accessor would take the name of a generated framework helper.
+///
+/// # Errors
+///
+/// An object's exported name matches a helper's, ignoring case.
+pub fn check_accessor_collisions(s: &Spec, objects: &[AppObjectSurface]) -> R<()> {
     let reserved = framework_reserved_names(s);
     for o in objects {
         if reserved.contains(&go_export(&o.object).to_lowercase()) {
-            return Err(Error::new(format!(
+            return Err(Error::unplaced(format!(
                 "framework emit: object {} generates the accessor {}, which collides with a generated framework helper of the same name; rename the object (the role-tier accessor is RoleTiers/roleTiers, verb caps is Caps/caps, the reusable check is Check/check)",
                 quote(&o.object),
                 quote(&go_export(&o.object))
@@ -130,7 +146,12 @@ pub(crate) fn check_accessor_collisions(s: &Spec, objects: &[AppObjectSurface]) 
     Ok(())
 }
 
-pub(crate) fn role_tier_fields(s: &Spec, vocab: &Vocabulary) -> R<Vec<(String, String)>> {
+/// Returns the role tiers a vocabulary's roles report, as each field's exported name and its role key.
+///
+/// # Errors
+///
+/// Two presets export to the same field name.
+pub fn role_tier_fields(s: &Spec, vocab: &Vocabulary) -> R<Vec<(String, String)>> {
     let virt: HashSet<String> = topology::chain(s).map(|c| c.into_iter().filter(|l| l.is_virtual).map(|l| l.name.clone()).collect()).unwrap_or_default();
     let mut fields = Vec::new();
     let mut seen_key = HashSet::new();
@@ -141,7 +162,7 @@ pub(crate) fn role_tier_fields(s: &Spec, vocab: &Vocabulary) -> R<Vec<(String, S
         }
         let exp = go_export(key);
         if !seen_exp.insert(exp.clone()) {
-            return Err(Error::new(format!("role tier: preset {} collides on field {}", quote(key), exp)));
+            return Err(Error::unplaced(format!("role tier: preset {} collides on field {}", quote(key), exp)));
         }
         fields.push((exp, key.to_string()));
         Ok(())

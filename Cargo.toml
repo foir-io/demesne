@@ -16,11 +16,13 @@ homepage = "https://github.com/foir-io/demesne"
 demesne-gocompat = { path = "crates/gocompat", version = "1.0.0" }
 demesne-syntax = { path = "crates/syntax", version = "1.0.0" }
 demesne-runtime = { path = "crates/runtime", version = "1.0.0" }
+demesne-runtime-call = { path = "crates/runtime-call" }
 demesne-model = { path = "crates/model", version = "1.0.0" }
 demesne-cli = { path = "crates/cli", version = "1.0.0", default-features = false }
 demesne-emit-sql = { path = "crates/emit-sql", version = "1.0.0" }
 demesne-emit-rust = { path = "crates/emit-rust", version = "1.0.0" }
 demesne-emit-ts = { path = "crates/emit-ts", version = "1.0.0" }
+demesne-emit-go = { path = "crates/emit-go", version = "1.0.0" }
 demesne-postgres = { path = "crates/postgres", version = "1.0.0" }
 insta = { version = "1.49.0", default-features = false }
 nix = { version = "0.30", default-features = false, features = ["user"] }
@@ -33,7 +35,7 @@ wasm-bindgen = "0.2"
 webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["alloc", "std"] }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 unreachable_pub = "warn"
 missing_debug_implementations = "warn"
 ambiguous_negative_literals = "warn"
@@ -74,6 +76,8 @@ unimplemented = "warn"
 dbg_macro = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
 
 [profile.release]
 lto = "thin"

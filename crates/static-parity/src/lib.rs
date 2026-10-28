@@ -1,4 +1,5 @@
 #![doc = "Every validating corpus spec compiled by build.rs into Rust tables through demesne-emit-rust's Builder, with a registry the tests compare against the compiler."]
+#![forbid(unsafe_code)]
 
 use demesne_runtime as rt;
 
