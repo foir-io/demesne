@@ -69,7 +69,13 @@ jobs:
       - name: features
         run: cargo hack check --workspace --ignore-private --each-feature --no-dev-deps
       - name: semver
-        run: cargo semver-checks --workspace --baseline-rev "$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD)"
+        run: |
+          base="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD)"
+          new=()
+          for manifest in crates/*/Cargo.toml; do
+            git cat-file -e "$base:$manifest" 2>/dev/null || new+=(--exclude "$(sed -n 's/^name = "\(.*\)"$/\1/p' "$manifest" | head -n 1)")
+          done
+          cargo semver-checks --workspace "${new[@]}" --baseline-rev "$base"
 
   ts:
     name: TypeScript
