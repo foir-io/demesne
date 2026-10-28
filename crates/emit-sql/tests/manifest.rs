@@ -15,8 +15,8 @@ fn all_sql(s: &demesne_syntax::Spec) -> String {
 
 #[test]
 fn a_migration_drops_exactly_what_the_previous_surface_had_and_this_one_does_not() {
-    let previous = Sql::new(&spec("d15-before.demesne")).manifest().expect("a manifest");
-    let after = spec("d15-after.demesne");
+    let previous = Sql::new(&spec("migrate-before.demesne")).manifest().expect("a manifest");
+    let after = spec("migrate-after.demesne");
     let migration = Sql::new(&after).migration(&previous).expect("a migration");
     let plain = all_sql(&after);
     let drops = migration.strip_prefix(plain.as_str()).expect("the migration starts with the spec's whole SQL");
@@ -42,14 +42,14 @@ fn a_migration_drops_exactly_what_the_previous_surface_had_and_this_one_does_not
 
 #[test]
 fn a_migration_from_its_own_surface_is_the_plain_sql() {
-    let after = spec("d15-after.demesne");
+    let after = spec("migrate-after.demesne");
     let own = Sql::new(&after).manifest().expect("a manifest");
     assert_eq!(Sql::new(&after).migration(&own), Ok(all_sql(&after)));
 }
 
 #[test]
 fn the_manifest_reads_back_what_it_wrote() {
-    let m = Sql::new(&spec("d15-before.demesne")).manifest().expect("a manifest");
+    let m = Sql::new(&spec("migrate-before.demesne")).manifest().expect("a manifest");
     assert_eq!(m.functions.len(), 4, "{m:?}");
     assert_eq!(Manifest::from_json(&m.to_json()), Ok(m));
 }

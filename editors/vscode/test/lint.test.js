@@ -5,7 +5,7 @@ const { join } = require("node:path");
 const { findings, findingsInFiles } = require("../lint.js");
 
 const repo = join(__dirname, "../../..");
-const gap = readFileSync(join(repo, "testdata/gaps/d37-wider-write.demesne"), "utf8");
+const gap = readFileSync(join(repo, "testdata/gaps/wider-write.demesne"), "utf8");
 
 test("a valid spec has no findings", () => {
   assert.deepEqual(findings(readFileSync(join(repo, "examples/example.demesne"), "utf8")), []);

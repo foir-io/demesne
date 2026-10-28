@@ -12,7 +12,7 @@ fn a_valid_spec_has_no_findings() {
 
 #[test]
 fn each_validation_error_carries_its_line() {
-    let got = diagnostics(&spec("d37-wider-write.demesne"));
+    let got = diagnostics(&spec("wider-write.demesne"));
     assert!(
         got.starts_with(r#"[{"severity":"error","line":24,"message":"permission note.remove maps delete, and its term `grantee:write` admits callers"#),
         "{got}"
@@ -22,7 +22,7 @@ fn each_validation_error_carries_its_line() {
 
 #[test]
 fn a_blind_write_is_a_warning_on_its_line() {
-    let src = spec("d37-wider-write.demesne").replace("@rls maps delete", "@rls maps delete blind").replace("@rls maps update", "@rls maps update blind");
+    let src = spec("wider-write.demesne").replace("@rls maps delete", "@rls maps delete blind").replace("@rls maps update", "@rls maps update blind");
     let got = diagnostics(&src);
     assert!(got.starts_with(r#"[{"severity":"warning","line":24,"message":"permission note.remove maps delete"#), "{got}");
     assert!(!got.contains(r#""severity":"error""#), "{got}");
