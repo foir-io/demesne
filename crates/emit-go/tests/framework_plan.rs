@@ -131,3 +131,15 @@ fn a_capability_verb_no_rolestore_covers_is_named() {
     let out = framework(&src).expect("an orphan verb still emits");
     assert!(out.contains("//   - doc.publish (needs \"x:go\")\n"), "{out}");
 }
+
+#[test]
+fn a_preset_two_vocabularies_share_is_one_role_tier() {
+    let src = BASE
+        .replace("topology {\n  level tenant\n}", "topology {\n  level platform virtual\n  level tenant   parent platform\n}")
+        .replace("  preset viewer @ tenant = docs:read\n", "  preset viewer @ tenant = docs:read\n  preset root @ platform = docs:read\n")
+        .replace("  permission x:go\n", "  permission x:go\n  preset root @ platform = x:go\n");
+    let out = framework(&src).expect("a shared preset name is one tier");
+    let set = &out[out.find("type RoleSet struct {").expect("a role set")..];
+    let set = &set[..set.find("}\n").expect("the role set ends")];
+    assert_eq!(set.matches("\tRoot ").count(), 1, "{set}");
+}
