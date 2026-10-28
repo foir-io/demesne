@@ -36,7 +36,7 @@ object doc {
 }
 "#;
 
-const SECOND: &str = r#"
+const SECOND: &str = r"
 vocabulary ops {
   permission site:manage
 }
@@ -47,7 +47,7 @@ rolestore ops {
   scope       tenant_id
   rolejoin    role_id roles id key
 }
-"#;
+";
 
 fn spec(src: &str) -> demesne_syntax::Spec {
     let s = demesne_syntax::parse(src).unwrap_or_else(|e| panic!("the spec parses: {e}\n{src}"));
@@ -75,7 +75,9 @@ fn the_base_spec_emits() {
 
 #[test]
 fn an_object_named_after_a_framework_helper_is_refused() {
-    for helper in ["check", "check_handler", "claims", "mint", "decision", "holds", "resolve_held", "caps", "cap_set", "role_tiers", "role_set", "assignments_sql"] {
+    for helper in
+        ["check", "check_handler", "claims", "mint", "decision", "holds", "resolve_held", "caps", "cap_set", "role_tiers", "role_set", "assignments_sql"]
+    {
         let err = framework(&renamed(BASE, helper)).expect_err(helper);
         assert!(err.contains("collides with a generated framework helper"), "{helper}: {err}");
     }
@@ -100,7 +102,10 @@ fn a_caps_domain_reserves_its_name() {
 
 #[test]
 fn two_presets_exporting_to_one_role_tier_are_refused() {
-    let src = BASE.replace("  preset editor @ tenant = viewer + docs:publish\n", "  preset editor @ tenant = viewer + docs:publish\n  preset Viewer @ tenant = docs:read\n");
+    let src = BASE.replace(
+        "  preset editor @ tenant = viewer + docs:publish\n",
+        "  preset editor @ tenant = viewer + docs:publish\n  preset Viewer @ tenant = docs:read\n",
+    );
     let err = framework(&src).expect_err("viewer and Viewer both export as Viewer");
     assert!(err.contains("collides on field Viewer"), "{err}");
 }
