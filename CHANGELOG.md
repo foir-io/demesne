@@ -507,9 +507,9 @@ it. Two new emit kinds close this:
 Several `.demesne` files can be compiled as one model, given in order, as in
 `demesne validate core.demesne extra.demesne`. Each file may refer to what the
 files before it declare. Split where each prefix still validates, a spec emits
-what its text emits in one file: a property test splits every corpus spec that
-way and checks that the files emit the same objects. A spec in one file emits
-exactly what it did.
+what its text emits in one file: a property test splits every valid corpus spec
+at each declaration where the prefix validates, and checks that the files emit
+the same objects. A spec in one file emits exactly what it did.
 
 - Findings name their file, as in `extra.demesne:12: …`. A spec in one file
   still reports `line 12: …`.
