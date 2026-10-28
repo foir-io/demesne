@@ -1,16 +1,16 @@
 # gap	spec	args ({spec} is the fixture)	v0.93.1 output matches	this release matches (and v0.93.1 must not)
-D37	d37-wider-write.demesne	validate {spec}	^ok: 1 objects	permission note\.remove maps delete, and its term `grantee:write` admits callers the select permission note\.view does not reach
-D36	d36-holds.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'holds'::text AS source, 'staff'::text AS principal_kind, ra\.grantee_id
-D36	d36-role.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	FROM docs e JOIN role_grants ra ON ra\.grantee_kind = 'staff' AND ra\.revoked_at IS NULL AND ra\.tenant_id = e\.tenant_id AND ra\.workspace_id = e\.workspace_id JOIN roles rr ON rr\.id = ra\.role_id AND rr\.key IN \('viewer'\)
-D36	d36-session-rel.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	FROM docs e JOIN role_grants ra ON ra\.grantee_kind = 'staff' AND ra\.revoked_at IS NULL AND ra\.tenant_id = e\.tenant_id AND ra\.workspace_id = e\.workspace_id JOIN roles rr ON rr\.id = ra\.role_id AND rr\.key IN \('viewer'\)
-D36	d36-kind.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'claim'::text, NULL::text, NULL::text, 'read'::text, 'kind'::text, 'member'::text
-D36	d36-public.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'public'::text, NULL::text, NULL::text, 'read'::text
-D36	d36-self.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	'sub'::text, owner_id::text
-D36	d36-session.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	'workspace_id'::text, workspace_id::text
-D36	d36-within-nullable.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'scope'::text, NULL::text, NULL::text, 'read'::text
-D36	d36-tree-holds.demesne	validate {spec}	term "@holds\(docs:read\)" has no accessor branch	^ok: 2 objects
+WRITE	wider-write.demesne	validate {spec}	^ok: 1 objects	permission note\.remove maps delete, and its term `grantee:write` admits callers the select permission note\.view does not reach
+ACCESS	accessors-holds.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'holds'::text AS source, 'staff'::text AS principal_kind, ra\.grantee_id
+ACCESS	accessors-role.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	FROM docs e JOIN role_grants ra ON ra\.grantee_kind = 'staff' AND ra\.revoked_at IS NULL AND ra\.tenant_id = e\.tenant_id AND ra\.workspace_id = e\.workspace_id JOIN roles rr ON rr\.id = ra\.role_id AND rr\.key IN \('viewer'\)
+ACCESS	accessors-session-rel.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	FROM docs e JOIN role_grants ra ON ra\.grantee_kind = 'staff' AND ra\.revoked_at IS NULL AND ra\.tenant_id = e\.tenant_id AND ra\.workspace_id = e\.workspace_id JOIN roles rr ON rr\.id = ra\.role_id AND rr\.key IN \('viewer'\)
+ACCESS	accessors-kind.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'claim'::text, NULL::text, NULL::text, 'read'::text, 'kind'::text, 'member'::text
+ACCESS	accessors-public.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'public'::text, NULL::text, NULL::text, 'read'::text
+ACCESS	accessors-self.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	'sub'::text, owner_id::text
+ACCESS	accessors-session.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	'workspace_id'::text, workspace_id::text
+ACCESS	accessors-within-nullable.demesne	emit {spec} definers	FUNCTION auth\.docs_accessors\(p_id	SELECT 'scope'::text, NULL::text, NULL::text, 'read'::text
+ACCESS	accessors-tree-holds.demesne	validate {spec}	term "@holds\(docs:read\)" has no accessor branch	^ok: 2 objects
 NAMES	shared-table-names.demesne	validate {spec}	^ok: 14 objects	each compile a policy named "items_select"; Postgres keeps only the last one created
-D15	d15-after.demesne	emit {spec} migrate {gaps}/d15-before.manifest.json	unknown emit kind "migrate"	DROP FUNCTION IF EXISTS auth\.notes_accessors_conditional\(text\);
+MIGRATE	migrate-after.demesne	emit {spec} migrate {gaps}/migrate-before.manifest.json	unknown emit kind "migrate"	DROP FUNCTION IF EXISTS auth\.notes_accessors_conditional\(text\);
 QUIRK1	quirk-accessors-schema.demesne	validate {spec}	\(auth\.docs_accessors would under-report\)	\(app_auth\.docs_accessors would under-report\)
 QUIRK1	quirk-structural-schema.demesne	validate {spec}	\(auth\.assets_accessors would under-report\)	\(app_auth\.assets_accessors would under-report\)
 IMPLIED	quirk-implied-schema.demesne	emit {spec} definers	[^_]auth\.member_perm_implied_by\(p_perm\)	app_auth\.member_perm_implied_by\(p_perm\)

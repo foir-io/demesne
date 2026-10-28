@@ -1,7 +1,7 @@
 use demesne_emit_sql::{GenFn, Sql, validate};
 
-fn d36() -> String {
-    std::fs::read_to_string(format!("{}/../../testdata/gaps/d36-holds.demesne", env!("CARGO_MANIFEST_DIR"))).expect("the fixture reads")
+fn holds_fixture() -> String {
+    std::fs::read_to_string(format!("{}/../../testdata/gaps/accessors-holds.demesne", env!("CARGO_MANIFEST_DIR"))).expect("the fixture reads")
 }
 
 fn swap(src: &str, pairs: &[(&str, &str)]) -> String {
@@ -32,7 +32,8 @@ const DOC_VIEW: &str = "permission view = owner + @holds(docs:read) + grantee:re
 
 #[test]
 fn a_rolestore_plane_pins_every_level_below_it_null() {
-    let branch = holds_branch(&swap(&d36(), &[("  permissions permissions\n", "  permissions permissions\n  plane       tenant\n")]), "docs_accessors");
+    let branch =
+        holds_branch(&swap(&holds_fixture(), &[("  permissions permissions\n", "  permissions permissions\n  plane       tenant\n")]), "docs_accessors");
     assert!(branch.contains("(ra.tenant_id IS NULL OR ra.tenant_id = e.tenant_id)"), "{branch}");
     assert!(branch.contains("ra.workspace_id IS NULL AND"), "{branch}");
     assert!(!branch.contains("ra.workspace_id = e."), "{branch}");
@@ -42,7 +43,7 @@ fn a_rolestore_plane_pins_every_level_below_it_null() {
 fn a_level_the_object_is_not_scoped_at_is_pinned_null() {
     let src = format!(
         "{}\nobject memo {{\n  table  memos\n  scoped tenant\n  relation tenant: tenant via tenant_id\n  relation grantee: member via grant memo_acl(memo_id, principal_kind, principal_id, access)\n  permission view = @holds(docs:read) + grantee:read @rls maps select\n}}\n",
-        d36()
+        holds_fixture()
     );
     let branch = holds_branch(&src, "memos_accessors");
     assert!(branch.contains("(ra.tenant_id IS NULL OR ra.tenant_id = e.tenant_id)"), "{branch}");
@@ -52,16 +53,16 @@ fn a_level_the_object_is_not_scoped_at_is_pinned_null() {
 
 #[test]
 fn a_vocabulary_with_implications_checks_held_permissions_through_them() {
-    let plain = holds_branch(&d36(), "docs_accessors");
+    let plain = holds_branch(&holds_fixture(), "docs_accessors");
     assert!(plain.contains("'docs:read' = ANY(ro.permissions)"), "{plain}");
-    let implied = holds_branch(&swap(&d36(), &[("  permission docs:write\n", "  permission docs:write implies docs:read\n")]), "docs_accessors");
+    let implied = holds_branch(&swap(&holds_fixture(), &[("  permission docs:write\n", "  permission docs:write implies docs:read\n")]), "docs_accessors");
     assert!(implied.contains("ro.permissions::text[] && auth.staff_perm_implied_by('docs:read')"), "{implied}");
 }
 
 #[test]
 fn a_platform_role_lists_the_holders_of_its_own_levels_presets() {
     let src = swap(
-        &d36(),
+        &holds_fixture(),
         &[
             ("  preset owner  @ tenant    = *\n", "  preset owner  @ tenant    = *\n  preset root   @ org       = *\n"),
             ("subject member {", "subject platform_staff { anchor org; reach descendants; identifies sub; roles configurable staff }\nsubject member {"),
@@ -75,8 +76,10 @@ fn a_platform_role_lists_the_holders_of_its_own_levels_presets() {
 
 #[test]
 fn a_walk_from_a_role_relation_lists_none_of_the_roles_holders() {
-    let src =
-        swap(&d36(), &[(DOC_VIEW, "permission view = owner + editor->view @kernel maps select\n  permission list = owner + grantee:read @rls maps select")]);
+    let src = swap(
+        &holds_fixture(),
+        &[(DOC_VIEW, "permission view = owner + editor->view @kernel maps select\n  permission list = owner + grantee:read @rls maps select")],
+    );
     let text = accessor(&src, "docs_accessors");
     assert!(text.contains("SELECT 'owner'::text"), "{text}");
     assert!(!text.contains("'role'::text"), "{text}");
@@ -84,7 +87,7 @@ fn a_walk_from_a_role_relation_lists_none_of_the_roles_holders() {
 
 fn with_borrow(view: &str) -> String {
     swap(
-        &d36(),
+        &holds_fixture(),
         &[
             (
                 "  permission view = staffer + @session @rls maps select\n",
@@ -182,7 +185,7 @@ object doc {
 #[test]
 fn a_session_on_a_role_relation_lists_that_roles_holders() {
     let role_rows = |view: &str| {
-        let text = accessor(&swap(&d36(), &[(DOC_VIEW, view)]), "docs_accessors");
+        let text = accessor(&swap(&holds_fixture(), &[(DOC_VIEW, view)]), "docs_accessors");
         let start = text.find("SELECT 'role'::text").unwrap_or_else(|| panic!("no role readers:\n{text}"));
         text[start..].to_string()
     };

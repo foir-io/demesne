@@ -15,7 +15,7 @@ async function until(probe, what) {
 }
 
 exports.run = async () => {
-  const bad = readFileSync(join(repo, "testdata/gaps/d37-wider-write.demesne"), "utf8");
+  const bad = readFileSync(join(repo, "testdata/gaps/wider-write.demesne"), "utf8");
   const doc = await vscode.workspace.openTextDocument({ language: "demesne", content: bad });
   await vscode.window.showTextDocument(doc);
   const found = await until(() => {

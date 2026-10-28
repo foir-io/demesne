@@ -1661,13 +1661,12 @@ rejection counted *every* vocabulary, including ones that back no rolestore at
 all. Such a vocabulary can never be the answer — it names no candidate — so it
 could only ever turn a well-defined resolution into a compile error.
 
-This bit the first real two-rolestore spec. Foir declares `vocabulary admin`
-(backed by `rolestore admin`) and `vocabulary customer` (an API-key scope set,
-backed by nothing), and the two share five permission names — `files:read`,
-`files:write`, `files:delete`, `operations:read`, `operations:execute` — because
-they name the same actions on the same data at different planes. Adding a second
-rolestore made `@holds(operations:read)` fail to compile at three existing sites
-that were correct and unchanged.
+This bit the first real spec with two rolestores. One vocabulary backed a
+rolestore, and a second, a scope set for API keys, backed nothing. The two
+shared several permission names, because they named the same actions on the
+same data at different planes. Adding a second rolestore made `@holds` on one of
+those permissions fail to compile at existing sites that were correct and
+unchanged.
 
 Ambiguity between two *rolestore-backed* vocabularies is still a compile error,
 and so is a vocabulary backing two rolestores. Single-rolestore specs are

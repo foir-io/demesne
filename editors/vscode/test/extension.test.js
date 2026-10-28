@@ -4,7 +4,7 @@ const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const { activateWith } = require("../extension.js");
 
-const gap = readFileSync(join(__dirname, "../../../testdata/gaps/d37-wider-write.demesne"), "utf8");
+const gap = readFileSync(join(__dirname, "../../../testdata/gaps/wider-write.demesne"), "utf8");
 
 function fake(docs, specs = []) {
   const sets = [];
