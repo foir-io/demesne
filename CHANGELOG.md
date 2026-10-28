@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.1.0
+
+### Go applications run the Rust runtime
+
+`demesne emit <spec> --target go <kind> [pkg]` generates Go again, for the new
+module `github.com/foir-io/demesne/go`. The module embeds the Rust runtime
+compiled to WebAssembly and runs it on wazero, with no cgo, so a Go program
+gets the answers the Rust crates and `@foir/demesne` give: CI replays every
+case of the runtime oracle through the Go module. The module's version is the
+demesne release whose runtime it embeds, tagged `go/vX.Y.Z`.
+
+The kinds are those of `--target ts`. `framework` writes a typed package: a
+`Surface` with a check per object and verb, `ListResources` and `CheckMany`,
+the holds resolvers, `Caps`, `RoleTiers`, `Check`, and `CheckHandler`, an
+`http.Handler`. `projections` (and `all`) writes the projections as Go values
+for the lower-level API, and `claims` and `pdp` write the claims contract and
+each emit site's policy map. The package is named `authz` unless you name it.
+`emit <spec> framework` and `emit <spec> claims` without a target now ask for
+`--target ts` or `--target go`.
+
+The generated checks run their SQL through `demesne.Querier`, which
+`demesne.FromSQL` makes from `database/sql`. The module under `go/example`
+runs the generated packages against a live Postgres in CI, and the Go emitted
+for every spec in the corpus is checked to be gofmt-clean and to compile.
+
+### Rust crates
+
+`demesne-emit-go` is new. `demesne_model::framework` holds the plan both
+framework emitters follow: which checks an object gets, the caps tree, the
+role tiers, and the names that would collide. `demesne_emit_ts::projections::all`
+returns every projection a spec has, each with its `Shape`. A projection that
+can't be built now reports `projection holdsResolver:` (and so on) where it
+said `EmitTS holdsResolver:`.
+
 ## v1.0.0
 
 

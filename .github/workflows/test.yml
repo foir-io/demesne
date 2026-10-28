@@ -43,7 +43,7 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: clippy (wasm32)
-        run: cargo clippy -p demesne-wasm -p demesne-runtime-wasm --target wasm32-unknown-unknown -- -D warnings
+        run: cargo clippy -p demesne-wasm -p demesne-runtime-wasm -p demesne-runtime-abi --target wasm32-unknown-unknown -- -D warnings
       - name: doc
         run: cargo doc --workspace --no-deps
         env:
@@ -69,7 +69,13 @@ jobs:
       - name: features
         run: cargo hack check --workspace --ignore-private --each-feature --no-dev-deps
       - name: semver
-        run: cargo semver-checks --workspace --baseline-rev "$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD)"
+        run: |
+          base="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD)"
+          new=()
+          for manifest in crates/*/Cargo.toml; do
+            git cat-file -e "$base:$manifest" 2>/dev/null || new+=(--exclude "$(sed -n 's/^name = "\(.*\)"$/\1/p' "$manifest" | head -n 1)")
+          done
+          cargo semver-checks --workspace "${new[@]}" --baseline-rev "$base"
 
   ts:
     name: TypeScript
@@ -119,6 +125,42 @@ jobs:
         run: pnpm --filter @foir/demesne test:browser
       - name: test the packed package (Node, workerd, Chrome)
         run: pnpm --filter @foir/demesne test:packed
+
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: |
+            go/go.sum
+            go/example/go.sum
+      - name: toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: runtime wasm
+        run: scripts/build-go-wasm.sh
+      - name: the committed runtime wasm is this build
+        run: git diff --exit-code -- go/runtime.wasm
+      - name: gofmt
+        run: test -z "$(gofmt -l go)"
+      - name: vet
+        run: go vet ./...
+        working-directory: go
+      - name: test
+        run: go test -count=1 -race ./...
+        working-directory: go
+      - name: Postgres binaries
+        run: ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n 1 >> "$GITHUB_PATH"
+      - name: example under live Postgres
+        run: go vet ./... && go test -count=1 ./...
+        working-directory: go/example
+        env:
+          DEMESNE_REQUIRE_PG: "1"
+      - name: emitted Go is gofmt-clean and compiles
+        run: cargo build -p demesne-cli && scripts/check-go-emit.sh
 
   vscode:
     name: VS Code

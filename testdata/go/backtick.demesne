@@ -1,0 +1,32 @@
+topology {
+  level tenant
+}
+
+vocabulary api {
+  permission docs:read
+}
+
+vocabulary API {
+  permission docs:write
+}
+
+rolestore api {
+  assignments role_grants
+  kind        grantee_kind = "st`aff"
+  subject     grantee_id
+  scope       tenant_id
+  rolejoin    role_id roles id key
+}
+
+subject staff { anchor tenant; reach self; identifies sub; roles configurable api }
+
+object doc {
+  table  docs
+  scoped tenant
+  relation tenant: tenant via tenant_id
+  permission view = @session   @rls maps select
+}
+
+procedures api {
+  docs.v1.DocService/GetDoc -> docs:read
+}

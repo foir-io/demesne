@@ -1,4 +1,5 @@
 #![doc = "Emits the demesne enforcement floor from a validated spec: RLS policies, the SECURITY DEFINER kernel, closure and group triggers, materialized flats, the changelog and the async tier."]
+#![forbid(unsafe_code)]
 
 mod app_surface;
 mod asynch;

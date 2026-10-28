@@ -1,4 +1,5 @@
 #![doc = "The demesne spec language: tokens, the parser and the AST it produces."]
+#![forbid(unsafe_code)]
 
 mod ast;
 mod error;

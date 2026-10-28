@@ -1,4 +1,5 @@
 #![doc = "Emits demesne's Rust surface: the runtime tables a spec compiles to, as `static` items built from `Cow::Borrowed` data, for only the surfaces a crate names. Nothing is parsed at runtime. `Builder` runs it from `build.rs`."]
+#![forbid(unsafe_code)]
 
 mod build;
 mod error;

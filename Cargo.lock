@@ -154,8 +154,9 @@ dependencies = [
 
 [[package]]
 name = "demesne-cli"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
+ "demesne-emit-go",
  "demesne-emit-sql",
  "demesne-emit-ts",
  "demesne-gocompat",
@@ -167,8 +168,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "demesne-emit-go"
+version = "1.1.0"
+dependencies = [
+ "demesne-emit-sql",
+ "demesne-emit-ts",
+ "demesne-gocompat",
+ "demesne-model",
+ "demesne-runtime",
+ "demesne-syntax",
+ "insta",
+]
+
+[[package]]
 name = "demesne-emit-rust"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-emit-sql",
  "demesne-model",
@@ -178,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-emit-sql"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-gocompat",
  "demesne-model",
@@ -188,7 +202,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-emit-ts"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-emit-sql",
  "demesne-gocompat",
@@ -199,11 +213,11 @@ dependencies = [
 
 [[package]]
 name = "demesne-gocompat"
-version = "1.0.0"
+version = "1.1.0"
 
 [[package]]
 name = "demesne-model"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-gocompat",
  "demesne-runtime",
@@ -213,9 +227,10 @@ dependencies = [
 
 [[package]]
 name = "demesne-parity"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-cli",
+ "demesne-emit-go",
  "demesne-emit-sql",
  "demesne-emit-ts",
  "demesne-gocompat",
@@ -229,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "demesne-postgres"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-emit-sql",
  "demesne-gocompat",
@@ -246,23 +261,37 @@ dependencies = [
 
 [[package]]
 name = "demesne-runtime"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-gocompat",
 ]
 
 [[package]]
-name = "demesne-runtime-wasm"
-version = "1.0.0"
+name = "demesne-runtime-abi"
+version = "1.1.0"
+dependencies = [
+ "demesne-runtime-call",
+]
+
+[[package]]
+name = "demesne-runtime-call"
+version = "1.1.0"
 dependencies = [
  "demesne-gocompat",
  "demesne-runtime",
+]
+
+[[package]]
+name = "demesne-runtime-wasm"
+version = "1.1.0"
+dependencies = [
+ "demesne-runtime-call",
  "wasm-bindgen",
 ]
 
 [[package]]
 name = "demesne-static-parity"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-emit-rust",
  "demesne-emit-sql",
@@ -273,14 +302,14 @@ dependencies = [
 
 [[package]]
 name = "demesne-syntax"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-gocompat",
 ]
 
 [[package]]
 name = "demesne-wasm"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "demesne-cli",
  "demesne-emit-sql",

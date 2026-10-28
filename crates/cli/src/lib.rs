@@ -1,4 +1,5 @@
 #![doc = "The demesne command line's pure commands (validate, emit, help, version) over a `Files` source, shared by the native binary and the WASM build. Its errors are messages to print; the library crates (`demesne-model`, `demesne-emit-sql`, `demesne-postgres` and the emitters) return typed errors."]
+#![forbid(unsafe_code)]
 
 use demesne_emit_sql::{Manifest, Sql, definers_sql};
 use demesne_gocompat::quote;
@@ -19,9 +20,11 @@ USAGE:
                                                             files (kind all, manifest or migrate)
                                                --target ts: emit TypeScript (@foir/demesne)
                                                             kind: claims|pdp|projections|framework|all
+                                               --target go: emit Go (github.com/foir-io/demesne/go)
+                                                            kind [pkg]: claims|pdp|projections|framework|all,
+                                                            in package pkg (default authz)
                                                --profile supabase: emit the Supabase
                                                             deployment profile (access-token hook)
-                                               v1 generates no Go; use demesne v0.93.1 for Go
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
   demesne scaffold   [-i] <dsn>                generate a STARTER spec from the schema (-i: interactive)
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role,
@@ -41,8 +44,6 @@ files before it declare, and may `replace` a declaration of theirs.
 ";
 
 pub type R = Result<(), String>;
-
-const NO_GO: &str = "v1 generates no Go: use --target ts for TypeScript, or demesne v0.93.1 for Go";
 
 #[derive(Debug, Default)]
 pub struct Out {
@@ -280,8 +281,8 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
     match target.as_str() {
         "" => {}
         "ts" => return emit_ts(out, s, kind),
-        "go" => return Err(NO_GO.to_string()),
-        other => return Err(format!("unknown --target {} (ts)", quote(other))),
+        "go" => return emit_go(out, s, kind, rest.get(1).map_or("authz", String::as_str)),
+        other => return Err(format!("unknown --target {} (ts|go)", quote(other))),
     }
     let sql = Sql::new(s);
     match kind {
@@ -292,7 +293,7 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
             out.print(&sql.triggers_sql());
             Ok(())
         }
-        "claims" | "framework" => Err(format!("emit kind {} generated Go. {NO_GO}", quote(kind))),
+        "claims" | "framework" => Err(format!("emit kind {} is generated code: give --target ts or --target go", quote(kind))),
         "pdp" => emit_pdp_report(out, s),
         "all" => emit_all_sql(out, &sql),
         "manifest" => {
@@ -383,6 +384,23 @@ fn emit_all_sql(out: &mut Out, sql: &Sql) -> R {
     let res = sql.write_all_sql(&mut b);
     out.print(&b);
     res.map_err(|e| e.to_string())
+}
+
+fn emit_go(out: &mut Out, s: &Spec, kind: &str, pkg: &str) -> R {
+    use demesne_emit_go::{Package, emit_framework_go, emit_go, render_claims_contract_go, render_pdp_go};
+    let pkg = Package::new(pkg).map_err(|e| e.to_string())?;
+    let text = match kind {
+        "all" | "projections" => emit_go(s, &pkg),
+        "claims" => render_claims_contract_go(s, &pkg),
+        "pdp" => render_pdp_go(s, &pkg),
+        "framework" => emit_framework_go(s, &pkg),
+        "rls" | "policies" | "definers" | "enablement" | "triggers" => {
+            return Err(format!("emit kind {} is language-neutral SQL, so it has no Go target; emit it without --target go", quote(kind)));
+        }
+        other => return Err(format!("unknown emit kind {} for --target go (claims|pdp|projections|framework|all)", quote(other))),
+    };
+    out.print(&text.map_err(|e| e.to_string())?);
+    Ok(())
 }
 
 fn emit_ts(out: &mut Out, s: &Spec, kind: &str) -> R {

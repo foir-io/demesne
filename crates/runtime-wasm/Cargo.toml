@@ -15,8 +15,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-demesne-gocompat.workspace = true
-demesne-runtime.workspace = true
+demesne-runtime-call.workspace = true
 wasm-bindgen.workspace = true
 
 [lints]

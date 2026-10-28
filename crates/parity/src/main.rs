@@ -1,4 +1,5 @@
 #![expect(clippy::print_stdout, clippy::print_stderr, reason = "a test harness reports by printing")]
+#![forbid(unsafe_code)]
 
 use demesne_parity::{api, corpus, dsn, fuzz, goast, oracle, runner};
 use std::fmt::Write as _;

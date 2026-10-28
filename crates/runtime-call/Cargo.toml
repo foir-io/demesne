@@ -1,0 +1,19 @@
+[package]
+name = "demesne-runtime-call"
+description = "demesne's runtime behind one JSON call, shared by its WebAssembly builds for TypeScript and Go."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+demesne-gocompat.workspace = true
+demesne-runtime.workspace = true
+
+[lints]
+workspace = true

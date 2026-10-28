@@ -5,16 +5,20 @@ Guide for an agent (or a human) working in this repository.
 ## What this is
 
 Demesne is a compiler that turns one authorization spec (`.demesne`) into Postgres Row-Level
-Security (the enforcement floor) plus a typed application surface in TypeScript and Rust.
+Security (the enforcement floor) plus a typed application surface in TypeScript, Go and Rust.
 There is no running authorization service; enforcement lives in the database. The compiler,
-CLI and runtime are Rust. The Go engine is frozen at v0.93.1 on the `release/v0.93` branch and
-is not on `main`.
+CLI and runtime are Rust; `@foir/demesne` and the Go module under `go/` run that runtime as
+WebAssembly. The Go engine is frozen at v0.93.1 on the `release/v0.93` branch and is not on
+`main`.
 
 ## Repository layout
 
 - `crates/` — the Rust workspace: `syntax` (lexer, parser), `model` (analysis and
-  validation), `emit-sql`, `emit-ts`, `emit-rust` (static tables from `build.rs`), `runtime`
-  (no parser), `runtime-wasm` (the runtime as WebAssembly, for `@foir/demesne`), `postgres`
+  validation), `emit-sql`, `emit-ts`, `emit-go`, `emit-rust` (static tables from `build.rs`),
+  `runtime` (no parser), `runtime-call` (the runtime's operations behind one JSON call, shared
+  by both WebAssembly builds), `runtime-wasm` (the runtime as WebAssembly, for
+  `@foir/demesne`), `runtime-abi` (the runtime as plain WebAssembly exports, for the Go module;
+  the one crate allowed unsafe code), `postgres`
   (live-database support), `cli` (the `demesne` binary, and a library of its pure commands),
   `wasm` (the compiler as WebAssembly, for editors), `gocompat` (the quoting, JSON escaping and
   sort order the output keeps from the Go engine), and the test-only `parity` and
@@ -29,9 +33,13 @@ is not on `main`.
   `scripts/build-runtime-wasm.sh` before the TS tests) and an example app whose generated
   files are goldens.
 - `editors/vscode/` — the VS Code extension, which validates specs with `crates/wasm`.
+- `go/` — the Go module `github.com/foir-io/demesne/go`, tagged `go/vX.Y.Z`: a thin layer that
+  embeds `go/runtime.wasm` (built by `scripts/build-go-wasm.sh`; CI checks the committed file
+  is that build) and runs it on wazero. `go/example` is a module of its own whose generated
+  packages are goldens and whose tests run them against a throwaway Postgres.
 - `go.mod` — no Go code. It retracts v0.94.0 and v1.0.0 through v1.999.999, so Go's tooling
-  keeps Go users on v0.93.1 even though every `vX.Y.Z` tag on `main` is also a Go module
-  version.
+  keeps users of the root module on v0.93.1 even though every `vX.Y.Z` tag on `main` is also a
+  version of it.
 
 ## Build, test, lint
 
@@ -39,6 +47,9 @@ is not on `main`.
   live-Postgres suites run with `cargo test -p demesne-postgres -- --ignored` and
   `$DEMESNE_PG_URL` set. The Supabase round-trip also needs `$SUPABASE_DB_URL`.
 - TypeScript: `scripts/build-runtime-wasm.sh`, then `cd ts && pnpm install && pnpm -r test`.
+- Go: `scripts/build-go-wasm.sh`, then `cd go && go test ./...`, and `cd go/example && go test ./...`
+  with `initdb` and `pg_ctl` on `PATH`. `scripts/check-go-emit.sh` checks that the Go emitted for
+  every corpus spec is gofmt-clean and compiles.
 - VS Code: `cd editors/vscode && npm run build:wasm && npm test`.
 - Goldens (the example app's generated files and `oracle.json`) are regenerated with
   `UPDATE_ORACLE=1 cargo test -p demesne-parity --test goldens --test oracle_manifest`.

@@ -146,7 +146,7 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 | command | needs a DB | what it does |
 |---|---|---|
 | `demesne validate <spec>` | no | parse + validate the spec |
-| `demesne emit <spec> [rls\|definers\|enablement\|triggers\|pdp\|all]` | no | print the generated SQL; `--target ts` prints TypeScript |
+| `demesne emit <spec> [rls\|definers\|enablement\|triggers\|pdp\|all]` | no | print the generated SQL; `--target ts` prints TypeScript, `--target go` Go |
 | `demesne introspect <dsn>` | yes | summarise the live schema |
 | `demesne scaffold [-i] <dsn>` | yes | generate a starter spec from the schema (`-i`: interactive — asks for the RLS role + definer/table schemas, lists ungoverned tables as TODO stubs) |
 | `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, verify the RLS role is not `BYPASSRLS`, and look for schema traps |
@@ -1052,8 +1052,22 @@ regenerate it to check for drift.
 A Rust application builds the same surface from the crates: `demesne-emit-rust` writes the
 spec's static tables from `build.rs`, and `demesne-runtime` runs them.
 
-v1 generates no Go. The Go engine is frozen at v0.93.1 on the `release/v0.93` branch, where
-`Spec.EmitFramework(pkg)` still generates the Go package; a Go application stays on it.
+**In Go.** `--target go framework <pkg>` generates the same surface as a Go package, over the
+module `github.com/foir-io/demesne/go`, which runs the same Rust runtime as WebAssembly on
+wazero, with no cgo:
+
+```
+demesne emit authz.demesne --target go framework authz > internal/authz/authz.go
+go get github.com/foir-io/demesne/go@v1.1.0
+```
+
+Its checks hang off a `Surface` that `authz.New(runtime)` builds from a `demesne.Runtime`:
+`s.Doc.CanView(ctx, q, id)`, `s.Holds(ctx, q, principalID, scope)`,
+`s.Check(ctx, q, object, verb, id)`, and `s.CheckHandler(q)`, an `http.Handler`. `q` is a
+`demesne.Querier`, which `demesne.FromSQL` makes from a `*sql.Tx`. The module's
+[README](go/README.md) covers the wiring and concurrency. The Go engine stays frozen at
+v0.93.1 on the `release/v0.93` branch, where `Spec.EmitFramework(pkg)` generates its older
+package.
 
 **Wiring a connection.** The module declares a `Querier` with one method,
 `query(text, params) → { rows }`, which a node-postgres `Client` or `Pool` already satisfies.
@@ -1316,7 +1330,7 @@ again with it.
 `--file` takes the emit kinds `all`, `manifest` and `migrate`. The manifest is
 the prefix's: what the database holds once the files up to the one named are
 applied, which is what the next `migrate` of that file compares with. Every
-other kind, and `--target ts` with it, covers the files given, so a build that
+other kind, and `--target ts` or `--target go` with it, covers the files given, so a build that
 ships fewer files passes fewer.
 
 ### `replace`

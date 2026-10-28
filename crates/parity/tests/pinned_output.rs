@@ -5,7 +5,13 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-const LATER_OUTPUTS: &[(&str, &[&str])] = &[("emit-manifest", &["emit", "{spec}", "manifest"])];
+const LATER_OUTPUTS: &[(&str, &[&str])] = &[
+    ("emit-manifest", &["emit", "{spec}", "manifest"]),
+    ("go-claims", &["emit", "--target", "go", "{spec}", "claims"]),
+    ("go-pdp", &["emit", "--target", "go", "{spec}", "pdp"]),
+    ("go-projections", &["emit", "--target=go", "{spec}", "projections", "projection"]),
+    ("go-framework", &["emit", "{spec}", "framework", "--target", "go"]),
+];
 
 struct Repo(PathBuf);
 
@@ -93,8 +99,26 @@ fn a_spec_in_several_files_matches_its_snapshots() {
         ("emit-file-whole-kind", emit(&files, &["--file", &extra, "rls"])),
         ("emit-file-with-target", emit(&files, &["--file", &extra, "--target", "ts"])),
         ("ts-projections", emit(&files, &["--target", "ts", "projections"])),
+        ("go-projections", emit(&files, &["--target", "go", "projections"])),
     ];
     for (name, args) in runs {
         insta::assert_snapshot!(format!("multi__{name}"), record(&repo, "", &args));
+    }
+}
+
+#[test]
+fn a_go_emit_the_cli_refuses_matches_its_snapshot() {
+    let repo = repo();
+    let spec = "examples/example.demesne";
+    let runs: [(&str, &[&str]); 6] = [
+        ("package-not-an-identifier", &["emit", spec, "--target", "go", "framework", "not-a-name"]),
+        ("package-a-keyword", &["emit", spec, "--target", "go", "claims", "func"]),
+        ("sql-kind", &["emit", spec, "--target", "go", "rls"]),
+        ("unknown-kind", &["emit", spec, "--target", "go", "nope"]),
+        ("unknown-target", &["emit", spec, "--target", "py", "framework"]),
+        ("framework-without-target", &["emit", spec, "framework"]),
+    ];
+    for (name, args) in runs {
+        insta::assert_snapshot!(format!("go_refusal__{name}"), record(&repo, "", args));
     }
 }

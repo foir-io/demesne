@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use demesne_cli::{Files, OsFiles, Out, R, finish, load_specs, need, run_pure, spec_args, strip_flag};
 use demesne_emit_sql::Sql;
 use demesne_gocompat::quote;

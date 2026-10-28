@@ -177,7 +177,7 @@ Don't read the whole book. Open only the guidelines for the area you're working 
 - **Features are additive** (M-FEATURES-ADDITIVE). CI checks each feature on its own.
   - When features select editions or tiers of a product, check every combination with `cargo hack --feature-powerset`, and give each tier its own schema and migration set from the first migration. Tools such as sqlx record a checksum for each applied migration, so splitting a set later means rewriting history on every database.
 - **Don't leak dependency types.** A published crate keeps third-party types out of its public API unless they earn their place (M-DONT-LEAK-TYPES).
-- **`unsafe` is forbidden workspace-wide.** If you think you need it, stop and ask rather than adding an exception.
+- **`unsafe` is forbidden in every crate but `runtime-abi`.** Its plain WebAssembly exports need `#[unsafe(no_mangle)]`, and handing a buffer back to the host needs one `Box::from_raw`. Each such item carries `#[expect(unsafe_code, reason = "…")]` and each unsafe block a `SAFETY` comment, and every other crate root has `#![forbid(unsafe_code)]`. If you think another crate needs it, stop and ask rather than adding an exception.
 
 ### 9. Docs, comments and logs
 

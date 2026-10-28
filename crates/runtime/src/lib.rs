@@ -1,4 +1,5 @@
 #![doc = "The demesne runtime. Everything here operates on compiled data: nothing in this crate parses a spec."]
+#![forbid(unsafe_code)]
 
 mod access;
 mod app_surface;
