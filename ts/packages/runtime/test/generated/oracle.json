@@ -3810,7 +3810,7 @@
         "kind": "appSurface.listResourcesSQL"
       },
       {
-        "expect": "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1 AND ((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.member_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'records:write')))))",
+        "expect": "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1 AND ((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.member_has_perm((SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'records:write')))))",
         "input": {
           "object": "record"
         },
@@ -6160,7 +6160,7 @@
           "pk": "id",
           "flatListFn": "",
           "asyncCheckSQL": "",
-          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1 AND ((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.member_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'records:write')))))"
+          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1 AND ((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.member_has_perm((SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'records:write')))))"
         }
       ],
       "claims": {
@@ -6382,7 +6382,7 @@
         "kind": "appSurface.listResourcesSQL"
       },
       {
-        "expect": "SELECT EXISTS (SELECT 1 FROM documents WHERE id = $1 AND ((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.operator_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'content:write')))))",
+        "expect": "SELECT EXISTS (SELECT 1 FROM documents WHERE id = $1 AND ((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.operator_has_perm((SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'content:write')))))",
         "input": {
           "object": "document"
         },
@@ -6417,7 +6417,7 @@
         "kind": "appSurface.listResourcesSQL"
       },
       {
-        "expect": "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), 'platform:manage'))))",
+        "expect": "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND ((auth.platform_has_perm((SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), 'platform:manage'))))",
         "input": {
           "object": "tenant"
         },
@@ -8915,7 +8915,7 @@
           "pk": "id",
           "flatListFn": "",
           "asyncCheckSQL": "",
-          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM documents WHERE id = $1 AND ((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.operator_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'content:write')))))"
+          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM documents WHERE id = $1 AND ((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'project_id') AND (auth.operator_has_perm((SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, project_id, 'content:write')))))"
         },
         {
           "object": "tenant",
@@ -8923,7 +8923,7 @@
           "pk": "id",
           "flatListFn": "",
           "asyncCheckSQL": "",
-          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), 'platform:manage'))))"
+          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND ((auth.platform_has_perm((SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), 'platform:manage'))))"
         }
       ],
       "claims": {
@@ -9231,7 +9231,7 @@
         "kind": "appSurface.listResourcesSQL"
       },
       {
-        "expect": "SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1 AND (((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND (auth.admin_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub')))) AND (invited_by = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'))))",
+        "expect": "SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1 AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND (auth.admin_has_perm((SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub')))) AND (invited_by = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'))))",
         "input": {
           "object": "invitation"
         },
@@ -10588,7 +10588,7 @@
           "pk": "id",
           "flatListFn": "",
           "asyncCheckSQL": "",
-          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1 AND (((tenant_id = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND (auth.admin_has_perm((current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub')))) AND (invited_by = (current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'))))"
+          "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1 AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'tenant_id') AND (auth.admin_has_perm((SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub')))) AND (invited_by = (SELECT current_setting('request.jwt.claims', true)::json -\u003e\u003e 'sub'))))"
         }
       ],
       "claims": {

@@ -6,7 +6,7 @@ exit: 0
 --- stdout ---
 DROP POLICY IF EXISTS documents_select ON public.documents;
 CREATE POLICY documents_select ON public.documents FOR SELECT TO authenticated
-    USING ((org_id = (current_setting('request.jwt.claims', true)::json ->> 'org_id') AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (auth.folder_closure_reachable((current_setting('request.jwt.claims', true)::json ->> 'viewer_folder'), folder_id))));
+    USING ((org_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'org_id') AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (auth.folder_closure_reachable((SELECT current_setting('request.jwt.claims', true)::json ->> 'viewer_folder'), folder_id))));
 
 
 --- stderr ---

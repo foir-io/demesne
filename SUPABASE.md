@@ -5,9 +5,9 @@ have a `.demesne` spec, it takes you from the emitted SQL to a project where the
 enforces your rules on every request.
 
 Supabase is a close fit out of the box. The RLS that Demesne emits reads its claims from
-`current_setting('request.jwt.claims', true)::json ->> '<key>'` with policies `TO
-authenticated`, and those are Supabase's defaults. The one thing you have to set up is
-getting your spec's claims into that setting.
+`(SELECT current_setting('request.jwt.claims', true)::json ->> '<key>')`, once per
+statement, with policies `TO authenticated`, and those are Supabase's defaults. The one thing
+you have to set up is getting your spec's claims into that setting.
 
 ## How the claims get to the database
 

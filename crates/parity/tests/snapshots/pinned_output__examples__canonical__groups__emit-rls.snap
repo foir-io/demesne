@@ -6,7 +6,7 @@ exit: 0
 --- stdout ---
 DROP POLICY IF EXISTS docs_select ON public.docs;
 CREATE POLICY docs_select ON public.docs FOR SELECT TO authenticated
-    USING ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND workspace_id = (current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.group_closure_member(audience_group, (current_setting('request.jwt.claims', true)::json ->> 'member_id')))));
+    USING ((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.group_closure_member(audience_group, (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id')))));
 
 
 --- stderr ---

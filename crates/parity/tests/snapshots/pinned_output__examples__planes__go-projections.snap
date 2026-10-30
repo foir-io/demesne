@@ -70,7 +70,7 @@ var AppSurface = demesne.MustDecode[[]demesne.AppObjectSurface](`[
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM documents WHERE id = $1 AND ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.operator_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:write')))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM documents WHERE id = $1 AND ((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.operator_has_perm((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'content:write')))))"
   },
   {
     "object": "tenant",
@@ -78,7 +78,7 @@ var AppSurface = demesne.MustDecode[[]demesne.AppObjectSurface](`[
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND ((auth.platform_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage'))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND ((auth.platform_has_perm((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage'))))"
   }
 ]`)
 

@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Each claim is read once per statement
+
+The SQL emitter now writes every read of the caller's claims as an
+uncorrelated scalar subquery, in every policy, definer and point check:
+
+```sql
+(SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')
+```
+
+where it wrote `(current_setting('request.jwt.claims', true)::json ->> 'sub')`.
+Postgres evaluates the subquery once per statement, as an InitPlan, instead of
+parsing the whole claims document again for every row a policy looks at, so a
+read under row-level security no longer pays for the size of the claims
+document once per row. Reads through `claims via` with another setting or cast
+change the same way, and so does the identifier read a grant's scopes use,
+`(SELECT NULLIF(current_setting(…, true), '')::json ->> …)`.
+
+Every other part of the emitted SQL is byte for byte what v1.1.0 emitted, for
+every example spec and every spec in the corpus. Each rule admits the rows it
+admitted in v1.1.0: a live test compiles each of those specs that Postgres can
+hold with this release and with v1.1.0, lays tables and rows for it, applies
+both, and compares the rows every policy's `USING` and `WITH CHECK` admit, the
+rows its role sees, and every point check's answers, under a spread of claims:
+none at all, an empty set, and sets that give each claim a value of its own,
+some of them aimed at a row.
+
+A statement now judges all its rows by the claims as it first reads them. A
+function that changes the claims setting part-way through a statement no longer
+changes the claims the statement's later rows are judged by.
+
+To pick the change up, apply the regenerated SQL, or the migration
+`emit <spec> migrate <manifest>` writes: it recreates every policy and replaces
+every definer.
+
 ## go/v1.1.1
 
 The Go module only; it embeds the v1.1.0 runtime.
