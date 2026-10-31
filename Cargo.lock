@@ -154,103 +154,134 @@ dependencies = [
 
 [[package]]
 name = "demesne-cli"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "demesne-emit-go",
- "demesne-emit-sql",
+ "demesne-emit-sql 1.2.0",
  "demesne-emit-ts",
- "demesne-gocompat",
- "demesne-model",
+ "demesne-gocompat 1.2.0",
+ "demesne-model 1.2.0",
  "demesne-postgres",
- "demesne-runtime",
- "demesne-syntax",
+ "demesne-runtime 1.2.0",
+ "demesne-syntax 1.2.0",
  "postgres",
 ]
 
 [[package]]
 name = "demesne-emit-go"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
- "demesne-emit-sql",
+ "demesne-emit-sql 1.2.0",
  "demesne-emit-ts",
- "demesne-gocompat",
- "demesne-model",
- "demesne-runtime",
- "demesne-syntax",
+ "demesne-gocompat 1.2.0",
+ "demesne-model 1.2.0",
+ "demesne-runtime 1.2.0",
+ "demesne-syntax 1.2.0",
  "insta",
 ]
 
 [[package]]
 name = "demesne-emit-rust"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
- "demesne-emit-sql",
- "demesne-model",
- "demesne-runtime",
- "demesne-syntax",
+ "demesne-emit-sql 1.2.0",
+ "demesne-model 1.2.0",
+ "demesne-runtime 1.2.0",
+ "demesne-syntax 1.2.0",
 ]
 
 [[package]]
 name = "demesne-emit-sql"
 version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b99966e9799bb0f52d4f15f64e69b0d7f252478787046bcddc125c4c5589c8e"
 dependencies = [
- "demesne-gocompat",
- "demesne-model",
- "demesne-runtime",
- "demesne-syntax",
+ "demesne-gocompat 1.1.0",
+ "demesne-model 1.1.0",
+ "demesne-runtime 1.1.0",
+ "demesne-syntax 1.1.0",
+]
+
+[[package]]
+name = "demesne-emit-sql"
+version = "1.2.0"
+dependencies = [
+ "demesne-gocompat 1.2.0",
+ "demesne-model 1.2.0",
+ "demesne-runtime 1.2.0",
+ "demesne-syntax 1.2.0",
 ]
 
 [[package]]
 name = "demesne-emit-ts"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
- "demesne-emit-sql",
- "demesne-gocompat",
- "demesne-model",
- "demesne-runtime",
- "demesne-syntax",
+ "demesne-emit-sql 1.2.0",
+ "demesne-gocompat 1.2.0",
+ "demesne-model 1.2.0",
+ "demesne-runtime 1.2.0",
+ "demesne-syntax 1.2.0",
 ]
 
 [[package]]
 name = "demesne-gocompat"
 version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa9fd4e696977ea4bf1dd9454c4215b11303ded600bdaac14dcc46a5a76faf21"
+
+[[package]]
+name = "demesne-gocompat"
+version = "1.2.0"
 
 [[package]]
 name = "demesne-model"
 version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4889bb2bd5e7bc6a2d32f1d576f4c5b8ee183960372c09f48c9502f69ea38091"
 dependencies = [
- "demesne-gocompat",
- "demesne-runtime",
- "demesne-syntax",
+ "demesne-gocompat 1.1.0",
+ "demesne-runtime 1.1.0",
+ "demesne-syntax 1.1.0",
+]
+
+[[package]]
+name = "demesne-model"
+version = "1.2.0"
+dependencies = [
+ "demesne-gocompat 1.2.0",
+ "demesne-runtime 1.2.0",
+ "demesne-syntax 1.2.0",
  "insta",
 ]
 
 [[package]]
 name = "demesne-parity"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "demesne-cli",
  "demesne-emit-go",
- "demesne-emit-sql",
+ "demesne-emit-sql 1.2.0",
  "demesne-emit-ts",
- "demesne-gocompat",
- "demesne-model",
+ "demesne-gocompat 1.2.0",
+ "demesne-model 1.2.0",
  "demesne-postgres",
- "demesne-runtime",
- "demesne-syntax",
+ "demesne-runtime 1.2.0",
+ "demesne-syntax 1.2.0",
  "insta",
  "sha2",
 ]
 
 [[package]]
 name = "demesne-postgres"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
- "demesne-emit-sql",
- "demesne-gocompat",
- "demesne-model",
- "demesne-runtime",
- "demesne-syntax",
+ "demesne-emit-sql 1.1.0",
+ "demesne-emit-sql 1.2.0",
+ "demesne-gocompat 1.2.0",
+ "demesne-model 1.2.0",
+ "demesne-runtime 1.2.0",
+ "demesne-syntax 1.1.0",
+ "demesne-syntax 1.2.0",
  "nix",
  "postgres",
  "rustls",
@@ -262,28 +293,37 @@ dependencies = [
 [[package]]
 name = "demesne-runtime"
 version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd9b1b1318a3edc0b00cad4bf73b29da9aab968c5628001759fd5dabc4a7c70f"
 dependencies = [
- "demesne-gocompat",
+ "demesne-gocompat 1.1.0",
+]
+
+[[package]]
+name = "demesne-runtime"
+version = "1.2.0"
+dependencies = [
+ "demesne-gocompat 1.2.0",
 ]
 
 [[package]]
 name = "demesne-runtime-abi"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "demesne-runtime-call",
 ]
 
 [[package]]
 name = "demesne-runtime-call"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
- "demesne-gocompat",
- "demesne-runtime",
+ "demesne-gocompat 1.2.0",
+ "demesne-runtime 1.2.0",
 ]
 
 [[package]]
 name = "demesne-runtime-wasm"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "demesne-runtime-call",
  "wasm-bindgen",
@@ -291,30 +331,39 @@ dependencies = [
 
 [[package]]
 name = "demesne-static-parity"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "demesne-emit-rust",
- "demesne-emit-sql",
- "demesne-model",
- "demesne-runtime",
- "demesne-syntax",
+ "demesne-emit-sql 1.2.0",
+ "demesne-model 1.2.0",
+ "demesne-runtime 1.2.0",
+ "demesne-syntax 1.2.0",
 ]
 
 [[package]]
 name = "demesne-syntax"
 version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a0eb60ea250def1e9b35fa552b21f14d835dc37d0c41bd7f8b70f5a1ed59662"
 dependencies = [
- "demesne-gocompat",
+ "demesne-gocompat 1.1.0",
+]
+
+[[package]]
+name = "demesne-syntax"
+version = "1.2.0"
+dependencies = [
+ "demesne-gocompat 1.2.0",
 ]
 
 [[package]]
 name = "demesne-wasm"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "demesne-cli",
- "demesne-emit-sql",
- "demesne-gocompat",
- "demesne-syntax",
+ "demesne-emit-sql 1.2.0",
+ "demesne-gocompat 1.2.0",
+ "demesne-syntax 1.2.0",
  "wasm-bindgen",
 ]
 

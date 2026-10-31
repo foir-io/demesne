@@ -56,7 +56,7 @@ export const space = {
   },
 
   async canEdit(q: Querier, id: string): Promise<Decision> {
-    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM spaces WHERE space_pk = $1 AND (auth.is_ops((current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_ref = (current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR space_pk = (current_setting('request.jwt.claims', true)::json ->> 'spc') AND auth.crew_has_space_role((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk)))))", [id]);
+    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM spaces WHERE space_pk = $1 AND (auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk)))))", [id]);
     return composeCan(true, Boolean(rows[0]?.exists), Decision.NotGoverned);
   },
 
@@ -78,7 +78,7 @@ export const asset = {
   },
 
   async canEdit(q: Querier, id: string): Promise<Decision> {
-    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM assets WHERE asset_pk = $1 AND ((auth.is_ops((current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write')))))", [id]);
+    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM assets WHERE asset_pk = $1 AND ((auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write')))))", [id]);
     return composeCan(true, Boolean(rows[0]?.exists), Decision.NotGoverned);
   },
 

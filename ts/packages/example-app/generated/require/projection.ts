@@ -57,7 +57,7 @@ export const appSurface: AppObjectSurface[] = [
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1 AND (((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.admin_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND (invited_by = (current_setting('request.jwt.claims', true)::json ->> 'sub'))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1 AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND (auth.admin_has_perm((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, NULL, 'invitations:write') OR invited_by = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND (invited_by = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))))"
   }
 ];
 
