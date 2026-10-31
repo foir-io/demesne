@@ -29,9 +29,10 @@ fn rbac_gates_reads_on_any_role_and_writes_on_the_permission() {
     let upd = policy(&res, "resources_update");
     assert!(upd.using.contains(&format!("auth.staff_has_perm({sub}, tenant_id, project_id, 'resource:write')")), "{}", upd.using);
     assert!(!upd.using.contains("staff_has_resource_role"), "{}", upd.using);
+    let (tenant, project) = (sql.claim("tenant_id"), sql.claim("project_id"));
     for p in [sel, upd] {
         assert!(
-            p.using.contains("tenant_id = (current_setting") && p.using.contains("project_id = (current_setting"),
+            p.using.contains(&format!("tenant_id = {tenant}")) && p.using.contains(&format!("project_id = {project}")),
             "{} dropped tenancy:\n{}",
             p.name,
             p.using

@@ -108,7 +108,7 @@ func (a AssetAccess) CanView(ctx context.Context, q demesne.Querier, id string) 
 
 func (a AssetAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1 AND (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1 AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
@@ -134,7 +134,7 @@ func (a BlueprintAccess) CanView(ctx context.Context, q demesne.Querier, id stri
 
 func (a BlueprintAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM blueprints WHERE id = $1 AND (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM blueprints WHERE id = $1 AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
@@ -178,7 +178,7 @@ func (a AllowanceAccess) CanView(ctx context.Context, q demesne.Querier, id stri
 
 func (a AllowanceAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM allowances WHERE id = $1 AND (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id'))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM allowances WHERE id = $1 AND (estate_id IN (SELECT auth.approvals_reach_unscoped_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id'))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
@@ -204,7 +204,7 @@ func (a SpaceAccess) CanView(ctx context.Context, q demesne.Querier, id string) 
 
 func (a SpaceAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM spaces WHERE id = $1 AND (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id'))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM spaces WHERE id = $1 AND (estate_id IN (SELECT auth.approvals_reach_unscoped_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id'))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
@@ -240,7 +240,7 @@ func (a EntryAccess) CanView(ctx context.Context, q demesne.Querier, id string) 
 
 func (a EntryAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM entries WHERE id = $1 AND (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.catalog_can_bound(catalog_id))))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM entries WHERE id = $1 AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.catalog_can_bound(catalog_id))))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
@@ -266,7 +266,7 @@ func (a FolderAccess) CanView(ctx context.Context, q demesne.Querier, id string)
 
 func (a FolderAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM folders WHERE id = $1 AND ((((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id)))))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM folders WHERE id = $1 AND ((((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id)))))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)

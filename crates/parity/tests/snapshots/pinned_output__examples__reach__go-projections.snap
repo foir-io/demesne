@@ -92,7 +92,7 @@ var AppSurface = demesne.MustDecode[[]demesne.AppObjectSurface](`[
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1 AND (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1 AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))"
   },
   {
     "object": "blueprint",
@@ -100,7 +100,7 @@ var AppSurface = demesne.MustDecode[[]demesne.AppObjectSurface](`[
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM blueprints WHERE id = $1 AND (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM blueprints WHERE id = $1 AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))"
   },
   {
     "object": "ledger",
@@ -116,7 +116,7 @@ var AppSurface = demesne.MustDecode[[]demesne.AppObjectSurface](`[
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM allowances WHERE id = $1 AND (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id'))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM allowances WHERE id = $1 AND (estate_id IN (SELECT auth.approvals_reach_unscoped_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id'))))"
   },
   {
     "object": "space",
@@ -124,7 +124,7 @@ var AppSurface = demesne.MustDecode[[]demesne.AppObjectSurface](`[
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM spaces WHERE id = $1 AND (estate_id IN (SELECT auth.approvals_reach_unscoped_set((current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id'))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM spaces WHERE id = $1 AND (estate_id IN (SELECT auth.approvals_reach_unscoped_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id'))))"
   },
   {
     "object": "catalog",
@@ -140,7 +140,7 @@ var AppSurface = demesne.MustDecode[[]demesne.AppObjectSurface](`[
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM entries WHERE id = $1 AND (((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.catalog_can_bound(catalog_id))))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM entries WHERE id = $1 AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.catalog_can_bound(catalog_id))))))"
   },
   {
     "object": "folder",
@@ -148,7 +148,7 @@ var AppSurface = demesne.MustDecode[[]demesne.AppObjectSurface](`[
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM folders WHERE id = $1 AND ((((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id)))))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM folders WHERE id = $1 AND ((((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id)))))))"
   }
 ]`)
 

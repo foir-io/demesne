@@ -184,10 +184,12 @@ pub(crate) fn leaf(obj: &Object) -> &str {
 }
 
 impl Sql<'_> {
+    /// Returns the SQL that reads the caller's claim `key`: an uncorrelated scalar subquery,
+    /// which Postgres evaluates once per statement rather than once per row.
     #[must_use]
     pub fn claim(&self, key: &str) -> String {
         let (setting, cast) = self.claims_setting();
-        format!("(current_setting({}, true)::{cast} ->> {})", quote_literal(setting), quote_literal(key))
+        format!("(SELECT current_setting({}, true)::{cast} ->> {})", quote_literal(setting), quote_literal(key))
     }
 
     pub(crate) fn claims_setting(&self) -> (&str, &str) {
@@ -207,10 +209,12 @@ impl Sql<'_> {
         format!("ARRAY(SELECT e{} FROM jsonb_array_elements_text({}::jsonb) e)", self.s.id_cast(), self.claim(key))
     }
 
+    /// Returns the SQL that reads the caller's claim `key` as an identifier, reading an unset or
+    /// empty claims setting as no claims, once per statement as [`Sql::claim`] does.
     #[must_use]
     pub fn session_claim(&self, key: &str) -> String {
         let (setting, cast) = self.claims_setting();
-        format!("(NULLIF(current_setting({}, true), '')::{cast} ->> {})", quote_literal(setting), quote_literal(key)) + &self.s.id_cast()
+        format!("(SELECT NULLIF(current_setting({}, true), '')::{cast} ->> {})", quote_literal(setting), quote_literal(key)) + &self.s.id_cast()
     }
 
     pub(crate) fn virtual_levels(&self) -> R<Virtual> {

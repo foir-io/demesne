@@ -90,7 +90,7 @@ func (a RecordAccess) CanView(ctx context.Context, q demesne.Querier, id string)
 
 func (a RecordAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1 AND ((tenant_id = (current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.member_has_perm((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'records:write')))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM records WHERE id = $1 AND ((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'project_id') AND (auth.member_has_perm((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_id, project_id, 'records:write')))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)

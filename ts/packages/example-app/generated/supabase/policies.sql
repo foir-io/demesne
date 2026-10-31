@@ -45,7 +45,7 @@ DECLARE
   admitted boolean;
 BEGIN
   PERFORM set_config('request.jwt.claims', p_claims::text, true);
-  admitted := EXISTS (SELECT 1 FROM notes WHERE note_pk = p_id AND ((org_ref = (current_setting('request.jwt.claims', true)::json ->> 'org') AND ws_ref = (current_setting('request.jwt.claims', true)::json ->> 'ws') AND (owner_ref = (current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR visibility = 'open' OR demesne.note_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_ref'), notes.note_pk, 'read')))));
+  admitted := EXISTS (SELECT 1 FROM notes WHERE note_pk = p_id AND ((org_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'org') AND ws_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'ws') AND (owner_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR visibility = 'open' OR demesne.note_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), notes.note_pk, 'read')))));
   PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
   RETURN admitted;
 END
@@ -58,5 +58,5 @@ ALTER TABLE public.notes FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS notes_select ON public.notes;
 CREATE POLICY notes_select ON public.notes FOR SELECT TO authenticated
-    USING ((org_ref = (current_setting('request.jwt.claims', true)::json ->> 'org') AND ws_ref = (current_setting('request.jwt.claims', true)::json ->> 'ws') AND (owner_ref = (current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR visibility = 'open' OR demesne.note_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_ref'), notes.note_pk, 'read'))));
+    USING ((org_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'org') AND ws_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'ws') AND (owner_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR visibility = 'open' OR demesne.note_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), notes.note_pk, 'read'))));
 

@@ -97,7 +97,7 @@ func (a SpaceAccess) CanView(ctx context.Context, q demesne.Querier, id string) 
 
 func (a SpaceAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM spaces WHERE space_pk = $1 AND (auth.is_ops((current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_ref = (current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR space_pk = (current_setting('request.jwt.claims', true)::json ->> 'spc') AND auth.crew_has_space_role((current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk)))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM spaces WHERE space_pk = $1 AND (auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk)))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
@@ -123,7 +123,7 @@ func (a AssetAccess) CanView(ctx context.Context, q demesne.Querier, id string) 
 
 func (a AssetAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM assets WHERE asset_pk = $1 AND ((auth.is_ops((current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write')))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM assets WHERE asset_pk = $1 AND ((auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write')))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
