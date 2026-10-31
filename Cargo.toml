@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "1.2.0"
+version = "1.2.1"
 edition = "2024"
 rust-version = "1.99"
 license = "Apache-2.0"
@@ -13,17 +13,17 @@ categories = ["authentication", "database", "compilers"]
 homepage = "https://github.com/foir-io/demesne"
 
 [workspace.dependencies]
-demesne-gocompat = { path = "crates/gocompat", version = "1.2.0" }
-demesne-syntax = { path = "crates/syntax", version = "1.2.0" }
-demesne-runtime = { path = "crates/runtime", version = "1.2.0" }
+demesne-gocompat = { path = "crates/gocompat", version = "1.2.1" }
+demesne-syntax = { path = "crates/syntax", version = "1.2.1" }
+demesne-runtime = { path = "crates/runtime", version = "1.2.1" }
 demesne-runtime-call = { path = "crates/runtime-call" }
-demesne-model = { path = "crates/model", version = "1.2.0" }
-demesne-cli = { path = "crates/cli", version = "1.2.0", default-features = false }
-demesne-emit-sql = { path = "crates/emit-sql", version = "1.2.0" }
-demesne-emit-rust = { path = "crates/emit-rust", version = "1.2.0" }
-demesne-emit-ts = { path = "crates/emit-ts", version = "1.2.0" }
-demesne-emit-go = { path = "crates/emit-go", version = "1.2.0" }
-demesne-postgres = { path = "crates/postgres", version = "1.2.0" }
+demesne-model = { path = "crates/model", version = "1.2.1" }
+demesne-cli = { path = "crates/cli", version = "1.2.1", default-features = false }
+demesne-emit-sql = { path = "crates/emit-sql", version = "1.2.1" }
+demesne-emit-rust = { path = "crates/emit-rust", version = "1.2.1" }
+demesne-emit-ts = { path = "crates/emit-ts", version = "1.2.1" }
+demesne-emit-go = { path = "crates/emit-go", version = "1.2.1" }
+demesne-postgres = { path = "crates/postgres", version = "1.2.1" }
 demesne-emit-sql-v1-1 = { package = "demesne-emit-sql", version = "=1.1.0" }
 demesne-syntax-v1-1 = { package = "demesne-syntax", version = "=1.1.0" }
 insta = { version = "1.49.0", default-features = false }

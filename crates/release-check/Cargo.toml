@@ -1,0 +1,22 @@
+[package]
+name = "demesne-release-check"
+description = "Holds a release to the one before it: the SQL it emits and the rows each rule admits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+repository.workspace = true
+publish = false
+
+[dev-dependencies]
+demesne-syntax.workspace = true
+demesne-model.workspace = true
+demesne-emit-sql.workspace = true
+postgres.workspace = true
+demesne-emit-sql-v1-1.workspace = true
+demesne-syntax-v1-1.workspace = true
+
+[lints]
+workspace = true

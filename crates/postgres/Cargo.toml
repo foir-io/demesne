@@ -27,8 +27,6 @@ nix.workspace = true
 
 [dev-dependencies]
 demesne-syntax.workspace = true
-demesne-emit-sql-v1-1.workspace = true
-demesne-syntax-v1-1.workspace = true
 
 [lints]
 workspace = true
