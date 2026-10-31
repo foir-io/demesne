@@ -3,7 +3,7 @@
 demesne's runtime for Go. The module embeds the Rust runtime compiled to WebAssembly and runs it on [wazero](https://wazero.io), so it needs no cgo and builds wherever Go does. Its answers are the Rust runtime's own: the oracle that checks `@foir/demesne` replays every case through this module too.
 
 ```
-go get github.com/foir-io/demesne/go@v1.2.0
+go get github.com/foir-io/demesne/go@v1.2.1
 ```
 
 The module's major and minor version are those of the demesne release whose runtime it embeds, and a patch release can fix the Go layer alone. Generate code with the CLI of the same minor version.

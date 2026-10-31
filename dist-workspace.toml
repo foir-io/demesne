@@ -13,3 +13,6 @@ include = ["NOTICE"]
 pr-run-mode = "plan"
 tag-namespace = "v"
 publish-jobs = ["./publish-npm"]
+
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"

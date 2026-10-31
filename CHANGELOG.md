@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.2.1
+
+### The crates publish again
+
+v1.2.0 never reached crates.io or npm. Its tests compare the SQL it emits,
+and the rows each rule admits, with v1.1.0's, and so `demesne-postgres`
+depended on v1.1.0's crates, which crates.io can't hold beside 1.2.0 in one
+package. Those tests now live in `demesne-release-check`, a crate that is never
+published, and still run on every change. Nothing a caller sees differs from
+v1.2.0, which reached only the Go module, as `go/v1.2.0`; 1.2.1 is the first
+release of it published everywhere.
+
 ## v1.2.0
 
 ### Each claim is read once per statement
