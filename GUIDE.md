@@ -1074,7 +1074,7 @@ wazero, with no cgo:
 
 ```
 demesne emit authz.demesne --target go framework authz > internal/authz/authz.go
-go get github.com/foir-io/demesne/go@v1.2.1
+go get github.com/foir-io/demesne/go@v1.3.0
 ```
 
 Its checks hang off a `Surface` that `authz.New(runtime)` builds from a `demesne.Runtime`:

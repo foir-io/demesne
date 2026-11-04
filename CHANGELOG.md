@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v2.0.0
+
+The crates are 2.0.0 because a public struct of `demesne-syntax` gains a field
+(below). Nothing else a caller sees changes, and a spec without the new clause
+emits exactly what v1.2.1 did. The Go module's API doesn't change, so it is
+`go/v1.3.0`; a `go/v2` would move every importer to a new module path.
 
 ### A grant class can admit others
 
