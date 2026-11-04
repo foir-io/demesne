@@ -465,9 +465,37 @@ fn check_object_relations<'a>(s: &Spec, o: &'a Object) -> (Rels<'a>, Vec<Finding
         {
             errs.push(Finding::at(r.pos.line, format!("object {} relation {} is `via grant ... async` without `tracked` — the async affordance index is maintained off the changelog, which requires `tracked`", quote(&o.name), quote(&r.name))));
         }
+        if let Repr::Grant(g) = &r.repr {
+            errs.extend(check_grant_admits(o, r, g));
+        }
         errs.extend(check_transient_relation(s, o, r));
     }
     (rels, errs)
+}
+
+fn check_grant_admits(o: &Object, r: &Relation, g: &ViaGrant) -> Vec<Finding> {
+    let at = |msg: String| Finding::at(r.pos.line, format!("object {} relation {} {msg}", quote(&o.name), quote(&r.name)));
+    let mut errs = Vec::new();
+    for (i, rule) in g.admits.iter().enumerate() {
+        if g.admits[..i].iter().any(|earlier| earlier.access == rule.access) {
+            errs.push(at(format!("says what {} admits twice — list every class it admits on one `{} admits` clause", quote(&rule.access), rule.access)));
+        }
+        for (j, also) in rule.also.iter().enumerate() {
+            if *also == rule.access {
+                errs.push(at(format!("says {} admits itself — a grant term always admits its own class", quote(&rule.access))));
+            } else if rule.also[..j].contains(also) {
+                errs.push(at(format!("says {} admits {} twice", quote(&rule.access), quote(also))));
+            } else if g.admits.iter().any(|other| other.access == *also) {
+                errs.push(at(format!(
+                    "says {} admits {}, which admits classes of its own — admitting is not transitive, so list on {}'s clause every class it admits",
+                    quote(&rule.access),
+                    quote(also),
+                    rule.access
+                )));
+            }
+        }
+    }
+    errs
 }
 
 fn check_closure_relation(o: &Object, r: &Relation, c: &ViaClosure) -> Option<Finding> {

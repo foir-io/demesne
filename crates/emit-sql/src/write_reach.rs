@@ -2,7 +2,7 @@ use crate::Sql;
 use crate::rls::{Virtual, leaf};
 use demesne_model::SpecExt;
 use demesne_runtime::quote_literal;
-use demesne_syntax::{Admit, Finding, Object, Perm, PermNode, Repr, Spec, Term, ViaObject};
+use demesne_syntax::{Admit, Finding, Object, Perm, PermNode, Relation, Repr, Spec, Term, ViaGrant, ViaObject};
 use std::collections::BTreeSet;
 
 const DNF_LIMIT: usize = 512;
@@ -143,6 +143,7 @@ fn perm_implies(s: &Spec, held: &str, needed: &str) -> bool {
 struct Implications<'a> {
     s: &'a Spec,
     pairs: BTreeSet<(String, String)>,
+    admitted: BTreeSet<(String, String, String)>,
 }
 
 impl Implications<'_> {
@@ -151,9 +152,14 @@ impl Implications<'_> {
             return true;
         }
         match (split_last_literal(have), split_last_literal(want)) {
-            (Some((hp, hl, hs)), Some((wp, wl, ws))) => hp == wp && hs == ws && perm_implies(self.s, hl, wl),
+            (Some((hp, hl, hs)), Some((wp, wl, ws))) => hp == wp && hs == ws && (perm_implies(self.s, hl, wl) || self.admits(hp, wl, hl)),
             _ => false,
         }
+    }
+
+    fn admits(&self, prefix: &str, access: &str, also: &str) -> bool {
+        let call = prefix.trim_start_matches('(');
+        self.admitted.iter().any(|(definer, a, o)| call.starts_with(definer.as_str()) && a == access && o == also)
     }
 
     fn conj(&self, have: &Conj, want: &Conj) -> bool {
@@ -183,16 +189,29 @@ fn borrow_implications(s: &Spec, vo: &ViaObject) -> Vec<(String, String)> {
     }
 }
 
+fn grant_admissions(s: &Spec, obj: &Object, r: &Relation, vg: &ViaGrant) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for i in 0..r.types.len() {
+        let definer = format!("{}.{}(", s.definer_schema(), s.grant_rel_binding(obj, vg, r, i).0);
+        for rule in &vg.admits {
+            out.extend(rule.also.iter().map(|also| (definer.clone(), rule.access.clone(), also.clone())));
+        }
+    }
+    out
+}
+
 fn implications(s: &Spec) -> Implications<'_> {
     let mut pairs = BTreeSet::new();
+    let mut admitted = BTreeSet::new();
     for (obj, r) in s.relations() {
         match &r.repr {
             Repr::Composition(_) => pairs.extend(composition_implications(s.definer_schema(), obj, &r.name)),
             Repr::Object(vo) => pairs.extend(borrow_implications(s, vo)),
+            Repr::Grant(vg) => admitted.extend(grant_admissions(s, obj, r, vg)),
             _ => {}
         }
     }
-    Implications { s, pairs }
+    Implications { s, pairs, admitted }
 }
 
 fn disjunct_node(d: &[(bool, Term)]) -> PermNode {

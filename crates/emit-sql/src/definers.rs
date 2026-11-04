@@ -1643,8 +1643,10 @@ fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, kind: &str,
     }
     conjuncts.push(format!("{} = {}", vg.kind_col, quote_literal(kind)));
     conjuncts.push(format!("{} = p_{}_id", vg.principal_col, param));
+    let mut matched = conjuncts.clone();
+    matched.push(grant_access_match(vg, &vg.access_col));
     conjuncts.push(format!("{} = p_access", vg.access_col));
-    let mut body = grant_edge_exists(&vg.table, &conjuncts);
+    let mut body = grant_edge_exists(&vg.table, &matched);
     let mut disjuncts: Vec<Vec<String>> = vec![conjuncts];
     if vg.group_closure.is_some() {
         write!(body, " OR {}", grant_group_exists(vg, obj, param)).expect("fmt::Write for String never fails");
@@ -1655,13 +1657,34 @@ fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, kind: &str,
     GenFn { name, strict: binds_every(&sig, &refs), sig, body, ..Default::default() }
 }
 
-pub(crate) fn grant_group_conds(vg: &ViaGrant, obj: &Object, param: &str) -> Vec<String> {
+fn grant_access_match(vg: &ViaGrant, col: &str) -> String {
+    let exact = format!("{col} = p_access");
+    if vg.admits.is_empty() {
+        return exact;
+    }
+    let wider: Vec<String> = vg
+        .admits
+        .iter()
+        .map(|rule| {
+            let also: Vec<String> = rule.also.iter().map(|c| quote_literal(c)).collect();
+            format!("(p_access = {} AND {col} IN ({}))", quote_literal(&rule.access), also.join(", "))
+        })
+        .collect();
+    format!("({exact} OR {})", wider.join(" OR "))
+}
+
+fn grant_group_keys(vg: &ViaGrant, obj: &Object, param: &str) -> Vec<String> {
     let mut conds = vec![format!("g.{} = p_{}_id", vg.record_col, obj.name)];
     if let Some(d) = &vg.discrim_col {
         conds.push(format!("g.{d} = {}", quote_literal(or(vg.discrim_val.as_deref()))));
     }
     conds.push(format!("g.{} = {}", vg.kind_col, quote_literal(or(vg.group_kind_val.as_deref()))));
     conds.push(format!("gc.{} = p_{}_id", or(vg.group_member_col.as_deref()), param));
+    conds
+}
+
+pub(crate) fn grant_group_conds(vg: &ViaGrant, obj: &Object, param: &str) -> Vec<String> {
+    let mut conds = grant_group_keys(vg, obj, param);
     conds.push(format!("g.{} = p_access", vg.access_col));
     conds
 }
@@ -1673,6 +1696,12 @@ pub(crate) fn grant_group_exists(vg: &ViaGrant, obj: &Object, param: &str) -> St
         or(vg.group_closure.as_deref()),
         or(vg.group_group_col.as_deref()),
         vg.principal_col,
-        grant_group_conds(vg, obj, param).join(" AND ")
+        grant_group_matched(vg, obj, param).join(" AND ")
     )
+}
+
+fn grant_group_matched(vg: &ViaGrant, obj: &Object, param: &str) -> Vec<String> {
+    let mut conds = grant_group_keys(vg, obj, param);
+    conds.push(grant_access_match(vg, &format!("g.{}", vg.access_col)));
+    conds
 }

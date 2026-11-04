@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.0.0
+
+The crates are 2.0.0 because a public struct of `demesne-syntax` gains a field
+(below). Nothing else a caller sees changes, and a spec without the new clause
+emits exactly what v1.2.1 did. The Go module's API doesn't change, so it is
+`go/v1.3.0`; a `go/v2` would move every importer to a new module path.
+
+### A grant class can admit others
+
+A grant relation can say that one access class admits others:
+`via grant record_acl(record_id, principal_kind, principal_id, access) read admits write, delete`
+makes `grantee:read` admit write and delete grants as well as read ones, so a
+caller granted write or delete reads the row it was granted, and its UPDATE or
+DELETE, whose WHERE Postgres checks against the select policy, takes effect.
+
+The grant's definer is still one function with the same signature and
+strictness; only the class match in its body widens, for a direct grant and for a
+group's. No policy changes, and a spec without the clause emits exactly what it
+did. Validation refuses a class that admits itself, names a class twice, says
+what one class admits on two clauses, or admits a class that admits others,
+since admitting is not transitive.
+
+The check that a write term's callers are ones the select permission reaches
+counts an admitted class: beside `view = grantee:read`, `edit = grantee:write`
+is accepted when read admits write, and still refused when it doesn't.
+
+`demesne_syntax::ViaGrant` gains `admits`, a list of the new `GrantAdmits`. A
+caller that builds a `ViaGrant` with a struct literal must add the field.
+
 ## v1.2.1
 
 ### The crates publish again

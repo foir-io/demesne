@@ -259,3 +259,19 @@ fn a_grant_built_without_its_edge_columns_is_refused() {
     }
     s.grants.retain(|g| g.name != "shared");
 }
+
+fn admitting(clause: &str) -> Vec<String> {
+    with(|b| b.replace("principal_id, access)\n", &format!("principal_id, access) {clause}\n")))
+}
+
+#[test]
+fn rules_on_what_a_grant_term_admits() {
+    check(vec![
+        ("a class admitting others", admitting("read admits write, delete"), "admits", false),
+        ("a class admitting itself", admitting("read admits read"), "says \"read\" admits itself", true),
+        ("a class admitting one class twice", admitting("read admits write, write"), "says \"read\" admits \"write\" twice", true),
+        ("a class with two clauses", admitting("read admits write read admits delete"), "says what \"read\" admits twice", true),
+        ("a chain", admitting("read admits write write admits delete"), "says \"read\" admits \"write\", which admits classes of its own", true),
+        ("two classes admitting one", admitting("read admits delete write admits delete"), "admits", false),
+    ]);
+}
