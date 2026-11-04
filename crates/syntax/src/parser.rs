@@ -1,9 +1,9 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Builtin, ClaimsAccessor, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantScope, GrantUse,
-    Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset, ProcEntry, Procedures, Relation, RelationKind, Repr,
-    Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant,
-    ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Builtin, ClaimsAccessor, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits,
+    GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset, ProcEntry, Procedures,
+    Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn,
+    ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -214,6 +214,10 @@ impl Parser {
 
     fn is_kw(&self, kw: &str) -> bool {
         self.peek() == Tok::Ident && self.cur().lit == kw
+    }
+
+    fn next_is_kw(&self, kw: &str) -> bool {
+        self.toks.get(self.i + 1).is_some_and(|t| t.kind == Tok::Ident && t.lit == kw)
     }
 
     fn accept_kw(&mut self, kw: &str) -> bool {
@@ -943,6 +947,19 @@ impl Parser {
             vg.group_edge = Some(edge);
             vg.group_edge_member = Some(edge_cols[0].clone());
             vg.group_edge_group = Some(edge_cols[1].clone());
+        }
+        while self.peek() == Tok::Ident && self.next_is_kw("admits") {
+            let access = self.ident()?;
+            let line = self.advance().line;
+            if self.cur().line != line {
+                return Err(self.err(format!("{} admits no class: name the classes it admits after `admits`, on its line", quote(&access))));
+            }
+            let mut also = vec![self.ident()?];
+            while self.peek() == Tok::Comma {
+                self.advance();
+                also.push(self.ident()?);
+            }
+            vg.admits.push(GrantAdmits { access, also });
         }
         vg.tracked = self.accept_kw("tracked");
         vg.is_async = self.accept_kw("async");

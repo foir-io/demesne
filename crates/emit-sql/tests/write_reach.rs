@@ -472,3 +472,16 @@ fn a_subjects_own_reach_past_the_limit_with_its_requirement_is_refused() {
         "{errs:#?}"
     );
 }
+
+#[test]
+fn a_write_term_select_reaches_through_an_admitted_class_is_accepted() {
+    let perms = "  permission view   = owner + grantee:read @rls maps select
+  permission edit   = owner + grantee:write @rls maps update
+  permission remove = owner + grantee:delete @rls maps delete";
+    let admitting = |clause: &str| errors(&note(perms).replace("grantee_ref, perm)\n", &format!("grantee_ref, perm) {clause}\n")));
+    assert_eq!(admitting("read admits write, delete"), [] as [String; 0]);
+    let write_only = admitting("read admits write");
+    assert_eq!(write_only.len(), 1, "{write_only:#?}");
+    assert!(write_only[0].contains("permission note.remove maps delete, and its term `grantee:delete`"), "{write_only:#?}");
+    assert_eq!(errors(&note(perms)).len(), 2, "without the clause read admits neither");
+}

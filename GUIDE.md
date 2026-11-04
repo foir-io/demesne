@@ -231,6 +231,22 @@ parentheses, with precedence union < intersection < `not`. So `viewer and member
 Negation is fail-closed: an exclusion whose condition can't be determined (a NULL
 claim) denies. A union-only expression is unchanged.
 
+A grant term names the class of grant it admits: `grantee:read` admits a grant
+whose access is `read`, and no other. A grant relation can say that one class
+admits others:
+
+```demesne
+relation grantee: customer via grant record_acl(record_id, principal_kind, principal_id, access) read admits write, delete
+```
+
+Now `grantee:read` admits write and delete grants too, so a customer granted
+write reads the record it may write. Postgres checks an UPDATE's or a DELETE's
+WHERE against the select policy, so without the clause a write-only or
+delete-only grant changes nothing. Each class lists every class it admits on one
+clause, because admitting is not transitive. The clause changes only the body of
+the grant's definer, which still answers in one call; no policy that calls it
+changes.
+
 ### `require` — the clause that narrows
 
 Every term in a `permission` line is a **disjunct**, and Postgres ORs permissive

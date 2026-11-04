@@ -550,8 +550,15 @@ pub struct ViaGrant {
     pub group_edge: Option<String>,
     pub group_edge_member: Option<String>,
     pub group_edge_group: Option<String>,
+    pub admits: Vec<GrantAdmits>,
     pub tracked: bool,
     pub is_async: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GrantAdmits {
+    pub access: String,
+    pub also: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
