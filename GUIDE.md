@@ -284,6 +284,9 @@ Four properties are worth knowing before you reach for it:
   `via grant` — are rejected in a `require`. The rest of the term vocabulary
   (relations, `@holds`, `@within`, `@kind`, `@self`, `@session`, `mode`, and the
   boolean algebra above) composes as usual.
+  Three tests are written only here: `@row(<column>, null)` as a branch of its
+  own, `@claim("<key>", null)` and `@within(<level> exact)`. See "Tests of the
+  row and the request in a `require`" below.
 - **It reaches every surface.** The narrowing is ANDed into the same compiled
   predicate the app surface runs, so `CanEdit` / `canEdit`, `@check`
   point-checks, and a verb borrowed through `via object <Other>-><verb>` all
@@ -318,6 +321,53 @@ is an unaudited one.
 
 `examples/require.demesne` is the worked spec, with its live-Postgres proof in
 `ts/packages/example-app/test/require.test.ts`.
+
+#### Tests of the row and the request in a `require`
+
+A floor often has to say which rows it applies to, or which requests. Three
+tests do that. Each names nobody, so none could admit a caller from a
+`permission`, and in a `require` each can only exempt a row or a request from
+the floor.
+
+```demesne
+object draft {
+  table drafts
+  scoped estate > space
+  permission view = @scoped @rls maps select
+  require view    = @claim("folder_id", null) + not @row(visibility, "private")
+}
+
+object ledger {
+  table ledgers
+  scoped estate
+  permission view = @scoped @rls maps select
+  permission edit = @scoped @rls maps update
+  require edit    = @within(space exact)
+}
+```
+
+- `@row(<column>, null)` is true of a row whose column is NULL, and compiles to
+  `<column> IS NULL`. Negated, it is true of a row whose column holds a value.
+  It follows the rules of `@row`, so in a `permission` it narrows another term
+  and never stands alone.
+- `@claim("<key>", null)` is true of a request that carries no value for the
+  claim: the key is missing from the claims, or is JSON `null`. It compiles to
+  `<claim> IS NULL`. Above, a request confined to a folder never reads a private
+  draft, and a request confined to none reads them all.
+- `@within(<level> exact)` is true when the row's column at the level is not
+  distinct from the request's claim there. A row with a NULL column passes for a
+  request that names nothing at the level, and for no other. It compiles to
+  `<column> IS NOT DISTINCT FROM <claim>`. Above, a ledger row is changed from
+  the space it names, and a row naming no space is changed only by a request
+  standing at the estate.
+
+In a `require`, a row test may be a branch of a union by itself, negated or not:
+`require view = owner + @row(folder_id, null)` exempts the rows that name no
+folder from the floor. A `permission` still refuses that shape, because there
+the branch would admit every caller. `@claim("<key>", null)` and
+`@within(<level> exact)` are refused in a `permission` and in an `admit` arm for
+the same reason. To contain a whole object by the exact rule, scope it
+`<level> exact` instead.
 
 #### `require` does not replace a trigger
 
@@ -566,9 +616,13 @@ It compiles to `<column> = '<value>'`. Negated, it compiles to `(<column> =
 '<value>') IS NOT TRUE`, so `not @row(...)` is true of a row whose column is
 NULL: "this row is not a customer's" holds for a row nobody owns.
 
-Validation refuses it anywhere it would be the reason a caller is admitted: as
-a branch of a union, as the only term, and inside an `and` whose other terms
-are all negations or row terms. It is legal in a `require` on the same rule.
+`@row(<column>, null)` tests for NULL instead of a value: it compiles to
+`<column> IS NULL`, and negated to `(<column> IS NULL) IS NOT TRUE`.
+
+Validation refuses a row term anywhere it would be the reason a caller is
+admitted: as a branch of a union, as the only term, and inside an `and` whose
+other terms are all negations or row terms. A `require` is different. Nothing in
+it admits anyone, so there a row term may stand as a branch by itself.
 
 It is not `mode`. A `mode` term is the object's visibility: a row carrying
 that mode is open to everyone the term is scoped to, the mode column is what
@@ -714,6 +768,47 @@ The marker is rejected where it could not bind: on a virtual level, which emits
 no containment conjunct at all, and on a level entity's own level, whose scope
 column is the primary key. Both would be silent no-ops otherwise.
 
+#### Bounding the wildcard, and `exact`
+
+`wildcard` admits a NULL row to every session beneath the parent, for every
+operation. `confers` bounds it to the operations that should see such a row:
+
+```demesne
+scoped tenant > project wildcard confers select
+```
+
+The named operations keep `(project_id IS NULL OR project_id = <claim>)`. Every
+other operation gets
+
+```sql
+project_id IS NOT DISTINCT FROM <project claim>
+```
+
+which a NULL row passes only for a session that carries no project claim. So
+with `confers select`, a session standing in one project reads the shared rows
+and cannot insert, change or delete one. Leave `insert` out of the list unless a
+session standing in a project is meant to write rows that every project sees:
+with `insert` conferred, the check on a new row is the widened form, and nothing
+stops such a session from leaving the column unset.
+
+`exact` is the partition the wildcard is not. It gives every operation the
+`IS NOT DISTINCT FROM` form:
+
+```demesne
+object notice {
+  table notices
+  scoped estate > space exact
+  permission view   = @scoped @rls maps select
+  permission create = @scoped @rls maps insert
+}
+```
+
+A notice with no space is the estate's own. A session standing at the estate,
+with no space claim, reads and writes those rows and no space's. A session
+standing in a space reads and writes that space's rows and never the estate's.
+The column is nullable, as a wildcard's is, and the marker is rejected on a
+virtual level and on a level entity's own level for the same reasons.
+
 Because the check keys on the permission verb at query time,
 editing a role's permissions array changes the floor immediately, with no
 re-emit — unlike preset-key grants, whose key sets are baked into definer
@@ -847,7 +942,10 @@ The language adds five more constructs on top of that:
 - **Unbounded-depth hierarchies.** `relation … via closure <C>(anc,desc) base
   <B>(id,parent) on <col>`. The compiler generates a trigger-maintained
   transitive-closure table plus an indexed reachability lookup. The cost is write
-  amplification.
+  amplification. A `closure` declaration says the same once for every relation
+  over the table, and adds reads in both directions, an ordered path, and
+  maintenance with a partition, a depth and a lock. See "A tree read in both
+  directions" under "Shaping reach".
 - **Nested groups.** `relation … via group <C>(group,member) edge <E>(member,group)
   on <col>`. Group-in-group membership over a many-to-many edge — a userset of
   usersets. The compiler maintains the membership closure, and the RLS term tests
@@ -1074,7 +1172,7 @@ wazero, with no cgo:
 
 ```
 demesne emit authz.demesne --target go framework authz > internal/authz/authz.go
-go get github.com/foir-io/demesne/go@v1.3.0
+go get github.com/foir-io/demesne/go@v1.4.0
 ```
 
 Its checks hang off a `Surface` that `authz.New(runtime)` builds from a `demesne.Runtime`:
@@ -1244,6 +1342,141 @@ them until one is `named`. `reach <grant> via <other>` takes the subject's reach
 through a different grant at the same level for the named operations, and the
 reverse enumerator follows the same choice.
 
+`via` takes a list, and the list may include the grant itself. An atlas is read
+from the folder it is kept at, from every folder above it and from every folder
+beneath:
+
+```demesne
+object atlas {
+  table atlases
+  scoped estate > space > folder wildcard confers select
+  reach descendants via descendants, ancestors for select
+  permission view = @scoped @rls maps select
+  permission edit = @scoped @rls maps update
+}
+```
+
+The folder term of the read becomes `folder_id IN (<descendants' set>) OR
+folder_id IN (<ancestors' set>)` beside its own equality. The update names
+neither grant, so it stays where the session stands. Each listed grant must be
+an edge grant at the same level that confers the operations, and the reverse
+enumerator lists the readers of every one.
+
+This puts both directions into containment, for every term of the permission.
+When the two directions must lead to different terms, such as everything
+beneath but only public rows above, write them as closure relations instead, as
+the next section does.
+
+### A tree read in both directions
+
+A reach puts the tree into containment, where it applies to every term of a
+permission alike. A closure relation is a term, so one object can use both
+directions and give each to different operations. A template is read by a
+session standing at the folder it is kept at, at any folder above it, or at any
+folder beneath it, which inherits it. It is written only from its own folder or
+from above:
+
+```demesne
+closure paths(ancestor_id, descendant_id)
+
+object template {
+  table templates
+  scoped estate > space
+  relation beneath: member via closure paths(ancestor_id, descendant_id) on folder_id from claim folder_id missing allow
+  relation above:   member via closure paths(descendant_id, ancestor_id) on folder_id from claim folder_id missing deny
+  permission view   = @scoped             @rls maps select
+  require view      = beneath + above + @row(folder_id, null)
+  permission create = @scoped and beneath @rls maps insert
+  permission edit   = @scoped and beneath @rls maps update
+}
+```
+
+A closure relation names the closure's two columns, and the order is the
+direction. The first column is the caller's side and the second is the row's.
+Ancestor first, the caller's folder is the ancestor, so the relation reaches
+rows at that folder and beneath it. Descendant first, it reaches rows at that
+folder and above it. The closure holds each folder's pair with itself, so both
+include the folder the caller stands at.
+
+The `closure` declaration says which column is which. A relation whose columns
+are not the declared pair, in one order or the other, is refused. Without a
+declaration the first relation over the table fixes the edge, and later
+relations are read against it the same way.
+
+Over a declared closure each relation compiles to a set the statement computes
+once:
+
+```sql
+folder_id IN (SELECT auth.paths_descendants(<claim>))   -- ancestor first
+folder_id IN (SELECT auth.paths_ancestors(<claim>))     -- descendant first
+```
+
+Over an undeclared one it stays the per-row lookup
+`auth.paths_reachable(<claim>, folder_id)`, with the arguments swapped for the
+upward direction. Declaring the closure is how a spec moves to the set form.
+`<closure>_reachable(ancestor, descendant)` is generated either way.
+
+`missing allow` admits a caller that carries no folder claim, and `missing deny`
+refuses one. Above, a session standing at the space, with no folder, reads and
+writes every template in it. A row with a NULL `folder_id` is in neither set, so
+the read's floor names it with `@row(folder_id, null)`, and no session standing
+in a folder can write it.
+
+#### The ordered path
+
+```demesne
+closure paths(ancestor_id, descendant_id) depth depth
+```
+
+`depth` names the closure column that holds how many edges separate a pair: 0
+for a folder and itself, 1 for its parent. With it the compiler also emits
+`<closure>_path(<node>)`, which returns the node's ancestors and the node
+itself, root first, each with its depth. Code that folds what each level
+declares into what the node is served reads the levels in that order.
+
+#### Maintenance from the declaration
+
+```demesne
+closure paths(ancestor_id, descendant_id)
+  base folders(id, parent_id)
+  scope space_id
+  depth depth
+```
+
+`base` names the table the tree is kept in, with its id and parent columns. The
+compiler emits one trigger function on it, `<closure>_maintain`, that keeps the
+closure equal to the parent pointers through an insert, a change of parent and
+a delete. It trusts the rows already there, so a closure adopted with rows in
+it must already be right.
+
+- `scope` names a column the base and the closure both carry, such as the
+  tenant a tree belongs to. Every pair is written with its node's value, a
+  parent must be in the same scope, and a row's scope cannot change once it is
+  in the tree.
+- `depth` is written on every pair.
+- Every write that changes the closure first takes a transaction-level advisory
+  lock, `pg_advisory_xact_lock(hashtext('<closure>'), hashtext(<scope>))`, or
+  `(hashtext('<closure>'), 0)` with no scope. Moves in one scope run one at a
+  time, and other scopes are not held up. Code that must read a stable tree,
+  such as a check made before a move, takes the same key.
+- A write that would corrupt the tree is refused with `check_violation` and a
+  named constraint, which an application can map to its own error:
+  `<closure>_acyclic` for a row made its own ancestor, `<closure>_parent_known`
+  for a parent the closure does not hold in that scope, and
+  `<closure>_scope_fixed` for a changed scope column. Insert a parent before
+  its children. Within one statement that means listing it first.
+
+`named <name>` on the declaration replaces the closure's table name at the
+front of every generated function and trigger. Use it when a function of the
+default name already exists.
+
+A relation may still carry `base` itself, as before, and then maintenance is the
+plain form with no lock, depth, scope or refusal. A closure has one base: two
+relations naming different ones, or a relation disagreeing with the
+declaration, are refused.
+
+`examples/tree.demesne` is the worked spec.
+
 ### Borrowing a predicate for an operation
 
 A predicate-only permission compiles with no operation, so a bounded wildcard and
@@ -1289,9 +1522,10 @@ object folder {
 
 `via closure ... from claim <key>` keys the closure on a claim instead of the
 owner. `missing allow` treats a token with no folder claim as unconfined;
-`missing deny` refuses it. With no `base`, the closure is yours to maintain and
-no trigger is emitted. A claim-keyed closure names no principal, so a reverse
-enumerator refuses to reverse it inside a permission.
+`missing deny` refuses it. With no `base`, on the relation or on a `closure`
+declaration, the closure is yours to maintain and no trigger is emitted. A
+claim-keyed closure names no principal, so a reverse enumerator refuses to
+reverse it inside a permission.
 
 `admit <ops> = <expression>` adds an arm to the table's policy for those
 operations, contained like the permission. It is not part of the permission: a

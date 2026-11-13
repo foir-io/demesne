@@ -1,0 +1,255 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+CREATE OR REPLACE FUNCTION auth.paths_reach(user_id text, check_folder_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = user_id AND descendant_id = check_folder_id);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_reach_set(user_id text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT descendant_id FROM paths WHERE ancestor_id = user_id;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_up_reach(user_id text, check_folder_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM paths WHERE descendant_id = user_id AND ancestor_id = check_folder_id);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_up_reach_set(user_id text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT ancestor_id FROM paths WHERE descendant_id = user_id;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_reachable(p_ancestor text, p_descendant text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant);
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_descendants(p_node text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT descendant_id FROM paths WHERE ancestor_id = p_node;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_ancestors(p_node text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT ancestor_id FROM paths WHERE descendant_id = p_node;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_path(p_node text)
+RETURNS TABLE(node text, depth integer)
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT ancestor_id, depth::integer FROM paths WHERE descendant_id = p_node ORDER BY depth DESC, ancestor_id;
+$$;
+
+
+ALTER TABLE public.atlases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.atlases FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.drafts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.drafts FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.folders FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.ledgers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ledgers FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.notices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notices FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.templates FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS atlases_select ON public.atlases;
+CREATE POLICY atlases_select ON public.atlases FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((folder_id IS NULL OR folder_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')) OR (folder_id IN (SELECT auth.paths_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))) OR folder_id IN (SELECT auth.paths_up_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')))))));
+
+DROP POLICY IF EXISTS atlases_update ON public.atlases;
+CREATE POLICY atlases_update ON public.atlases FOR UPDATE TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')))
+    WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')));
+
+DROP POLICY IF EXISTS drafts_select ON public.drafts;
+CREATE POLICY drafts_select ON public.drafts FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS drafts_select_require ON public.drafts;
+CREATE POLICY drafts_select_require ON public.drafts AS RESTRICTIVE FOR SELECT TO authenticated
+    USING ((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR (visibility = 'private') IS NOT TRUE);
+
+DROP POLICY IF EXISTS folders_delete ON public.folders;
+CREATE POLICY folders_delete ON public.folders FOR DELETE TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))));
+
+DROP POLICY IF EXISTS folders_insert ON public.folders;
+CREATE POLICY folders_insert ON public.folders FOR INSERT TO authenticated
+    WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR parent_id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))));
+
+DROP POLICY IF EXISTS folders_select ON public.folders;
+CREATE POLICY folders_select ON public.folders FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')))) OR id IN (SELECT auth.paths_ancestors((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')))))));
+
+DROP POLICY IF EXISTS folders_update ON public.folders;
+CREATE POLICY folders_update ON public.folders FOR UPDATE TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))))
+    WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))));
+
+DROP POLICY IF EXISTS ledgers_select ON public.ledgers;
+CREATE POLICY ledgers_select ON public.ledgers FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')));
+
+DROP POLICY IF EXISTS ledgers_update ON public.ledgers;
+CREATE POLICY ledgers_update ON public.ledgers FOR UPDATE TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')))
+    WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')));
+
+DROP POLICY IF EXISTS ledgers_update_require ON public.ledgers;
+CREATE POLICY ledgers_update_require ON public.ledgers AS RESTRICTIVE FOR UPDATE TO authenticated
+    USING (space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id'))
+    WITH CHECK (space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id'));
+
+DROP POLICY IF EXISTS notices_delete ON public.notices;
+CREATE POLICY notices_delete ON public.notices FOR DELETE TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS notices_insert ON public.notices;
+CREATE POLICY notices_insert ON public.notices FOR INSERT TO authenticated
+    WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS notices_select ON public.notices;
+CREATE POLICY notices_select ON public.notices FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS notices_update ON public.notices;
+CREATE POLICY notices_update ON public.notices FOR UPDATE TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')))
+    WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS templates_delete ON public.templates;
+CREATE POLICY templates_delete ON public.templates FOR DELETE TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR folder_id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))));
+
+DROP POLICY IF EXISTS templates_insert ON public.templates;
+CREATE POLICY templates_insert ON public.templates FOR INSERT TO authenticated
+    WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR folder_id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))));
+
+DROP POLICY IF EXISTS templates_select ON public.templates;
+CREATE POLICY templates_select ON public.templates FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS templates_select_require ON public.templates;
+CREATE POLICY templates_select_require ON public.templates AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR folder_id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')))) OR folder_id IN (SELECT auth.paths_ancestors((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))) OR folder_id IS NULL);
+
+DROP POLICY IF EXISTS templates_update ON public.templates;
+CREATE POLICY templates_update ON public.templates FOR UPDATE TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR folder_id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))))
+    WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR folder_id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))));
+
+
+-- ===== Closure maintenance (via closure / via group) =====
+-- COST: each of these triggers write-amplifies the base table — a change
+-- fans out to the transitive closure. This is the explicit, opt-in price of
+-- O(1) indexed reachability (`via closure`) / membership (`via group`).
+
+CREATE OR REPLACE FUNCTION auth.paths_maintain()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF (TG_OP = 'DELETE') THEN
+    PERFORM pg_advisory_xact_lock(hashtext('paths'), COALESCE(hashtext(OLD.space_id::text), 0));
+    DELETE FROM paths WHERE descendant_id = OLD.id OR ancestor_id = OLD.id;
+    RETURN OLD;
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtext('paths'), COALESCE(hashtext(NEW.space_id::text), 0));
+  IF (TG_OP = 'UPDATE') THEN
+    IF NEW.space_id IS DISTINCT FROM OLD.space_id THEN
+      RAISE EXCEPTION 'a row of folders keeps its space_id: the closure paths is partitioned by it' USING ERRCODE = 'check_violation', CONSTRAINT = 'paths_scope_fixed', TABLE = 'folders';
+    END IF;
+    IF NEW.parent_id IS NOT NULL AND EXISTS (SELECT 1 FROM paths WHERE ancestor_id = NEW.id AND descendant_id = NEW.parent_id) THEN
+      RAISE EXCEPTION 'a row of folders cannot sit beneath itself' USING ERRCODE = 'check_violation', CONSTRAINT = 'paths_acyclic', TABLE = 'folders';
+    END IF;
+    DELETE FROM paths
+      WHERE descendant_id IN (SELECT descendant_id FROM paths WHERE ancestor_id = NEW.id)
+        AND ancestor_id IN (SELECT ancestor_id FROM paths WHERE descendant_id = NEW.id AND ancestor_id <> NEW.id);
+  ELSE
+    IF NEW.parent_id = NEW.id THEN
+      RAISE EXCEPTION 'a row of folders cannot sit beneath itself' USING ERRCODE = 'check_violation', CONSTRAINT = 'paths_acyclic', TABLE = 'folders';
+    END IF;
+    INSERT INTO paths (ancestor_id, descendant_id, space_id, depth) VALUES (NEW.id, NEW.id, NEW.space_id, 0) ON CONFLICT DO NOTHING;
+  END IF;
+  IF NEW.parent_id IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = NEW.parent_id AND descendant_id = NEW.parent_id AND space_id IS NOT DISTINCT FROM NEW.space_id) THEN
+      RAISE EXCEPTION 'the parent_id of a row of folders names no row the closure paths holds' USING ERRCODE = 'check_violation', CONSTRAINT = 'paths_parent_known', TABLE = 'folders';
+    END IF;
+    INSERT INTO paths (ancestor_id, descendant_id, space_id, depth)
+      SELECT p.ancestor_id, sub.descendant_id, NEW.space_id, p.depth + sub.depth + 1
+        FROM paths p
+        CROSS JOIN paths sub
+        WHERE p.descendant_id = NEW.parent_id AND sub.ancestor_id = NEW.id
+      ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS paths_maintain_ins ON public.folders;
+CREATE TRIGGER paths_maintain_ins AFTER INSERT ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.paths_maintain();
+DROP TRIGGER IF EXISTS paths_maintain_upd ON public.folders;
+CREATE TRIGGER paths_maintain_upd AFTER UPDATE ON public.folders FOR EACH ROW WHEN (OLD.parent_id IS DISTINCT FROM NEW.parent_id OR OLD.space_id IS DISTINCT FROM NEW.space_id) EXECUTE FUNCTION auth.paths_maintain();
+DROP TRIGGER IF EXISTS paths_maintain_del ON public.folders;
+CREATE TRIGGER paths_maintain_del AFTER DELETE ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.paths_maintain();
+
+
+--- stderr ---
+
+--- end ---

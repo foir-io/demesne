@@ -1,0 +1,130 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.paths_ancestors(text)",
+    "auth.paths_descendants(text)",
+    "auth.paths_maintain()",
+    "auth.paths_path(text)",
+    "auth.paths_reach(text, text)",
+    "auth.paths_reach_set(text)",
+    "auth.paths_reachable(text, text)",
+    "auth.paths_up_reach(text, text)",
+    "auth.paths_up_reach_set(text)"
+  ],
+  "policies": [
+    {
+      "table": "public.atlases",
+      "name": "atlases_select"
+    },
+    {
+      "table": "public.atlases",
+      "name": "atlases_update"
+    },
+    {
+      "table": "public.drafts",
+      "name": "drafts_select"
+    },
+    {
+      "table": "public.drafts",
+      "name": "drafts_select_require"
+    },
+    {
+      "table": "public.folders",
+      "name": "folders_delete"
+    },
+    {
+      "table": "public.folders",
+      "name": "folders_insert"
+    },
+    {
+      "table": "public.folders",
+      "name": "folders_select"
+    },
+    {
+      "table": "public.folders",
+      "name": "folders_update"
+    },
+    {
+      "table": "public.ledgers",
+      "name": "ledgers_select"
+    },
+    {
+      "table": "public.ledgers",
+      "name": "ledgers_update"
+    },
+    {
+      "table": "public.ledgers",
+      "name": "ledgers_update_require"
+    },
+    {
+      "table": "public.notices",
+      "name": "notices_delete"
+    },
+    {
+      "table": "public.notices",
+      "name": "notices_insert"
+    },
+    {
+      "table": "public.notices",
+      "name": "notices_select"
+    },
+    {
+      "table": "public.notices",
+      "name": "notices_update"
+    },
+    {
+      "table": "public.templates",
+      "name": "templates_delete"
+    },
+    {
+      "table": "public.templates",
+      "name": "templates_insert"
+    },
+    {
+      "table": "public.templates",
+      "name": "templates_select"
+    },
+    {
+      "table": "public.templates",
+      "name": "templates_select_require"
+    },
+    {
+      "table": "public.templates",
+      "name": "templates_update"
+    }
+  ],
+  "triggers": [
+    {
+      "table": "public.folders",
+      "name": "paths_maintain_del"
+    },
+    {
+      "table": "public.folders",
+      "name": "paths_maintain_ins"
+    },
+    {
+      "table": "public.folders",
+      "name": "paths_maintain_upd"
+    }
+  ],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.atlases",
+    "public.drafts",
+    "public.folders",
+    "public.ledgers",
+    "public.notices",
+    "public.templates"
+  ]
+}
+
+--- stderr ---
+
+--- end ---

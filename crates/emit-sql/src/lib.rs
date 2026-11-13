@@ -16,7 +16,7 @@ mod write_reach;
 
 pub use asynch::AsyncIndex;
 pub use changelog::{CHANGELOG_CHANNEL, ChangelogTrigger, ObjectChangelogTrigger};
-pub use closure::{ClosureTrigger, GroupTrigger, MaterializedFlat};
+pub use closure::{ClosureTrigger, DeclaredMaintenance, GroupTrigger, MaterializedFlat};
 pub use error::{Error, ManifestError};
 pub use files::{file_migration, file_sql, validate_files, validate_files_warnings};
 pub use genfn::{DefinerArm, Execute, GenFn, Language, definers_sql};

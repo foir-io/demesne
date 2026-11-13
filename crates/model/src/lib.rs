@@ -3,6 +3,7 @@
 
 mod admission;
 pub mod analysis;
+pub mod closure;
 pub mod conditional;
 mod error;
 pub mod framework;

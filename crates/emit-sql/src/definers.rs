@@ -8,6 +8,7 @@ use demesne_model::analysis::{
     Rels, access_for, contains, go_type_name, grant_relation, grant_selector, mapped_perm, object_grant_edge, object_select_perm, object_select_policy_perm,
     object_uses_store_manage, rels_of, store_manage_name, without_composition,
 };
+use demesne_model::closure;
 use demesne_model::conditional::{
     accessor_tree_op, admission_names, is_claim_leaf, is_composition_leaf, is_row_leaf, mode_row_sql, narrowing_accessor_leaf, row_term_sql,
 };
@@ -16,7 +17,7 @@ use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Grant, Object, Perm, PermNode, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
+    Closure, Grant, Object, Perm, PermNode, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -791,16 +792,52 @@ impl Sql<'_> {
     }
 
     fn def_emit_closure(&self, defs: &mut Definers) {
-        for (_, r) in self.s.relations() {
-            let Repr::Closure(c) = &r.repr else { continue };
-            let name = format!("{}_reachable", c.closure);
+        for edge in closure::edges(self.s) {
+            let base = edge.definer_base();
+            let name = format!("{base}_reachable");
             if !defs.claim(&name) {
                 continue;
             }
             let sig = "p_ancestor text, p_descendant text".to_string();
-            let conj = vec![format!("{} = p_ancestor", c.ancestor_col), format!("{} = p_descendant", c.descendant_col)];
-            defs.fns.push(GenFn { name, strict: binds_every(&sig, &[&conj]), sig, body: grant_edge_exists(&c.closure, &conj), ..Default::default() });
+            let conj = vec![format!("{} = p_ancestor", edge.ancestor_col), format!("{} = p_descendant", edge.descendant_col)];
+            defs.fns.push(GenFn { name, strict: binds_every(&sig, &[&conj]), sig, body: grant_edge_exists(edge.table, &conj), ..Default::default() });
+            if let Some(declared) = edge.declared {
+                defs.add_each_once(self.closure_set_definers(declared));
+            }
         }
+    }
+
+    fn closure_set_definers(&self, c: &Closure) -> Vec<GenFn> {
+        let id_t = self.s.id_type();
+        let base = c.definer_base();
+        let sig = format!("p_node {id_t}");
+        let set = |name: String, returned: &str, bound: &str| GenFn {
+            name,
+            strict: true,
+            sig: sig.clone(),
+            returns: format!("SETOF {id_t}"),
+            body: format!("{returned} FROM {} WHERE {bound} = p_node", c.table),
+            ..Default::default()
+        };
+        let mut out =
+            vec![set(format!("{base}_descendants"), &c.descendant_col, &c.ancestor_col), set(format!("{base}_ancestors"), &c.ancestor_col, &c.descendant_col)];
+        if let Some(depth) = &c.depth_col {
+            out.push(GenFn {
+                name: format!("{base}_path"),
+                strict: true,
+                sig,
+                returns: format!("TABLE(node {id_t}, depth integer)"),
+                raw_body: true,
+                body: format!(
+                    "  SELECT {anc}, {depth}::integer FROM {} WHERE {} = p_node ORDER BY {depth} DESC, {anc};",
+                    c.table,
+                    c.descendant_col,
+                    anc = c.ancestor_col
+                ),
+                ..Default::default()
+            });
+        }
+        out
     }
 
     fn def_emit_group(&self, defs: &mut Definers) {
@@ -1444,9 +1481,7 @@ impl Sql<'_> {
             branches.extend(self.structural_term_enum(obj, t, &rels, rs, &preset_levels)?);
         }
         for g in &self.s.grants {
-            if let Some(e) = self.s.enumerated_grant(obj, g) {
-                branches.push(self.grant_enum_sql(obj, e));
-            }
+            branches.extend(self.s.enumerated_grants(obj, g).into_iter().map(|e| self.grant_enum_sql(obj, e)));
         }
         if branches.is_empty() {
             return Ok(None);

@@ -3,6 +3,7 @@ use crate::analysis::{
     ORDERED_TABLE_OPS, Rels, contains, go_type_name, grant_relation, grant_selector, is_perm_key_lit, mapped_perm, object_grant_edge, object_uses_store_manage,
     op_to_cmd,
 };
+use crate::closure;
 use crate::conditional::is_row_leaf;
 use crate::error::Error;
 use crate::schema::{exported_columns, exported_row};
@@ -63,6 +64,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_store_manage(s));
     errs.extend(check_emit_sites(s, &vocab_names));
     errs.extend(check_externals(s));
+    errs.extend(check_closures(s));
     Structure::Errors(errs)
 }
 
@@ -415,6 +417,30 @@ fn check_scope_wildcards(s: &Spec, o: &Object) -> Vec<Finding> {
             seen.insert(v.clone());
         }
     }
+    for lvl in &o.scope_exact {
+        if s.level_is_virtual(lvl) {
+            errs.push(Finding::at(
+                o.pos.line,
+                format!(
+                    "object {} declares `{} exact`, but {} is a virtual level — containment emits no conjunct for a virtual level (V6)",
+                    quote(&o.name),
+                    lvl,
+                    quote(lvl)
+                ),
+            ));
+        } else if o.is_level_entity() && lvl == o.level() {
+            errs.push(Finding::at(
+                o.pos.line,
+                format!(
+                    "object {} declares `{} exact`, but {} is its own level, whose scope column is the primary key {} — a primary key is never NULL, so plain containment already is exact (V6)",
+                    quote(&o.name),
+                    lvl,
+                    quote(lvl),
+                    quote(o.pk())
+                ),
+            ));
+        }
+    }
     for lvl in o.scope_wildcard_verbs.keys() {
         if !o.scope_is_wildcard(lvl) {
             errs.push(Finding::at(o.pos.line, format!("object {} bounds a wildcard at level {} that it does not declare", quote(&o.name), quote(lvl))));
@@ -448,7 +474,7 @@ fn check_object_relations<'a>(s: &Spec, o: &'a Object) -> (Rels<'a>, Vec<Finding
                 r.pos.line,
                 format!("object {} relation {} via memberin references unknown level {}", quote(&o.name), quote(&r.name), quote(&mi.level)),
             )),
-            Repr::Closure(c) => errs.extend(check_closure_relation(o, r, c)),
+            Repr::Closure(c) => errs.extend(check_closure_relation(s, o, r, c)),
             Repr::Object(vo) => errs.extend(validate_borrow_operation(s, r, vo)),
             Repr::Role => errs.extend(check_via_role(s, o, r)),
             _ => {}
@@ -498,22 +524,90 @@ fn check_grant_admits(o: &Object, r: &Relation, g: &ViaGrant) -> Vec<Finding> {
     errs
 }
 
-fn check_closure_relation(o: &Object, r: &Relation, c: &ViaClosure) -> Option<Finding> {
+fn check_closure_relation(s: &Spec, o: &Object, r: &Relation, c: &ViaClosure) -> Vec<Finding> {
+    let at = |msg: String| Finding::at(r.pos.line, format!("object {} relation {}: {msg}", quote(&o.name), quote(&r.name)));
+    let mut errs = Vec::new();
+    let edge = closure::edge(s, &c.closure);
+    if c.ancestor_col == c.descendant_col {
+        errs.push(at(format!("closure {} names {} as both of its columns — an edge runs between two", c.closure, quote(&c.ancestor_col))));
+    } else if let Some(edge) = &edge {
+        if edge.relation_direction(c).is_none() {
+            errs.push(at(format!(
+                "closure {}({}, {}) matches no edge of the closure, which is ({}, {}) — name its columns ancestor first to reach beneath the caller, descendant first to reach above",
+                c.closure, c.ancestor_col, c.descendant_col, edge.ancestor_col, edge.descendant_col
+            )));
+        }
+        if let (Some(mine), Some(theirs)) = (c.base.as_deref(), edge.base)
+            && (mine, c.base_id.as_deref().unwrap_or(""), c.base_parent.as_deref().unwrap_or("")) != (theirs.table, theirs.id_col, theirs.parent_col)
+        {
+            errs.push(at(format!(
+                "closure {} is maintained from {}({}, {}), not {}({}, {}) — a closure has one base",
+                c.closure,
+                theirs.table,
+                theirs.id_col,
+                theirs.parent_col,
+                mine,
+                c.base_id.as_deref().unwrap_or(""),
+                c.base_parent.as_deref().unwrap_or("")
+            )));
+        }
+    }
     let Some(claim) = &c.claim else {
-        return c.base.is_none().then(|| {
-            Finding::unplaced(format!("object {} relation {}: a closure keyed on the owner needs `base <table>(id, parent)`", quote(&o.name), quote(&r.name)))
-        });
+        let declared_base = edge.is_some_and(|e| e.declared.is_some() && e.base.is_some());
+        if c.base.is_none() && !declared_base {
+            errs.push(Finding::unplaced(format!(
+                "object {} relation {}: a closure keyed on the owner needs `base <table>(id, parent)`",
+                quote(&o.name),
+                quote(&r.name)
+            )));
+        }
+        return errs;
     };
     let missing = c.missing.as_deref().unwrap_or("");
-    (missing != "allow" && missing != "deny").then(|| {
-        Finding::unplaced(format!(
+    if missing != "allow" && missing != "deny" {
+        errs.push(Finding::unplaced(format!(
             "object {} relation {}: closure claim {}: missing must be allow or deny, got {}",
             quote(&o.name),
             quote(&r.name),
             quote(claim),
             quote(missing)
-        ))
-    })
+        )));
+    }
+    errs
+}
+
+fn check_closures(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    for (i, c) in s.closures.iter().enumerate() {
+        let at = |msg: String| Finding::at(c.pos.line, format!("closure {} {msg}", quote(&c.table)));
+        if s.closures[..i].iter().any(|earlier| earlier.table == c.table) {
+            errs.push(at("is declared more than once".into()));
+        } else if let Some(earlier) = s.closures[..i].iter().find(|earlier| earlier.definer_base() == c.definer_base()) {
+            errs.push(at(format!(
+                "and closure {} both name their functions {}_… — give one its own name with `named`",
+                quote(&earlier.table),
+                c.definer_base()
+            )));
+        }
+        if c.ancestor_col == c.descendant_col {
+            errs.push(at(format!("names {} as both its ancestor and its descendant column", quote(&c.ancestor_col))));
+        }
+        let Some(base) = &c.base else {
+            if c.scope_col.is_some() {
+                errs.push(at(
+                    "declares `scope` with no `base` — the scope column is what maintenance copies and locks on, and nothing maintains this closure".into()
+                ));
+            }
+            continue;
+        };
+        if base.id_col == base.parent_col {
+            errs.push(at(format!("base {} names {} as both its id and its parent column", quote(&base.table), quote(&base.id_col))));
+        }
+        if base.table == c.table {
+            errs.push(at("names itself as its base".into()));
+        }
+    }
+    errs
 }
 
 fn check_transient_relation(s: &Spec, o: &Object, r: &Relation) -> Vec<Finding> {
@@ -659,6 +753,15 @@ fn perm_positive(n: &PermNode) -> bool {
         PermNode::Not(_) => false,
         PermNode::And(kids) => kids.iter().any(perm_positive),
         PermNode::Or(kids) => kids.iter().all(perm_positive) && !kids.is_empty(),
+    }
+}
+
+fn require_positive(n: &PermNode) -> bool {
+    match n {
+        PermNode::Leaf(_) => true,
+        PermNode::Not(k) => is_row_leaf(k),
+        PermNode::And(kids) => kids.iter().any(require_positive),
+        PermNode::Or(kids) => kids.iter().all(require_positive) && !kids.is_empty(),
     }
 }
 
@@ -913,7 +1016,7 @@ fn check_perm_terms(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<Finding
                 errs.push(at(&format!("mode term scope `for {}` names no subject", t.mode_scope())));
             }
         } else if t.builtin() == "row" {
-            if t.row_col().is_empty() || t.row_val().is_empty() {
+            if t.row_col().is_empty() || (t.row_val().is_empty() && !t.row_null()) {
                 errs.push(at("uses @row with an empty column or value — `@row(<column>, \"<value>\")`"));
             }
             if !has_pred {
@@ -979,6 +1082,12 @@ fn check_builtin_term(s: &Spec, o: &Object, pm: &Perm, t: &Term, rels: &Rels, ha
                 errs.push(at("uses @kind but is not @rls"));
             }
         }
+        "claim" if t.claim_absent() => {
+            errs.push(at(&format!(
+                "uses {} — a test that a claim is absent names nobody a permission could admit, so it may appear only in a `require` clause",
+                t.display()
+            )));
+        }
         "claim" => {
             if t.claim_key().is_empty() || t.claim_val().is_empty() {
                 errs.push(at("uses @claim with an empty key or value — `@claim(\"<key>\", \"<value>\")`"));
@@ -994,6 +1103,14 @@ fn check_builtin_term(s: &Spec, o: &Object, pm: &Perm, t: &Term, rels: &Rels, ha
             if !has_rls {
                 errs.push(at("uses @self but is not @rls"));
             }
+        }
+        "within" if t.within_exact() => {
+            errs.push(at(&format!(
+                "uses {} — an exact level test admits a request that names no {}, so it may appear only in a `require` clause; scope the object `{} exact` to contain it that way",
+                t.display(),
+                t.within_level(),
+                t.within_level()
+            )));
         }
         "within" => {
             if s.level_by_name(t.within_level()).is_none() {
@@ -1102,14 +1219,14 @@ fn check_requires(s: &Spec, o: &Object, rels: &Rels) -> Vec<Finding> {
 fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<Finding> {
     let mut errs = Vec::new();
     let at = |what: String| Finding::at(rq.pos.line, format!("require {}.{} {what}", o.name, rq.verb));
-    if !rq.tree.is_nil() && !perm_positive(&rq.tree) {
+    if !rq.tree.is_nil() && !require_positive(&rq.tree) {
         errs.push(at("is not positively gated — a `not` must be combined with `and` with a positive term".into()));
-    }
-    if let Some(t) = row_term_admitting(&rq.tree) {
-        errs.push(at(format!("uses {} by itself — a row term only narrows another term: write it inside an `and`", t.display())));
     }
     for t in rq.tree.leaves() {
         let b = t.builtin();
+        if b == "within" && s.level_by_name(t.within_level()).is_none() {
+            errs.push(at(format!("uses @within({}) which is not a topology level", quote(t.within_level()))));
+        }
         if b == "external" {
             let f = t.external_fn();
             match s.external_by_name(f) {
@@ -1523,8 +1640,8 @@ fn validate_grant_use_target(s: &Spec, o: &Object, g: &Grant, u: &GrantUse) -> V
     if !s.grant_reached_by_subject(&g.name) {
         errs.push(Finding::at(u.pos.line, format!("object {} selects the reach of {}, which no subject reaches through", quote(&o.name), quote(&g.name))));
     }
-    if let Some(via) = &u.via {
-        errs.extend(validate_grant_use_via(s, o, g, u, via));
+    if !u.via.is_empty() {
+        errs.extend(validate_grant_use_via(s, o, g, u));
     } else if g.scopes.is_empty() {
         errs.push(Finding::at(u.pos.line, format!("object {} reach {}: unscoped and bound need a grant with scope levels", quote(&o.name), g.name)));
     } else if let Some(bound) = &u.bound
@@ -1535,18 +1652,25 @@ fn validate_grant_use_target(s: &Spec, o: &Object, g: &Grant, u: &GrantUse) -> V
     errs
 }
 
-fn validate_grant_use_via(s: &Spec, o: &Object, g: &Grant, u: &GrantUse, via_name: &str) -> Vec<Finding> {
-    let Some(via) = s.grant_by_name(via_name).filter(|v| v.claim_key.is_none() && !std::ptr::eq(*v, g) && v.level == g.level) else {
-        return vec![Finding::at(
-            u.pos.line,
-            format!("object {} reach {} via {}: the replacement must be another edge grant at {}", quote(&o.name), g.name, via_name, quote(&g.level)),
-        )];
-    };
+fn validate_grant_use_via(s: &Spec, o: &Object, g: &Grant, u: &GrantUse) -> Vec<Finding> {
     let ops: Vec<&str> = if u.ops.is_empty() { ORDERED_TABLE_OPS.to_vec() } else { u.ops.iter().map(String::as_str).collect() };
-    ops.into_iter()
-        .filter(|op| g.confers(op) && !via.confers(op))
-        .map(|op| Finding::at(u.pos.line, format!("object {} reach {} via {}: {} does not confer {}", quote(&o.name), g.name, via_name, quote(via_name), op)))
-        .collect()
+    let alone = u.via.len() == 1;
+    let mut errs = Vec::new();
+    for (i, via_name) in u.via.iter().enumerate() {
+        if u.via[..i].contains(via_name) {
+            errs.push(Finding::at(u.pos.line, format!("object {} reach {} names {} twice after `via`", quote(&o.name), g.name, via_name)));
+            continue;
+        }
+        let Some(via) = s.grant_by_name(via_name).filter(|v| v.claim_key.is_none() && !(alone && std::ptr::eq(*v, g)) && v.level == g.level) else {
+            let what = if alone { "the replacement must be another edge grant" } else { "each grant it reads through must be an edge grant" };
+            errs.push(Finding::at(u.pos.line, format!("object {} reach {} via {}: {what} at {}", quote(&o.name), g.name, via_name, quote(&g.level))));
+            continue;
+        };
+        errs.extend(ops.iter().filter(|op| g.confers(op) && !via.confers(op)).map(|op| {
+            Finding::at(u.pos.line, format!("object {} reach {} via {}: {} does not confer {}", quote(&o.name), g.name, via_name, quote(via_name), op))
+        }));
+    }
+    errs
 }
 
 fn validate_borrow_operation(s: &Spec, r: &Relation, vo: &ViaObject) -> Vec<Finding> {

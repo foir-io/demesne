@@ -23,6 +23,7 @@ pub struct Spec {
     pub grants: Vec<Grant>,
     pub templates: Vec<Template>,
     pub externals: Vec<External>,
+    pub closures: Vec<Closure>,
     pub claims: Option<ClaimsAccessor>,
     pub definer_schema: Option<String>,
     pub table_schema: Option<String>,
@@ -72,6 +73,41 @@ impl Spec {
     pub fn external_by_name(&self, name: &str) -> Option<&External> {
         self.externals.iter().find(|e| e.name == name)
     }
+
+    /// Returns the `closure` declaration over `table`, when the spec has one.
+    #[must_use]
+    pub fn closure_by_table(&self, table: &str) -> Option<&Closure> {
+        self.closures.iter().find(|c| c.table == table)
+    }
+}
+
+/// A `closure` declaration: a transitive-closure table, its edge, and how it is maintained.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Closure {
+    pub table: String,
+    pub ancestor_col: String,
+    pub descendant_col: String,
+    pub base: Option<ClosureBase>,
+    pub scope_col: Option<String>,
+    pub depth_col: Option<String>,
+    pub named: Option<String>,
+    pub pos: Pos,
+}
+
+impl Closure {
+    /// Returns the name the closure's generated functions and triggers start with.
+    #[must_use]
+    pub fn definer_base(&self) -> &str {
+        self.named.as_deref().unwrap_or(&self.table)
+    }
+}
+
+/// The table a declared closure is maintained from: one row per node, naming its parent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClosureBase {
+    pub table: String,
+    pub id_col: String,
+    pub parent_col: String,
 }
 
 #[derive(Debug, Clone)]
@@ -161,7 +197,8 @@ pub struct GrantScope {
 #[derive(Debug, Clone, Default)]
 pub struct GrantUse {
     pub grant: String,
-    pub via: Option<String>,
+    /// The grants whose reach replaces this one's, in the order written; empty when the use names none.
+    pub via: Vec<String>,
     pub bound: Option<String>,
     pub unscoped: bool,
     pub ops: Vec<String>,
@@ -349,6 +386,7 @@ pub struct Object {
     pub scoped: Vec<String>,
     pub scope_wildcards: Vec<String>,
     pub scope_wildcard_verbs: BTreeMap<String, Vec<String>>,
+    pub scope_exact: Vec<String>,
     pub reach_uses: Vec<GrantUse>,
     pub admits: Vec<Admit>,
     pub exports: Vec<PermissionExport>,
@@ -381,14 +419,21 @@ impl Object {
         or_empty(self.level.as_deref())
     }
 
+    /// Reports whether the scope column at `level` may be NULL: the level is `wildcard` or `exact`.
     #[must_use]
     pub fn scope_is_wildcard(&self, level: &str) -> bool {
-        self.scope_wildcards.iter().any(|w| w == level)
+        self.scope_wildcards.iter().any(|w| w == level) || self.scope_is_exact(level)
+    }
+
+    /// Reports whether `level` is `exact`: a row belongs to the requests whose claim there is not distinct from its column.
+    #[must_use]
+    pub fn scope_is_exact(&self, level: &str) -> bool {
+        self.scope_exact.iter().any(|w| w == level)
     }
 
     #[must_use]
     pub fn scope_is_wildcard_for(&self, level: &str, op: &str) -> bool {
-        if !self.scope_is_wildcard(level) {
+        if self.scope_is_exact(level) || !self.scope_is_wildcard(level) {
             return false;
         }
         match self.scope_wildcard_verbs.get(level) {
@@ -800,12 +845,30 @@ pub enum Builtin {
     Session(Option<String>),
     AppScope(Vec<String>),
     Kind(String),
-    Claim { key: String, val: String },
+    Claim {
+        key: String,
+        val: String,
+    },
     SelfCol(String),
-    Within { level: String, nullable: bool },
-    External { func: String, args: Vec<ExternalArg> },
+    Within {
+        level: String,
+        nullable: bool,
+    },
+    External {
+        func: String,
+        args: Vec<ExternalArg>,
+    },
     Holds(String),
-    Row { col: String, val: String },
+    Row {
+        col: String,
+        val: String,
+    },
+    /// `@row(<column>, null)`: true of a row whose column is NULL.
+    RowNull(String),
+    /// `@claim("<key>", null)`: true of a request that carries no value for the claim.
+    ClaimAbsent(String),
+    /// `@within(<level> exact)`: true when the row's column at the level is not distinct from the request's claim.
+    WithinExact(String),
     Other(String),
 }
 
@@ -824,6 +887,9 @@ impl Builtin {
             Builtin::Holds(p) => format!("@holds({p})"),
             Builtin::External { func, .. } => format!("@external({func})"),
             Builtin::Row { col, val } => format!("@row({col}, {})", quote(val)),
+            Builtin::RowNull(col) => format!("@row({col}, null)"),
+            Builtin::ClaimAbsent(key) => format!("@claim({}, null)", quote(key)),
+            Builtin::WithinExact(level) => format!("@within({level} exact)"),
             Builtin::Session(None) | Builtin::AppScope(_) | Builtin::Other(_) => format!("@{}", self.name()),
         }
     }
@@ -834,12 +900,12 @@ impl Builtin {
             Builtin::Session(_) => "session",
             Builtin::AppScope(_) => "app_scope",
             Builtin::Kind(_) => "kind",
-            Builtin::Claim { .. } => "claim",
+            Builtin::Claim { .. } | Builtin::ClaimAbsent(_) => "claim",
             Builtin::SelfCol(_) => "self",
-            Builtin::Within { .. } => "within",
+            Builtin::Within { .. } | Builtin::WithinExact(_) => "within",
             Builtin::External { .. } => "external",
             Builtin::Holds(_) => "holds",
-            Builtin::Row { .. } => "row",
+            Builtin::Row { .. } | Builtin::RowNull(_) => "row",
             Builtin::Other(name) => name,
         }
     }
@@ -940,7 +1006,7 @@ impl Term {
     #[must_use]
     pub fn claim_key(&self) -> &str {
         match self.builtin_ref() {
-            Some(Builtin::Claim { key, .. }) => key,
+            Some(Builtin::Claim { key, .. } | Builtin::ClaimAbsent(key)) => key,
             _ => "",
         }
     }
@@ -956,7 +1022,7 @@ impl Term {
     #[must_use]
     pub fn row_col(&self) -> &str {
         match self.builtin_ref() {
-            Some(Builtin::Row { col, .. }) => col,
+            Some(Builtin::Row { col, .. } | Builtin::RowNull(col)) => col,
             _ => "",
         }
     }
@@ -972,9 +1038,27 @@ impl Term {
     #[must_use]
     pub fn within_level(&self) -> &str {
         match self.builtin_ref() {
-            Some(Builtin::Within { level, .. }) => level,
+            Some(Builtin::Within { level, .. } | Builtin::WithinExact(level)) => level,
             _ => "",
         }
+    }
+
+    /// Reports whether the term is `@within(<level> exact)`.
+    #[must_use]
+    pub fn within_exact(&self) -> bool {
+        matches!(self.builtin_ref(), Some(Builtin::WithinExact(_)))
+    }
+
+    /// Reports whether the term is `@row(<column>, null)`.
+    #[must_use]
+    pub fn row_null(&self) -> bool {
+        matches!(self.builtin_ref(), Some(Builtin::RowNull(_)))
+    }
+
+    /// Reports whether the term is `@claim("<key>", null)`.
+    #[must_use]
+    pub fn claim_absent(&self) -> bool {
+        matches!(self.builtin_ref(), Some(Builtin::ClaimAbsent(_)))
     }
 
     #[must_use]

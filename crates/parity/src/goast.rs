@@ -147,7 +147,7 @@ fn object(ob: &Object) -> Value {
 fn grant_use(u: &GrantUse) -> Value {
     obj(vec![
         ("Grant", s(&u.grant)),
-        ("Via", o(u.via.as_deref())),
+        ("Via", o(u.via.first().map(String::as_str))),
         ("Bound", o(u.bound.as_deref())),
         ("Unscoped", b(u.unscoped)),
         ("Ops", strs(&u.ops)),

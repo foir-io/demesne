@@ -17,9 +17,12 @@ pub fn is_row_leaf(n: &PermNode) -> bool {
     matches!(n, PermNode::Leaf(t) if t.builtin() == "row")
 }
 
-/// Returns the SQL a `@row` term compiles to: true of a row whose column holds the value.
+/// Returns the SQL a `@row` term compiles to: true of a row whose column holds the value, or is NULL for `@row(<column>, null)`.
 #[must_use]
 pub fn row_term_sql(t: &Term) -> String {
+    if t.row_null() {
+        return format!("{} IS NULL", t.row_col());
+    }
     format!("{} = {}", t.row_col(), quote_literal(t.row_val()))
 }
 

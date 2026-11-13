@@ -43,6 +43,8 @@ fn every_public_type_is_send_and_sync() {
     send_sync::<demesne_syntax::UngovEntry>();
     send_sync::<demesne_syntax::Ungoverned>();
     send_sync::<demesne_syntax::ViaClosure>();
+    send_sync::<demesne_syntax::Closure>();
+    send_sync::<demesne_syntax::ClosureBase>();
     send_sync::<demesne_syntax::ViaColumn>();
     send_sync::<demesne_syntax::ViaComposition>();
     send_sync::<demesne_syntax::ViaEdge>();
