@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## v4.0.0
 
-A spec that uses none of the constructs below emits exactly what v3.0.0 did.
+The crates are 4.0.0 because public types of `demesne-syntax` and
+`demesne-emit-sql` gain fields and variants, named under each change. A spec
+that uses none of the constructs below emits exactly what v3.0.0 did. The Go
+module's API doesn't change, so it is `go/v1.5.0`.
 
 ### A borrowed permission can be asked once a statement
 
