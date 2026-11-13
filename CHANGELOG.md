@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a composition inside an `and` let the parent admit on the other side alone
+
+`via composition` reaches a row because the caller reaches its parent, and the
+parent is judged by the object's rule with the composition terms taken out.
+Only the composition term itself was taken out. With
+
+```demesne
+permission view = owner + (@kind("auditor") and parent) @rls maps select
+```
+
+the parent was judged by `owner + @kind("auditor")`, so an auditor read every
+row that had a parent, whether or not they could read that parent. The rule as
+written admits an auditor to a row only when they reach its parent. A
+composition under `not` had the same fault: `member and not parent` judged the
+parent by `member`.
+
+Every release since the cascade was added has this: the Go engine from v0.62.1
+to v0.93.1, and every Rust release from v0.94.0 to v4.0.0.
+
+The parent is now judged without any branch that needs a composition: the whole
+`and` goes, not one side of it. A rule is affected only if it has a composition
+relation directly inside an `and` or under a `not`. A rule whose composition
+terms are branches of a union, including a union that is one side of an `and`,
+emits exactly what it did. The change can only narrow what a spec admits.
+
+To check a spec, look for a `via composition` relation named beside `and` or
+after `not` in a permission. After upgrading, re-emit and apply the definers:
+the fix is in the generated `<object>_composition_<relation>` functions.
+
 ## v4.0.0
 
 The crates are 4.0.0 because public types of `demesne-syntax` and

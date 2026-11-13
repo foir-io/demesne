@@ -161,38 +161,11 @@ pub fn without_composition(o: &Object) -> Object {
         .iter()
         .map(|pm| {
             let mut pc = pm.clone();
-            pc.tree = prune_comp_leaves(&pm.tree, &comp).unwrap_or_else(PermNode::nil);
+            pc.tree = without_comp_branches(&pm.tree, &comp).unwrap_or_else(PermNode::nil);
             pc
         })
         .collect();
     cp
-}
-
-fn prune_comp_leaves(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
-    match n {
-        PermNode::Leaf(t) => {
-            if let Some(scope) = t.some_scope() {
-                let body = without_comp_branches(&scope.body, comp)?;
-                let pruned = SomeScope { body, ..scope.clone() };
-                return Some(PermNode::Leaf(Term { kind: TermKind::Builtin(Builtin::Some(Box::new(pruned))), pos: t.pos }));
-            }
-            if comp.contains(&t.ident()) { None } else { Some(n.clone()) }
-        }
-        PermNode::Or(kids) | PermNode::And(kids) => {
-            if kids.is_empty() {
-                return None;
-            }
-            let mut out: Vec<PermNode> = kids.iter().filter_map(|k| prune_comp_leaves(k, comp)).collect();
-            if out.is_empty() {
-                return None;
-            }
-            if out.len() == 1 && matches!(n, PermNode::Or(_)) {
-                return out.pop();
-            }
-            Some(if matches!(n, PermNode::Or(_)) { PermNode::Or(out) } else { PermNode::And(out) })
-        }
-        PermNode::Not(k) => prune_comp_leaves(k, comp).map(|pk| PermNode::Not(Box::new(pk))),
-    }
 }
 
 enum Pruned {
@@ -208,6 +181,12 @@ fn rebuilt(t: &Term, b: Builtin) -> Pruned {
 fn pruned_leaf(t: &Term, comp: &[&str]) -> Pruned {
     if comp.contains(&t.ident()) {
         return Pruned::Never;
+    }
+    if let Some(scope) = t.some_scope() {
+        return match pruned_branches(&scope.body, comp) {
+            Pruned::Kept(body) => rebuilt(t, Builtin::Some(Box::new(SomeScope { body, ..scope.clone() }))),
+            Pruned::Never | Pruned::Always => Pruned::Never,
+        };
     }
     let Some(scope) = t.declared_scope() else { return Pruned::Kept(PermNode::Leaf(t.clone())) };
     match (pruned_branches(&scope.body, comp), scope.quantifier) {
