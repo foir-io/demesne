@@ -1339,6 +1339,13 @@ impl Parser {
                 self.expect(Tok::RParen)?;
                 Builtin::Claim { key, val }
             }
+            "clock" => {
+                self.expect(Tok::LParen)?;
+                let col = self.ident()?;
+                self.expect_kw("reached")?;
+                self.expect(Tok::RParen)?;
+                Builtin::Clock(col)
+            }
             "slot" => {
                 self.expect(Tok::LParen)?;
                 let col = self.ident()?;

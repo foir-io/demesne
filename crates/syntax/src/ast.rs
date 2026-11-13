@@ -972,6 +972,8 @@ pub enum Builtin {
     Some(Box<SomeScope>),
     /// `@element prefix "<text>"`: the element a `some` has bound starts with the text.
     ElementPrefix(String),
+    /// `@clock(<column> reached)`: the row's instant is not in the future.
+    Clock(String),
     /// `every <name> in <table>(<key column>) … ( <expression> )`, or `none …`.
     Declared(Box<DeclaredScope>),
     /// `@slot(<column>, "<value>")`: the declared row an `every` or `none` has bound holds the value.
@@ -1017,6 +1019,7 @@ impl Builtin {
                 format!("some {} in {}{prefix}{held} ({})", scope.var, scope.col, scope.body.display())
             }
             Builtin::ElementPrefix(p) => format!("@element prefix {}", quote(p)),
+            Builtin::Clock(col) => format!("@clock({col} reached)"),
             Builtin::Declared(scope) => {
                 let word = match scope.quantifier {
                     Quantifier::Every => "every",
@@ -1049,6 +1052,7 @@ impl Builtin {
             Builtin::Holds(_) => "holds",
             Builtin::Some(_) => "some",
             Builtin::ElementPrefix(_) => "element",
+            Builtin::Clock(_) => "clock",
             Builtin::Declared(_) => "declared",
             Builtin::Slot { .. } => "slot",
             Builtin::HoldsEvery { .. } => "holds_every",
@@ -1169,7 +1173,7 @@ impl Term {
     #[must_use]
     pub fn row_col(&self) -> &str {
         match self.builtin_ref() {
-            Some(Builtin::Row { col, .. } | Builtin::RowNull(col)) => col,
+            Some(Builtin::Row { col, .. } | Builtin::RowNull(col) | Builtin::Clock(col)) => col,
             _ => "",
         }
     }
@@ -1252,6 +1256,15 @@ impl Term {
     #[must_use]
     pub fn bracketed(&self) -> Option<&PermNode> {
         self.some_scope().map(|s| &s.body).or_else(|| self.declared_scope().map(|d| &d.body))
+    }
+
+    /// Returns the column of `@clock(<column> reached)`.
+    #[must_use]
+    pub fn clock_col(&self) -> Option<&str> {
+        match self.builtin_ref() {
+            Some(Builtin::Clock(col)) => Some(col),
+            _ => None,
+        }
     }
 
     /// Returns the text of `@element prefix "<text>"`.

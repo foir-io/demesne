@@ -17,7 +17,8 @@ use demesne_syntax::{
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 const KNOWN_LAYERS: [&str; 4] = ["rls", "pdp", "kernel", "check"];
-const KNOWN_BUILTINS: [&str; 17] = [
+const KNOWN_BUILTINS: [&str; 18] = [
+    "clock",
     "app_scope",
     "scoped",
     "session",

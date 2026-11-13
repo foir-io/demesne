@@ -747,7 +747,7 @@ impl Sql<'_> {
             "kind" => Ok(vec![format!("{} = {}", self.claim("kind"), quote_literal(t.kind_val()))]),
             "claim" if t.claim_absent() => Ok(vec![format!("{} IS NULL", self.claim(t.claim_key()))]),
             "claim" => Ok(vec![format!("{} = {}", self.claim(t.claim_key()), quote_literal(t.claim_val()))]),
-            "row" | "element" | "slot" => Ok(vec![row_term_sql(t)]),
+            "row" | "element" | "slot" | "clock" => Ok(vec![row_term_sql(t)]),
             "within" => {
                 let col = self.s.scope_col(obj, t.within_level());
                 let claim = self.id_claim(&self.s.claim_key_for_level(t.within_level()));
