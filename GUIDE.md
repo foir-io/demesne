@@ -1035,6 +1035,268 @@ in the spec but kept as separate physical stores, never one generic tuple table.
 
 ---
 
+## Rules stored as data
+
+Some adopters let their own users write access rules. The rules are rows, not
+spec text, so the spec cannot name each one. It says instead how a stored rule
+is read: which elements a row carries, what each element requires, and what the
+caller must hold. The constructs below compile to the same policies and
+definers as everything else, and each is refused where it could admit a caller
+by itself.
+
+### `some`: one element of an array column
+
+```demesne
+object doc {
+  table docs
+  scoped estate
+  relation shared: member via edge doc_shares(member_id, doc_id) key rule
+  permission view = some r in rules_live prefix "read." held rules_held (
+      (@element prefix "read.share." and shared) + (@element prefix "read.open." and mode access = "open")
+  ) @rls maps select
+}
+```
+
+`some <name> in <column> ( … )` is true of a row when one element of the array
+column satisfies the brackets. `prefix "<text>"` binds only the elements that
+start with the text. `held <claim>` binds only the elements the claim's JSON
+array also holds, so a rule the caller's credential does not carry is never
+tried.
+
+Inside the brackets:
+
+- `@element prefix "<text>"` tests the bound element.
+- A **keyed edge**, `via edge <table>(<principal>, <object>) key <column>`,
+  matches rows of the table whose key column equals the bound element. `on
+  <row column>` matches the object against that column and not the row's key,
+  and `where <column> = "<value>"` keeps only rows holding the value.
+
+One element is bound at a time: a `some` does not nest. A keyed relation is
+refused outside a `some`.
+
+### `every` and `none`: what a table declares for the element
+
+An element often needs several things at once, and which things is itself
+data:
+
+```demesne
+permission view = some r in rules_live held rules_held (
+      every s in rule_slots(rule) where role = "require" (
+          (@slot(kind, "share") and shared) + (@slot(kind, "grant") and granted:read) )
+  and none  s in rule_slots(rule) where role = "except" (@slot(kind, "share") and barred)
+) @rls maps select
+```
+
+`every <name> in <table>(<key column>) ( … )` reads the rows of the table whose
+key column equals the bound element, and holds when the brackets hold for each
+of them. `none` holds when they hold for none. `where` keeps only the rows
+holding a value. `@slot(<column>, "<value>")` tests the declared row, and
+`@slot(<column> held <claim>)` is true when its column is one of the claim's
+JSON array. A keyed edge or a `via composition` with `slot <column> [from
+<declared column>]` matches one of its own columns against the declared row's.
+
+`none` bars when the brackets cannot be decided for a row, and `every` fails on
+one. A plain `not` keeps its meaning: it is true of what is not known to be
+true.
+
+The declared rows come through one generated function per table and key,
+`<table>_declared_by_<key>`, which returns the columns the spec reads and no
+others.
+
+### `via conditions`: comparisons stored as rows
+
+```demesne
+relation terms: member via conditions doc_terms(doc_id, term, op) values (num, txt, at, list, lat, lng) key rule on id from claim facts
+```
+
+Each row of the table names a term, an operator and a stored value, in the
+column that fits its type: a number, a text, an instant, and optionally a list
+and a latitude and longitude. The claim is a JSON object keyed by term. The
+relation holds for a row of the object when every stored condition holds
+against the claim's value for its term. With `key` it reads only the
+conditions stored for the bound element.
+
+Each comparison reads *stored, operator, caller's value*:
+
+| Operators | Stored value | Caller's value |
+|---|---|---|
+| `eq`, `ne` | number, text or instant | the same |
+| `lt`, `le`, `gt`, `ge` | number or instant | the same |
+| `not_before`, `not_after` | instant | none: compared with `now()` |
+| `in`, `not_in` | number or text | a JSON array |
+| `includes`, `not_includes` | list | one value |
+| `contains`, `prefix`, `suffix`, and `not_` of each | text | text |
+| `caller_contains`, `caller_prefix`, `caller_suffix`, and `not_` of each | text | text, the other way round |
+| `within_km` | latitude, longitude, and the radius in `num` | `{"lat": …, "lng": …}` |
+
+The answer has three values. It is false when any condition is decided false.
+It is unknown when none is false and one cannot be decided: the claim has no
+value for the term, or one of the wrong form. Otherwise it is true. A negated
+operator is its own operator and is unknown on a missing value, where `not`
+around the positive would be true. An empty stored list is a known value.
+
+Numbers are double precision. Text is compared by code point. `within_km` is
+the haversine distance on a sphere of radius 6371.0 km, admitted when the
+distance is at most the radius, and unknown for a latitude outside −90 to 90,
+a longitude outside −180 to 180 or a negative radius. Declare `extension postgis` (with `schema
+"<name>"` when it is not on the search path) and it compiles to `ST_DWithin`
+on geography instead.
+
+A conditions relation only narrows. A rule in which it could admit a caller by
+itself is refused.
+
+### Chains whose hops depend on the caller
+
+`via composition` over a closure table reaches a row through a chain of rows.
+The closure is shared by every caller, so a closure row cannot say whether
+each hop on the way holds for this caller. Three additions make the chain
+exact.
+
+```demesne
+object doc {
+  table docs
+  scoped estate
+  nested 1
+  relation lent: member via composition doc_lends(borrower_id, lender_id) slot field from param
+      path trail along (
+        every h in trail_hops(trail) (
+            (@slot(kind, "claim") and @slot(rule held rules_held))
+          + (@slot(kind, "live") and @holds_at(doc_id, rule slot field for select)) ) )
+  …
+}
+```
+
+**`path <column> along ( … )`.** The closure row's column is its path key, and
+the table in the brackets holds one row for each hop the path passes through
+that needs checking. The closure row counts only when the brackets hold. A
+relation followed for several operations may keep a path for each: `path
+select seen, update changed, delete dropped along ( … )`.
+
+**A hop the claim decides.** `@slot(rule held rules_held)` is one array test,
+with no lookup.
+
+**A hop judged live.** `@holds_at(<record column>, <element column>)` asks
+whether the element the hop names holds at the row it names, for this caller.
+It is the permission's `some` brackets, compiled for one element at one row:
+the row is inside the caller's containment, the element is in the row's column
+and passes the `some`'s `prefix` and `held`, and the brackets hold. The
+composition the path is on is taken as followed at that row, since the closure
+row is the proof of it. When the composition binds a `slot`, the hop names the
+column that says which slot it follows (`slot field`), and only that slot is
+taken as followed. `for <operation>` judges every hop for one operation;
+without it a hop is judged for the operation the composition is followed for.
+
+Because the hop is judged when the row is read, a change at a middle row ends
+or gives access at once, in the same transaction, with nothing to maintain.
+
+**`nested <n>`.** The rule at a hop may itself need another composition, a
+second borrow, say. `nested` says how many such compositions deep a hop is
+judged. The hop's own composition costs no level. With `nested 1` another
+composition in a hop's rule is followed, and one inside *its* hops is not.
+
+**Past the nesting, the safe answer.** Each generated function is a lower
+bound of the rule, and has an upper bound beside it (`…_upper`) where
+something narrows by it:
+
+- a composition that widens a rule is followed by the lower bound, so what
+  cannot be followed does not admit;
+- a composition under `not` or inside `none` is followed by the upper bound,
+  so what cannot be followed bars, and so does what cannot be decided.
+
+Inside the nesting the two agree and the answer is exact. Size `nested` to the
+rules you accept, and refuse a rule that needs more.
+
+**The evaluator, for the application.** `<object>_<operation>_holds_at(record,
+element)` is emitted for each operation whose permission has a `some`, on an
+object that declares `nested`. A row is admitted by a rule that is one `some`
+exactly when the function holds for one of the row's elements, so it answers
+"which rule let this caller in".
+
+A write permission that repeats the read rule, `edit = <write terms> and <the
+read rule>`, follows the read rule's compositions for writing. The compiler
+accepts that a composition followed for writing reaches no further than for
+reading. It refuses the shape when the read rule narrows by a composition,
+because there the write could admit a row the read does not show: mark the
+permission `blind`, or keep such an exception out of the rule the write
+repeats.
+
+## A role store's held permissions
+
+```demesne
+rolestore staff {
+  assignments role_grants
+  …
+  permissions permissions
+  held claim held_verbs
+}
+```
+
+A credential can carry permissions of its own: a key minted for one job, say.
+`held claim <key>` names a claim holding them as a JSON array. `@holds(<p>)` is
+then also true when the array holds the permission, or one that implies it,
+**and the row stands where the session stands**:
+
+- at the top level the row's scope column equals the session's claim;
+- at a lower level the session's claim is absent, or equal to the row's column;
+- a row of an object not scoped at a level the session names is not reached.
+
+So a held permission follows the same containment as an assignment, never
+wider and never onto an unset level. Assignments count as before.
+
+## `@clock`: a row's instant against now
+
+`@clock(<column> reached)` is a row test, true when the column's instant is not
+in the future. An unset column is never reached, so `not @clock(closes_at
+reached)` is true of a row with no closing time.
+
+```demesne
+permission view = @scoped and @clock(opens_at reached) and not @clock(closes_at reached) @rls maps select
+```
+
+## Markers: a container that confines writes beneath it
+
+Some containers are owned by one activity while it lasts: a space made by a
+job, a folder made by an import. Rows under such a container should be written
+only by that activity, whoever else can reach them.
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  marker made_by from claim job_id confines insert, update, delete
+  …
+}
+```
+
+`marker <column> from claim <key> confines <operations>` goes on the object
+that declares a level. Every other object scoped at that level gains one more
+restrictive condition for each named operation:
+
+| The row's level column | The container's marker | The write |
+|---|---|---|
+| NULL | | is asked nothing |
+| names no container | | is refused |
+| names a container | NULL | passes |
+| names a container | set | passes when the session's claim equals it |
+
+No object is edited: the condition joins each object's
+`<table>_<operation>_require` policy, its point checks and any predicate
+another object borrows from it. The container's own row keeps its own rule.
+Several markers on one level all apply. With `through closure <table>`, naming
+a closure declared over the container's table, every marked container above
+the row's own confines too.
+
+Reads are confined only when `select` is named, and a marker that confines
+`select` must confine `update` and `delete` as well: Postgres applies a write
+only to rows the read policy shows, so the compiler refuses a spec in which a
+write could pass where the read is refused.
+
+Each marker compiles to `<table>_<column>_marker_admits(container, claim)`,
+a definer, because the caller may not be able to read the container's row.
+
+---
+
 ## Probes: asking about rows the caller cannot read
 
 Before it writes, an application sometimes has to ask about rows its caller is

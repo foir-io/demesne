@@ -2,6 +2,180 @@
 
 ## Unreleased
 
+The crates will be 5.0.0 because public types of `demesne-syntax`,
+`demesne-model` and `demesne-emit-sql` gain fields and variants, named under
+each change, and `demesne_emit_sql::Sql` gains private fields, so it is built
+with `Sql::new`. A spec that uses none of the constructs below emits exactly
+what v4.0.0 did, with the two exceptions under "Fixed".
+
+### `some`: one element of an array column, and what must hold for it
+
+```demesne
+permission view = some r in rules_live prefix "read." held rules_held (
+    (@element prefix "read.edge." and shared) + (@element prefix "read.open." and mode access = "open")
+) @rls maps select
+```
+
+`some <name> in <array column> [prefix "<text>"] [held <claim>] ( … )` is true
+of a row when one element of the column satisfies the brackets. `prefix` binds
+only elements that start with the text, and `held` only elements the claim's
+JSON array also holds. Inside the brackets `@element prefix "<text>"` tests the
+bound element, and a keyed edge matches it:
+`via edge <table>(<principal>, <object>) key <column> [on <row column>] [where <column> = "<value>"]`
+compiles to `<object>_<relation>_keyed(principal, object, key)`. The term is one
+`EXISTS` over `unnest(<column>)` per row.
+
+`demesne_syntax::Builtin` gains `Some` and `ElementPrefix`, `ViaEdge` gains
+`key`, `on`, `filter` and `slot`, and `PermNode` and `Term` derive `PartialEq`.
+
+### `every` and `none`: the rows a table declares for the element
+
+Inside a `some`,
+`every <name> in <table>(<key column>) [where <column> = "<value>"] ( … )` holds
+when the brackets hold for every row the table has for the bound element, and
+`none …` when they hold for no row. `@slot(<column>, "<value>")` tests the
+declared row, and `slot <column> [from <declared column>]` on a keyed edge or a
+`via composition` matches one of its columns against the declared row's. The
+declared rows are read through one generated function per table and key,
+`<table>_declared_by_<key>`, which returns only the columns the spec reads.
+
+`none` bars when a row's brackets cannot be decided, and `every` fails on one.
+A plain `not` keeps its meaning.
+
+`Builtin` gains `Declared`, `Slot` and `SlotHeld` (`@slot(<column> held <claim>)`:
+the declared row's column is one of the claim's JSON array), and
+`ViaComposition` gains `slot`.
+
+### `via conditions`: stored conditions compared with what the caller's claim carries
+
+```demesne
+relation terms: member via conditions doc_terms(doc_id, term, op) values (num, txt, at, list, lat, lng) key rule on id from claim facts
+```
+
+Each stored row names a term, an operator and a value. The caller's claim is a
+JSON object keyed by term. The relation holds when every stored row for the
+object (and key, inside a `some`) holds against the claim's value for its term.
+It is three-valued: false when any condition is decided false, unknown when
+one cannot be decided (the claim carries no value for the term, or a value of
+the wrong form), and true otherwise. It compiles to
+`<object>_<relation>_hold(object[, key], values)`.
+
+The operators are `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `in`, `not_in`,
+`includes`, `not_includes`, `contains`, `prefix`, `suffix`, their `caller_` and
+`not_` forms, `not_before`, `not_after` and `within_km`. `num` is double
+precision and text is compared by code point. `within_km` is the haversine
+distance with a radius of 6371.0 km, and is unknown for a latitude or longitude
+out of range. With `extension postgis [schema "<name>"]` declared it compiles
+to `ST_DWithin` on geography.
+
+A conditions relation only narrows: a rule in which it would admit a caller by
+itself is refused.
+
+`demesne_syntax::Repr` gains `Conditions(ViaConditions)` and `Spec` gains
+`extensions`.
+
+### A role store's `held claim`: permissions the credential carries
+
+`held claim <key>` in a `rolestore` names a claim holding a JSON array of
+permissions. `@holds(<permission>)` is then also true when the array holds the
+permission (or one that implies it) and the row stands where the session
+stands: at the top level its scope column equals the claim, and at a lower
+level the claim is absent or equal. A row whose object is not scoped at a level
+the session names is not reached. An assignment in the role store still counts
+as before.
+
+`demesne_syntax::RoleStore` gains `held_claim`.
+
+### `@clock(<column> reached)`
+
+A row test: true when the row's instant is not in the future. An unset column
+is never reached. It compiles to `<column> <= now()`.
+
+`Builtin` gains `Clock`.
+
+### `marker`: a column on a level's row confines writes beneath it
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  marker made_by from claim job_id confines insert, update, delete through closure paths
+}
+```
+
+Every other object scoped at the level gains, for each named operation, a
+restrictive condition: the row's container is unmarked, or its marker equals
+the session's claim. A level value that names no container refuses, and a row
+whose level column is NULL is asked nothing. With `through closure <table>`
+every marked container above the row's own confines too. Several markers on
+one level all apply. The container's own row keeps its own rule. Each marker
+compiles to `<table>_<column>_marker_admits(container, claim)`, and the
+condition joins the object's `<table>_<operation>_require` policy, its point
+checks and any predicate another object borrows.
+
+A marker that confines `select` must confine `update` and `delete` too, or the
+spec is refused: Postgres applies a write only to rows the read policy shows.
+
+`demesne_syntax::Object` gains `markers`, a list of the new `Marker`.
+
+### Chains whose hops depend on the caller: `path`, `nested` and the evaluator
+
+A closure table says a row reaches another through a chain. It is shared by
+every caller, so it cannot say whether each hop holds for this one.
+
+```demesne
+object doc {
+  nested 1
+  relation lent: member via composition doc_lends(borrower_id, lender_id) slot field from param
+      path trail along (
+        every h in trail_hops(trail) (
+            (@slot(kind, "claim") and @slot(rule held rules_held))
+          + (@slot(kind, "live") and @holds_at(doc_id, rule slot field for select)) ) )
+}
+```
+
+- `path <column> along ( … )` on `via composition`: a closure row counts only
+  when the brackets hold of the rows declared for its path key. One column
+  serves every operation, or name one each:
+  `path select seen, update changed, delete dropped along ( … )`.
+- `@holds_at(<record column>, <element column> [slot <column>] [for <operation>])`:
+  the element the hop names holds at the row it names, for this caller, **with
+  the composition the path is on taken as followed there**. A slot-bound
+  composition names the column that says which slot the hop follows. Without
+  `for`, a hop is judged for the operation the composition is followed for.
+- The evaluator is the permission's `some` brackets compiled for one element at
+  one row: the row is inside the caller's containment, the element is in the
+  row's column and passes `prefix` and `held`, and the brackets hold.
+  `<object>_<operation>_holds_at(record, element)` is emitted for each
+  operation whose permission has a `some`, for the application to call.
+- `nested <n>` on the object says how many further compositions deep a hop is
+  judged. A hop's own composition costs nothing. Another composition in the
+  hop's rule is followed through one level less, and at the last level it is
+  not followed.
+
+Past the nesting the answer is the safe one. Every generated function has a
+lower bound and, where something narrows by it, an upper bound
+(`…_upper`). A composition that widens a rule is followed by the lower bound,
+so what cannot be followed does not admit. A composition under `not` or inside
+`none` is followed by the upper bound, so what cannot be followed, or cannot be
+decided, bars. Only the functions something calls are emitted.
+
+`demesne_syntax` gains `CompPath`; `ViaComposition` gains `path`, `Object` gains
+`nested`, `Builtin` gains `HoldsAt`, and the lexer reads a whole number.
+`demesne_model::analysis` gains `Cut`, `CutAt`, `Bounded`, `composition_cut`
+and `cut_tree`.
+
+### Fixed: a composition under `not` or inside `none` was judged by a lower bound
+
+`member and not parent` asked the same generated function a widening `parent`
+asks. That function judges the parent by its own rule with every branch that
+needs a composition left out, so it can say "not reached" of a parent the
+caller does reach, and the `not` then admitted. A composition that narrows a
+rule now calls `<object>_composition_<relation>_upper`, which counts such a
+branch as possibly true. The change can only narrow what a spec admits, and a
+spec with no composition under `not` or inside `none` emits what it did.
+
 ### Fixed: a composition inside an `and` let the parent admit on the other side alone
 
 `via composition` reaches a row because the caller reaches its parent, and the
