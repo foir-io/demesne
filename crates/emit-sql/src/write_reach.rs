@@ -144,17 +144,25 @@ struct Implications<'a> {
     s: &'a Spec,
     pairs: BTreeSet<(String, String)>,
     admitted: BTreeSet<(String, String, String)>,
+    followed: Vec<(String, String)>,
 }
 
 impl Implications<'_> {
     fn atom(&self, have: &str, want: &str) -> bool {
-        if have == want || want == "true" || self.pairs.contains(&(have.to_string(), want.to_string())) {
+        if have == want || want == "true" || self.pairs.contains(&(have.to_string(), want.to_string())) || self.some_followed_for_read(have, want) {
             return true;
         }
         match (split_last_literal(have), split_last_literal(want)) {
             (Some((hp, hl, hs)), Some((wp, wl, ws))) => hp == wp && hs == ws && (perm_implies(self.s, hl, wl) || self.admits(hp, wl, hl)),
             _ => false,
         }
+    }
+
+    fn some_followed_for_read(&self, have: &str, want: &str) -> bool {
+        if !have.starts_with("EXISTS (SELECT 1 FROM unnest(") {
+            return false;
+        }
+        self.followed.iter().fold(have.to_string(), |text, (written, read)| text.replace(written, read)) == want
     }
 
     fn admits(&self, prefix: &str, access: &str, also: &str) -> bool {
@@ -167,13 +175,17 @@ impl Implications<'_> {
     }
 }
 
-fn composition_implications(schema: &str, obj: &Object, rel: &str) -> Vec<(String, String)> {
-    let call = |access: &str| format!("{schema}.{}_composition_{rel}({}.{}, {})", obj.name, obj.table, obj.pk(), quote_literal(access));
+fn composition_calls(schema: &str, obj: &Object, rel: &str, close: &str) -> Vec<(String, String)> {
+    let call = |access: &str| format!("{schema}.{}_composition_{rel}({}.{}, {}{close}", obj.name, obj.table, obj.pk(), quote_literal(access));
     [("update", "write"), ("delete", "delete")]
         .into_iter()
         .filter(|(op, _)| obj.perms.iter().find(|p| p.has_layer("rls") && p.maps() == *op).is_some_and(|p| !p.blind))
         .map(|(_, access)| (call(access), call("read")))
         .collect()
+}
+
+fn composition_implications(schema: &str, obj: &Object, rel: &str) -> Vec<(String, String)> {
+    composition_calls(schema, obj, rel, ")")
 }
 
 fn borrow_implications(s: &Spec, vo: &ViaObject) -> Vec<(String, String)> {
@@ -203,15 +215,19 @@ fn grant_admissions(s: &Spec, obj: &Object, r: &Relation, vg: &ViaGrant) -> Vec<
 fn implications(s: &Spec) -> Implications<'_> {
     let mut pairs = BTreeSet::new();
     let mut admitted = BTreeSet::new();
+    let mut followed = Vec::new();
     for (obj, r) in s.relations() {
         match &r.repr {
-            Repr::Composition(_) => pairs.extend(composition_implications(s.definer_schema(), obj, &r.name)),
+            Repr::Composition(_) => {
+                pairs.extend(composition_implications(s.definer_schema(), obj, &r.name));
+                followed.extend(composition_calls(s.definer_schema(), obj, &r.name, ""));
+            }
             Repr::Object(vo) => pairs.extend(borrow_implications(s, vo)),
             Repr::Grant(vg) => admitted.extend(grant_admissions(s, obj, r, vg)),
             _ => {}
         }
     }
-    Implications { s, pairs, admitted }
+    Implications { s, pairs, admitted, followed }
 }
 
 fn disjunct_node(d: &[(bool, Term)]) -> PermNode {

@@ -154,19 +154,95 @@ pub fn relation_is_async(r: &Relation) -> bool {
 
 #[must_use]
 pub fn without_composition(o: &Object) -> Object {
-    let comp: Vec<&str> = o.relations.iter().filter(|r| matches!(r.repr, Repr::Composition(_))).map(|r| r.name.as_str()).collect();
+    composition_cut(o, Cut { upper: false, positive: CutAt::Never, negative: CutAt::Unknown, given: None })
+}
+
+/// What a composition term becomes when an object's rule is judged without following it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CutAt {
+    /// The term stays, to be followed.
+    Keep,
+    /// The term is false: the rule is the row's own.
+    Never,
+    /// The term cannot be decided: false in a lower bound, true in an upper bound, and the reverse under a `not` or a `none`.
+    Unknown,
+}
+
+/// How [`composition_cut`] treats the composition terms of an object's rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cut<'a> {
+    /// The cut rule is an upper bound of the rule, where it otherwise is a lower bound.
+    pub upper: bool,
+    /// A composition term that widens the rule.
+    pub positive: CutAt,
+    /// A composition term under a `not` or inside a `none`, which narrows the rule.
+    pub negative: CutAt,
+    /// A composition relation whose terms stay whatever the rest says: the one a hop is being followed on.
+    pub given: Option<&'a str>,
+}
+
+impl Cut<'_> {
+    fn root(self) -> Bound {
+        if self.upper { Bound::AtLeast } else { Bound::AtMost }
+    }
+
+    fn keeps(self) -> bool {
+        self.positive == CutAt::Keep || self.negative == CutAt::Keep
+    }
+}
+
+/// Returns the object with its composition terms cut from every permission as `cut` says, so the rule bounds the object's own.
+#[must_use]
+pub fn composition_cut(o: &Object, cut: Cut<'_>) -> Object {
+    let comp = cut_relations(o, cut);
+    let pruning = Pruning { comp: &comp, cut };
     let mut cp = o.clone();
-    cp.relations = o.relations.iter().filter(|r| !matches!(r.repr, Repr::Composition(_))).cloned().collect();
+    if !cut.keeps() && cut.given.is_none() {
+        cp.relations = o.relations.iter().filter(|r| !matches!(r.repr, Repr::Composition(_))).cloned().collect();
+    }
     cp.perms = o
         .perms
         .iter()
         .map(|pm| {
             let mut pc = pm.clone();
-            pc.tree = without_comp_branches(&pm.tree, &comp).unwrap_or_else(PermNode::nil);
+            pc.tree = match pruned_branches(&pm.tree, pruning, cut.root()) {
+                Pruned::Kept(body) => body,
+                Pruned::Never | Pruned::Always => PermNode::nil(),
+            };
             pc
         })
         .collect();
     cp
+}
+
+/// An expression after its composition terms are cut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bounded {
+    Kept(PermNode),
+    Never,
+    Always,
+}
+
+/// Returns `n`, an expression of `o` that widens its rule, with its composition terms cut as `cut` says.
+#[must_use]
+pub fn cut_tree(o: &Object, n: &PermNode, cut: Cut<'_>) -> Bounded {
+    let comp = cut_relations(o, cut);
+    match pruned_branches(n, Pruning { comp: &comp, cut }, cut.root()) {
+        Pruned::Kept(body) => Bounded::Kept(body),
+        Pruned::Never => Bounded::Never,
+        Pruned::Always => Bounded::Always,
+    }
+}
+
+fn cut_relations<'a>(o: &'a Object, cut: Cut<'_>) -> Vec<&'a str> {
+    let composed = o.relations.iter().filter(|r| matches!(r.repr, Repr::Composition(_))).map(|r| r.name.as_str());
+    composed.filter(|name| cut.given != Some(*name)).collect()
+}
+
+#[derive(Clone, Copy)]
+struct Pruning<'a> {
+    comp: &'a [&'a str],
+    cut: Cut<'a>,
 }
 
 enum Pruned {
@@ -201,9 +277,14 @@ impl Bound {
     }
 }
 
-fn pruned_leaf(t: &Term, comp: &[&str], bound: Bound) -> Pruned {
-    if comp.contains(&t.ident()) {
-        return bound.unknown();
+fn pruned_leaf(t: &Term, comp: Pruning<'_>, bound: Bound) -> Pruned {
+    if comp.comp.contains(&t.ident()) {
+        let at = if bound == comp.cut.root() { comp.cut.positive } else { comp.cut.negative };
+        return match at {
+            CutAt::Keep => Pruned::Kept(PermNode::Leaf(t.clone())),
+            CutAt::Never => Pruned::Never,
+            CutAt::Unknown => bound.unknown(),
+        };
     }
     if let Some(scope) = t.some_scope() {
         return match pruned_branches(&scope.body, comp, bound) {
@@ -228,7 +309,7 @@ fn pruned_leaf(t: &Term, comp: &[&str], bound: Bound) -> Pruned {
     }
 }
 
-fn pruned_branches(n: &PermNode, comp: &[&str], bound: Bound) -> Pruned {
+fn pruned_branches(n: &PermNode, comp: Pruning<'_>, bound: Bound) -> Pruned {
     match n {
         PermNode::Leaf(t) => pruned_leaf(t, comp, bound),
         PermNode::Not(k) => match pruned_branches(k, comp, bound.flipped()) {
@@ -262,13 +343,6 @@ fn pruned_branches(n: &PermNode, comp: &[&str], bound: Bound) -> Pruned {
                 _ => Pruned::Kept(PermNode::Or(kept)),
             }
         }
-    }
-}
-
-fn without_comp_branches(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
-    match pruned_branches(n, comp, Bound::AtMost) {
-        Pruned::Kept(body) => Some(body),
-        Pruned::Never | Pruned::Always => None,
     }
 }
 

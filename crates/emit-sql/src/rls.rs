@@ -381,7 +381,15 @@ impl Sql<'_> {
         self.rls_subject_branches(obj, virt, obj_leaf, obj_is_global, has_staff, op).0
     }
 
-    fn rls_subject_branches(&self, obj: &Object, virt: &Virtual, obj_leaf: &str, obj_is_global: bool, has_staff: bool, op: &str) -> (Vec<String>, Inject) {
+    pub(crate) fn rls_subject_branches(
+        &self,
+        obj: &Object,
+        virt: &Virtual,
+        obj_leaf: &str,
+        obj_is_global: bool,
+        has_staff: bool,
+        op: &str,
+    ) -> (Vec<String>, Inject) {
         let mut top = Vec::new();
         let mut inject = Inject::new();
         let schema = self.s.definer_schema();
@@ -669,7 +677,7 @@ impl Sql<'_> {
                 Ok(vec![parts.join(" AND ")])
             }
             PermNode::Not(k) => {
-                let kf = self.node_frags_mode(obj, pm, k, rels, cust_claim, require)?;
+                let kf = self.flipped().node_frags_mode(obj, pm, k, rels, cust_claim, require)?;
                 if kf.is_empty() {
                     return Ok(Vec::new());
                 }
@@ -748,6 +756,11 @@ impl Sql<'_> {
             "claim" if t.claim_absent() => Ok(vec![format!("{} IS NULL", self.claim(t.claim_key()))]),
             "claim" => Ok(vec![format!("{} = {}", self.claim(t.claim_key()), quote_literal(t.claim_val()))]),
             "row" | "element" | "slot" | "clock" => Ok(vec![row_term_sql(t)]),
+            "slot_held" => {
+                let (col, claim) = t.slot_held().expect("a slot_held term carries its column and claim");
+                Ok(vec![self.held_sql(&format!("{SLOT}.{col}"), claim)])
+            }
+            "holds_at" => Err(format!("{} on {}: it reads the rows a composition's `path` declares, and is written only there", t.display(), quote(&obj.name))),
             "within" => {
                 let col = self.s.scope_col(obj, t.within_level());
                 let claim = self.id_claim(&self.s.claim_key_for_level(t.within_level()));
@@ -802,24 +815,71 @@ impl Sql<'_> {
 
     fn rls_emit_declared(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
         let scope = t.declared_scope().ok_or_else(|| format!("{} is no `every` or `none` term", t.display()))?;
-        let body = self.node_frags(obj, pm, &scope.body, rels, cust_claim)?;
+        let judge = if scope.quantifier == Quantifier::None { self.flipped() } else { *self };
+        let body = judge.node_frags(obj, pm, &scope.body, rels, cust_claim)?;
         if body.is_empty() {
             return Err(format!("`{}` on {}: its brackets compile to no predicate", t.display(), quote(&obj.name)));
         }
+        Ok(vec![self.declared_rows_sql(scope, ELEMENT, &body.join(" OR "))])
+    }
+
+    pub(crate) fn declared_rows_sql(&self, scope: &demesne_syntax::DeclaredScope, key: &str, body: &str) -> String {
         let mut conds = Vec::new();
         if let Some((col, val)) = &scope.filter {
             conds.push(format!("{SLOT}.{col} = {}", quote_literal(val)));
         }
-        conds.push(match scope.quantifier {
-            Quantifier::Every => format!("({}) IS NOT TRUE", body.join(" OR ")),
-            Quantifier::None => format!("({}) IS NOT FALSE", body.join(" OR ")),
-        });
-        Ok(vec![format!(
-            "NOT EXISTS (SELECT 1 FROM {}.{}({ELEMENT}) AS {SLOT} WHERE {})",
+        let fails = match (scope.quantifier, self.bounds_above()) {
+            (Quantifier::Every, false) => "IS NOT TRUE",
+            (Quantifier::Every, true) => "IS FALSE",
+            (Quantifier::None, false) => "IS NOT FALSE",
+            (Quantifier::None, true) => "IS TRUE",
+        };
+        conds.push(format!("({body}) {fails}"));
+        format!(
+            "NOT EXISTS (SELECT 1 FROM {}.{}({key}) AS {SLOT} WHERE {})",
             self.s.definer_schema(),
             declared_fn(&scope.table, &scope.key_col),
             conds.join(" AND ")
-        )])
+        )
+    }
+
+    pub(crate) fn flipped(&self) -> Self {
+        Sql { negated: !self.negated, ..*self }
+    }
+
+    pub(crate) fn bounds_above(&self) -> bool {
+        self.upper != self.negated
+    }
+
+    pub(crate) fn judged(&self, nest: Option<usize>, upper: bool) -> Self {
+        Sql { s: self.s, definer_body: false, nest, upper, negated: false, given: None }
+    }
+
+    pub(crate) fn composition_fn(&self, obj: &Object, r: &Relation) -> String {
+        let level = match (&r.repr, self.nest) {
+            (Repr::Composition(vc), Some(k)) if vc.path.is_some() => format!("_{k}"),
+            _ => String::new(),
+        };
+        format!("{}_composition_{}{level}{}", obj.name, r.name, if self.bounds_above() { "_upper" } else { "" })
+    }
+
+    pub(crate) fn held_sql(&self, value: &str, claim: &str) -> String {
+        format!("{value} = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text({}::jsonb) e))", self.claim(claim))
+    }
+
+    pub(crate) fn some_bounds(&self, scope: &demesne_syntax::SomeScope) -> Vec<String> {
+        let mut bound = Vec::new();
+        if let Some(prefix) = &scope.prefix {
+            bound.push(format!("starts_with({ELEMENT}, {})", quote_literal(prefix)));
+        }
+        if let Some(held) = &scope.held {
+            bound.push(self.held_sql(ELEMENT, held));
+        }
+        bound
+    }
+
+    pub(crate) fn some_body(&self, body: &[String]) -> String {
+        format!("({}){}", body.join(" OR "), if self.bounds_above() { " IS NOT FALSE" } else { "" })
     }
 
     fn rls_emit_some(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
@@ -828,14 +888,8 @@ impl Sql<'_> {
         if body.is_empty() {
             return Err(format!("`some {}` on {}: its brackets compile to no predicate", scope.var, quote(&obj.name)));
         }
-        let mut bound = Vec::new();
-        if let Some(prefix) = &scope.prefix {
-            bound.push(format!("starts_with({ELEMENT}, {})", quote_literal(prefix)));
-        }
-        if let Some(held) = &scope.held {
-            bound.push(format!("{ELEMENT} = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text({}::jsonb) e))", self.claim(held)));
-        }
-        bound.push(format!("({})", body.join(" OR ")));
+        let mut bound = self.some_bounds(scope);
+        bound.push(self.some_body(&body));
         Ok(vec![format!("EXISTS (SELECT 1 FROM unnest({}.{}) AS demesne_element(v) WHERE {})", obj.table, scope.col, bound.join(" AND "))])
     }
 
@@ -983,8 +1037,15 @@ impl Sql<'_> {
             }
             Repr::Composition(vc) => {
                 let slot = vc.slot.as_ref().map(|(_, from)| format!(", {SLOT}.{from}")).unwrap_or_default();
-                let call = format!("{}.{}_composition_{}({}, {}{slot})", schema, obj.name, r.name, pk, quote_literal(access));
-                Ok(vec![self.probed(&composition_probe(obj, vc), call)])
+                let call = format!("{}.{}({}, {}{slot})", schema, self.composition_fn(obj, r), pk, quote_literal(access));
+                let followed = self.given.is_some_and(|(given, _)| given == r.name);
+                let floor = self.given.is_some_and(|(_, floor)| floor);
+                Ok(vec![match (&vc.slot, followed) {
+                    (_, false) => self.probed(&composition_probe(obj, vc), call),
+                    (Some((_, from)), true) if floor && !self.bounds_above() => format!("{SLOT}.{from} = p_slot"),
+                    (Some((_, from)), true) if !floor => format!("({SLOT}.{from} = p_slot OR {call})"),
+                    (_, true) => "true".into(),
+                }])
             }
             Repr::Closure(c) => self.rls_closure_frag(obj, c, t.ident(), cust_claim),
             Repr::Group(g) => {

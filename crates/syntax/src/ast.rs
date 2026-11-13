@@ -421,6 +421,8 @@ pub struct Object {
     pub nearests: Vec<Nearest>,
     pub projections: Vec<Projection>,
     pub markers: Vec<Marker>,
+    /// `nested <n>`: how many compositions deep an element is judged at another row of the object.
+    pub nested: Option<usize>,
     pub relations: Vec<Relation>,
     pub perms: Vec<Perm>,
     pub requires: Vec<Require>,
@@ -629,6 +631,24 @@ pub struct ViaComposition {
     pub kind_val: Option<String>,
     /// `slot <column> from <declared column>`: only hops whose column equals the bound declared row's are followed.
     pub slot: Option<(String, String)>,
+    /// `path <column> along ( <expression> )`: a hop counts only when the expression holds of the rows declared for its path key.
+    pub path: Option<CompPath>,
+}
+
+/// `path <column> along ( <expression> )` on `via composition`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompPath {
+    /// The column holding the path key for each operation; one entry with an empty operation serves every operation.
+    pub cols: Vec<(String, String)>,
+    pub along: PermNode,
+}
+
+impl CompPath {
+    /// Returns the column that holds the path key when the composition is followed for `op`.
+    #[must_use]
+    pub fn col_for(&self, op: &str) -> Option<&str> {
+        self.cols.iter().find(|(o, _)| o.is_empty() || o == op).map(|(_, col)| col.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -982,6 +1002,19 @@ pub enum Builtin {
         col: String,
         val: String,
     },
+    /// `@slot(<column> held <claim>)`: the bound declared row's column is one of the claim's JSON array.
+    SlotHeld {
+        col: String,
+        claim: String,
+    },
+    /// `@holds_at(<record column>, <element column> [slot <column>] [for <operation>])`: the element the bound declared row names holds at
+    /// the row it names, with the composition the path is on taken as followed there.
+    HoldsAt {
+        record: String,
+        element: String,
+        slot: Option<String>,
+        op: Option<String>,
+    },
     /// `@holds(<perm> every <column> at <level>)`: the permission is held at every value an array column names at a level.
     HoldsEvery {
         perm: String,
@@ -1030,6 +1063,12 @@ impl Builtin {
                 format!("{word} {} in {}({}){filter} ({})", scope.var, scope.table, scope.key_col, scope.body.display())
             }
             Builtin::Slot { col, val } => format!("@slot({col}, {})", quote(val)),
+            Builtin::SlotHeld { col, claim } => format!("@slot({col} held {claim})"),
+            Builtin::HoldsAt { record, element, slot, op } => {
+                let slot = slot.as_ref().map(|slot| format!(" slot {slot}")).unwrap_or_default();
+                let op = op.as_ref().map(|op| format!(" for {op}")).unwrap_or_default();
+                format!("@holds_at({record}, {element}{slot}{op})")
+            }
             Builtin::HoldsEvery { perm, col, level } => format!("@holds({perm} every {col} at {level})"),
             Builtin::External { func, .. } => format!("@external({func})"),
             Builtin::Row { col, val } => format!("@row({col}, {})", quote(val)),
@@ -1056,6 +1095,8 @@ impl Builtin {
             Builtin::Clock(_) => "clock",
             Builtin::Declared(_) => "declared",
             Builtin::Slot { .. } => "slot",
+            Builtin::SlotHeld { .. } => "slot_held",
+            Builtin::HoldsAt { .. } => "holds_at",
             Builtin::HoldsEvery { .. } => "holds_every",
             Builtin::Row { .. } | Builtin::RowNull(_) => "row",
             Builtin::Other(name) => name,
@@ -1249,6 +1290,33 @@ impl Term {
     pub fn slot_test(&self) -> Option<(&str, &str)> {
         match self.builtin_ref() {
             Some(Builtin::Slot { col, val }) => Some((col, val)),
+            _ => None,
+        }
+    }
+
+    /// Returns the column and claim of `@slot(<column> held <claim>)`.
+    #[must_use]
+    pub fn slot_held(&self) -> Option<(&str, &str)> {
+        match self.builtin_ref() {
+            Some(Builtin::SlotHeld { col, claim }) => Some((col, claim)),
+            _ => None,
+        }
+    }
+
+    /// Returns the record column, the element column and the operation of `@holds_at(…)`.
+    #[must_use]
+    pub fn holds_at(&self) -> Option<(&str, &str, Option<&str>)> {
+        match self.builtin_ref() {
+            Some(Builtin::HoldsAt { record, element, op, .. }) => Some((record, element, op.as_deref())),
+            _ => None,
+        }
+    }
+
+    /// Returns the column of `@holds_at(… slot <column>)` that says which of the composition's slots a hop follows.
+    #[must_use]
+    pub fn holds_at_slot(&self) -> Option<&str> {
+        match self.builtin_ref() {
+            Some(Builtin::HoldsAt { slot, .. }) => slot.as_deref(),
             _ => None,
         }
     }

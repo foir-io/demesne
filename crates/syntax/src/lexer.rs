@@ -9,6 +9,7 @@ pub(crate) enum Tok {
     PermKey,
     Proc,
     Str,
+    Int,
     LBrace,
     RBrace,
     LParen,
@@ -34,6 +35,7 @@ impl fmt::Display for Tok {
             Tok::PermKey => "PERMKEY",
             Tok::Proc => "PROC",
             Tok::Str => "STRING",
+            Tok::Int => "NUMBER",
             Tok::LBrace => "{",
             Tok::RBrace => "}",
             Tok::LParen => "(",
@@ -147,6 +149,11 @@ impl Lexer<'_> {
             }
             b'"' => return self.lex_string(),
             c if is_ident_start(c) => self.lex_run(),
+            c if c.is_ascii_digit() => {
+                let width = self.src[self.pos..].iter().take_while(|b| b.is_ascii_digit()).count();
+                let lit = String::from_utf8_lossy(&self.src[self.pos..self.pos + width]).into_owned();
+                self.tok(Tok::Int, &lit, line, width)
+            }
             c => {
                 return Err(Error::at(line, format!("unexpected character {}", quote(&char::from(c).to_string()))));
             }

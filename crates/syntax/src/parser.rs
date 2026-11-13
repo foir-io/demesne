@@ -1,10 +1,10 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, DeclaredScope, ExportParameter, Extension, External, ExternalArg, FieldRule,
-    FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker, Membership, Nearest, Object,
-    Perm, PermNode, PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr, Require,
-    RoleStore, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaConditions,
-    ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, DeclaredScope, ExportParameter, Extension, External, ExternalArg,
+    FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker, Membership, Nearest,
+    Object, Perm, PermNode, PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr,
+    Require, RoleStore, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition,
+    ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -669,6 +669,10 @@ impl Parser {
             o.fields.push(f);
         } else if self.is_kw("marker") {
             self.parse_marker(o)?;
+        } else if self.is_kw("nested") {
+            self.advance();
+            let n = self.expect(Tok::Int)?;
+            o.nested = Some(n.lit.parse().map_err(|e| Error::at(n.line, format!("nested {}: {e}", n.lit)))?);
         } else if self.is_kw("projection") {
             self.parse_projection(o)?;
         } else if self.is_kw("nearest") {
@@ -952,7 +956,35 @@ impl Parser {
             vc.kind_val = non_empty(val);
         }
         vc.slot = self.parse_slot_binding()?;
+        if self.accept_kw("path") {
+            vc.path = Some(self.parse_comp_path()?);
+        }
         Ok(Repr::Composition(vc))
+    }
+
+    fn parse_comp_path(&mut self) -> PResult<CompPath> {
+        let mut cols = Vec::new();
+        let first = self.ident()?;
+        if self.is_kw("along") {
+            cols.push((String::new(), first));
+        } else {
+            cols.push((first, self.ident()?));
+            while self.peek() == Tok::Comma {
+                self.advance();
+                let op = self.ident()?;
+                cols.push((op, self.ident()?));
+            }
+        }
+        self.expect_kw("along")?;
+        if self.depth == MAX_NESTING {
+            return Err(self.err(format!("parentheses nest more than {MAX_NESTING} deep")));
+        }
+        self.expect(Tok::LParen)?;
+        self.depth += 1;
+        let along = self.parse_perm_union()?;
+        self.depth -= 1;
+        self.expect(Tok::RParen)?;
+        Ok(CompPath { cols, along })
     }
 
     fn parse_repr_closure(&mut self) -> PResult<Repr> {
@@ -1348,14 +1380,8 @@ impl Parser {
                 self.expect(Tok::RParen)?;
                 Builtin::Clock(col)
             }
-            "slot" => {
-                self.expect(Tok::LParen)?;
-                let col = self.ident()?;
-                self.expect(Tok::Comma)?;
-                let val = self.string()?;
-                self.expect(Tok::RParen)?;
-                Builtin::Slot { col, val }
-            }
+            "slot" => self.parse_term_slot()?,
+            "holds_at" => self.parse_term_holds_at()?,
             "element" => {
                 self.expect_kw("prefix")?;
                 Builtin::ElementPrefix(self.string()?)
@@ -1386,6 +1412,31 @@ impl Parser {
             "holds" => self.parse_term_holds()?,
             _ => Builtin::Other(name),
         })
+    }
+
+    fn parse_term_slot(&mut self) -> PResult<Builtin> {
+        self.expect(Tok::LParen)?;
+        let col = self.ident()?;
+        if self.accept_kw("held") {
+            let claim = self.ident()?;
+            self.expect(Tok::RParen)?;
+            return Ok(Builtin::SlotHeld { col, claim });
+        }
+        self.expect(Tok::Comma)?;
+        let val = self.string()?;
+        self.expect(Tok::RParen)?;
+        Ok(Builtin::Slot { col, val })
+    }
+
+    fn parse_term_holds_at(&mut self) -> PResult<Builtin> {
+        self.expect(Tok::LParen)?;
+        let record = self.ident()?;
+        self.expect(Tok::Comma)?;
+        let element = self.ident()?;
+        let slot = if self.accept_kw("slot") { Some(self.ident()?) } else { None };
+        let op = if self.accept_kw("for") { Some(self.ident()?) } else { None };
+        self.expect(Tok::RParen)?;
+        Ok(Builtin::HoldsAt { record, element, slot, op })
     }
 
     fn parse_term_holds(&mut self) -> PResult<Builtin> {

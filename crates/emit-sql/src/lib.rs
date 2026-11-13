@@ -3,6 +3,7 @@
 
 mod app_surface;
 mod asynch;
+mod chains;
 mod changelog;
 mod closure;
 mod conditions;
@@ -36,12 +37,16 @@ use std::fmt::Write as _;
 pub struct Sql<'a> {
     pub s: &'a Spec,
     pub definer_body: bool,
+    nest: Option<usize>,
+    upper: bool,
+    negated: bool,
+    given: Option<(&'a str, bool)>,
 }
 
 impl<'a> Sql<'a> {
     #[must_use]
     pub fn new(s: &'a Spec) -> Self {
-        Sql { s, definer_body: false }
+        Sql { s, definer_body: false, nest: None, upper: false, negated: false, given: None }
     }
 }
 

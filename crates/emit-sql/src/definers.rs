@@ -1,12 +1,12 @@
 use crate::Sql;
 use crate::error::Error;
-use crate::genfn::{DefinerArm, Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
+use crate::genfn::{Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
 use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
     Rels, access_for, contains, go_type_name, grant_relation, grant_selector, mapped_perm, object_grant_edge, object_select_perm, object_select_policy_perm,
-    object_uses_store_manage, rels_of, store_manage_name, without_composition,
+    object_uses_store_manage, rels_of, store_manage_name,
 };
 use demesne_model::closure;
 use demesne_model::conditional::{
@@ -25,13 +25,13 @@ use std::fmt::Write as _;
 
 type R<T> = Result<T, String>;
 #[derive(Debug)]
-struct Definers {
-    fns: Vec<GenFn>,
+pub(crate) struct Definers {
+    pub(crate) fns: Vec<GenFn>,
     named: HashSet<String>,
 }
 
 impl Definers {
-    fn claim(&mut self, name: &str) -> bool {
+    pub(crate) fn claim(&mut self, name: &str) -> bool {
         self.named.insert(name.to_owned())
     }
 
@@ -297,7 +297,7 @@ impl Sql<'_> {
     }
 
     fn definer_fns(&self) -> R<Vec<GenFn>> {
-        let d = Sql { s: self.s, definer_body: true };
+        let d = Sql { definer_body: true, ..*self };
         d.emit_definers_inner()
     }
 
@@ -323,7 +323,8 @@ impl Sql<'_> {
         self.def_emit_declared(&mut defs);
         defs.add_each_once(self.conditions_definers());
         self.def_emit_cross_object(&mut defs, &virt)?;
-        self.def_emit_composition(&mut defs, &virt)?;
+        let mut optional = self.def_emit_composition(&mut defs, &virt)?;
+        optional.extend(self.def_emit_evaluators(&mut defs, &virt)?);
         self.def_emit_store_manage(&mut defs, &virt)?;
         self.def_emit_materialized_flat_members(&mut defs);
         let mut out = defs.fns;
@@ -336,7 +337,7 @@ impl Sql<'_> {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
         }
-        Ok(order_by_calls(out))
+        Ok(order_by_calls(crate::chains::reached(out, &optional)))
     }
 
     fn def_emit_membership(&self, out: &mut Vec<GenFn>) -> R<()> {
@@ -750,7 +751,7 @@ impl Sql<'_> {
 
     fn admits_definer(&self, obj: &Object) -> R<Option<GenFn>> {
         let Some(sel) = object_select_policy_perm(obj) else { return Ok(None) };
-        let policy = Sql { s: self.s, definer_body: false };
+        let policy = Sql { definer_body: false, ..*self };
         let virt = policy.virtual_levels()?;
         let pred = policy.admission_with_require(obj, sel, self.s.owner_subject(leaf(obj)), &virt)?;
         let setting = quote_literal(self.claims_setting().0);
@@ -927,7 +928,11 @@ impl Sql<'_> {
         for obj in &self.s.objects {
             let rels = rels_of(obj);
             let trees = obj.perms.iter().map(|pm| &pm.tree).chain(obj.requires.iter().map(|rq| &rq.tree)).chain(obj.admits.iter().map(|a| &a.tree));
-            for scope in trees.flat_map(PermNode::leaves_deep).filter_map(Term::declared_scope) {
+            let paths = obj.relations.iter().filter_map(|r| match &r.repr {
+                Repr::Composition(vc) => vc.path.as_ref().map(|path| &path.along),
+                _ => None,
+            });
+            for scope in trees.chain(paths).flat_map(PermNode::leaves_deep).filter_map(Term::declared_scope) {
                 read.entry((scope.table.clone(), scope.key_col.clone())).or_default().extend(declared_columns(scope, &rels));
             }
         }
@@ -1016,66 +1021,7 @@ impl Sql<'_> {
         Ok(())
     }
 
-    fn def_emit_composition(&self, defs: &mut Definers, virt: &Virtual) -> R<()> {
-        for (obj, r) in self.s.relations() {
-            let Repr::Composition(vc) = &r.repr else { continue };
-            let name = format!("{}_composition_{}", obj.name, r.name);
-            if !defs.claim(&name) {
-                continue;
-            }
-            let arms = self.composition_arms(obj, vc, virt)?;
-            if arms.is_empty() {
-                return Err(format!("object {} composition relation {}: object has no cascadable @rls verb predicate", quote(&obj.name), quote(&r.name)));
-            }
-            let slot_arg = if vc.slot.is_some() { ", p_slot text" } else { "" };
-            defs.fns.push(GenFn {
-                name,
-                sig: format!("p_{}_id text, p_access text{slot_arg}", obj.name),
-                arm_param: "p_access".into(),
-                arms,
-                strict: true,
-                ..Default::default()
-            });
-        }
-        Ok(())
-    }
-
-    fn composition_arms(&self, obj: &Object, vc: &ViaComposition, virt: &Virtual) -> R<Vec<DefinerArm>> {
-        let plain = Sql { s: self.s, definer_body: false };
-        let base = without_composition(obj);
-        let mut kind_filter = match &vc.kind_col {
-            Some(k) => format!(" AND e.{k} = {}", quote_literal(or(vc.kind_val.as_deref()))),
-            None => String::new(),
-        };
-        if let Some((col, _)) = &vc.slot {
-            write!(kind_filter, " AND e.{col}::text = p_slot").expect("fmt::Write for String never fails");
-        }
-        let mut arms = Vec::new();
-        for (access, op) in [("read", "select"), ("write", "update"), ("delete", "delete")] {
-            let pred = plain.op_predicate(&base, op, virt)?;
-            if pred.is_empty() {
-                continue;
-            }
-            arms.push(DefinerArm {
-                value: access.into(),
-                body: format!(
-                    "EXISTS (SELECT 1 FROM {} e WHERE e.{} = p_{}_id{} AND EXISTS (SELECT 1 FROM {} WHERE {}.{} = e.{} AND ({})))",
-                    vc.table,
-                    vc.child_col,
-                    obj.name,
-                    kind_filter,
-                    obj.table,
-                    obj.table,
-                    obj.pk(),
-                    vc.parent_col,
-                    pred
-                ),
-            });
-        }
-        Ok(arms)
-    }
-
-    fn op_predicate(&self, obj: &Object, op: &str, virt: &Virtual) -> R<String> {
+    pub(crate) fn op_predicate(&self, obj: &Object, op: &str, virt: &Virtual) -> R<String> {
         for pm in &obj.perms {
             if pm.has_layer("rls") && pm.maps() == op {
                 let cust = self.s.owner_subject(leaf(obj));
@@ -1932,9 +1878,11 @@ fn declared_columns(scope: &DeclaredScope, rels: &Rels) -> Vec<String> {
         })
     };
     let leaves = scope.body.leaves();
-    let tested = leaves.iter().filter_map(|t| t.slot_test()).map(|(col, _)| col.to_string());
+    let tested = leaves.iter().filter_map(|t| t.slot_test().or_else(|| t.slot_held())).map(|(col, _)| col.to_string());
+    let hops = leaves.iter().filter_map(|t| t.holds_at()).flat_map(|(record, element, _)| [record.to_string(), element.to_string()]);
+    let followed = leaves.iter().filter_map(|t| t.holds_at_slot()).map(str::to_string);
     let matched = leaves.iter().filter_map(bound).map(|(_, from)| from.clone());
-    scope.filter.iter().map(|(col, _)| col.clone()).chain(tested).chain(matched).collect()
+    scope.filter.iter().map(|(col, _)| col.clone()).chain(tested).chain(hops).chain(followed).chain(matched).collect()
 }
 
 fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, kind: &str, param: &str) -> GenFn {
