@@ -1,4 +1,4 @@
-use demesne_syntax::{Builtin, Object, Perm, PermNode, Pos, Relation, Repr, SomeScope, Term, TermKind, ViaGrant};
+use demesne_syntax::{Builtin, DeclaredScope, Object, Perm, PermNode, Pos, Quantifier, Relation, Repr, SomeScope, Term, TermKind, ViaGrant};
 use std::collections::HashMap;
 
 pub const ORDERED_TABLE_OPS: [&str; 4] = ["select", "insert", "update", "delete"];
@@ -195,19 +195,68 @@ fn prune_comp_leaves(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
     }
 }
 
-fn without_comp_branches(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
+enum Pruned {
+    Kept(PermNode),
+    Never,
+    Always,
+}
+
+fn rebuilt(t: &Term, b: Builtin) -> Pruned {
+    Pruned::Kept(PermNode::Leaf(Term { kind: TermKind::Builtin(b), pos: t.pos }))
+}
+
+fn pruned_leaf(t: &Term, comp: &[&str]) -> Pruned {
+    if comp.contains(&t.ident()) {
+        return Pruned::Never;
+    }
+    let Some(scope) = t.declared_scope() else { return Pruned::Kept(PermNode::Leaf(t.clone())) };
+    match (pruned_branches(&scope.body, comp), scope.quantifier) {
+        (Pruned::Kept(body), _) => rebuilt(t, Builtin::Declared(Box::new(DeclaredScope { body, ..scope.clone() }))),
+        (Pruned::Never, Quantifier::None) => Pruned::Always,
+        (Pruned::Never | Pruned::Always, Quantifier::Every) | (Pruned::Always, Quantifier::None) => Pruned::Never,
+    }
+}
+
+fn pruned_branches(n: &PermNode, comp: &[&str]) -> Pruned {
     match n {
-        PermNode::Leaf(t) => (!comp.contains(&t.ident())).then(|| n.clone()),
-        PermNode::And(kids) => kids.iter().map(|k| without_comp_branches(k, comp)).collect::<Option<Vec<_>>>().map(PermNode::And),
-        PermNode::Not(k) => without_comp_branches(k, comp).map(|pk| PermNode::Not(Box::new(pk))),
+        PermNode::Leaf(t) => pruned_leaf(t, comp),
+        PermNode::Not(k) => match pruned_branches(k, comp) {
+            Pruned::Kept(pk) => Pruned::Kept(PermNode::Not(Box::new(pk))),
+            Pruned::Never | Pruned::Always => Pruned::Never,
+        },
+        PermNode::And(kids) => {
+            let mut kept = Vec::new();
+            for k in kids {
+                match pruned_branches(k, comp) {
+                    Pruned::Never => return Pruned::Never,
+                    Pruned::Always => {}
+                    Pruned::Kept(pk) => kept.push(pk),
+                }
+            }
+            if kept.is_empty() { Pruned::Always } else { Pruned::Kept(PermNode::And(kept)) }
+        }
         PermNode::Or(kids) => {
-            let mut kept: Vec<PermNode> = kids.iter().filter_map(|k| without_comp_branches(k, comp)).collect();
+            let mut kept = Vec::new();
+            for k in kids {
+                match pruned_branches(k, comp) {
+                    Pruned::Never => {}
+                    Pruned::Always => return Pruned::Always,
+                    Pruned::Kept(pk) => kept.push(pk),
+                }
+            }
             match kept.len() {
-                0 => None,
-                1 => kept.pop(),
-                _ => Some(PermNode::Or(kept)),
+                0 => Pruned::Never,
+                1 => Pruned::Kept(kept.remove(0)),
+                _ => Pruned::Kept(PermNode::Or(kept)),
             }
         }
+    }
+}
+
+fn without_comp_branches(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
+    match pruned_branches(n, comp) {
+        Pruned::Kept(body) => Some(body),
+        Pruned::Never | Pruned::Always => None,
     }
 }
 

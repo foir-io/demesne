@@ -17,8 +17,25 @@ use demesne_syntax::{
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 const KNOWN_LAYERS: [&str; 4] = ["rls", "pdp", "kernel", "check"];
-const KNOWN_BUILTINS: [&str; 15] =
-    ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "holds_every", "claim", "row", "some", "element"];
+const KNOWN_BUILTINS: [&str; 17] = [
+    "app_scope",
+    "scoped",
+    "session",
+    "open",
+    "store_manage",
+    "public",
+    "kind",
+    "self",
+    "within",
+    "holds",
+    "holds_every",
+    "claim",
+    "row",
+    "some",
+    "element",
+    "declared",
+    "slot",
+];
 const EXPORT_PARAMETER_TYPES: [&str; 12] =
     ["text", "uuid", "smallint", "integer", "bigint", "boolean", "json", "jsonb", "numeric", "timestamptz", "timestamp", "date"];
 
@@ -764,39 +781,71 @@ fn keyed_relation(rels: &Rels, t: &Term) -> bool {
     rels.get(t.ident()).is_some_and(|r| matches!(&r.repr, Repr::Edge(e) if e.key.is_some()))
 }
 
+fn slot_bound_relation(rels: &Rels, t: &Term) -> bool {
+    rels.get(t.ident()).is_some_and(|r| match &r.repr {
+        Repr::Edge(e) => e.slot.is_some(),
+        Repr::Composition(c) => c.slot.is_some(),
+        _ => false,
+    })
+}
+
+fn check_brackets(what: &str, body: &PermNode) -> Vec<String> {
+    let mut errs = Vec::new();
+    if body.is_nil() || !perm_positive(body) {
+        errs.push(format!("uses `{what}` whose brackets hold no positive term — a `not` inside them must be combined with `and` with a positive term"));
+    }
+    if let Some(row) = row_term_admitting(body) {
+        errs.push(format!(
+            "uses `{what}` in which {} would admit a caller by itself — a test of the row, the element or the declared row only narrows another term",
+            row.display()
+        ));
+    }
+    for inner in body.leaves() {
+        if !inner.grant_ref().is_empty() || matches!(inner.builtin(), "scoped" | "public" | "open" | "self") {
+            errs.push(format!("uses {} inside `{what}` — a term that is placed outside the object's containment cannot be bound there", inner.display()));
+        }
+    }
+    errs
+}
+
+fn check_declared_scope(some: &str, t: &Term, rels: &Rels) -> Vec<String> {
+    let Some(scope) = t.declared_scope() else { return Vec::new() };
+    let what = format!("{} {}", if scope.quantifier == demesne_syntax::Quantifier::Every { "every" } else { "none" }, scope.var);
+    let mut errs = check_brackets(&what, &scope.body);
+    for inner in scope.body.leaves() {
+        if matches!(inner.builtin(), "some" | "declared") {
+            errs.push(format!("nests {} inside `{what}` in `some {some}` — one element and one declared row are bound at a time", inner.display()));
+        } else if slot_bound_relation(rels, inner) && !keyed_relation(rels, inner) && rels.get(inner.ident()).is_some_and(|r| matches!(r.repr, Repr::Edge(_))) {
+            errs.push(format!("uses relation {}, which binds a slot without a key", quote(inner.ident())));
+        }
+    }
+    errs
+}
+
 fn check_some_scopes(tree: &PermNode, rels: &Rels) -> Vec<String> {
     let mut errs = Vec::new();
     for t in tree.leaves() {
         if t.builtin() == "element" {
             errs.push(format!("uses {} outside a `some` — it tests the element a `some` has bound", t.display()));
+        } else if matches!(t.builtin(), "declared" | "slot") {
+            errs.push(format!("uses {} outside a `some` — `every`, `none` and `@slot` read the rows declared for the element a `some` has bound", t.display()));
         } else if keyed_relation(rels, t) {
             errs.push(format!("uses keyed relation {} outside a `some` — its `key` column is matched against the element a `some` binds", quote(t.ident())));
         }
         let Some(scope) = t.some_scope() else { continue };
-        if scope.body.is_nil() || !perm_positive(&scope.body) {
-            errs.push(format!(
-                "uses `some {}` whose brackets hold no positive term — a `not` inside them must be combined with `and` with a positive term",
-                scope.var
-            ));
-        }
-        if let Some(row) = row_term_admitting(&scope.body) {
-            errs.push(format!(
-                "uses `some {}` in which {} would admit a caller by itself — a test of the row or the element only narrows another term",
-                scope.var,
-                row.display()
-            ));
-        }
+        errs.extend(check_brackets(&format!("some {}", scope.var), &scope.body));
         for inner in scope.body.leaves() {
-            let b = inner.builtin();
-            if b == "some" {
+            if inner.builtin() == "some" {
                 errs.push(format!("nests a `some` inside `some {}` — one element is bound at a time", scope.var));
-            } else if !inner.grant_ref().is_empty() || matches!(b, "scoped" | "public" | "open" | "self") {
+            } else if inner.builtin() == "slot" {
+                errs.push(format!("uses {} outside an `every` or `none` — it tests the declared row one of them has bound", inner.display()));
+            } else if slot_bound_relation(rels, inner) {
                 errs.push(format!(
-                    "uses {} inside `some {}` — a term that is placed outside the object's containment cannot be bound to an element",
-                    inner.display(),
-                    scope.var
+                    "uses slot-bound relation {} outside an `every` or `none` — its `slot` column is matched against the declared row one of them binds",
+                    quote(inner.ident())
                 ));
             }
+            errs.extend(check_declared_scope(&scope.var, inner, rels));
         }
     }
     errs
@@ -1067,7 +1116,7 @@ fn check_perm_terms(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<Finding
     let at = |what: &str| Finding::at(pm.pos.line, format!("permission {}.{} {what}", o.name, pm.verb));
     errs.extend(check_some_scopes(&pm.tree, rels).iter().map(|e| at(e)));
     for t in pm.tree.leaves_deep() {
-        if matches!(t.builtin(), "some" | "element") {
+        if matches!(t.builtin(), "some" | "element" | "declared" | "slot") {
             continue;
         }
         if !t.grant_ref().is_empty() {
@@ -1303,7 +1352,7 @@ fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<F
     errs.extend(check_some_scopes(&rq.tree, rels).into_iter().map(&at));
     for t in rq.tree.leaves_deep() {
         let b = t.builtin();
-        if matches!(b, "some" | "element") {
+        if matches!(b, "some" | "element" | "declared" | "slot") {
             continue;
         }
         errs.extend(check_holds_every(s, o, t).into_iter().map(&at));

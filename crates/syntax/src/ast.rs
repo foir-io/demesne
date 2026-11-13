@@ -542,6 +542,27 @@ pub struct ViaEdge {
     pub on: Option<String>,
     /// `where <column> = "<value>"` on a keyed edge: a literal the edge must also hold.
     pub filter: Option<(String, String)>,
+    /// `slot <column> [from <declared column>]`: the edge column that must equal a column of the declared row an `every` or `none` has bound.
+    pub slot: Option<(String, String)>,
+}
+
+/// Whether a `every` or `none` scope asks that all declared rows satisfy its expression, or that none does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quantifier {
+    Every,
+    None,
+}
+
+/// An `every` or `none` scope inside a `some`: the rows a table declares for the bound element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredScope {
+    pub quantifier: Quantifier,
+    pub var: String,
+    pub table: String,
+    pub key_col: String,
+    /// `where <column> = "<value>"`: only declared rows holding the value are counted.
+    pub filter: Option<(String, String)>,
+    pub body: PermNode,
 }
 
 /// A `some` scope: one element of a row's array column, and the expression that must hold for it.
@@ -563,6 +584,8 @@ pub struct ViaComposition {
     pub parent_col: String,
     pub kind_col: Option<String>,
     pub kind_val: Option<String>,
+    /// `slot <column> from <declared column>`: only hops whose column equals the bound declared row's are followed.
+    pub slot: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -743,14 +766,14 @@ impl PermNode {
         out
     }
 
-    /// Returns every leaf term, and the leaves inside each `some` term's brackets after it.
+    /// Returns every leaf term, and the leaves inside each `some`, `every` or `none` term's brackets after it.
     #[must_use]
     pub fn leaves_deep(&self) -> Vec<&Term> {
         let mut out = Vec::new();
         for t in self.leaves() {
             out.push(t);
-            if let Some(scope) = t.some_scope() {
-                out.extend(scope.body.leaves());
+            if let Some(body) = t.bracketed() {
+                out.extend(body.leaves_deep());
             }
         }
         out
@@ -907,6 +930,13 @@ pub enum Builtin {
     Some(Box<SomeScope>),
     /// `@element prefix "<text>"`: the element a `some` has bound starts with the text.
     ElementPrefix(String),
+    /// `every <name> in <table>(<key column>) … ( <expression> )`, or `none …`.
+    Declared(Box<DeclaredScope>),
+    /// `@slot(<column>, "<value>")`: the declared row an `every` or `none` has bound holds the value.
+    Slot {
+        col: String,
+        val: String,
+    },
     /// `@holds(<perm> every <column> at <level>)`: the permission is held at every value an array column names at a level.
     HoldsEvery {
         perm: String,
@@ -945,6 +975,15 @@ impl Builtin {
                 format!("some {} in {}{prefix}{held} ({})", scope.var, scope.col, scope.body.display())
             }
             Builtin::ElementPrefix(p) => format!("@element prefix {}", quote(p)),
+            Builtin::Declared(scope) => {
+                let word = match scope.quantifier {
+                    Quantifier::Every => "every",
+                    Quantifier::None => "none",
+                };
+                let filter = scope.filter.as_ref().map(|(c, v)| format!(" where {c} = {}", quote(v))).unwrap_or_default();
+                format!("{word} {} in {}({}){filter} ({})", scope.var, scope.table, scope.key_col, scope.body.display())
+            }
+            Builtin::Slot { col, val } => format!("@slot({col}, {})", quote(val)),
             Builtin::HoldsEvery { perm, col, level } => format!("@holds({perm} every {col} at {level})"),
             Builtin::External { func, .. } => format!("@external({func})"),
             Builtin::Row { col, val } => format!("@row({col}, {})", quote(val)),
@@ -968,6 +1007,8 @@ impl Builtin {
             Builtin::Holds(_) => "holds",
             Builtin::Some(_) => "some",
             Builtin::ElementPrefix(_) => "element",
+            Builtin::Declared(_) => "declared",
+            Builtin::Slot { .. } => "slot",
             Builtin::HoldsEvery { .. } => "holds_every",
             Builtin::Row { .. } | Builtin::RowNull(_) => "row",
             Builtin::Other(name) => name,
@@ -1145,6 +1186,30 @@ impl Term {
             Some(Builtin::Some(scope)) => Some(scope),
             _ => None,
         }
+    }
+
+    /// Returns the scope of an `every` or `none` term.
+    #[must_use]
+    pub fn declared_scope(&self) -> Option<&DeclaredScope> {
+        match self.builtin_ref() {
+            Some(Builtin::Declared(scope)) => Some(scope),
+            _ => None,
+        }
+    }
+
+    /// Returns the column and value of `@slot(<column>, "<value>")`.
+    #[must_use]
+    pub fn slot_test(&self) -> Option<(&str, &str)> {
+        match self.builtin_ref() {
+            Some(Builtin::Slot { col, val }) => Some((col, val)),
+            _ => None,
+        }
+    }
+
+    /// Returns the expression in the brackets of a `some`, `every` or `none` term.
+    #[must_use]
+    pub fn bracketed(&self) -> Option<&PermNode> {
+        self.some_scope().map(|s| &s.body).or_else(|| self.declared_scope().map(|d| &d.body))
     }
 
     /// Returns the text of `@element prefix "<text>"`.

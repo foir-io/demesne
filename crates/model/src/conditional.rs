@@ -14,15 +14,21 @@ pub fn accessor_tree_op(n: &PermNode) -> &'static str {
 
 #[must_use]
 pub fn is_row_leaf(n: &PermNode) -> bool {
-    matches!(n, PermNode::Leaf(t) if matches!(t.builtin(), "row" | "element"))
+    matches!(n, PermNode::Leaf(t) if matches!(t.builtin(), "row" | "element" | "slot"))
 }
 
 /// The name a `some` term binds its element to in the SQL it compiles to.
 pub const ELEMENT: &str = "demesne_element.v";
 
+/// The name an `every` or `none` term binds its declared row to in the SQL it compiles to.
+pub const SLOT: &str = "demesne_slot";
+
 /// Returns the SQL a `@row` term compiles to: true of a row whose column holds the value, or is NULL for `@row(<column>, null)`.
 #[must_use]
 pub fn row_term_sql(t: &Term) -> String {
+    if let Some((col, val)) = t.slot_test() {
+        return format!("{SLOT}.{col} = {}", quote_literal(val));
+    }
     if let Some(prefix) = t.element_prefix() {
         return format!("starts_with({ELEMENT}, {})", quote_literal(prefix));
     }

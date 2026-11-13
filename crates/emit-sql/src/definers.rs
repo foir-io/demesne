@@ -1,7 +1,7 @@
 use crate::Sql;
 use crate::error::Error;
 use crate::genfn::{DefinerArm, Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
-use crate::rls::{Virtual, keyed_edge_fn, owner_col_present_pub, platform_role_fn};
+use crate::rls::{Virtual, declared_fn, keyed_edge_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -17,8 +17,8 @@ use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Closure, Grant, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject,
-    Vocabulary,
+    Closure, DeclaredScope, Grant, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant,
+    ViaGroup, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -320,6 +320,7 @@ impl Sql<'_> {
         self.def_emit_closure(&mut defs);
         self.def_emit_group(&mut defs);
         self.def_emit_keyed_edges(&mut defs);
+        self.def_emit_declared(&mut defs);
         self.def_emit_cross_object(&mut defs, &virt)?;
         self.def_emit_composition(&mut defs, &virt)?;
         self.def_emit_store_manage(&mut defs, &virt)?;
@@ -902,6 +903,30 @@ impl Sql<'_> {
         out
     }
 
+    fn def_emit_declared(&self, defs: &mut Definers) {
+        let mut read: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+        for obj in &self.s.objects {
+            let rels = rels_of(obj);
+            let trees = obj.perms.iter().map(|pm| &pm.tree).chain(obj.requires.iter().map(|rq| &rq.tree)).chain(obj.admits.iter().map(|a| &a.tree));
+            for scope in trees.flat_map(PermNode::leaves_deep).filter_map(Term::declared_scope) {
+                read.entry((scope.table.clone(), scope.key_col.clone())).or_default().extend(declared_columns(scope, &rels));
+            }
+        }
+        for ((table, key_col), cols) in read {
+            let returned: Vec<String> = cols.iter().map(|c| format!("{c} text")).collect();
+            let selected: Vec<String> = cols.iter().map(|c| format!("{table}.{c}::text")).collect();
+            defs.add_once(GenFn {
+                name: declared_fn(&table, &key_col),
+                sig: "p_key text".into(),
+                strict: true,
+                returns: format!("TABLE({})", returned.join(", ")),
+                raw_body: true,
+                body: format!("  SELECT {} FROM {table} WHERE {table}.{key_col} = p_key;", selected.join(", ")),
+                ..Default::default()
+            });
+        }
+    }
+
     fn def_emit_keyed_edges(&self, defs: &mut Definers) {
         let id_t = self.s.id_type();
         for (obj, r) in self.s.relations() {
@@ -911,9 +936,14 @@ impl Sql<'_> {
             if let Some((col, val)) = &e.filter {
                 conds.push(format!("{col} = {}", quote_literal(val)));
             }
+            let mut slot_arg = "";
+            if let Some((col, _)) = &e.slot {
+                conds.push(format!("{col}::text = p_slot"));
+                slot_arg = ", p_slot text";
+            }
             defs.add_once(GenFn {
                 name: keyed_edge_fn(obj, r),
-                sig: format!("p_principal {id_t}, p_object {id_t}, p_key text"),
+                sig: format!("p_principal {id_t}, p_object {id_t}, p_key text{slot_arg}"),
                 strict: true,
                 body: grant_edge_exists(&e.table, &conds),
                 ..Default::default()
@@ -978,9 +1008,10 @@ impl Sql<'_> {
             if arms.is_empty() {
                 return Err(format!("object {} composition relation {}: object has no cascadable @rls verb predicate", quote(&obj.name), quote(&r.name)));
             }
+            let slot_arg = if vc.slot.is_some() { ", p_slot text" } else { "" };
             defs.fns.push(GenFn {
                 name,
-                sig: format!("p_{}_id text, p_access text", obj.name),
+                sig: format!("p_{}_id text, p_access text{slot_arg}", obj.name),
                 arm_param: "p_access".into(),
                 arms,
                 strict: true,
@@ -993,10 +1024,13 @@ impl Sql<'_> {
     fn composition_arms(&self, obj: &Object, vc: &ViaComposition, virt: &Virtual) -> R<Vec<DefinerArm>> {
         let plain = Sql { s: self.s, definer_body: false };
         let base = without_composition(obj);
-        let kind_filter = match &vc.kind_col {
+        let mut kind_filter = match &vc.kind_col {
             Some(k) => format!(" AND e.{k} = {}", quote_literal(or(vc.kind_val.as_deref()))),
             None => String::new(),
         };
+        if let Some((col, _)) = &vc.slot {
+            write!(kind_filter, " AND e.{col}::text = p_slot").expect("fmt::Write for String never fails");
+        }
         let mut arms = Vec::new();
         for (access, op) in [("read", "select"), ("write", "update"), ("delete", "delete")] {
             let pred = plain.op_predicate(&base, op, virt)?;
@@ -1846,6 +1880,20 @@ impl Sql<'_> {
         }
         Ok(())
     }
+}
+
+fn declared_columns(scope: &DeclaredScope, rels: &Rels) -> Vec<String> {
+    let bound = |t: &&Term| {
+        rels.get(t.ident()).and_then(|r| match &r.repr {
+            Repr::Edge(e) => e.slot.as_ref(),
+            Repr::Composition(c) => c.slot.as_ref(),
+            _ => None,
+        })
+    };
+    let leaves = scope.body.leaves();
+    let tested = leaves.iter().filter_map(|t| t.slot_test()).map(|(col, _)| col.to_string());
+    let matched = leaves.iter().filter_map(bound).map(|(_, from)| from.clone());
+    scope.filter.iter().map(|(col, _)| col.clone()).chain(tested).chain(matched).collect()
 }
 
 fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, kind: &str, param: &str) -> GenFn {

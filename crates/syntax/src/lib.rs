@@ -8,10 +8,11 @@ mod lexer;
 mod parser;
 
 pub use ast::{
-    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes,
-    Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm, PermNode, PermissionExport, Pos,
-    Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Relation, RelationKind, Repr, Require, RoleStore, SomeScope, Spec, Subject, Template, Term,
-    TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, DeclaredScope, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry,
+    FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm, PermNode,
+    PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr, Require, RoleStore,
+    SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup,
+    ViaMemberIn, ViaObject, Vocabulary,
 };
 pub use error::{Error, Finding};
 pub use files::{SpecFiles, parse_files};

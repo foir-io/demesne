@@ -1,9 +1,10 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes,
-    Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm, PermNode, PermissionExport, Pos,
-    Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Relation, RelationKind, Repr, Require, RoleStore, SomeScope, Spec, Subject, Template, Term,
-    TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, DeclaredScope, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry,
+    FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm, PermNode,
+    PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr, Require, RoleStore,
+    SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup,
+    ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -842,10 +843,11 @@ impl Parser {
             let key = if self.accept_kw("key") { Some(self.ident()?) } else { None };
             let on = if key.is_some() && self.accept_kw("on") { Some(self.ident()?) } else { None };
             let filter = if key.is_some() { self.parse_where()? } else { None };
+            let slot = if key.is_some() { self.parse_slot_binding()? } else { None };
             if key.is_some() && cols.len() != 2 {
                 return Err(self.err(format!("a keyed edge names 2 columns (principal, object), got {}", cols.len())));
             }
-            return Ok(Repr::Edge(ViaEdge { table, cols, key, on, filter }));
+            return Ok(Repr::Edge(ViaEdge { table, cols, key, on, filter, slot }));
         }
         if self.accept_kw("role") {
             return Ok(Repr::Role);
@@ -881,6 +883,15 @@ impl Parser {
         Ok(Some((col, val)))
     }
 
+    fn parse_slot_binding(&mut self) -> PResult<Option<(String, String)>> {
+        if !self.accept_kw("slot") {
+            return Ok(None);
+        }
+        let col = self.ident()?;
+        let from = if self.accept_kw("from") { self.ident()? } else { col.clone() };
+        Ok(Some((col, from)))
+    }
+
     fn parse_repr_composition(&mut self) -> PResult<Repr> {
         let (table, cols) = self.parse_table_cols()?;
         if cols.len() != 2 {
@@ -891,6 +902,7 @@ impl Parser {
             vc.kind_col = Some(col);
             vc.kind_val = non_empty(val);
         }
+        vc.slot = self.parse_slot_binding()?;
         Ok(Repr::Composition(vc))
     }
 
@@ -1171,6 +1183,9 @@ impl Parser {
         if self.is_kw("some") && self.toks.get(self.i + 2).is_some_and(|t| t.kind == Tok::Ident && t.lit == "in") {
             return Ok(Term { kind: TermKind::Builtin(self.parse_some()?), pos });
         }
+        if (self.is_kw("every") || self.is_kw("none")) && self.toks.get(self.i + 2).is_some_and(|t| t.kind == Tok::Ident && t.lit == "in") {
+            return Ok(Term { kind: TermKind::Builtin(self.parse_declared()?), pos });
+        }
         if self.is_kw("mode") {
             self.advance();
             let col = self.ident()?;
@@ -1200,6 +1215,24 @@ impl Parser {
             walk_verb = Some(self.ident()?);
         }
         Ok(Term { kind: TermKind::Ref { ident, walk_verb }, pos })
+    }
+
+    fn parse_declared(&mut self) -> PResult<Builtin> {
+        let quantifier = if self.advance().lit == "every" { Quantifier::Every } else { Quantifier::None };
+        let var = self.ident()?;
+        self.expect_kw("in")?;
+        let table = self.ident()?;
+        let key_col = self.paren_ident()?;
+        let filter = self.parse_where()?;
+        if self.depth == MAX_NESTING {
+            return Err(self.err(format!("parentheses nest more than {MAX_NESTING} deep")));
+        }
+        self.expect(Tok::LParen)?;
+        self.depth += 1;
+        let body = self.parse_perm_union()?;
+        self.depth -= 1;
+        self.expect(Tok::RParen)?;
+        Ok(Builtin::Declared(Box::new(DeclaredScope { quantifier, var, table, key_col, filter, body })))
     }
 
     fn parse_some(&mut self) -> PResult<Builtin> {
@@ -1259,6 +1292,14 @@ impl Parser {
                 self.expect(Tok::RParen)?;
                 Builtin::Claim { key, val }
             }
+            "slot" => {
+                self.expect(Tok::LParen)?;
+                let col = self.ident()?;
+                self.expect(Tok::Comma)?;
+                let val = self.string()?;
+                self.expect(Tok::RParen)?;
+                Builtin::Slot { col, val }
+            }
             "element" => {
                 self.expect_kw("prefix")?;
                 Builtin::ElementPrefix(self.string()?)
@@ -1286,26 +1327,28 @@ impl Parser {
                 self.expect(Tok::RParen)?;
                 Builtin::External { func, args }
             }
-            "holds" => {
-                self.expect(Tok::LParen)?;
-                let perm = match self.peek() {
-                    Tok::PermKey | Tok::Str => self.advance().lit,
-                    _ => {
-                        return Err(self.err(format!("@holds needs a permission verb (`@holds(<domain>:<verb>)`), got {}", self.got())));
-                    }
-                };
-                if self.accept_kw("every") {
-                    let col = self.ident()?;
-                    self.expect_kw("at")?;
-                    let level = self.ident()?;
-                    self.expect(Tok::RParen)?;
-                    return Ok(Builtin::HoldsEvery { perm, col, level });
-                }
-                self.expect(Tok::RParen)?;
-                Builtin::Holds(perm)
-            }
+            "holds" => self.parse_term_holds()?,
             _ => Builtin::Other(name),
         })
+    }
+
+    fn parse_term_holds(&mut self) -> PResult<Builtin> {
+        self.expect(Tok::LParen)?;
+        let perm = match self.peek() {
+            Tok::PermKey | Tok::Str => self.advance().lit,
+            _ => {
+                return Err(self.err(format!("@holds needs a permission verb (`@holds(<domain>:<verb>)`), got {}", self.got())));
+            }
+        };
+        if self.accept_kw("every") {
+            let col = self.ident()?;
+            self.expect_kw("at")?;
+            let level = self.ident()?;
+            self.expect(Tok::RParen)?;
+            return Ok(Builtin::HoldsEvery { perm, col, level });
+        }
+        self.expect(Tok::RParen)?;
+        Ok(Builtin::Holds(perm))
     }
 
     fn parse_term_row(&mut self) -> PResult<Builtin> {

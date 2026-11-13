@@ -6,11 +6,11 @@ use demesne_model::analysis::{
     Rels, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
 };
 use demesne_model::closure::{self, Direction};
-use demesne_model::conditional::{ELEMENT, mode_row_sql, row_term_sql};
+use demesne_model::conditional::{ELEMENT, SLOT, mode_row_sql, row_term_sql};
 use demesne_model::topology;
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Admit, ArgSrc, Grant, Guard, GuardOp, Level, Membership, Object, Perm, PermNode, Relation, Repr, Require, Subject, Term, ViaClosure, ViaColumn,
+    Admit, ArgSrc, Grant, Guard, GuardOp, Level, Membership, Object, Perm, PermNode, Quantifier, Relation, Repr, Require, Subject, Term, ViaClosure, ViaColumn,
     ViaComposition, ViaGrant, ViaGroup, ViaObject,
 };
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -740,7 +740,7 @@ impl Sql<'_> {
             "kind" => Ok(vec![format!("{} = {}", self.claim("kind"), quote_literal(t.kind_val()))]),
             "claim" if t.claim_absent() => Ok(vec![format!("{} IS NULL", self.claim(t.claim_key()))]),
             "claim" => Ok(vec![format!("{} = {}", self.claim(t.claim_key()), quote_literal(t.claim_val()))]),
-            "row" | "element" => Ok(vec![row_term_sql(t)]),
+            "row" | "element" | "slot" => Ok(vec![row_term_sql(t)]),
             "within" => {
                 let col = self.s.scope_col(obj, t.within_level());
                 let claim = self.id_claim(&self.s.claim_key_for_level(t.within_level()));
@@ -755,6 +755,7 @@ impl Sql<'_> {
             "holds" => self.rls_emit_holds(obj, t),
             "holds_every" => self.rls_emit_holds_every(obj, t),
             "some" => self.rls_emit_some(obj, pm, t, rels, cust_claim),
+            "declared" => self.rls_emit_declared(obj, pm, t, rels, cust_claim),
             "" => {
                 if is_perm_key_lit(t.ident()) {
                     Err(format!("capability term {} belongs to the PDP, not RLS", quote(t.ident())))
@@ -792,6 +793,28 @@ impl Sql<'_> {
         }
         args.push(quote_literal(perm));
         Ok(vec![format!("{}.{}({})", self.s.definer_schema(), self.s.holds_perm_fn(rs), args.join(", "))])
+    }
+
+    fn rls_emit_declared(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
+        let scope = t.declared_scope().ok_or_else(|| format!("{} is no `every` or `none` term", t.display()))?;
+        let body = self.node_frags(obj, pm, &scope.body, rels, cust_claim)?;
+        if body.is_empty() {
+            return Err(format!("`{}` on {}: its brackets compile to no predicate", t.display(), quote(&obj.name)));
+        }
+        let mut conds = Vec::new();
+        if let Some((col, val)) = &scope.filter {
+            conds.push(format!("{SLOT}.{col} = {}", quote_literal(val)));
+        }
+        conds.push(match scope.quantifier {
+            Quantifier::Every => format!("({}) IS NOT TRUE", body.join(" OR ")),
+            Quantifier::None => format!("({})", body.join(" OR ")),
+        });
+        Ok(vec![format!(
+            "NOT EXISTS (SELECT 1 FROM {}.{}({ELEMENT}) AS {SLOT} WHERE {})",
+            self.s.definer_schema(),
+            declared_fn(&scope.table, &scope.key_col),
+            conds.join(" AND ")
+        )])
     }
 
     fn rls_emit_some(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
@@ -946,14 +969,16 @@ impl Sql<'_> {
                 let claim_key = self.s.relation_claim(Some(r), cust_claim);
                 req_claim(claim_key, obj, &format!("keyed relation {}", t.ident()))?;
                 let object = e.on.as_ref().map_or(pk, |col| format!("{}.{col}", obj.table));
-                Ok(vec![format!("{}.{}({}, {}, {ELEMENT})", schema, keyed_edge_fn(obj, r), self.id_claim(claim_key), object)])
+                let slot = e.slot.as_ref().map(|(_, from)| format!(", {SLOT}.{from}")).unwrap_or_default();
+                Ok(vec![format!("{}.{}({}, {}, {ELEMENT}{slot})", schema, keyed_edge_fn(obj, r), self.id_claim(claim_key), object)])
             }
             Repr::Edge(e) => {
                 req_claim(cust_claim, obj, &format!("edge relation {}", t.ident()))?;
                 Ok(vec![format!("{}.{}({}, {}, {})", schema, e.table, self.id_claim(cust_claim), pk, quote_literal(access))])
             }
             Repr::Composition(vc) => {
-                let call = format!("{}.{}_composition_{}({}, {})", schema, obj.name, r.name, pk, quote_literal(access));
+                let slot = vc.slot.as_ref().map(|(_, from)| format!(", {SLOT}.{from}")).unwrap_or_default();
+                let call = format!("{}.{}_composition_{}({}, {}{slot})", schema, obj.name, r.name, pk, quote_literal(access));
                 Ok(vec![self.probed(&composition_probe(obj, vc), call)])
             }
             Repr::Closure(c) => self.rls_closure_frag(obj, c, t.ident(), cust_claim),
@@ -1166,6 +1191,10 @@ impl Sql<'_> {
         }
         Ok(set.into_iter().collect())
     }
+}
+
+pub(crate) fn declared_fn(table: &str, key_col: &str) -> String {
+    format!("{table}_declared_by_{key_col}")
 }
 
 pub(crate) fn keyed_edge_fn(obj: &Object, r: &Relation) -> String {
