@@ -92,6 +92,17 @@ AS $$
   SELECT ancestor_id, depth::integer FROM paths WHERE descendant_id = p_node ORDER BY depth DESC, ancestor_id;
 $$;
 
+CREATE OR REPLACE FUNCTION auth.space_can_view(p_space_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM spaces WHERE spaces.id = p_space_id AND ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((status = 'open')))));
+$$;
+
 
 ALTER TABLE public.atlases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.atlases FORCE ROW LEVEL SECURITY;
@@ -103,6 +114,12 @@ ALTER TABLE public.ledgers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ledgers FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.notices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notices FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.pages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pages FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.sheets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sheets FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.spaces ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.spaces FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.templates FORCE ROW LEVEL SECURITY;
 
@@ -170,6 +187,18 @@ DROP POLICY IF EXISTS notices_update ON public.notices;
 CREATE POLICY notices_update ON public.notices FOR UPDATE TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')))
     WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS pages_select ON public.pages;
+CREATE POLICY pages_select ON public.pages FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT auth.space_can_view((SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')))))));
+
+DROP POLICY IF EXISTS sheets_select ON public.sheets;
+CREATE POLICY sheets_select ON public.sheets FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.space_can_view(space_id)))));
+
+DROP POLICY IF EXISTS spaces_select ON public.spaces;
+CREATE POLICY spaces_select ON public.spaces FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((status = 'open'))));
 
 DROP POLICY IF EXISTS templates_delete ON public.templates;
 CREATE POLICY templates_delete ON public.templates FOR DELETE TO authenticated

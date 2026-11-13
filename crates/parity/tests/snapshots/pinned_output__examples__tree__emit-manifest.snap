@@ -15,7 +15,8 @@ exit: 0
     "auth.paths_reach_set(text)",
     "auth.paths_reachable(text, text)",
     "auth.paths_up_reach(text, text)",
-    "auth.paths_up_reach_set(text)"
+    "auth.paths_up_reach_set(text)",
+    "auth.space_can_view(text)"
   ],
   "policies": [
     {
@@ -79,6 +80,18 @@ exit: 0
       "name": "notices_update"
     },
     {
+      "table": "public.pages",
+      "name": "pages_select"
+    },
+    {
+      "table": "public.sheets",
+      "name": "sheets_select"
+    },
+    {
+      "table": "public.spaces",
+      "name": "spaces_select"
+    },
+    {
       "table": "public.templates",
       "name": "templates_delete"
     },
@@ -121,6 +134,9 @@ exit: 0
     "public.folders",
     "public.ledgers",
     "public.notices",
+    "public.pages",
+    "public.sheets",
+    "public.spaces",
     "public.templates"
   ]
 }

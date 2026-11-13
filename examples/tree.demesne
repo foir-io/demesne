@@ -43,6 +43,27 @@ object atlas {
   permission edit = @scoped @rls maps update
 }
 
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  permission view = @scoped and @row(status, "open") @rls maps select
+}
+
+object page {
+  table pages
+  scoped estate > space
+  relation open_space: member via object space->view on space_id pinned
+  permission view = @scoped and open_space @rls maps select
+}
+
+object sheet {
+  table sheets
+  scoped estate > space
+  relation open_space: member via object space->view on space_id
+  permission view = @scoped and open_space @rls maps select
+}
+
 object notice {
   table notices
   scoped estate > space exact

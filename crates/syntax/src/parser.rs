@@ -939,10 +939,11 @@ impl Parser {
         let verb = self.ident()?;
         self.expect_kw("on")?;
         let col = self.ident()?;
-        let mut v = ViaObject { object, verb, col, op: None };
+        let mut v = ViaObject { object, verb, col, op: None, pinned: false };
         if self.accept_kw("for") {
             v.op = Some(self.ident()?);
         }
+        v.pinned = self.accept_kw("pinned");
         Ok(Repr::Object(v))
     }
 

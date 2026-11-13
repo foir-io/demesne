@@ -59,6 +59,9 @@ type Surface struct {
 	Folder   FolderAccess
 	Template TemplateAccess
 	Atlas    AtlasAccess
+	Space    SpaceAccess
+	Page     PageAccess
+	Sheet    SheetAccess
 	Notice   NoticeAccess
 	Draft    DraftAccess
 	Ledger   LedgerAccess
@@ -69,6 +72,9 @@ func New(r *demesne.Runtime) *Surface {
 	s.Folder = FolderAccess{r}
 	s.Template = TemplateAccess{r}
 	s.Atlas = AtlasAccess{r}
+	s.Space = SpaceAccess{r}
+	s.Page = PageAccess{r}
+	s.Sheet = SheetAccess{r}
 	s.Notice = NoticeAccess{r}
 	s.Draft = DraftAccess{r}
 	s.Ledger = LedgerAccess{r}
@@ -170,6 +176,60 @@ func (AtlasAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []strin
 	return demesne.QueryIDs(ctx, q, "SELECT id FROM atlases WHERE id = ANY($1)", ids)
 }
 
+type SpaceAccess struct{ r *demesne.Runtime }
+
+func (a SpaceAccess) CanView(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
+	var ok bool
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM spaces WHERE id = $1)", id).Scan(&ok); err != nil {
+		return Deny, err
+	}
+	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
+}
+
+func (SpaceAccess) ListResources(ctx context.Context, q demesne.Querier, after *string, limit int) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM spaces WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", after, limit)
+}
+
+func (SpaceAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []string) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM spaces WHERE id = ANY($1)", ids)
+}
+
+type PageAccess struct{ r *demesne.Runtime }
+
+func (a PageAccess) CanView(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
+	var ok bool
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pages WHERE id = $1)", id).Scan(&ok); err != nil {
+		return Deny, err
+	}
+	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
+}
+
+func (PageAccess) ListResources(ctx context.Context, q demesne.Querier, after *string, limit int) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM pages WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", after, limit)
+}
+
+func (PageAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []string) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM pages WHERE id = ANY($1)", ids)
+}
+
+type SheetAccess struct{ r *demesne.Runtime }
+
+func (a SheetAccess) CanView(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
+	var ok bool
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM sheets WHERE id = $1)", id).Scan(&ok); err != nil {
+		return Deny, err
+	}
+	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
+}
+
+func (SheetAccess) ListResources(ctx context.Context, q demesne.Querier, after *string, limit int) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM sheets WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", after, limit)
+}
+
+func (SheetAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []string) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM sheets WHERE id = ANY($1)", ids)
+}
+
 type NoticeAccess struct{ r *demesne.Runtime }
 
 func (a NoticeAccess) CanView(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
@@ -254,6 +314,12 @@ func (s *Surface) Check(ctx context.Context, q demesne.Querier, object, verb, id
 		return s.Atlas.CanView(ctx, q, id)
 	case "atlas.edit":
 		return s.Atlas.CanEdit(ctx, q, id)
+	case "space.view":
+		return s.Space.CanView(ctx, q, id)
+	case "page.view":
+		return s.Page.CanView(ctx, q, id)
+	case "sheet.view":
+		return s.Sheet.CanView(ctx, q, id)
 	case "notice.view":
 		return s.Notice.CanView(ctx, q, id)
 	case "notice.edit":

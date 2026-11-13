@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+A spec that uses none of the constructs below emits exactly what v3.0.0 did.
+
+### A borrowed permission can be asked once a statement
+
+`relation r: s via object space->view on space_id pinned` compiles the borrow
+to `(SELECT auth.space_can_view(<space claim>))` where it was
+`auth.space_can_view(space_id)`. Postgres evaluates the first once for the
+statement and the second for every row. The rows admitted are the same: the
+marker is accepted only on a scope column the object's containment holds equal
+to the caller's claim, and is refused on a nullable level, on a level a reach
+widens for the operation, and inside a `require`.
+
+`demesne_syntax::ViaObject` gains `pinned`.
+
 ## v3.0.0
 
 The crates are 3.0.0 because public types of `demesne-syntax`, `demesne-model`

@@ -11,6 +11,9 @@ CREATE TABLE folders (id text PRIMARY KEY, estate_id text NOT NULL, space_id tex
 CREATE TABLE paths (ancestor_id text NOT NULL, descendant_id text NOT NULL, space_id text NOT NULL, depth integer NOT NULL, PRIMARY KEY (ancestor_id, descendant_id));
 CREATE TABLE templates (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text, body text);
 CREATE TABLE atlases (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text);
+CREATE TABLE spaces (id text PRIMARY KEY, estate_id text NOT NULL, status text NOT NULL);
+CREATE TABLE pages (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL);
+CREATE TABLE sheets (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL);
 CREATE TABLE notices (id text PRIMARY KEY, estate_id text NOT NULL, space_id text, body text);
 CREATE TABLE drafts (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, visibility text);
 CREATE TABLE ledgers (id text PRIMARY KEY, estate_id text NOT NULL, space_id text, amount integer);
@@ -56,7 +59,7 @@ fn install(db: &mut Client) {
     }
     db.batch_execute(&format!(
         "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER};
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers TO {CALLER};
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.spaces, {ROWS}.pages, {ROWS}.sheets, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers TO {CALLER};
          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {AUTH} TO {CALLER};
          SET search_path = {ROWS};"
     ))
@@ -97,6 +100,7 @@ fn the_closure_follows_its_base_and_reads_answer_in_both_directions() {
     reads_and_writes(&mut db);
     two_way_reach(&mut db);
     exact_tier(&mut db);
+    pinned_borrow(&mut db);
     require_terms(&mut db);
     a_caller_grows_the_tree_beneath_itself_alone(&mut db);
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
@@ -364,6 +368,51 @@ fn exact_tier(db: &mut Client) {
         }
     }
     grid.finish("notices");
+}
+
+fn visible_and_calls(db: &mut Client, who: &str, table: &str) -> (BTreeSet<String>, i64) {
+    let mut tx = db.transaction().expect("a transaction");
+    tx.batch_execute(&format!("SET LOCAL track_functions = 'all'; SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&who]).expect("the claims");
+    let counted = format!("SELECT COALESCE(pg_stat_get_xact_function_calls('{AUTH}.space_can_view(text)'::regprocedure), 0)");
+    let before: i64 = tx.query_one(&counted, &[]).expect("the call count").get(0);
+    let ids = tx.query(&format!("SELECT id FROM {table}"), &[]).expect("the read").iter().map(|r| r.get(0)).collect();
+    let after: i64 = tx.query_one(&counted, &[]).expect("the call count").get(0);
+    tx.rollback().expect("rollback");
+    (ids, after - before)
+}
+
+fn pinned_borrow(db: &mut Client) {
+    db.batch_execute(
+        "INSERT INTO spaces VALUES ('s1', 'e1', 'open'), ('s2', 'e1', 'closed'), ('s3', 'e2', 'open');
+         INSERT INTO pages VALUES ('p1', 'e1', 's1'), ('p2', 'e1', 's1'), ('p3', 'e1', 's1'), ('p4', 'e1', 's2'), ('p5', 'e2', 's3');
+         INSERT INTO sheets SELECT * FROM pages;",
+    )
+    .expect("spaces, pages and sheets");
+    let own = |ids: &[&str]| -> BTreeSet<String> { ids.iter().map(|id| (*id).to_string()).collect() };
+    let cases = [
+        (Some("e1"), Some("s1"), own(&["p1", "p2", "p3"]), "an open space's pages"),
+        (Some("e1"), Some("s2"), own(&[]), "a closed space's pages"),
+        (Some("e2"), Some("s3"), own(&["p5"]), "another estate's open space"),
+        (Some("e1"), Some("s3"), own(&[]), "a space claimed under the wrong estate"),
+        (Some("e1"), None, own(&[]), "no space claimed"),
+        (None, Some("s1"), own(&[]), "no estate claimed"),
+    ];
+    for (estate, space, want, what) in cases {
+        let who = claims(&[("estate_id", estate), ("space_id", space)]);
+        let (pinned, pinned_calls) = visible_and_calls(db, &who, "pages");
+        let (per_row, per_row_calls) = visible_and_calls(db, &who, "sheets");
+        assert_eq!(pinned, want, "{what}");
+        assert_eq!(pinned, per_row, "{what}: the pinned borrow admits the rows the per-row borrow admits");
+        assert!(pinned_calls <= 1, "{what}: the pinned borrow was asked {pinned_calls} times in one statement");
+        assert!(
+            per_row_calls >= i64::try_from(want.len()).expect("a small count"),
+            "{what}: the per-row borrow was asked {per_row_calls} times for {} rows",
+            want.len()
+        );
+    }
+    let who = claims(&[("estate_id", Some("e1")), ("space_id", Some("s1"))]);
+    assert_eq!((visible_and_calls(db, &who, "pages").1, visible_and_calls(db, &who, "sheets").1), (1, 3), "three rows: one call pinned, three per row");
 }
 
 fn require_terms(db: &mut Client) {

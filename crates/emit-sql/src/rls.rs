@@ -910,6 +910,10 @@ impl Sql<'_> {
                 }
                 Ok(vec![frag])
             }
+            Repr::Object(vo) if vo.pinned => {
+                let claim = self.pinned_claim(obj, r, vo, pm.maps())?;
+                Ok(vec![format!("(SELECT {}.{}({}))", schema, vo.function_name(), claim)])
+            }
             Repr::Object(vo) => {
                 let call = format!("{}.{}({})", schema, vo.function_name(), vo.col);
                 Ok(vec![self.probed(&self.object_probe(obj, vo), call)])
@@ -917,6 +921,31 @@ impl Sql<'_> {
             Repr::Grant(vg) => self.emit_grant_frags(obj, r, vg, access_for(pm.maps()), cust_claim),
             Repr::Role => Ok(self.rls_emit_role(obj, r)),
         }
+    }
+
+    fn pinned_claim(&self, obj: &Object, r: &Relation, vo: &ViaObject, op: &str) -> R<String> {
+        let refuse = |why: String| format!("relation {} is `pinned` on {}, but {why}", quote(&r.name), quote(&vo.col));
+        let obj_leaf = leaf(obj);
+        let virt = self.virtual_levels()?;
+        let own_level = |l: &String| obj.is_level_entity() && l == obj.level();
+        let Some(level) = obj.scoped.iter().find(|l| !virt.contains(*l) && !own_level(l) && self.s.scope_col(obj, l) == vo.col) else {
+            return Err(refuse(format!("that is not a column object {} is contained by", quote(&obj.name))));
+        };
+        if obj.scope_is_wildcard(level) {
+            return Err(refuse(format!("level {} admits a NULL column there, so containment does not hold it equal to the caller's claim", quote(level))));
+        }
+        let paths = topology::ancestor_paths(self.s, obj_leaf).map_err(|e| e.to_string())?;
+        if !paths.iter().all(|path| path.iter().any(|l| &l.name == level)) {
+            return Err(refuse(format!("level {} is not on every path to {}", quote(level), quote(obj_leaf))));
+        }
+        let (_, inject) = self.rls_subject_branches(obj, &virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op);
+        if inject.get(level).is_some_and(|reaches| !reaches.is_empty()) {
+            return Err(refuse(format!(
+                "a grant reaches rows at other values of {} for this operation, so the column is not always the caller's claim",
+                quote(level)
+            )));
+        }
+        Ok(self.id_claim(&self.s.claim_key_for_level(level)))
     }
 
     fn probed(&self, probe: &str, call: String) -> String {
@@ -1009,6 +1038,14 @@ impl Sql<'_> {
         }
         if b == "self" {
             return Ok(vec![format!("{} = {}", t.self_col(), self.id_claim(self.s.admin_identify()))]);
+        }
+        if rels.get(t.ident()).is_some_and(|r| matches!(&r.repr, Repr::Object(vo) if vo.pinned)) {
+            return Err(format!(
+                "object {} require {}: relation {} is `pinned` — a pinned borrow is asked at the caller's claim, which equals the row's column only under the permission's containment; a `require` stands outside it, so borrow there without `pinned`",
+                quote(&obj.name),
+                quote(&pm.verb),
+                quote(t.ident())
+            ));
         }
         if !t.grant_ref().is_empty() || matches!(b, "scoped" | "public" | "open") {
             return Err(format!(

@@ -1499,6 +1499,41 @@ This emits `template_reach_can_bound_for_select` beside `template_reach_can_boun
 `for` applies only to a predicate-only permission; a permission that maps an
 operation already has one.
 
+### A borrow asked once a statement
+
+A borrowed permission is a function call on the row's column, and Postgres runs
+it for every row the statement reads:
+
+```demesne
+relation open_space: member via object space->view on space_id
+```
+
+When the column is one the object is contained by, every row the policy admits
+holds the same value there, the caller's claim, and the answer is the same for
+all of them. `pinned` says so:
+
+```demesne
+object page {
+  table pages
+  scoped estate > space
+  relation open_space: member via object space->view on space_id pinned
+  permission view = @scoped and open_space @rls maps select
+}
+```
+
+The call becomes `(SELECT auth.space_can_view(<space claim>))`, which Postgres
+evaluates once for the statement. The rows admitted are the same, since the
+containment term beside it already requires `space_id` to equal that claim.
+
+The compiler accepts the marker only where that holds, and refuses it:
+
+- on a column that is not one of the object's scope columns;
+- on a `wildcard` or `exact` level, whose column may be NULL;
+- on a level that a grant or a claim reach widens for the operation, since a
+  row reached that way holds another value;
+- inside a `require`, which is compiled outside the permission's containment.
+  Borrow there without `pinned`.
+
 ### Credential confinement, admit arms and exported permissions
 
 An integration token belongs to no principal table. Its authority is its kind and

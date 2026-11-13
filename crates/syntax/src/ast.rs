@@ -567,6 +567,8 @@ pub struct ViaObject {
     pub verb: String,
     pub col: String,
     pub op: Option<String>,
+    /// `pinned`: the object's containment holds `col` equal to the caller's claim, so the borrow is asked once, at the claim.
+    pub pinned: bool,
 }
 
 impl ViaObject {
