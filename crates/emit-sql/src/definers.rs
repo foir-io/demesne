@@ -279,14 +279,55 @@ fn grant_access(g: &Grant) -> &'static str {
     "read"
 }
 
-fn hold_perm_cond(perms_col: &str, implied_by: &str) -> String {
+fn hold_perm_cond(perms: &str, implied_by: &str) -> String {
     if implied_by.is_empty() {
-        return format!("p_perm = ANY(r.{perms_col})");
+        return format!("p_perm = ANY({perms})");
     }
-    format!("r.{perms_col}::text[] && {implied_by}(p_perm)")
+    format!("{perms}::text[] && {implied_by}(p_perm)")
+}
+
+fn role_row_tests(tests: &[(String, Option<String>)], alias: &str) -> Vec<String> {
+    tests
+        .iter()
+        .map(|(col, val)| match val {
+            Some(val) => format!("{alias}.{col} = {}", quote_literal(val)),
+            None => format!("{alias}.{col} IS NULL"),
+        })
+        .collect()
+}
+
+fn role_in_force(rs: &RoleStore, alias: &str) -> Vec<String> {
+    role_row_tests(&rs.active, alias)
 }
 
 impl Sql<'_> {
+    fn role_form_value(&self, rs: &RoleStore, alias: &str, base: &str, of: impl Fn(&demesne_syntax::RoleForm) -> String) -> String {
+        let Some(first) = rs.forms.first() else { return format!("{alias}.{base}") };
+        let mut picked = format!("CASE COALESCE({}, {})", self.claim(&first.claim), quote_literal(rs.absent_form.as_deref().unwrap_or("")));
+        for form in &rs.forms {
+            write!(picked, " WHEN {} THEN {}", quote_literal(&form.value), of(form)).expect("fmt::Write for String never fails");
+        }
+        picked.push_str(" END");
+        let unversioned = role_row_tests(&rs.unversioned, alias);
+        if unversioned.is_empty() {
+            return format!("({picked})");
+        }
+        format!("(CASE WHEN {} THEN {alias}.{base} ELSE {picked} END)", unversioned.join(" OR "))
+    }
+
+    fn role_permissions(&self, rs: &RoleStore, alias: &str) -> String {
+        let base = or(rs.perms_col.as_deref());
+        self.role_form_value(rs, alias, base, |form| format!("{alias}.{}", form.perms_col.as_deref().unwrap_or(base)))
+    }
+
+    fn role_name(&self, rs: &RoleStore, alias: &str) -> String {
+        let base = or(rs.key_col.as_deref());
+        self.role_form_value(rs, alias, base, |form| match &form.perms_col {
+            Some(perms) => format!("CASE WHEN {alias}.{perms} IS NOT NULL THEN {alias}.{} END", form.key_col.as_deref().unwrap_or(base)),
+            None => format!("{alias}.{base}"),
+        })
+    }
+
     /// Compiles the `SECURITY DEFINER` functions the policies and surfaces call.
     ///
     /// # Errors
@@ -653,7 +694,8 @@ impl Sql<'_> {
         conds.push(format!("ra.{} = user_id", or(rs.subject_col.as_deref())));
         conds.extend(scope);
         conds.extend(revoked_cond(rs, "ra."));
-        conds.push(hold_perm_cond(or(rs.perms_col.as_deref()), implied_by));
+        conds.extend(role_in_force(rs, "r"));
+        conds.push(hold_perm_cond(&self.role_permissions(rs, "r"), implied_by));
         let body = format!(
             "EXISTS (SELECT 1 FROM {} ra JOIN {} r ON r.{} = ra.{} WHERE {})",
             or(rs.assignments.as_deref()),
@@ -1129,7 +1171,8 @@ impl Sql<'_> {
         conds.push(format!("ra.{} = user_id", or(rs.subject_col.as_deref())));
         conds.extend(scope);
         conds.extend(revoked_cond(rs, "ra."));
-        conds.push(format!("r.{} IN ({})", or(rs.key_col.as_deref()), quoted.join(", ")));
+        conds.extend(role_in_force(rs, "r"));
+        conds.push(format!("{} IN ({})", self.role_name(rs, "r"), quoted.join(", ")));
         let exists = format!(
             "EXISTS (SELECT 1 FROM {} ra JOIN {} r ON r.{} = ra.{} WHERE {})",
             or(rs.assignments.as_deref()),
@@ -1481,7 +1524,7 @@ impl Sql<'_> {
 
     fn holds_accessor_branch(&self, obj: &Object, perm: &str) -> Option<String> {
         let rs = self.s.holds_role_store(perm).ok()?;
-        let perms_col = rs.perms_col.as_deref()?;
+        rs.perms_col.as_deref()?;
         let chain = topology::chain(self.s).unwrap_or_default();
         let plane_depth = self.s.rolestore_plane_depth(rs);
         let mut on = kind_cond(rs, "ra.");
@@ -1495,10 +1538,11 @@ impl Sql<'_> {
         on.extend(revoked_cond(rs, "ra."));
         let held = match self.s.rolestore_vocab(rs) {
             Ok(v) if !v.implications.is_empty() => {
-                format!("ro.{perms_col}::text[] && {}.{}({})", self.s.definer_schema(), self.s.perm_implied_by_fn(rs), quote_literal(perm))
+                format!("{}::text[] && {}.{}({})", self.role_permissions(rs, "ro"), self.s.definer_schema(), self.s.perm_implied_by_fn(rs), quote_literal(perm))
             }
-            _ => format!("{} = ANY(ro.{perms_col})", quote_literal(perm)),
+            _ => format!("{} = ANY({})", quote_literal(perm), self.role_permissions(rs, "ro")),
         };
+        let held = role_in_force(rs, "ro").into_iter().chain([held]).collect::<Vec<_>>().join(" AND ");
         Some(format!(
             "SELECT 'holds'::text AS source, {}::text AS principal_kind, ra.{} AS principal_id, 'read'::text AS access\n    FROM {} e JOIN {} ra ON {}\n    JOIN {} ro ON ro.{} = ra.{}\n    WHERE e.{} = p_id AND {}",
             quote_literal(or(rs.kind_val.as_deref())),
@@ -1622,17 +1666,21 @@ impl Sql<'_> {
             }
         }
         let mut join = String::new();
+        let mut role = role_in_force(rs, "rr");
         if let Some(presets) = presets.filter(|p| !p.is_empty()) {
             let mut ks = presets.clone();
             ks.sort();
             let q: Vec<String> = ks.iter().map(|p| quote_literal(p)).collect();
+            let name = if rs.forms.is_empty() { format!("rr.{}", or(rs.key_col.as_deref())) } else { self.role_name(rs, "rr") };
+            role.push(format!("{name} IN ({})", q.join(", ")));
+        }
+        if !role.is_empty() {
             join = format!(
-                " JOIN {} rr ON rr.{} = ra.{} AND rr.{} IN ({})",
+                " JOIN {} rr ON rr.{} = ra.{} AND {}",
                 or(rs.roles_table.as_deref()),
                 or(rs.roles_id.as_deref()),
                 or(rs.role_col.as_deref()),
-                or(rs.key_col.as_deref()),
-                q.join(", ")
+                role.join(" AND ")
             );
         }
         let mut on = kind_cond(rs, "ra.");

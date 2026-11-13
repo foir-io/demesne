@@ -86,6 +86,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_projections(s));
     errs.extend(validate_markers(s));
     errs.extend(validate_chains(s));
+    errs.extend(validate_role_forms(s));
     errs.extend(validate_grant_stores(s));
     errs.extend(validate_store_manage(s));
     errs.extend(check_emit_sites(s, &vocab_names));
@@ -1931,6 +1932,46 @@ fn validate_projections(s: &Spec) -> Vec<Finding> {
         let pm = p.admit().perm("select");
         errs.extend(check_perm_polarity(obj, &pm));
         errs.extend(check_perm_terms(s, obj, &pm, &crate::analysis::rels_of(obj)));
+    }
+    errs
+}
+
+fn validate_role_forms(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    for rs in &s.role_stores {
+        let at = |msg: String| Finding::at(rs.pos.line, format!("rolestore {} {msg}", quote(&rs.name)));
+        if rs.roles_table.is_none() && !(rs.forms.is_empty() && rs.unversioned.is_empty() && rs.active.is_empty()) {
+            errs.push(at("declares `form`, `unversioned` or `active` but no `rolejoin` naming the roles they read".into()));
+        }
+        let Some(first) = rs.forms.first() else {
+            if !rs.unversioned.is_empty() {
+                errs.push(at("declares `unversioned` but no `form` for a role to have more than one of".into()));
+            }
+            if rs.absent_form.is_some() {
+                errs.push(at("declares `absent claim reads` but no `form` to read".into()));
+            }
+            continue;
+        };
+        if rs.perms_col.is_none() {
+            errs.push(at("declares a `form` but no `permissions` column for the base form".into()));
+        }
+        if rs.forms.iter().any(|f| f.claim != first.claim) {
+            errs.push(at("reads its forms from two claims — every `form` line names one claim".into()));
+        }
+        let mut values: HashSet<&str> = HashSet::new();
+        for form in &rs.forms {
+            if !values.insert(&form.value) {
+                errs.push(at(format!("names form {} twice", quote(&form.value))));
+            }
+        }
+        match &rs.absent_form {
+            None => errs.push(at(format!(
+                "names no form for a session with no {} claim — write `absent claim reads \"<value>\"`, so no session is left to a default",
+                quote(&first.claim)
+            ))),
+            Some(value) if !values.contains(value.as_str()) => errs.push(at(format!("reads {} for an absent claim, which no `form` line names", quote(value)))),
+            Some(_) => {}
+        }
     }
     errs
 }

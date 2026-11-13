@@ -247,12 +247,31 @@ pub struct RoleStore {
     pub perms_col: Option<String>,
     /// `held claim <key>`: a claim holding a JSON array of permissions the session's credential carries.
     pub held_claim: Option<String>,
+    /// `form claim <key> = "<value>" …`: the forms a role's definition has, each picked by a value of one claim.
+    pub forms: Vec<RoleForm>,
+    /// `absent claim reads "<value>"`: the form a session with no value for the claim takes.
+    pub absent_form: Option<String>,
+    /// `unversioned <column> …`: tests of a role's row, any of which marks a role that has the base form only.
+    pub unversioned: Vec<(String, Option<String>)>,
+    /// `active <column> …`: tests of a role's row, all of which a role in force passes.
+    pub active: Vec<(String, Option<String>)>,
     pub id_col: Option<String>,
     pub granted_at_col: Option<String>,
     pub granted_by_col: Option<String>,
     pub revoked_by_col: Option<String>,
     pub extra_cols: Vec<String>,
     pub pos: Pos,
+}
+
+/// One form of a role's definition, picked by a claim value.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoleForm {
+    pub claim: String,
+    pub value: String,
+    /// The column holding the form's permissions; `None` for the `base` form.
+    pub perms_col: Option<String>,
+    /// The column holding the form's name; `None` reads the base key.
+    pub key_col: Option<String>,
 }
 
 impl RoleStore {

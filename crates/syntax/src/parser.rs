@@ -3,7 +3,7 @@ use crate::ast::{
     Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, DeclaredScope, ExportParameter, Extension, External, ExternalArg,
     FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker, Membership, Nearest,
     Object, Perm, PermNode, PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr,
-    Require, RoleStore, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition,
+    Require, RoleForm, RoleStore, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition,
     ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
@@ -1561,6 +1561,16 @@ impl Parser {
         } else if self.accept_kw("held") {
             self.expect_kw("claim")?;
             rs.held_claim = Some(self.ident()?);
+        } else if self.accept_kw("form") {
+            rs.forms.push(self.parse_role_form()?);
+        } else if self.accept_kw("absent") {
+            self.expect_kw("claim")?;
+            self.expect_kw("reads")?;
+            rs.absent_form = Some(self.string()?);
+        } else if self.accept_kw("unversioned") {
+            rs.unversioned.push(self.parse_role_row_test()?);
+        } else if self.accept_kw("active") {
+            rs.active.push(self.parse_role_row_test()?);
         } else if self.accept_kw("permissions") {
             rs.perms_col = Some(self.ident()?);
         } else if self.accept_kw("pk") {
@@ -1576,6 +1586,29 @@ impl Parser {
             return Err(self.err(format!("unexpected {} in rolestore", self.got())));
         }
         Ok(())
+    }
+
+    fn parse_role_form(&mut self) -> PResult<RoleForm> {
+        self.expect_kw("claim")?;
+        let claim = self.ident()?;
+        self.expect(Tok::Eq)?;
+        let value = self.string()?;
+        if self.accept_kw("base") {
+            return Ok(RoleForm { claim, value, perms_col: None, key_col: None });
+        }
+        self.expect_kw("permissions")?;
+        let perms_col = Some(self.ident()?);
+        let key_col = if self.accept_kw("key") { Some(self.ident()?) } else { None };
+        Ok(RoleForm { claim, value, perms_col, key_col })
+    }
+
+    fn parse_role_row_test(&mut self) -> PResult<(String, Option<String>)> {
+        let col = self.ident()?;
+        if self.accept_kw("null") {
+            return Ok((col, None));
+        }
+        self.expect(Tok::Eq)?;
+        Ok((col, Some(self.string()?)))
     }
 
     fn parse_claims(&mut self) -> PResult<ClaimsAccessor> {
@@ -1820,7 +1853,25 @@ impl Parser {
 }
 
 fn role_store_keyword(s: &str) -> bool {
-    matches!(s, "assignments" | "kind" | "subject" | "scope" | "plane" | "rolejoin" | "revoked" | "permissions" | "pk" | "granted" | "column" | "held")
+    matches!(
+        s,
+        "assignments"
+            | "kind"
+            | "subject"
+            | "scope"
+            | "plane"
+            | "rolejoin"
+            | "revoked"
+            | "permissions"
+            | "pk"
+            | "granted"
+            | "column"
+            | "held"
+            | "form"
+            | "absent"
+            | "unversioned"
+            | "active"
+    )
 }
 
 pub(crate) fn expand_templates(s: &mut Spec) -> Result<(), Error> {

@@ -86,6 +86,38 @@ as before.
 
 `demesne_syntax::RoleStore` gains `held_claim`.
 
+### A role store whose roles have forms, and roles that are in force
+
+```demesne
+rolestore staff {
+  rolejoin role_id roles id key
+  permissions permissions
+  form claim channel = "draft" base
+  form claim channel = "live" permissions live_permissions
+  absent claim reads "live"
+  unversioned estate_id null
+  active disabled_at null
+}
+```
+
+A role's definition can exist in more than one form, and a claim picks the one
+a session reads. `form claim <key> = "<value>" base` reads the base columns for
+that value, and `form … permissions <column> [key <column>]` reads the named
+ones. `absent claim reads "<value>"` names the form a session with no value
+takes; a store with a `form` line is refused without it. A value no `form`
+names reads no role. A form whose permissions column is NULL is no role in
+that form, by name as well. `unversioned <column> null` or `= "<value>"` marks
+roles that have the base form only. `active <column> null` or `= "<value>"`
+says which roles are in force: a role that fails one is no role in any form,
+and the line stands alone in a store with no forms.
+
+Every generated read of a role's name or permissions follows the same rule:
+`@holds`, a role matched by name, and the access listings. A store with none
+of the lines emits what it did.
+
+`demesne_syntax::RoleStore` gains `forms` (a list of the new `RoleForm`),
+`absent_form`, `unversioned` and `active`.
+
 ### `@clock(<column> reached)`
 
 A row test: true when the row's instant is not in the future. An unset column

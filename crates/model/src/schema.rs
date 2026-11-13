@@ -297,6 +297,11 @@ fn check_role_store_refs(s: &Spec, b: &mut Binder, rs: &RoleStore) {
     if b.req_table(or(rs.roles_table.as_deref()), &rrc) {
         b.req_col(or(rs.roles_table.as_deref()), or(rs.roles_id.as_deref()), &rrc);
         b.req_col(or(rs.roles_table.as_deref()), or(rs.key_col.as_deref()), &rrc);
+        let forms = rs.forms.iter().flat_map(|f| [f.perms_col.as_deref(), f.key_col.as_deref()]).flatten();
+        let tests = rs.unversioned.iter().chain(&rs.active).map(|(col, _)| col.as_str());
+        for col in forms.chain(tests) {
+            b.req_col(or(rs.roles_table.as_deref()), col, &rrc);
+        }
         if let Some(pc) = &rs.perms_col {
             b.req_col(or(rs.roles_table.as_deref()), pc, &rrc);
             if s.uses_holds()

@@ -1243,6 +1243,60 @@ then also true when the array holds the permission, or one that implies it,
 So a held permission follows the same containment as an assignment, never
 wider and never onto an unset level. Assignments count as before.
 
+## A role store whose roles have forms
+
+A role's definition, its name and its permissions, can exist in more than one
+form at once: the form being edited and a form that was released, say. Which
+one applies depends on the session, not on the role. The role store says where
+each form is kept, and every generated check reads the roles table itself.
+
+```demesne
+rolestore staff {
+  assignments role_grants
+  …
+  rolejoin role_id roles id key
+  permissions permissions
+  form claim channel = "draft" base
+  form claim channel = "live" permissions live_permissions
+  absent claim reads "live"
+  unversioned estate_id null
+  active disabled_at null
+}
+```
+
+- `form claim <key> = "<value>" base`: a session whose claim has the value
+  reads the base columns, `rolejoin`'s key and `permissions`.
+- `form claim <key> = "<value>" permissions <column> [key <column>]`: such a
+  session reads the role's permissions from the named column, and its name
+  from the `key` column when one is given.
+- `absent claim reads "<value>"`: the form a session with no value for the
+  claim takes. It is required. The compiler refuses a store that has forms and
+  does not say, so no session is left to a default.
+- `unversioned <column> null`, or `= "<value>"`: a role that passes any such
+  line has the base form only, whatever the claim says.
+- `active <column> null`, or `= "<value>"`: which roles are in force. It needs
+  no forms beside it.
+
+A role that fails an `active` line is no role. For the others:
+
+| The role's row | The session's claim | The role is |
+|---|---|---|
+| passes an `unversioned` test | anything | its base name and permissions |
+| any other | a value a `base` form names | its base name and permissions |
+| any other | a value a `permissions` form names, the column not NULL | that form's name and permissions |
+| any other | the same, the column NULL | no role |
+| any other | absent | what the `absent claim reads` form gives |
+| any other | a value no form names | no role |
+
+"No role" means it matches no role name and holds no permission. So a form
+never written, or one withdrawn by setting its column to NULL, confers
+nothing, and a credential carrying a value the spec does not name holds
+nothing through a versioned role. Send only the values the spec names.
+
+The rule covers every generated read of a role: `@holds`, a role matched by
+name, and the access listings. Assignments are read as before, and so is a
+membership test that reads the assignment without its role.
+
 ## `@clock`: a row's instant against now
 
 `@clock(<column> reached)` is a row test, true when the column's instant is not
