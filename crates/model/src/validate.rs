@@ -63,6 +63,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_permission_exports(s));
     errs.extend(validate_probes(s));
     errs.extend(validate_nearests(s));
+    errs.extend(validate_projections(s));
     errs.extend(validate_grant_stores(s));
     errs.extend(validate_store_manage(s));
     errs.extend(check_emit_sites(s, &vocab_names));
@@ -1740,6 +1741,33 @@ fn validate_permission_exports(s: &Spec) -> Vec<Finding> {
             names.insert(export.name.clone());
             errs.extend(validate_permission_export(s, obj, export));
         }
+    }
+    errs
+}
+
+fn validate_projections(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    let taken = |o: &'_ Object| -> Vec<String> {
+        o.exports.iter().map(|e| e.name.clone()).chain(o.probes.iter().map(|p| p.name.clone())).chain(o.nearests.iter().map(|n| n.name.clone())).collect()
+    };
+    let mut names: HashSet<String> = s.objects.iter().flat_map(taken).collect();
+    for (obj, p) in s.objects.iter().flat_map(|o| o.projections.iter().map(move |p| (o, p))) {
+        let at = |msg: String| Finding::at(p.pos.line, format!("projection {} {msg}", quote(&p.name)));
+        if !names.insert(p.name.clone()) {
+            errs.push(at("shares its name with another generated function of the spec".into()));
+        }
+        let mut returned = HashSet::new();
+        for c in &p.columns {
+            if !returned.insert(c.name.as_deref().unwrap_or(&c.column)) {
+                errs.push(at(format!("returns {} twice", quote(c.name.as_deref().unwrap_or(&c.column)))));
+            }
+            if !EXPORT_PARAMETER_TYPES.contains(&c.ty.as_str()) {
+                errs.push(at(format!("column {} has unsupported type {}", quote(&c.column), quote(&c.ty))));
+            }
+        }
+        let pm = p.admit().perm("select");
+        errs.extend(check_perm_polarity(obj, &pm));
+        errs.extend(check_perm_terms(s, obj, &pm, &crate::analysis::rels_of(obj)));
     }
     errs
 }

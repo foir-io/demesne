@@ -327,6 +327,7 @@ impl Sql<'_> {
         self.def_emit_permission_exports(&mut out, &virt)?;
         self.def_emit_probes(&mut out)?;
         self.def_emit_nearests(&mut out)?;
+        self.def_emit_projections(&mut out, &virt)?;
         for f in &mut out {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
@@ -1737,6 +1738,26 @@ impl Sql<'_> {
                 strict: !probe.params.is_empty(),
                 returns,
                 body,
+                ..Default::default()
+            });
+        }
+        Ok(())
+    }
+
+    fn def_emit_projections(&self, out: &mut Vec<GenFn>, virt: &Virtual) -> R<()> {
+        let mut seen: HashSet<String> = out.iter().map(|f| f.name.clone()).collect();
+        for (obj, p) in self.s.objects.iter().flat_map(|o| o.projections.iter().map(move |p| (o, p))) {
+            if !seen.insert(p.name.clone()) {
+                return Err(format!("projection {} collides with a generated function", quote(&p.name)));
+            }
+            let pred = self.admit_arm_predicate(obj, &p.admit(), "select", self.s.owner_subject(leaf(obj)), virt)?;
+            let returned: Vec<String> = p.columns.iter().map(|c| format!("{} {}", c.name.as_deref().unwrap_or(&c.column), c.ty)).collect();
+            let selected: Vec<String> = p.columns.iter().map(|c| format!("{}.{}::{}", obj.table, c.column, c.ty)).collect();
+            out.push(GenFn {
+                name: p.name.clone(),
+                returns: format!("TABLE({})", returned.join(", ")),
+                raw_body: true,
+                body: format!("  SELECT {} FROM {} WHERE {pred};", selected.join(", "), obj.table),
                 ..Default::default()
             });
         }

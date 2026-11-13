@@ -2,8 +2,8 @@ use crate::Error;
 use crate::ast::{
     Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes,
     Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm, PermNode, PermissionExport, Pos,
-    Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology,
-    UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind,
+    Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -650,6 +650,8 @@ impl Parser {
         } else if self.is_kw("field") {
             let f = self.parse_field_rule(o)?;
             o.fields.push(f);
+        } else if self.is_kw("projection") {
+            self.parse_projection(o)?;
         } else if self.is_kw("nearest") {
             self.parse_nearest(o)?;
         } else if self.is_kw("probe") {
@@ -1562,6 +1564,19 @@ impl Parser {
         let params = self.parse_bound_columns()?;
         self.expect(Tok::RParen)?;
         o.exports.push(PermissionExport { verb, name, params, pos });
+        Ok(())
+    }
+
+    fn parse_projection(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let columns = self.parse_bound_columns()?;
+        self.expect(Tok::RParen)?;
+        self.expect(Tok::Eq)?;
+        let tree = self.parse_perm_union()?;
+        o.projections.push(Projection { name, columns, tree, pos });
         Ok(())
     }
 

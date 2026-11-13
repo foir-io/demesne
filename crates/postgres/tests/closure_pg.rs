@@ -7,7 +7,7 @@ const AUTH: &str = "demesne_tree_auth";
 const CALLER: &str = "demesne_tree_caller";
 
 const TABLES: &str = "
-CREATE TABLE folders (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, parent_id text);
+CREATE TABLE folders (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, parent_id text, name text);
 CREATE TABLE paths (ancestor_id text NOT NULL, descendant_id text NOT NULL, space_id text NOT NULL, depth integer NOT NULL, PRIMARY KEY (ancestor_id, descendant_id));
 CREATE TABLE templates (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text, body text);
 CREATE TABLE atlases (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text);
@@ -104,6 +104,7 @@ fn the_closure_follows_its_base_and_reads_answer_in_both_directions() {
     pinned_borrow(&mut db);
     probes(&mut db);
     nearest(&mut db);
+    projections(&mut db);
     require_terms(&mut db);
     a_caller_grows_the_tree_beneath_itself_alone(&mut db);
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
@@ -483,6 +484,42 @@ fn nearest(db: &mut Client) {
         .expect("the lookup's privileges")
         .get(0);
     assert!(!public, "the lookup returns a row's value for any node, so PUBLIC cannot run it");
+}
+
+fn projected(db: &mut Client, who: &str, call: &str) -> Vec<(String, Option<String>)> {
+    let mut tx = db.transaction().expect("a transaction");
+    tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&who]).expect("the claims");
+    let rows =
+        tx.query(&format!("SELECT id, title FROM {AUTH}.{call}() ORDER BY id"), &[]).expect("the projection").iter().map(|r| (r.get(0), r.get(1))).collect();
+    tx.rollback().expect("rollback");
+    rows
+}
+
+fn projections(db: &mut Client) {
+    db.batch_execute("UPDATE folders SET name = 'folder ' || id").expect("folder names");
+    let card = |id: &str, title: &str| (id.to_string(), Some(title.to_string()));
+    let member = |estate: &str| claims(&[("estate_id", Some(estate)), ("space_id", Some("s1")), ("kind", Some("member"))]);
+    assert_eq!(projected(db, &member("e1"), "space_cards"), [card("s1", "north"), card("s2", "south")], "every space of the estate, the closed one too");
+    assert_eq!(projected(db, &member("e2"), "space_cards"), [card("s3", "east")], "another estate's cards");
+    let robot = claims(&[("estate_id", Some("e1")), ("space_id", Some("s1")), ("kind", Some("robot"))]);
+    assert_eq!(projected(db, &robot, "space_cards"), [], "the projection's own expression refuses a caller it does not name");
+    assert!(!attempt(db, &member("e1"), "spaces", "s2", Op::Select, &[]), "the closed space's row stays unreadable through the table");
+    let columns: Vec<String> = db
+        .query(&format!("SELECT a.attname::text FROM pg_proc p, unnest(p.proargnames) AS a(attname) WHERE p.oid = '{AUTH}.space_cards()'::regprocedure"), &[])
+        .expect("the projection's columns")
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(columns, ["id", "title"], "it returns the named columns and never the status");
+    let at = |folder: Option<&str>| claims(&[("estate_id", Some("e1")), ("space_id", Some("s1")), ("folder_id", folder)]);
+    assert_eq!(
+        projected(db, &at(Some("c")), "folder_path"),
+        [card("a", "folder a"), card("b", "folder b"), card("c", "folder c")],
+        "the folders on the caller's path"
+    );
+    assert_eq!(projected(db, &at(Some("e")), "folder_path"), [card("e", "folder e")]);
+    assert_eq!(projected(db, &at(None), "folder_path"), [], "a caller standing at no folder has no path");
 }
 
 fn require_terms(db: &mut Client) {

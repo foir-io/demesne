@@ -400,6 +400,7 @@ pub struct Object {
     pub exports: Vec<PermissionExport>,
     pub probes: Vec<Probe>,
     pub nearests: Vec<Nearest>,
+    pub projections: Vec<Projection>,
     pub relations: Vec<Relation>,
     pub perms: Vec<Perm>,
     pub requires: Vec<Require>,
@@ -1163,6 +1164,23 @@ pub struct PermissionExport {
     pub name: String,
     pub params: Vec<ExportParameter>,
     pub pos: Pos,
+}
+
+/// A `projection`: named columns of the rows an expression admits, read without the object's own permission.
+#[derive(Debug, Clone)]
+pub struct Projection {
+    pub name: String,
+    pub columns: Vec<ExportParameter>,
+    pub tree: PermNode,
+    pub pos: Pos,
+}
+
+impl Projection {
+    /// Returns the projection's expression as the select arm it is compiled as.
+    #[must_use]
+    pub fn admit(&self) -> Admit {
+        Admit { ops: vec!["select".to_string()], tree: self.tree.clone(), pos: self.pos }
+    }
 }
 
 /// A `nearest` lookup: the value a column holds on the nearest row at or above a node of a closure.

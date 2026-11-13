@@ -151,6 +151,26 @@ AS $$
 $$;
 REVOKE EXECUTE ON FUNCTION auth.theme_color(text) FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION auth.folder_path()
+RETURNS TABLE(id text, title text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT folders.id::text, folders.name::text FROM folders WHERE estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (id IN (SELECT auth.paths_ancestors((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.space_cards()
+RETURNS TABLE(id text, title text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT spaces.id::text, spaces.name::text FROM spaces WHERE estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'member');
+$$;
+
 
 --- stderr ---
 

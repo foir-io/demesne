@@ -59,6 +59,16 @@ scope. `EXECUTE` on the function is revoked from PUBLIC.
 
 `demesne_syntax::Object` gains `nearests`, a list of the new `Nearest`.
 
+### `projection` shows some columns to callers who cannot read the row
+
+`projection <name>(<column> <type>, ...) = <expression>` on an object emits a
+function that returns the named columns of the rows the expression admits. The
+expression is compiled as an `admit` arm, inside the object's containment and
+apart from its permissions, so a caller the read policy hides a row from can
+still be shown part of it, by claim and not by database role.
+
+`demesne_syntax::Object` gains `projections`, a list of the new `Projection`.
+
 ## v3.0.0
 
 The crates are 3.0.0 because public types of `demesne-syntax`, `demesne-model`

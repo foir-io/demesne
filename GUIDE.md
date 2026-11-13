@@ -1070,6 +1070,41 @@ So a probe is a deliberate disclosure. Declare one only for a fact every caller
 inside the containment may learn. The compiler refuses a probe on an object no
 claim contains, since it would answer for the whole table.
 
+## Projections: some columns of rows the caller cannot read whole
+
+A policy admits a row or hides it. It cannot show two columns of a row and
+keep the rest. Field rules can, but they work through database roles, so with
+one connection role for every request they cannot tell one caller from another.
+
+A `projection` is a second way into a table that carries its own columns and
+its own rule:
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  projection space_cards(id text, name text as title) = @kind("member")
+  permission view = @scoped and @row(status, "open") @rls maps select
+}
+```
+
+`projection <name>(<column> <type> [as <output>], ...) = <expression>` emits a
+function, `<name>()`, that returns the named columns of every row the
+expression admits. Above, any member of the estate lists the id and name of
+every space, including a closed one whose row `view` hides, and never sees
+`status`. Query it like a table: `SELECT id, title FROM auth.space_cards()`.
+
+The expression is compiled as an `admit` arm is: inside the object's
+containment, with the same terms and the same validation, and with no part of
+the object's own permissions. The columns are a fixed list, so adding a column
+to the table exposes nothing new.
+
+A projection is not inlined into the query that calls it. It computes every
+admitted row first and the caller filters afterwards, so it suits small tables
+of declarations, not large tables of content. Callers a projection admits are
+not in the object's reader listing, which lists who reads whole rows.
+
 ## A changelog the application writes
 
 `via grant ... tracked`, `track owner` and `track visibility` keep a changelog
