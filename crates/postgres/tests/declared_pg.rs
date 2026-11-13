@@ -108,9 +108,9 @@ struct Caller<'a> {
     held: &'a [&'a str],
 }
 
-fn slot_matches(c: Caller, doc: &str, (rule, slot, kind, param, role): &Slot, hop: bool) -> bool {
+fn slot_matches(c: Caller, doc: &str, (element, slot, kind, param, role): &Slot, hop: bool) -> bool {
     match *kind {
-        "edge" => EDGES.contains(&(c.who, doc, rule, slot)),
+        "edge" => EDGES.contains(&(c.who, doc, element, slot)),
         "grant" => GRANTS.contains(&(c.who, doc)),
         "borrow" if hop => HOPS.iter().any(|(from, to, field)| *from == doc && field == param && reads(c, to, false)),
         "borrow" => *role == "except",
