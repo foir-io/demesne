@@ -783,23 +783,21 @@ impl Sql<'_> {
         let chain = topology::chain(self.s).map_err(|e| e.to_string())?;
         let plane_depth = self.s.rolestore_plane_depth(rs);
         let mut args = vec![self.id_claim(self.s.admin_identify())];
-        let mut i = 0;
-        for l in chain {
-            if l.is_virtual {
-                continue;
-            }
-            if i >= rs.scope_cols.len() || i >= plane_depth {
-                break;
-            }
-            if contains(&obj.scoped, &l.name) {
-                args.push(self.s.scope_col(obj, &l.name));
-            } else {
-                args.push("NULL".into());
-            }
-            i += 1;
+        let mut stands = Vec::new();
+        for l in chain.into_iter().filter(|l| !l.is_virtual).take(rs.scope_cols.len().min(plane_depth)) {
+            let claim = self.id_claim(&l.claim_key());
+            let top = stands.is_empty();
+            let col = contains(&obj.scoped, &l.name).then(|| self.s.scope_col(obj, &l.name));
+            stands.push(session_stands(top, &claim, col.as_deref()));
+            args.push(col.unwrap_or_else(|| "NULL".into()));
         }
         args.push(quote_literal(perm));
-        Ok(vec![format!("{}.{}({})", self.s.definer_schema(), self.s.holds_perm_fn(rs), args.join(", "))])
+        let schema = self.s.definer_schema();
+        let assigned = format!("{}.{}({})", schema, self.s.holds_perm_fn(rs), args.join(", "));
+        if rs.held_claim.is_none() {
+            return Ok(vec![assigned]);
+        }
+        Ok(vec![format!("({assigned} OR ((SELECT {schema}.{}({})) AND {}))", held_fn(&self.s.holds_perm_fn(rs)), quote_literal(perm), stands.join(" AND "))])
     }
 
     fn rls_emit_declared(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
@@ -1202,6 +1200,19 @@ impl Sql<'_> {
         }
         Ok(set.into_iter().collect())
     }
+}
+
+fn session_stands(top: bool, claim: &str, col: Option<&str>) -> String {
+    match (top, col) {
+        (true, Some(col)) => format!("{col} = {claim}"),
+        (true, None) => "false".to_string(),
+        (false, Some(col)) => format!("({claim} IS NULL OR {col} = {claim})"),
+        (false, None) => format!("{claim} IS NULL"),
+    }
+}
+
+pub(crate) fn held_fn(holds_perm_fn: &str) -> String {
+    holds_perm_fn.strip_suffix("_has_perm").map_or_else(|| format!("{holds_perm_fn}_held"), |base| format!("{base}_holds_by_claim"))
 }
 
 pub(crate) fn conditions_fn(obj: &Object, r: &Relation) -> String {

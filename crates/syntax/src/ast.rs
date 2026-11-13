@@ -245,6 +245,8 @@ pub struct RoleStore {
     pub key_col: Option<String>,
     pub revoked_col: Option<String>,
     pub perms_col: Option<String>,
+    /// `held claim <key>`: a claim holding a JSON array of permissions the session's credential carries.
+    pub held_claim: Option<String>,
     pub id_col: Option<String>,
     pub granted_at_col: Option<String>,
     pub granted_by_col: Option<String>,

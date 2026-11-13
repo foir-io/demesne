@@ -1498,6 +1498,9 @@ impl Parser {
             if self.accept_kw("by") {
                 rs.revoked_by_col = Some(self.ident()?);
             }
+        } else if self.accept_kw("held") {
+            self.expect_kw("claim")?;
+            rs.held_claim = Some(self.ident()?);
         } else if self.accept_kw("permissions") {
             rs.perms_col = Some(self.ident()?);
         } else if self.accept_kw("pk") {
@@ -1738,7 +1741,7 @@ impl Parser {
 }
 
 fn role_store_keyword(s: &str) -> bool {
-    matches!(s, "assignments" | "kind" | "subject" | "scope" | "plane" | "rolejoin" | "revoked" | "permissions" | "pk" | "granted" | "column")
+    matches!(s, "assignments" | "kind" | "subject" | "scope" | "plane" | "rolejoin" | "revoked" | "permissions" | "pk" | "granted" | "column" | "held")
 }
 
 pub(crate) fn expand_templates(s: &mut Spec) -> Result<(), Error> {

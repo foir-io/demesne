@@ -1,7 +1,7 @@
 use crate::Sql;
 use crate::error::Error;
 use crate::genfn::{DefinerArm, Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
-use crate::rls::{Virtual, declared_fn, keyed_edge_fn, owner_col_present_pub, platform_role_fn};
+use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -601,8 +601,25 @@ impl Sql<'_> {
             implied_by = format!("{}.{}", self.s.definer_schema(), f.name);
             defs.fns.push(f);
         }
+        if let Some(held) = &rs.held_claim {
+            defs.fns.push(self.held_definer(&name, held, &implied_by));
+        }
         defs.fns.push(self.holds_perm_definer(&name, rs, &implied_by));
         Ok(())
+    }
+
+    fn held_definer(&self, holds_fn: &str, held_claim: &str, implied_by: &str) -> GenFn {
+        let carried = self.claim_object(held_claim);
+        let confers = if implied_by.is_empty() { "v = p_perm".to_string() } else { format!("v = ANY({implied_by}(p_perm))") };
+        GenFn {
+            name: held_fn(holds_fn),
+            sig: "p_perm text".into(),
+            strict: true,
+            body: format!(
+                "CASE WHEN jsonb_typeof({carried}) = 'array' THEN EXISTS (SELECT 1 FROM jsonb_array_elements_text({carried}) v WHERE {confers}) ELSE false END"
+            ),
+            ..Default::default()
+        }
     }
 
     fn holds_perm_definer(&self, name: &str, rs: &RoleStore, implied_by: &str) -> GenFn {
