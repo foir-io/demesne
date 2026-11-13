@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased
+## v3.0.0
 
-These changes make the next release 3.0.0: public types of `demesne-syntax` and
-`demesne-emit-sql` gain fields and variants, listed at the end. A spec that uses
-none of the constructs below emits exactly what v2.0.0 did.
+The crates are 3.0.0 because public types of `demesne-syntax`, `demesne-model`
+and `demesne-emit-sql` gain fields and variants, listed at the end. A spec that
+uses none of the constructs below emits exactly what v2.0.0 did. The Go module's
+API doesn't change, so it is `go/v1.4.0`.
 
 ### A closure relation reads the edge in the direction it names
 
@@ -116,8 +117,6 @@ the floor. A `permission` refuses that shape as before.
   `DeclaredMaintenance`.
 - `demesne_model::closure` is new: the edge of each closure and the direction
   each relation reads it in.
-
-The Go module's API doesn't change.
 
 ## v2.0.0
 
