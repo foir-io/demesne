@@ -141,6 +141,7 @@ fn merge(into: &mut Spec, fragment: Fragment) -> Result<(), Error> {
         grants,
         templates,
         externals,
+        closures,
         claims,
         definer_schema,
         table_schema,
@@ -169,6 +170,7 @@ fn merge(into: &mut Spec, fragment: Fragment) -> Result<(), Error> {
     join(&mut into.grants, grants, &marked(Kind::Grant), Kind::Grant, |v| &v.name)?;
     join(&mut into.templates, templates, &marked(Kind::Template), Kind::Template, |v| &v.name)?;
     join(&mut into.externals, externals, &external_replaces, Kind::External, |v| &v.name)?;
+    join(&mut into.closures, closures, &marked(Kind::Closure), Kind::Closure, |v| &v.table)?;
     Ok(())
 }
 

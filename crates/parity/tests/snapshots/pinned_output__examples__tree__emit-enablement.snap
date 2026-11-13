@@ -1,0 +1,22 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+ALTER TABLE public.atlases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.atlases FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.drafts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.drafts FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.folders FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.ledgers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ledgers FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.notices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notices FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.templates FORCE ROW LEVEL SECURITY;
+
+--- stderr ---
+
+--- end ---

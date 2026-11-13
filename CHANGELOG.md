@@ -1,5 +1,124 @@
 # Changelog
 
+## Unreleased
+
+These changes make the next release 3.0.0: public types of `demesne-syntax` and
+`demesne-emit-sql` gain fields and variants, listed at the end. A spec that uses
+none of the constructs below emits exactly what v2.0.0 did.
+
+### A closure relation reads the edge in the direction it names
+
+`via closure paths(ancestor_id, descendant_id) on folder_id` reaches rows at
+the caller's node and beneath it. Written with the columns the other way round,
+`paths(descendant_id, ancestor_id)`, a relation is meant to reach rows at the
+caller's node and above it. Until now both compiled to the same downward
+lookup, with no error.
+
+The order is now honoured: the first column is the caller's side and the second
+is the row's. A relation whose columns are not the closure's pair in one order
+or the other is refused. The closure's edge is its `closure` declaration (below)
+or, without one, the first relation over the table.
+
+One closure has one lookup and one maintenance trigger, and both are built from
+that edge. Before, a relation with reversed columns declared first turned the
+lookup over for every relation, and a reversed relation carrying the `base`
+maintained the closure upside down. Two relations over one closure that name
+different bases are refused.
+
+### `closure` declares a closure table once
+
+```demesne
+closure paths(ancestor_id, descendant_id)
+  base folders(id, parent_id)
+  scope space_id
+  depth depth
+```
+
+A top-level `closure` names the table and which column is the ancestor. Every
+option is optional. `named <name>` replaces the table's name at the front of
+the functions and triggers generated for it. A spec in several files replaces a
+declaration by its table.
+
+Three things follow from declaring a closure.
+
+Relations over it compile to sets. `folder_id IN (SELECT
+auth.paths_descendants(<claim>))` reaches downward and `auth.paths_ancestors`
+upward, each an uncorrelated subquery that Postgres evaluates once per
+statement, where the undeclared form calls `paths_reachable` for every row. One
+object can use both directions and give each to different operations: read at
+the caller's node, above it and beneath it, and write at the node and beneath.
+`paths_reachable` is still generated.
+
+With `depth`, `paths_path(<node>)` returns the node's ancestors and the node,
+root first, each with its depth.
+
+With `base`, the generated maintenance is new. It writes the `scope` and
+`depth` columns on every pair. It takes
+`pg_advisory_xact_lock(hashtext('<closure>'), hashtext(<scope>))` before it
+reads or writes the closure, so moves in one scope run one at a time. It
+refuses, with `check_violation` and a named constraint, a row made its own
+ancestor (`<closure>_acyclic`), a parent the closure does not hold in the row's
+scope (`<closure>_parent_known`), and a changed scope column
+(`<closure>_scope_fixed`). The update trigger fires only when the parent or the
+scope changes.
+
+A relation's own `base` still works and emits the maintenance it always did.
+
+### A reach can read through several grants
+
+`reach descendants via descendants, ancestors for select` takes the subject's
+reach through each listed grant, and the list may include the grant itself. The
+level's containment term gains one set per grant, joined by OR, so an object
+scoped at a tree level is read from above and from beneath at once. One grant
+after `via` emits what it did. Each listed grant must be an edge grant at the
+level that confers the operations, and none may be listed twice.
+
+### `exact` scopes a level as a partition
+
+```demesne
+scoped estate > space exact
+```
+
+An `exact` level contains every operation by `space_id IS NOT DISTINCT FROM
+<claim>`. A row with a NULL column belongs to the requests that carry no claim
+at the level and to no others, and a request that carries one reads and writes
+only rows with that value. It is the form a `wildcard` already emits for the
+operations its `confers` list leaves out, now available for all of them. The
+GUIDE also says what a `wildcard` that confers `insert` lets a session write.
+
+### NULL, absent-claim and exact-level tests
+
+`@row(<column>, null)` is true of a row whose column is NULL. It goes wherever
+`@row` goes.
+
+Two tests are for a `require` alone, since neither names anyone a permission
+could admit. `@claim("<key>", null)` is true of a request that carries no value
+for the claim. `@within(<level> exact)` is true when the row's column at the
+level is not distinct from the request's claim.
+
+A `require` now accepts a row test as a branch of a union by itself, negated or
+not. A restrictive policy admits nobody, so the branch only exempts rows from
+the floor. A `permission` refuses that shape as before.
+
+### What changes for a caller of the crates
+
+- `demesne_syntax::Spec` gains `closures`, a list of the new `Closure`, which
+  holds an optional `ClosureBase`. `Object` gains `scope_exact`.
+- `demesne_syntax::GrantUse::via` is a list where it was an optional name, and
+  `SpecExt::enumerated_grant` is `enumerated_grants`, which returns every grant
+  a reader listing follows.
+- `demesne_syntax::Builtin` gains the variants `RowNull`, `ClaimAbsent` and
+  `WithinExact`. Their `name()` is `row`, `claim` and `within`, and `Term` gains
+  `row_null()`, `claim_absent()` and `within_exact()` to tell them apart.
+- `Object::scope_is_wildcard` is true for an `exact` level too, since its column
+  may be NULL. `scope_is_wildcard_for` is false for every operation there.
+- `demesne_emit_sql::ClosureTrigger` gains `declared`, an optional
+  `DeclaredMaintenance`.
+- `demesne_model::closure` is new: the edge of each closure and the direction
+  each relation reads it in.
+
+The Go module's API doesn't change.
+
 ## v2.0.0
 
 The crates are 2.0.0 because a public struct of `demesne-syntax` gains a field

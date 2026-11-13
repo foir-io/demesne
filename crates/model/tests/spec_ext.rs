@@ -130,14 +130,23 @@ object blueprint {
   reach descendants via ancestors for select
   permission view = @scoped @rls maps select
 }
+
+object atlas {
+  table atlases
+  scoped estate > space > folder wildcard confers select
+  reach descendants via descendants, ancestors for select
+  permission view = @scoped @rls maps select
+}
 ";
     let s = demesne_syntax::parse(src).expect("the spec parses");
     let enumerated = |object: &str, grant: &str| {
         let o = s.objects.iter().find(|o| o.name == object).expect("the object exists");
         let g = s.grants.iter().find(|g| g.name == grant).expect("the grant exists");
-        s.enumerated_grant(o, g).map(|g| g.name.clone())
+        s.enumerated_grants(o, g).iter().map(|g| g.name.clone()).collect::<Vec<_>>()
     };
-    assert_eq!(enumerated("asset", "spare"), Some("spare".into()));
-    assert_eq!(enumerated("asset", "ancestors"), None);
-    assert_eq!(enumerated("blueprint", "descendants"), Some("ancestors".into()));
+    assert_eq!(enumerated("asset", "spare"), ["spare"]);
+    assert_eq!(enumerated("asset", "ancestors"), [] as [&str; 0]);
+    assert_eq!(enumerated("blueprint", "descendants"), ["ancestors"]);
+    assert_eq!(enumerated("atlas", "descendants"), ["descendants", "ancestors"]);
+    assert_eq!(enumerated("atlas", "ancestors"), [] as [&str; 0]);
 }

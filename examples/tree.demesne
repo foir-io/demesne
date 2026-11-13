@@ -1,0 +1,68 @@
+topology { level estate level space parent estate level folder parent space }
+
+closure paths(ancestor_id, descendant_id)
+  base folders(id, parent_id)
+  scope space_id
+  depth depth
+
+grant descendants at folder via edge paths(ancestor_id, descendant_id) confers select
+grant ancestors   at folder via edge paths(descendant_id, ancestor_id) named paths_up confers select
+
+subject member { anchor space; reach self; identifies sub; roles none }
+subject viewer { anchor folder; reach via grant descendants; identifies folder_id; roles none }
+
+object folder {
+  table folders
+  scoped estate > space
+  relation beneath:        member via closure paths(ancestor_id, descendant_id) on id        from claim folder_id missing allow
+  relation beneath_parent: member via closure paths(ancestor_id, descendant_id) on parent_id from claim folder_id missing allow
+  relation above:          member via closure paths(descendant_id, ancestor_id) on id        from claim folder_id missing deny
+  permission view   = @scoped and (beneath + above) @rls maps select
+  permission create = @scoped and beneath_parent    @rls maps insert
+  permission edit   = @scoped and beneath           @rls maps update
+  permission delete = @scoped and beneath           @rls maps delete
+}
+
+object template {
+  table templates
+  scoped estate > space
+  relation beneath: member via closure paths(ancestor_id, descendant_id) on folder_id from claim folder_id missing allow
+  relation above:   member via closure paths(descendant_id, ancestor_id) on folder_id from claim folder_id missing deny
+  permission view   = @scoped             @rls maps select
+  require view      = beneath + above + @row(folder_id, null)
+  permission create = @scoped and beneath @rls maps insert
+  permission edit   = @scoped and beneath @rls maps update
+  permission delete = @scoped and beneath @rls maps delete
+}
+
+object atlas {
+  table atlases
+  scoped estate > space > folder wildcard confers select
+  reach descendants via descendants, ancestors for select
+  permission view = @scoped @rls maps select
+  permission edit = @scoped @rls maps update
+}
+
+object notice {
+  table notices
+  scoped estate > space exact
+  permission view   = @scoped @rls maps select
+  permission create = @scoped @rls maps insert
+  permission edit   = @scoped @rls maps update
+  permission delete = @scoped @rls maps delete
+}
+
+object draft {
+  table drafts
+  scoped estate > space
+  permission view = @scoped @rls maps select
+  require view    = @claim("folder_id", null) + not @row(visibility, "private")
+}
+
+object ledger {
+  table ledgers
+  scoped estate
+  permission view = @scoped @rls maps select
+  permission edit = @scoped @rls maps update
+  require edit    = @within(space exact)
+}

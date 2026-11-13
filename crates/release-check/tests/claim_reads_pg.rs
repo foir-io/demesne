@@ -557,7 +557,13 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+const SPECS_V1_1_0_CANNOT_PARSE: [&str; 1] = ["examples/tree.demesne"];
+
 fn specs() -> Vec<(String, String)> {
+    every_spec().into_iter().filter(|(name, _)| !SPECS_V1_1_0_CANNOT_PARSE.contains(&name.as_str())).collect()
+}
+
+fn every_spec() -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut dirs = vec![root().join("examples"), root().join("testdata/corpus/fixtures")];
     while let Some(dir) = dirs.pop() {
@@ -709,6 +715,16 @@ fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads() {
     }
     assert_eq!((compared, refused), (158, 188), "the specs both releases emit, and those both refuse");
     assert!(reads > compared, "{reads} claim reads over {compared} specs");
+}
+
+#[test]
+fn a_spec_left_out_of_the_comparison_is_one_only_this_release_reads() {
+    let all = every_spec();
+    for name in SPECS_V1_1_0_CANNOT_PARSE {
+        let (_, src) = all.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name} is not in the corpus"));
+        assert!(ddl_now(src).is_some(), "{name}: this release emits it");
+        assert!(demesne_syntax_v1_1::parse(src).is_err(), "{name}: v1.1.0 parses it, so it belongs in the comparison");
+    }
 }
 
 #[test]

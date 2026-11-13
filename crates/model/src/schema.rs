@@ -2,7 +2,7 @@ use crate::SpecExt;
 use crate::analysis::contains;
 use crate::error::{Error, refuse_any};
 use demesne_gocompat::quote;
-use demesne_syntax::{ExternalArg, Finding, Grant, Object, Perm, Relation, Repr, RoleStore, Spec, Subject, Term};
+use demesne_syntax::{Closure, ExternalArg, Finding, Grant, Object, Perm, Relation, Repr, RoleStore, Spec, Subject, Term};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,6 +317,23 @@ fn check_subject_refs(b: &mut Binder, sub: &Subject) {
     }
 }
 
+fn check_closure_refs(b: &mut Binder, c: &Closure) {
+    let cc = format!("closure {}", c.table);
+    let extra = [c.scope_col.as_deref(), c.depth_col.as_deref()];
+    if b.req_table(&c.table, &cc) {
+        for col in [Some(c.ancestor_col.as_str()), Some(c.descendant_col.as_str())].into_iter().chain(extra).flatten() {
+            b.req_col(&c.table, col, &cc);
+        }
+    }
+    let Some(base) = &c.base else { return };
+    let bc = format!("{cc} base");
+    if b.req_table(&base.table, &bc) {
+        for col in [Some(base.id_col.as_str()), Some(base.parent_col.as_str()), c.scope_col.as_deref()].into_iter().flatten() {
+            b.req_col(&base.table, col, &bc);
+        }
+    }
+}
+
 /// Checks every table and column the spec names exists in `sc`.
 ///
 /// # Errors
@@ -335,6 +352,9 @@ pub fn validate_against(s: &Spec, sc: &Schema) -> Result<(), Error> {
     }
     for sub in &s.subjects {
         check_subject_refs(&mut b, sub);
+    }
+    for c in &s.closures {
+        check_closure_refs(&mut b, c);
     }
     b.errs.sort();
     refuse_any(b.errs.into_iter().map(Finding::unplaced).collect(), ())
@@ -367,6 +387,10 @@ pub fn table_coverage(s: &Spec, db_tables: &[String]) -> TableCoverage {
         if let Some(m) = &sub.membership {
             add(&m.table);
         }
+    }
+    for c in &s.closures {
+        add(&c.table);
+        add(c.base.as_ref().map_or("", |b| b.table.as_str()));
     }
     for o in &s.objects {
         for r in &o.relations {

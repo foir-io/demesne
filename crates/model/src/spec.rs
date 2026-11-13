@@ -390,26 +390,25 @@ pub trait SpecExt: sealed::Sealed {
     }
 
     fn grant_selected_as_via(&self, name: &str) -> bool {
-        self.spec().objects.iter().any(|o| o.reach_uses.iter().any(|u| u.via.as_deref() == Some(name)))
+        self.spec().objects.iter().any(|o| o.reach_uses.iter().any(|u| u.via.iter().any(|v| v == name)))
     }
 
     fn level_on_object_path(&self, obj: &Object, level: &str) -> bool {
         contains(&obj.scoped, level)
     }
 
-    fn enumerated_grant<'a>(&'a self, obj: &Object, g: &'a Grant) -> Option<&'a Grant> {
+    /// Returns the grants a reader listing enumerates for `g` on `obj`: `g` itself, or the grants the object reads through in its place.
+    fn enumerated_grants<'a>(&'a self, obj: &Object, g: &'a Grant) -> Vec<&'a Grant> {
         if g.claim_key.is_some() || !self.level_on_object_path(obj, &g.level) {
-            return None;
+            return Vec::new();
         }
         if !self.grant_reached_by_subject(&g.name) && self.grant_selected_as_via(&g.name) {
-            return None;
+            return Vec::new();
         }
-        if let Some(u) = obj.grant_use(&g.name, "select")
-            && let Some(via) = &u.via
-        {
-            return self.grant_by_name(via);
+        match obj.grant_use(&g.name, "select") {
+            Some(u) if !u.via.is_empty() => u.via.iter().filter_map(|via| self.grant_by_name(via)).collect(),
+            _ => vec![g],
         }
-        Some(g)
     }
 
     fn level_descends_from(&self, level: &str, ancestor: &str) -> bool {

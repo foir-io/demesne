@@ -1,6 +1,7 @@
 use crate::Sql;
 use crate::genfn::GenFn;
 use demesne_model::SpecExt;
+use demesne_model::closure;
 use demesne_runtime::quote_literal;
 use demesne_syntax::Repr;
 use std::collections::HashSet;
@@ -20,15 +21,123 @@ pub struct ClosureTrigger {
     pub base: String,
     pub base_id: String,
     pub base_parent: String,
+    pub declared: Option<DeclaredMaintenance>,
+}
+
+/// What a `closure` declaration adds to the maintenance of its table.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeclaredMaintenance {
+    /// The name the function and its triggers start with.
+    pub name: String,
+    /// The column, on the base and the closure alike, that partitions the tree.
+    pub scope: Option<String>,
+    /// The closure column that holds how many edges separate the pair.
+    pub depth: Option<String>,
 }
 
 impl ClosureTrigger {
+    fn name(&self) -> &str {
+        self.declared.as_ref().map_or(&self.closure, |d| &d.name)
+    }
+
     fn fn_name(&self) -> String {
-        format!("{}.{}_maintain", or_default(&self.schema, "auth"), self.closure)
+        format!("{}.{}_maintain", or_default(&self.schema, "auth"), self.name())
     }
 
     #[must_use]
     pub fn function_sql(&self) -> String {
+        match &self.declared {
+            Some(d) => self.declared_function_sql(d),
+            None => self.relation_function_sql(),
+        }
+    }
+
+    fn refusal(&self, constraint: &str, message: &str) -> String {
+        format!(
+            "RAISE EXCEPTION {} USING ERRCODE = 'check_violation', CONSTRAINT = {}, TABLE = {}",
+            quote_literal(message),
+            quote_literal(&format!("{}_{constraint}", self.name())),
+            quote_literal(&self.base)
+        )
+    }
+
+    fn declared_function_sql(&self, d: &DeclaredMaintenance) -> String {
+        let (clo, anc, desc, id, par) = (&self.closure, &self.ancestor, &self.descendant, &self.base_id, &self.base_parent);
+        let lock = |row: &str| match &d.scope {
+            Some(scope) => format!("PERFORM pg_advisory_xact_lock(hashtext({}), COALESCE(hashtext({row}.{scope}::text), 0));", quote_literal(clo)),
+            None => format!("PERFORM pg_advisory_xact_lock(hashtext({}), 0);", quote_literal(clo)),
+        };
+        let mut cols = format!("{anc}, {desc}");
+        let mut own = format!("NEW.{id}, NEW.{id}");
+        let mut linked = format!("p.{anc}, sub.{desc}");
+        let mut parent_known = format!("{anc} = NEW.{par} AND {desc} = NEW.{par}");
+        let mut scope_fixed = String::new();
+        if let Some(scope) = &d.scope {
+            write!(cols, ", {scope}").expect("fmt::Write for String never fails");
+            write!(own, ", NEW.{scope}").expect("fmt::Write for String never fails");
+            write!(linked, ", NEW.{scope}").expect("fmt::Write for String never fails");
+            write!(parent_known, " AND {scope} IS NOT DISTINCT FROM NEW.{scope}").expect("fmt::Write for String never fails");
+            scope_fixed = format!(
+                "    IF NEW.{scope} IS DISTINCT FROM OLD.{scope} THEN\n      {};\n    END IF;\n",
+                self.refusal("scope_fixed", &format!("a row of {} keeps its {scope}: the closure {clo} is partitioned by it", self.base))
+            );
+        }
+        if let Some(depth) = &d.depth {
+            write!(cols, ", {depth}").expect("fmt::Write for String never fails");
+            own.push_str(", 0");
+            write!(linked, ", p.{depth} + sub.{depth} + 1").expect("fmt::Write for String never fails");
+        }
+        let acyclic = self.refusal("acyclic", &format!("a row of {} cannot sit beneath itself", self.base));
+        let known = self.refusal("parent_known", &format!("the {par} of a row of {} names no row the closure {clo} holds", self.base));
+        format!(
+            r"CREATE OR REPLACE FUNCTION {f}()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, {ts}
+AS $$
+BEGIN
+  IF (TG_OP = 'DELETE') THEN
+    {lock_old}
+    DELETE FROM {clo} WHERE {desc} = OLD.{id} OR {anc} = OLD.{id};
+    RETURN OLD;
+  END IF;
+  {lock_new}
+  IF (TG_OP = 'UPDATE') THEN
+{scope_fixed}    IF NEW.{par} IS NOT NULL AND EXISTS (SELECT 1 FROM {clo} WHERE {anc} = NEW.{id} AND {desc} = NEW.{par}) THEN
+      {acyclic};
+    END IF;
+    DELETE FROM {clo}
+      WHERE {desc} IN (SELECT {desc} FROM {clo} WHERE {anc} = NEW.{id})
+        AND {anc} IN (SELECT {anc} FROM {clo} WHERE {desc} = NEW.{id} AND {anc} <> NEW.{id});
+  ELSE
+    IF NEW.{par} = NEW.{id} THEN
+      {acyclic};
+    END IF;
+    INSERT INTO {clo} ({cols}) VALUES ({own}) ON CONFLICT DO NOTHING;
+  END IF;
+  IF NEW.{par} IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM {clo} WHERE {parent_known}) THEN
+      {known};
+    END IF;
+    INSERT INTO {clo} ({cols})
+      SELECT {linked}
+        FROM {clo} p
+        CROSS JOIN {clo} sub
+        WHERE p.{desc} = NEW.{par} AND sub.{anc} = NEW.{id}
+      ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;",
+            f = self.fn_name(),
+            ts = or_default(&self.table_schema, "public"),
+            lock_old = lock("OLD"),
+            lock_new = lock("NEW"),
+        )
+    }
+
+    fn relation_function_sql(&self) -> String {
         format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
@@ -75,14 +184,24 @@ $$;",
         )
     }
 
+    fn update_condition(&self) -> String {
+        let Some(d) = &self.declared else { return String::new() };
+        let mut changed = format!("OLD.{par} IS DISTINCT FROM NEW.{par}", par = self.base_parent);
+        if let Some(scope) = &d.scope {
+            write!(changed, " OR OLD.{scope} IS DISTINCT FROM NEW.{scope}").expect("fmt::Write for String never fails");
+        }
+        format!(" WHEN ({changed})")
+    }
+
     #[must_use]
     pub fn trigger_sql(&self) -> String {
         let ts = or_default(&self.table_schema, "public");
         let mut b = String::new();
         for op in ["INSERT", "UPDATE", "DELETE"] {
-            let name = format!("{}_maintain_{}", self.closure, op[..3].to_lowercase());
+            let name = format!("{}_maintain_{}", self.name(), op[..3].to_lowercase());
+            let when = if op == "UPDATE" { self.update_condition() } else { String::new() };
             writeln!(b, "DROP TRIGGER IF EXISTS {name} ON {ts}.{};", self.base).expect("fmt::Write for String never fails");
-            writeln!(b, "CREATE TRIGGER {name} AFTER {op} ON {ts}.{} FOR EACH ROW EXECUTE FUNCTION {}();", self.base, self.fn_name())
+            writeln!(b, "CREATE TRIGGER {name} AFTER {op} ON {ts}.{} FOR EACH ROW{when} EXECUTE FUNCTION {}();", self.base, self.fn_name())
                 .expect("fmt::Write for String never fails");
         }
         b
@@ -371,25 +490,27 @@ $$;",
 impl Sql<'_> {
     #[must_use]
     pub fn emit_triggers(&self) -> Vec<ClosureTrigger> {
-        let mut seen = HashSet::new();
-        let mut out = Vec::new();
-        for (_, r) in self.s.relations() {
-            let Repr::Closure(c) = &r.repr else { continue };
-            let Some(base) = &c.base else { continue };
-            if !seen.insert(c.closure.clone()) {
-                continue;
-            }
-            out.push(ClosureTrigger {
-                schema: self.s.definer_schema().into(),
-                table_schema: self.s.table_schema().into(),
-                closure: c.closure.clone(),
-                ancestor: c.ancestor_col.clone(),
-                descendant: c.descendant_col.clone(),
-                base: base.clone(),
-                base_id: c.base_id.clone().unwrap_or_default(),
-                base_parent: c.base_parent.clone().unwrap_or_default(),
-            });
-        }
+        let mut out: Vec<ClosureTrigger> = closure::edges(self.s)
+            .into_iter()
+            .filter_map(|edge| {
+                let base = edge.base?;
+                Some(ClosureTrigger {
+                    schema: self.s.definer_schema().into(),
+                    table_schema: self.s.table_schema().into(),
+                    closure: edge.table.into(),
+                    ancestor: edge.ancestor_col.into(),
+                    descendant: edge.descendant_col.into(),
+                    base: base.table.into(),
+                    base_id: base.id_col.into(),
+                    base_parent: base.parent_col.into(),
+                    declared: edge.declared.map(|c| DeclaredMaintenance {
+                        name: c.definer_base().into(),
+                        scope: c.scope_col.clone(),
+                        depth: c.depth_col.clone(),
+                    }),
+                })
+            })
+            .collect();
         out.sort_by(|a, b| a.closure.cmp(&b.closure));
         out
     }

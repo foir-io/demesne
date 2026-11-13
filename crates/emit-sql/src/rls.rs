@@ -5,6 +5,7 @@ use demesne_model::SpecExt;
 use demesne_model::analysis::{
     Rels, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
 };
+use demesne_model::closure::{self, Direction};
 use demesne_model::conditional::{mode_row_sql, row_term_sql};
 use demesne_model::topology;
 use demesne_runtime::quote_literal;
@@ -542,12 +543,13 @@ impl Sql<'_> {
         let member = |f: String| format!("{} IN (SELECT {}.{}({}))", col, schema, f, self.id_claim(claim));
         match obj.grant_use(&g.name, op) {
             None => Some(member(format!("{}_reach_set", g.definer_base()))),
-            Some(demesne_syntax::GrantUse { via: Some(via_name), .. }) => {
-                let via = self.s.grant_by_name(via_name)?;
-                if !via.confers(op) {
-                    return None;
+            Some(u) if !u.via.is_empty() => {
+                let vias = u.via.iter().map(|name| self.s.grant_by_name(name).filter(|via| via.confers(op))).collect::<Option<Vec<_>>>()?;
+                let members: Vec<String> = vias.iter().map(|via| member(format!("{}_reach_set", via.definer_base()))).collect();
+                match members.as_slice() {
+                    [only] => Some(only.clone()),
+                    _ => Some(format!("({})", members.join(" OR "))),
                 }
-                Some(member(format!("{}_reach_set", via.definer_base())))
             }
             Some(u) if u.unscoped => Some(member(format!("{}_reach_unscoped_set", g.definer_base()))),
             Some(u) => {
@@ -735,12 +737,19 @@ impl Sql<'_> {
             "store_manage" => self.rls_emit_store_manage(obj),
             "session" => self.rls_emit_session(obj, pm, t, rels, cust_claim),
             "kind" => Ok(vec![format!("{} = {}", self.claim("kind"), quote_literal(t.kind_val()))]),
+            "claim" if t.claim_absent() => Ok(vec![format!("{} IS NULL", self.claim(t.claim_key()))]),
             "claim" => Ok(vec![format!("{} = {}", self.claim(t.claim_key()), quote_literal(t.claim_val()))]),
             "row" => Ok(vec![row_term_sql(t)]),
             "within" => {
                 let col = self.s.scope_col(obj, t.within_level());
                 let claim = self.id_claim(&self.s.claim_key_for_level(t.within_level()));
-                if t.within_nullable() { Ok(vec![format!("({col} IS NULL OR {col} = {claim})")]) } else { Ok(vec![format!("{col} = {claim}")]) }
+                if t.within_exact() {
+                    Ok(vec![format!("{col} IS NOT DISTINCT FROM {claim}")])
+                } else if t.within_nullable() {
+                    Ok(vec![format!("({col} IS NULL OR {col} = {claim})")])
+                } else {
+                    Ok(vec![format!("{col} = {claim}")])
+                }
             }
             "holds" => self.rls_emit_holds(obj, t),
             "" => {
@@ -826,13 +835,30 @@ impl Sql<'_> {
         Ok(vec![format!("{} AND {}", me, role_frag[0])])
     }
 
-    fn rls_closure_frag(&self, obj: &Object, c: &ViaClosure, ident: &str, cust_claim: &str) -> R<Vec<String>> {
+    fn closure_lookup(&self, c: &ViaClosure, caller: &str) -> R<String> {
         let schema = self.s.definer_schema();
+        let edge = closure::edge(self.s, &c.closure).ok_or_else(|| format!("closure {} has no edge", quote(&c.closure)))?;
+        let direction = edge.relation_direction(c).ok_or_else(|| {
+            format!(
+                "closure {}({}, {}) matches no edge of the closure, which is ({}, {})",
+                c.closure, c.ancestor_col, c.descendant_col, edge.ancestor_col, edge.descendant_col
+            )
+        })?;
+        let base = edge.definer_base();
+        Ok(match (edge.declared, direction) {
+            (Some(_), Direction::Down) => format!("{} IN (SELECT {schema}.{base}_descendants({caller}))", c.col),
+            (Some(_), Direction::Up) => format!("{} IN (SELECT {schema}.{base}_ancestors({caller}))", c.col),
+            (None, Direction::Down) => format!("{schema}.{base}_reachable({caller}, {})", c.col),
+            (None, Direction::Up) => format!("{schema}.{base}_reachable({}, {caller})", c.col),
+        })
+    }
+
+    fn rls_closure_frag(&self, obj: &Object, c: &ViaClosure, ident: &str, cust_claim: &str) -> R<Vec<String>> {
         let Some(claim) = &c.claim else {
             req_claim(cust_claim, obj, &format!("closure relation {ident}"))?;
-            return Ok(vec![format!("{}.{}_reachable({}, {})", schema, c.closure, self.id_claim(cust_claim), c.col)]);
+            return Ok(vec![self.closure_lookup(c, &self.id_claim(cust_claim))?]);
         };
-        let call = format!("{}.{}_reachable({}, {})", schema, c.closure, self.id_claim(claim), c.col);
+        let call = self.closure_lookup(c, &self.id_claim(claim))?;
         if c.missing.as_deref() == Some("allow") {
             return Ok(vec![format!("({} IS NULL OR {})", self.claim(claim), call)]);
         }

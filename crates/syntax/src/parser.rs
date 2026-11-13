@@ -1,9 +1,9 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Builtin, ClaimsAccessor, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits,
-    GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset, ProcEntry, Procedures,
-    Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn,
-    ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Builtin, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant,
+    GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset, ProcEntry,
+    Procedures, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure,
+    ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -15,6 +15,7 @@ type PResult<T> = Result<T, Error>;
 struct LevelChain {
     chain: Vec<String>,
     wildcards: Vec<String>,
+    exact: Vec<String>,
     verbs_by_level: BTreeMap<String, Vec<String>>,
 }
 
@@ -89,6 +90,7 @@ pub(crate) enum Kind {
     Tables,
     Identifiers,
     External,
+    Closure,
 }
 
 impl Kind {
@@ -109,6 +111,7 @@ impl Kind {
             "tables" => Kind::Tables,
             "identifiers" => Kind::Identifiers,
             "external" => Kind::External,
+            "closure" => Kind::Closure,
             _ => return None,
         })
     }
@@ -130,6 +133,7 @@ impl Kind {
             Kind::Tables => "tables",
             Kind::Identifiers => "identifiers",
             Kind::External => "external",
+            Kind::Closure => "closure",
         }
     }
 
@@ -149,6 +153,7 @@ impl Kind {
             Kind::RoleStore => s.role_stores.len(),
             Kind::Grant => s.grants.len(),
             Kind::External => s.externals.len(),
+            Kind::Closure => s.closures.len(),
             Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers => 0,
         }
     }
@@ -296,6 +301,7 @@ impl Parser {
                 s.identifiers = Some(t);
             }
             "external" => self.parse_external(s)?,
+            "closure" => s.closures.push(self.parse_closure()?),
             other => return Err(self.err(format!("unknown declaration {}", quote(other)))),
         }
         Ok(())
@@ -334,6 +340,42 @@ impl Parser {
             return Err(self.err(format!("duplicate external predicate {}", quote(&name))));
         }
         s.externals.push(External { name, arg_types, pos });
+        Ok(())
+    }
+
+    fn parse_closure(&mut self) -> PResult<Closure> {
+        let pos = self.pos();
+        self.advance();
+        let (table, cols) = self.parse_table_cols()?;
+        let [ancestor_col, descendant_col] =
+            <[String; 2]>::try_from(cols).map_err(|cols| self.err(format!("closure {table} needs 2 columns (ancestor, descendant), got {}", cols.len())))?;
+        let mut c = Closure { table, ancestor_col, descendant_col, pos, ..Default::default() };
+        loop {
+            if self.accept_kw("base") {
+                let (base, cols) = self.parse_table_cols()?;
+                let [id_col, parent_col] = <[String; 2]>::try_from(cols)
+                    .map_err(|cols| self.err(format!("closure {} base needs 2 columns (id, parent), got {}", c.table, cols.len())))?;
+                self.set_closure_option(&c.table, "base", c.base.is_some())?;
+                c.base = Some(ClosureBase { table: base, id_col, parent_col });
+            } else if self.accept_kw("scope") {
+                self.set_closure_option(&c.table, "scope", c.scope_col.is_some())?;
+                c.scope_col = Some(self.ident()?);
+            } else if self.accept_kw("depth") {
+                self.set_closure_option(&c.table, "depth", c.depth_col.is_some())?;
+                c.depth_col = Some(self.ident()?);
+            } else if self.accept_kw("named") {
+                self.set_closure_option(&c.table, "named", c.named.is_some())?;
+                c.named = Some(self.ident()?);
+            } else {
+                return Ok(c);
+            }
+        }
+    }
+
+    fn set_closure_option(&self, table: &str, option: &str, set: bool) -> PResult<()> {
+        if set {
+            return Err(self.err(format!("closure {table} says `{option}` twice")));
+        }
         Ok(())
     }
 
@@ -564,10 +606,11 @@ impl Parser {
             o.level = Some(self.ident()?);
         }
         self.expect_kw("scoped")?;
-        let LevelChain { chain, wildcards, verbs_by_level: verbs } = self.parse_level_chain()?;
+        let LevelChain { chain, wildcards, exact, verbs_by_level: verbs } = self.parse_level_chain()?;
         o.scoped = chain;
         o.scope_wildcards = wildcards;
         o.scope_wildcard_verbs = verbs;
+        o.scope_exact = exact;
         self.parse_object_body(&mut o)?;
         self.expect(Tok::RBrace)?;
         Ok(o)
@@ -719,6 +762,7 @@ impl Parser {
     fn parse_level_chain(&mut self) -> PResult<LevelChain> {
         let mut chain = Vec::new();
         let mut wildcards = Vec::new();
+        let mut exact = Vec::new();
         let mut verbs_by_level = BTreeMap::new();
         loop {
             let nm = self.ident()?;
@@ -726,12 +770,14 @@ impl Parser {
             let wildcard = self.accept_kw("wildcard");
             if wildcard {
                 wildcards.push(nm.clone());
+            } else if self.accept_kw("exact") {
+                exact.push(nm.clone());
             }
             if wildcard && self.accept_kw("confers") {
                 verbs_by_level.insert(nm, self.ident_list()?);
             }
             if self.peek() != Tok::Gt {
-                return Ok(LevelChain { chain, wildcards, verbs_by_level });
+                return Ok(LevelChain { chain, wildcards, exact, verbs_by_level });
             }
             self.advance();
         }
@@ -1160,6 +1206,10 @@ impl Parser {
                 self.expect(Tok::LParen)?;
                 let key = self.string()?;
                 self.expect(Tok::Comma)?;
+                if self.accept_kw("null") {
+                    self.expect(Tok::RParen)?;
+                    return Ok(Builtin::ClaimAbsent(key));
+                }
                 let val = self.string()?;
                 self.expect(Tok::RParen)?;
                 Builtin::Claim { key, val }
@@ -1168,6 +1218,10 @@ impl Parser {
             "within" => {
                 self.expect(Tok::LParen)?;
                 let level = self.ident()?;
+                if self.accept_kw("exact") {
+                    self.expect(Tok::RParen)?;
+                    return Ok(Builtin::WithinExact(level));
+                }
                 let nullable = self.accept_kw("nullable");
                 self.expect(Tok::RParen)?;
                 Builtin::Within { level, nullable }
@@ -1202,6 +1256,10 @@ impl Parser {
         self.expect(Tok::LParen)?;
         let col = self.ident()?;
         self.expect(Tok::Comma)?;
+        if self.accept_kw("null") {
+            self.expect(Tok::RParen)?;
+            return Ok(Builtin::RowNull(col));
+        }
         let val = self.string()?;
         self.expect(Tok::RParen)?;
         Ok(Builtin::Row { col, val })
@@ -1433,7 +1491,7 @@ impl Parser {
         } else if self.accept_kw("bound") {
             u.bound = Some(self.ident()?);
         } else if self.accept_kw("via") {
-            u.via = Some(self.ident()?);
+            u.via = self.ident_list()?;
         } else {
             return Err(self.err(format!("reach {} needs `unscoped`, `bound <level>` or `via <grant>`", u.grant)));
         }
