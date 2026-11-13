@@ -108,8 +108,9 @@ impl Sql<'_> {
             name: conditions_fn(obj, r),
             sig: format!("p_object {}{key_arg}, p_values jsonb", self.s.id_type()),
             raw_body: true,
+            language: Language::Plpgsql,
             body: format!(
-                "  SELECT CASE WHEN p_object IS NULL THEN NULL WHEN bool_or(h.holds IS FALSE) THEN false WHEN bool_or(h.holds IS NULL) THEN NULL ELSE true END\n  FROM (\n    SELECT (CASE c.{op}{cases}\n    END) AS holds\n    FROM {table} c CROSS JOIN LATERAL (\n      {caller}\n    ) x\n    WHERE c.{object} = p_object{keyed}\n  ) h;",
+                "#variable_conflict use_column\nBEGIN\n  IF p_object IS NULL THEN\n    RETURN NULL;\n  END IF;\n  IF NOT EXISTS (SELECT 1 FROM {table} c WHERE c.{object} = p_object{keyed}) THEN\n    RETURN true;\n  END IF;\n  RETURN (SELECT CASE WHEN bool_or(h.holds IS FALSE) THEN false WHEN bool_or(h.holds IS NULL) THEN NULL ELSE true END\n  FROM (\n    SELECT (CASE c.{op}{cases}\n    END) AS holds\n    FROM {table} c CROSS JOIN LATERAL (\n      {caller}\n    ) x\n    WHERE c.{object} = p_object{keyed}\n  ) h);\nEND",
                 table = c.table,
                 object = c.object_col,
                 op = c.op_col

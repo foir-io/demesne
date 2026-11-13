@@ -148,24 +148,14 @@ impl Sql<'_> {
             if pred.is_empty() {
                 continue;
             }
-            let path = match &vc.path {
-                Some(path) => format!(" AND ({})", self.judged(None, upper).path_sql(obj, r, path, level, op)?),
-                None => String::new(),
+            let admits = format!("EXISTS (SELECT 1 FROM {} WHERE {}.{} = e.{} AND ({pred}){possibly})", obj.table, obj.table, obj.pk(), vc.parent_col);
+            let reached = match &vc.path {
+                Some(path) => format!("CASE WHEN {admits} THEN ({}) ELSE false END", self.judged(None, upper).path_sql(obj, r, path, level, op)?),
+                None => admits,
             };
             arms.push(DefinerArm {
                 value: access.into(),
-                body: format!(
-                    "EXISTS (SELECT 1 FROM {} e WHERE e.{} = p_{}_id{} AND EXISTS (SELECT 1 FROM {} WHERE {}.{} = e.{} AND ({}){possibly}){path})",
-                    vc.table,
-                    vc.child_col,
-                    obj.name,
-                    kind_filter,
-                    obj.table,
-                    obj.table,
-                    obj.pk(),
-                    vc.parent_col,
-                    pred
-                ),
+                body: format!("EXISTS (SELECT 1 FROM {} e WHERE e.{} = p_{}_id{kind_filter} AND {reached})", vc.table, vc.child_col, obj.name),
             });
         }
         Ok(arms)

@@ -39,11 +39,12 @@ fn the_function_is_false_when_a_condition_fails_and_unknown_when_one_cannot_be_d
     let (_, defs) = emitted(&spec("", VIEW));
     let keyed = &defs.iter().find(|d| d.name == "doc_matches_hold").expect("the function").body;
     let lacking: Vec<&str> = [
-        "SELECT CASE WHEN p_object IS NULL THEN NULL WHEN bool_or(h.holds IS FALSE) THEN false WHEN bool_or(h.holds IS NULL) THEN NULL ELSE true END",
+        "BEGIN\n  IF p_object IS NULL THEN\n    RETURN NULL;\n  END IF;\n  IF NOT EXISTS (SELECT 1 FROM rule_terms c WHERE c.object_id = p_object AND c.rule_id = p_key) THEN\n    RETURN true;\n  END IF;",
+        "RETURN (SELECT CASE WHEN bool_or(h.holds IS FALSE) THEN false WHEN bool_or(h.holds IS NULL) THEN NULL ELSE true END",
         "SELECT (CASE c.op",
         "END) AS holds",
         "FROM rule_terms c CROSS JOIN LATERAL (",
-        "WHERE c.object_id = p_object AND c.rule_id = p_key\n  ) h;",
+        "WHERE c.object_id = p_object AND c.rule_id = p_key\n  ) h);\nEND",
         "WHEN 'eq' THEN CASE WHEN c.num IS NOT NULL THEN c.num = x.num WHEN c.at IS NOT NULL THEN c.at = x.at ELSE c.txt = x.txt COLLATE \"C\" END",
         "WHEN 'lt' THEN CASE WHEN c.num IS NOT NULL THEN c.num < x.num WHEN c.at IS NOT NULL THEN c.at < x.at END",
         "WHEN 'not_in' THEN NOT (CASE WHEN jsonb_typeof(x.v) = 'array' THEN EXISTS (",
@@ -67,7 +68,10 @@ fn the_function_is_false_when_a_condition_fails_and_unknown_when_one_cannot_be_d
     let per_operator = &keyed[keyed.find("SELECT (CASE c.op").expect("the operators")..keyed.find("END) AS holds").expect("their end")];
     assert!(!per_operator.contains("ELSE true") && !per_operator.contains("ELSE false"), "an operator that cannot decide answers neither way:\n{per_operator}");
     let plain = &defs.iter().find(|d| d.name == "doc_fits_hold").expect("the function").body;
-    assert!(plain.contains("WHERE c.object_id = p_object\n  ) h;"), "an unkeyed relation matches the row alone:\n{plain}");
+    assert!(
+        plain.contains("WHERE c.object_id = p_object\n  ) h);") && plain.contains("FROM doc_terms c WHERE c.object_id = p_object) THEN\n    RETURN true;"),
+        "an unkeyed relation matches the row alone:\n{plain}"
+    );
     assert!(!plain.contains("within_km") && !plain.contains("'includes'"), "an operator whose columns the relation does not name is not offered:\n{plain}");
 }
 

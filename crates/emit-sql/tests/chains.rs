@@ -90,10 +90,10 @@ fn the_policy_follows_a_composition_that_widens_by_its_lower_bound_and_one_that_
 fn a_hop_counts_only_when_every_row_declared_for_its_path_key_holds() {
     let (_, defs) = emitted("  nested 1");
     let followed = &named(&defs, "doc_composition_lent").arms[0].body;
-    assert!(followed.starts_with("EXISTS (SELECT 1 FROM doc_lends e WHERE e.borrower_id = p_doc_id AND e.field::text = p_slot AND EXISTS (SELECT 1 FROM docs WHERE docs.id = e.lender_id AND ((estate_id = ESTATE AND"), "{followed}");
+    assert!(followed.starts_with("EXISTS (SELECT 1 FROM doc_lends e WHERE e.borrower_id = p_doc_id AND e.field::text = p_slot AND CASE WHEN EXISTS (SELECT 1 FROM docs WHERE docs.id = e.lender_id AND ((estate_id = ESTATE AND"), "{followed}");
     assert!(
         followed.ends_with(
-            " AND (NOT EXISTS (SELECT 1 FROM auth.doc_trail_hops_declared_by_trail(e.trail::text) AS demesne_slot WHERE (((demesne_slot.kind = 'claim') AND (demesne_slot.rule = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text(HELD::jsonb) e)))) OR ((demesne_slot.kind = 'live') AND (auth.doc_select_holds_at_lent_1(demesne_slot.doc_id, demesne_slot.rule, demesne_slot.field)))) IS NOT TRUE)))"
+            " THEN (NOT EXISTS (SELECT 1 FROM auth.doc_trail_hops_declared_by_trail(e.trail::text) AS demesne_slot WHERE (((demesne_slot.kind = 'claim') AND (demesne_slot.rule = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text(HELD::jsonb) e)))) OR ((demesne_slot.kind = 'live') AND (auth.doc_select_holds_at_lent_1(demesne_slot.doc_id, demesne_slot.rule, demesne_slot.field)))) IS NOT TRUE)) ELSE false END)"
         ),
         "{followed}"
     );
@@ -174,8 +174,8 @@ fn an_upper_bound_counts_what_cannot_be_decided_and_what_lies_deeper_than_the_ne
     holds(
         lent,
         &[
-            " IS NOT FALSE) AND (NOT EXISTS (SELECT 1 FROM auth.doc_trail_hops_declared_by_trail(e.trail::text)",
-            "auth.doc_select_holds_at_lent_1_upper(demesne_slot.doc_id, demesne_slot.rule, demesne_slot.field)))) IS FALSE)))",
+            " IS NOT FALSE) THEN (NOT EXISTS (SELECT 1 FROM auth.doc_trail_hops_declared_by_trail(e.trail::text)",
+            "auth.doc_select_holds_at_lent_1_upper(demesne_slot.doc_id, demesne_slot.rule, demesne_slot.field)))) IS FALSE)) ELSE false END)",
         ],
     );
     lacks(lent, &["demesne_slot.kind = 'tree'", "demesne_slot.param = p_slot"]);
