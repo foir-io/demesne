@@ -326,6 +326,7 @@ impl Sql<'_> {
         let mut out = defs.fns;
         self.def_emit_permission_exports(&mut out, &virt)?;
         self.def_emit_probes(&mut out)?;
+        self.def_emit_nearests(&mut out)?;
         for f in &mut out {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
@@ -1736,6 +1737,47 @@ impl Sql<'_> {
                 strict: !probe.params.is_empty(),
                 returns,
                 body,
+                ..Default::default()
+            });
+        }
+        Ok(())
+    }
+
+    fn def_emit_nearests(&self, out: &mut Vec<GenFn>) -> R<()> {
+        let mut seen: HashSet<String> = out.iter().map(|f| f.name.clone()).collect();
+        for (obj, n) in self.s.objects.iter().flat_map(|o| o.nearests.iter().map(move |n| (o, n))) {
+            if !seen.insert(n.name.clone()) {
+                return Err(format!("nearest {} collides with a generated function", quote(&n.name)));
+            }
+            let declared = self.s.closure_by_table(&n.closure).and_then(|c| c.depth_col.as_deref().map(|d| (c, d)));
+            let Some((c, depth)) = declared else {
+                return Err(format!(
+                    "nearest {}: closure {} must be declared with a `depth` column to say which row is nearest",
+                    quote(&n.name),
+                    quote(&n.closure)
+                ));
+            };
+            let (t, val, node) = (&obj.table, &n.value_col, &n.node_col);
+            let mut rows = format!(
+                "SELECT t.{val} AS v, c.{depth} AS d FROM {} c JOIN {t} t ON t.{node} = c.{} WHERE c.{} = p_node AND t.{val} IS NOT NULL",
+                c.table, c.ancestor_col, c.descendant_col
+            );
+            if let Some(scope) = c.scope_col.as_deref().filter(|scope| obj.scoped.iter().any(|l| self.s.scope_col(obj, l) == *scope)) {
+                write!(
+                    rows,
+                    "\n    UNION ALL\n    SELECT t.{val}, NULL FROM {t} t WHERE t.{node} IS NULL AND t.{val} IS NOT NULL AND t.{scope} = (SELECT s.{scope} FROM {} s WHERE s.{} = p_node AND s.{} = p_node)",
+                    c.table, c.ancestor_col, c.descendant_col
+                )
+                .expect("fmt::Write for String never fails");
+            }
+            out.push(GenFn {
+                name: n.name.clone(),
+                sig: format!("p_node {}", self.s.id_type()),
+                strict: true,
+                returns: n.ty.clone(),
+                raw_body: true,
+                body: format!("  SELECT x.v FROM (\n    {rows}\n  ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;"),
+                execute: Execute::Granted,
                 ..Default::default()
             });
         }

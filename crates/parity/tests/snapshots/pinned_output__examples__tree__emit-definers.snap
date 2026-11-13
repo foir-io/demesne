@@ -135,6 +135,22 @@ AS $$
   SELECT id FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND name = space_by_name.wanted ORDER BY id LIMIT 1;
 $$;
 
+CREATE OR REPLACE FUNCTION auth.theme_color(p_node text)
+RETURNS text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT x.v FROM (
+    SELECT t.color AS v, c.depth AS d FROM paths c JOIN themes t ON t.folder_id = c.ancestor_id WHERE c.descendant_id = p_node AND t.color IS NOT NULL
+    UNION ALL
+    SELECT t.color, NULL FROM themes t WHERE t.folder_id IS NULL AND t.color IS NOT NULL AND t.space_id = (SELECT s.space_id FROM paths s WHERE s.ancestor_id = p_node AND s.descendant_id = p_node)
+  ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;
+$$;
+REVOKE EXECUTE ON FUNCTION auth.theme_color(text) FROM PUBLIC;
+
 
 --- stderr ---
 

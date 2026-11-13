@@ -67,6 +67,13 @@ object sheet {
   permission view = @scoped and open_space @rls maps select
 }
 
+object theme {
+  table themes
+  scoped estate > space
+  nearest theme_color(color text) via closure paths on folder_id
+  permission view = @scoped @rls maps select
+}
+
 object notice {
   table notices
   scoped estate > space exact

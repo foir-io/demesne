@@ -1,9 +1,9 @@
 use crate::Error;
 use crate::ast::{
     Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes,
-    Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset,
-    Probe, ProbeAnswer, ProcEntry, Procedures, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry,
-    Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm, PermNode, PermissionExport, Pos,
+    Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology,
+    UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -650,6 +650,8 @@ impl Parser {
         } else if self.is_kw("field") {
             let f = self.parse_field_rule(o)?;
             o.fields.push(f);
+        } else if self.is_kw("nearest") {
+            self.parse_nearest(o)?;
         } else if self.is_kw("probe") {
             self.parse_probe(o)?;
         } else if self.is_kw("export") {
@@ -1560,6 +1562,23 @@ impl Parser {
         let params = self.parse_bound_columns()?;
         self.expect(Tok::RParen)?;
         o.exports.push(PermissionExport { verb, name, params, pos });
+        Ok(())
+    }
+
+    fn parse_nearest(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let value_col = self.ident()?;
+        let ty = self.ident()?;
+        self.expect(Tok::RParen)?;
+        self.expect_kw("via")?;
+        self.expect_kw("closure")?;
+        let closure = self.ident()?;
+        self.expect_kw("on")?;
+        let node_col = self.ident()?;
+        o.nearests.push(Nearest { name, value_col, ty, closure, node_col, pos });
         Ok(())
     }
 

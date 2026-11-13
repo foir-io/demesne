@@ -19,7 +19,8 @@ exit: 0
     "auth.space_by_name(text)",
     "auth.space_can_view(text)",
     "auth.space_named(text)",
-    "auth.spaces_in_estate()"
+    "auth.spaces_in_estate()",
+    "auth.theme_color(text)"
   ],
   "policies": [
     {
@@ -113,6 +114,10 @@ exit: 0
     {
       "table": "public.templates",
       "name": "templates_update"
+    },
+    {
+      "table": "public.themes",
+      "name": "themes_select"
     }
   ],
   "triggers": [
@@ -140,7 +145,8 @@ exit: 0
     "public.pages",
     "public.sheets",
     "public.spaces",
-    "public.templates"
+    "public.templates",
+    "public.themes"
   ]
 }
 

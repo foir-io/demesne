@@ -150,6 +150,10 @@ pub(crate) fn check_object_refs(s: &Spec, b: &mut Binder, o: &Object) {
     for r in &o.relations {
         check_relation_refs(b, o, r);
     }
+    for n in &o.nearests {
+        b.req_col(&o.table, &n.value_col, &format!("{oc} nearest {}", n.name));
+        b.req_col(&o.table, &n.node_col, &format!("{oc} nearest {}", n.name));
+    }
     for probe in &o.probes {
         for param in &probe.params {
             b.req_col(&o.table, &param.column, &format!("{oc} probe {}", probe.name));

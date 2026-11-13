@@ -62,6 +62,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_grant_reach(s));
     errs.extend(validate_permission_exports(s));
     errs.extend(validate_probes(s));
+    errs.extend(validate_nearests(s));
     errs.extend(validate_grant_stores(s));
     errs.extend(validate_store_manage(s));
     errs.extend(check_emit_sites(s, &vocab_names));
@@ -1738,6 +1739,35 @@ fn validate_permission_exports(s: &Spec) -> Vec<Finding> {
             }
             names.insert(export.name.clone());
             errs.extend(validate_permission_export(s, obj, export));
+        }
+    }
+    errs
+}
+
+fn validate_nearests(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    let mut names: HashSet<&str> =
+        s.objects.iter().flat_map(|o| o.exports.iter().map(|e| e.name.as_str()).chain(o.probes.iter().map(|p| p.name.as_str()))).collect();
+    for n in s.objects.iter().flat_map(|o| &o.nearests) {
+        let at = |msg: String| Finding::at(n.pos.line, format!("nearest {} {msg}", quote(&n.name)));
+        if !names.insert(&n.name) {
+            errs.push(at("shares its name with another generated function of the spec".into()));
+        }
+        if !EXPORT_PARAMETER_TYPES.contains(&n.ty.as_str()) {
+            errs.push(at(format!("returns unsupported type {}", quote(&n.ty))));
+        }
+        let closure = s.closure_by_table(&n.closure);
+        if closure.is_none() {
+            errs.push(at(format!(
+                "reads closure {}, which the spec does not declare — declare it with `closure {}(…) depth <column>`",
+                quote(&n.closure),
+                n.closure
+            )));
+        } else if closure.is_some_and(|c| c.depth_col.is_none()) {
+            errs.push(at(format!("reads closure {}, which declares no `depth` column to say which row is nearest", quote(&n.closure))));
+        }
+        if n.value_col == n.node_col {
+            errs.push(at(format!("names {} as both its value and its node column", quote(&n.value_col))));
         }
     }
     errs

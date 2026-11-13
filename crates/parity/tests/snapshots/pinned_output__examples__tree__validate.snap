@@ -4,7 +4,7 @@ expression: "record(&repo, &spec, args)"
 ---
 exit: 0
 --- stdout ---
-ok: 9 objects, 3 levels, 23 policies, 2 reachability grants
+ok: 10 objects, 3 levels, 24 policies, 2 reachability grants
 
 --- stderr ---
 

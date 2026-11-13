@@ -49,6 +49,16 @@ generated `<admin>_has_perm_every_<level>` function.
 
 `demesne_syntax::Builtin` gains `HoldsEvery`, whose `name()` is `holds_every`.
 
+### `nearest` reads the value declared closest above a node
+
+`nearest <name>(<column> <type>) via closure <closure> on <node column>` on an
+object emits `<name>(<node>)`, which returns the column from the nearest row at
+or above the node that sets it. The closure must be declared with `depth`. With
+a `scope` the object shares, a row naming no node is the fallback for its
+scope. `EXECUTE` on the function is revoked from PUBLIC.
+
+`demesne_syntax::Object` gains `nearests`, a list of the new `Nearest`.
+
 ## v3.0.0
 
 The crates are 3.0.0 because public types of `demesne-syntax`, `demesne-model`

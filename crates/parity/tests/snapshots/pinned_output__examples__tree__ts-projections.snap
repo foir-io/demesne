@@ -123,6 +123,14 @@ export const appSurface: AppObjectSurface[] = [
     "editCheckSQL": ""
   },
   {
+    "object": "theme",
+    "table": "themes",
+    "pk": "id",
+    "flatListFn": "",
+    "asyncCheckSQL": "",
+    "editCheckSQL": ""
+  },
+  {
     "object": "notice",
     "table": "notices",
     "pk": "id",

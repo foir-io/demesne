@@ -399,6 +399,7 @@ pub struct Object {
     pub admits: Vec<Admit>,
     pub exports: Vec<PermissionExport>,
     pub probes: Vec<Probe>,
+    pub nearests: Vec<Nearest>,
     pub relations: Vec<Relation>,
     pub perms: Vec<Perm>,
     pub requires: Vec<Require>,
@@ -1161,6 +1162,17 @@ pub struct PermissionExport {
     pub verb: String,
     pub name: String,
     pub params: Vec<ExportParameter>,
+    pub pos: Pos,
+}
+
+/// A `nearest` lookup: the value a column holds on the nearest row at or above a node of a closure.
+#[derive(Debug, Clone)]
+pub struct Nearest {
+    pub name: String,
+    pub value_col: String,
+    pub ty: String,
+    pub closure: String,
+    pub node_col: String,
     pub pos: Pos,
 }
 

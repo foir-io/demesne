@@ -14,6 +14,7 @@ CREATE TABLE atlases (id text PRIMARY KEY, estate_id text NOT NULL, space_id tex
 CREATE TABLE spaces (id text PRIMARY KEY, estate_id text NOT NULL, status text NOT NULL, name text);
 CREATE TABLE pages (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL);
 CREATE TABLE sheets (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL);
+CREATE TABLE themes (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text, color text);
 CREATE TABLE notices (id text PRIMARY KEY, estate_id text NOT NULL, space_id text, body text);
 CREATE TABLE drafts (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, visibility text);
 CREATE TABLE ledgers (id text PRIMARY KEY, estate_id text NOT NULL, space_id text, amount integer);
@@ -59,7 +60,7 @@ fn install(db: &mut Client) {
     }
     db.batch_execute(&format!(
         "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER};
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.spaces, {ROWS}.pages, {ROWS}.sheets, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers TO {CALLER};
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.spaces, {ROWS}.pages, {ROWS}.sheets, {ROWS}.themes, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers TO {CALLER};
          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {AUTH} TO {CALLER};
          SET search_path = {ROWS};"
     ))
@@ -102,6 +103,7 @@ fn the_closure_follows_its_base_and_reads_answer_in_both_directions() {
     exact_tier(&mut db);
     pinned_borrow(&mut db);
     probes(&mut db);
+    nearest(&mut db);
     require_terms(&mut db);
     a_caller_grows_the_tree_beneath_itself_alone(&mut db);
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
@@ -444,6 +446,43 @@ fn probes(db: &mut Client) {
     );
     assert_eq!(ask(db, Some("e1"), None), (None, Some(2), None, hidden.clone()), "no value to match is no answer");
     assert_eq!(ask(db, None, Some("north")), (Some(false), Some(0), None, hidden), "a caller with no estate claim is inside no containment");
+}
+
+fn nearest(db: &mut Client) {
+    db.batch_execute(
+        "INSERT INTO themes VALUES ('th_a', 'e1', 's1', 'a', 'red'), ('th_b', 'e1', 's1', 'b', NULL), ('th_c', 'e1', 's1', 'c', 'green'),
+           ('th_s1', 'e1', 's1', NULL, 'grey'), ('th_unset', 'e1', 's1', NULL, NULL), ('th_y', 'e1', 's2', 'y', 'blue');",
+    )
+    .expect("themes");
+    let color = |db: &mut Client, node: Option<&str>| -> Option<String> {
+        db.query_one(&format!("SELECT {AUTH}.theme_color($1)"), &[&node]).expect("the lookup").get(0)
+    };
+    for (node, want, why) in [
+        (Some("c"), Some("green"), "its own row"),
+        (Some("b"), Some("red"), "its own row sets nothing, so the parent's"),
+        (Some("d"), Some("red"), "the parent's"),
+        (Some("a"), Some("red"), "its own row"),
+        (Some("e"), Some("grey"), "no row above, so the space's own"),
+        (Some("y"), Some("blue"), "its own row, in another space"),
+        (Some("x"), None, "no row above and its space has none of its own"),
+        (Some("nowhere"), None, "a node the closure does not hold"),
+        (None, None, "no node"),
+    ] {
+        assert_eq!(color(db, node).as_deref(), want, "the colour at {node:?}: {why}");
+    }
+    db.batch_execute("UPDATE folders SET parent_id = 'c' WHERE id = 'e'").expect("a move");
+    assert_eq!(color(db, Some("e")).as_deref(), Some("green"), "after a move the nearest row is the new parent's");
+    db.batch_execute("UPDATE folders SET parent_id = NULL WHERE id = 'e'").expect("the move undone");
+    let public: bool = db
+        .query_one(
+            &format!(
+                "SELECT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(p.proacl) a WHERE p.oid = '{AUTH}.theme_color(text)'::regprocedure AND a.grantee = 0)"
+            ),
+            &[],
+        )
+        .expect("the lookup's privileges")
+        .get(0);
+    assert!(!public, "the lookup returns a row's value for any node, so PUBLIC cannot run it");
 }
 
 fn require_terms(db: &mut Client) {

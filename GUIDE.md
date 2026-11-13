@@ -1561,6 +1561,33 @@ it must already be right.
   `<closure>_scope_fixed` for a changed scope column. Insert a parent before
   its children. Within one statement that means listing it first.
 
+#### The nearest declaration
+
+Settings often inherit down a tree: a folder uses its own theme, or its
+parent's, or the nearest one above that sets a colour. Folding that in the
+application takes the path and one read per level. A `nearest` lookup answers
+in one call:
+
+```demesne
+object theme {
+  table themes
+  scoped estate > space
+  nearest theme_color(color text) via closure paths on folder_id
+  permission view = @scoped @rls maps select
+}
+```
+
+`theme_color(<node>)` returns `color` from the nearest row at or above the
+node, counting only rows where the column is set. The closure must be declared
+with `depth`. When the closure has a `scope` the object is also scoped by, a
+row that names no node is the last resort for every node in its scope: above,
+a theme with a NULL `folder_id` is the space's own.
+
+The function takes a node and returns a column's value whatever the caller may
+read, so `EXECUTE` is revoked from PUBLIC. Grant it to the roles that should
+ask: a role your policies run as, if a policy calls it, or the owner of a
+trigger that refuses a write against the inherited value.
+
 `named <name>` on the declaration replaces the closure's table name at the
 front of every generated function and trigger. Use it when a function of the
 default name already exists.
