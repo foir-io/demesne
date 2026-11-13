@@ -147,6 +147,7 @@ fn merge(into: &mut Spec, fragment: Fragment) -> Result<(), Error> {
         table_schema,
         identifiers,
         changelog,
+        extensions,
     } = from;
     into.topology = topology.or(into.topology.take());
     into.claims = claims.or(into.claims.take());
@@ -154,6 +155,10 @@ fn merge(into: &mut Spec, fragment: Fragment) -> Result<(), Error> {
     into.table_schema = table_schema.or(into.table_schema.take());
     into.identifiers = identifiers.or(into.identifiers.take());
     into.changelog = changelog.or(into.changelog.take());
+    for extension in extensions {
+        into.extensions.retain(|e| e.name != extension.name);
+        into.extensions.push(extension);
+    }
     let marked = |kind: Kind| -> Vec<Replace> { replaces.iter().filter(|r| r.kind == kind).copied().collect() };
     let external_replaces = marked(Kind::External);
     for (i, e) in externals.iter().enumerate() {

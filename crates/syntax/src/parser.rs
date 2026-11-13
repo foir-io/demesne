@@ -1,10 +1,10 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, DeclaredScope, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry,
-    FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm, PermNode,
-    PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr, Require, RoleStore,
-    SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup,
-    ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, DeclaredScope, ExportParameter, Extension, External, ExternalArg, FieldRule,
+    FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm,
+    PermNode, PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr, Require,
+    RoleStore, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaConditions,
+    ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -93,6 +93,7 @@ pub(crate) enum Kind {
     External,
     Closure,
     Changelog,
+    Extension,
 }
 
 impl Kind {
@@ -115,6 +116,7 @@ impl Kind {
             "external" => Kind::External,
             "closure" => Kind::Closure,
             "changelog" => Kind::Changelog,
+            "extension" => Kind::Extension,
             _ => return None,
         })
     }
@@ -138,6 +140,7 @@ impl Kind {
             Kind::External => "external",
             Kind::Closure => "closure",
             Kind::Changelog => "changelog",
+            Kind::Extension => "extension",
         }
     }
 
@@ -158,6 +161,7 @@ impl Kind {
             Kind::Grant => s.grants.len(),
             Kind::External => s.externals.len(),
             Kind::Closure => s.closures.len(),
+            Kind::Extension => s.extensions.len(),
             Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers | Kind::Changelog => 0,
         }
     }
@@ -306,6 +310,18 @@ impl Parser {
             }
             "external" => self.parse_external(s)?,
             "closure" => s.closures.push(self.parse_closure()?),
+            "extension" => {
+                self.advance();
+                let name = self.ident()?;
+                if s.extensions.iter().any(|e| e.name == name) {
+                    return Err(self.err(format!("extension {name} is declared twice")));
+                }
+                let schema = if self.accept_kw("schema") { Some(self.string()?) } else { None };
+                if let Some(sch) = schema.as_ref().filter(|sch| !is_plain_identifier(sch)) {
+                    return Err(self.err(format!("schema {} is not a plain identifier: use letters, digits and _, not starting with a digit", quote(sch))));
+                }
+                s.extensions.push(Extension { name, schema });
+            }
             "changelog" => {
                 self.advance();
                 self.expect_kw("checked")?;
@@ -870,6 +886,9 @@ impl Parser {
         if self.accept_kw("grant") {
             return self.parse_repr_grant();
         }
+        if self.accept_kw("conditions") {
+            return self.parse_repr_conditions();
+        }
         self.parse_repr_column()
     }
 
@@ -881,6 +900,34 @@ impl Parser {
         self.expect(Tok::Eq)?;
         let val = self.string()?;
         Ok(Some((col, val)))
+    }
+
+    fn parse_repr_conditions(&mut self) -> PResult<Repr> {
+        let (table, cols) = self.parse_table_cols()?;
+        let [object_col, term_col, op_col] =
+            <[String; 3]>::try_from(cols).map_err(|cols| self.err(format!("via conditions names 3 columns (object, term, operator), got {}", cols.len())))?;
+        self.expect_kw("values")?;
+        self.expect(Tok::LParen)?;
+        let mut values = self.ident_list()?.into_iter();
+        self.expect(Tok::RParen)?;
+        let count = values.len();
+        let (Some(num_col), Some(txt_col), Some(at_col)) = (values.next(), values.next(), values.next()) else {
+            return Err(self.err(format!("via conditions values names a number, a text and an instant column, then optionally a list column and a latitude and longitude pair; got {count}")));
+        };
+        let (list_col, point_cols) = match (values.next(), values.next(), values.next(), values.next()) {
+            (None, ..) => (None, None),
+            (Some(list), None, ..) => (Some(list), None),
+            (Some(lat), Some(lng), None, _) => (None, Some((lat, lng))),
+            (Some(list), Some(lat), Some(lng), None) => (Some(list), Some((lat, lng))),
+            _ => return Err(self.err(format!("via conditions values names at most 6 columns, got {count}"))),
+        };
+        let key = if self.accept_kw("key") { Some(self.ident()?) } else { None };
+        self.expect_kw("on")?;
+        let on = self.ident()?;
+        self.expect_kw("from")?;
+        self.expect_kw("claim")?;
+        let claim = self.ident()?;
+        Ok(Repr::Conditions(ViaConditions { table, object_col, term_col, op_col, num_col, txt_col, at_col, list_col, point_cols, key, on, claim }))
     }
 
     fn parse_slot_binding(&mut self) -> PResult<Option<(String, String)>> {

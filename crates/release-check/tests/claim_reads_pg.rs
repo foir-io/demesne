@@ -134,7 +134,7 @@ fn relation_cols(t: &mut Tables, o: &Object, repr: &Repr) {
             t.col(table, mi.principal.col(), Kind::Id);
             t.col(table, mi.scope.col(), Kind::Id);
         }
-        Repr::Role => {}
+        Repr::Role | Repr::Conditions(_) => {}
     }
 }
 

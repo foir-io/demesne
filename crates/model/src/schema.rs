@@ -2,7 +2,7 @@ use crate::SpecExt;
 use crate::analysis::contains;
 use crate::error::{Error, refuse_any};
 use demesne_gocompat::quote;
-use demesne_syntax::{Closure, ExternalArg, Finding, Grant, Object, Perm, Relation, Repr, RoleStore, Spec, Subject, Term};
+use demesne_syntax::{Closure, ExternalArg, Finding, Grant, Object, Perm, Relation, Repr, RoleStore, Spec, Subject, Term, ViaConditions};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +185,17 @@ pub(crate) fn check_object_refs(s: &Spec, b: &mut Binder, o: &Object) {
     }
 }
 
+fn check_conditions_refs(b: &mut Binder, o: &Object, c: &ViaConditions, rc: &str) {
+    b.req_col(&o.table, &c.on, rc);
+    if b.req_table(&c.table, rc) {
+        let always = [&c.object_col, &c.term_col, &c.op_col, &c.num_col, &c.txt_col, &c.at_col];
+        let point = c.point_cols.iter().flat_map(|(lat, lng)| [lat, lng]);
+        for col in always.into_iter().chain(&c.list_col).chain(&c.key).chain(point) {
+            b.req_col(&c.table, col, rc);
+        }
+    }
+}
+
 fn check_relation_refs(b: &mut Binder, o: &Object, r: &Relation) {
     let rc = format!("object {} relation {}", o.name, quote(&r.name));
     match &r.repr {
@@ -238,6 +249,7 @@ fn check_relation_refs(b: &mut Binder, o: &Object, r: &Relation) {
             }
         }
         Repr::Object(vo) => b.req_col(&o.table, &vo.col, &rc),
+        Repr::Conditions(c) => check_conditions_refs(b, o, c, &rc),
         Repr::Grant(g) => {
             if b.req_table(&g.table, &rc) {
                 let mut cols = vec![&g.record_col, &g.kind_col, &g.principal_col, &g.access_col];
@@ -423,6 +435,7 @@ pub fn table_coverage(s: &Spec, db_tables: &[String]) -> TableCoverage {
                     add(&g.edge);
                 }
                 Repr::Grant(g) => add(&g.table),
+                Repr::Conditions(c) => add(&c.table),
                 _ => {}
             }
         }

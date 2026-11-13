@@ -200,6 +200,13 @@ impl Sql<'_> {
         }
     }
 
+    /// Returns the SQL that reads the caller's claim `key` as JSON, once per statement as [`Sql::claim`] does.
+    #[must_use]
+    pub fn claim_object(&self, key: &str) -> String {
+        let (setting, cast) = self.claims_setting();
+        format!("(SELECT (current_setting({}, true)::{cast} -> {})::jsonb)", quote_literal(setting), quote_literal(key))
+    }
+
     #[must_use]
     pub fn id_claim(&self, key: &str) -> String {
         self.claim(key) + &self.s.id_cast()
@@ -807,7 +814,7 @@ impl Sql<'_> {
         }
         conds.push(match scope.quantifier {
             Quantifier::Every => format!("({}) IS NOT TRUE", body.join(" OR ")),
-            Quantifier::None => format!("({})", body.join(" OR ")),
+            Quantifier::None => format!("({}) IS NOT FALSE", body.join(" OR ")),
         });
         Ok(vec![format!(
             "NOT EXISTS (SELECT 1 FROM {}.{}({ELEMENT}) AS {SLOT} WHERE {})",
@@ -1007,6 +1014,10 @@ impl Sql<'_> {
                 Ok(vec![self.probed(&self.object_probe(obj, vo), call)])
             }
             Repr::Grant(vg) => self.emit_grant_frags(obj, r, vg, access_for(pm.maps()), cust_claim),
+            Repr::Conditions(c) => {
+                let element = if c.key.is_some() { format!("{ELEMENT}, ") } else { String::new() };
+                Ok(vec![format!("{}.{}({}.{}, {element}{})", schema, conditions_fn(obj, r), obj.table, c.on, self.claim_object(&c.claim))])
+            }
             Repr::Role => Ok(self.rls_emit_role(obj, r)),
         }
     }
@@ -1191,6 +1202,10 @@ impl Sql<'_> {
         }
         Ok(set.into_iter().collect())
     }
+}
+
+pub(crate) fn conditions_fn(obj: &Object, r: &Relation) -> String {
+    format!("{}_{}_hold", obj.name, r.name)
 }
 
 pub(crate) fn declared_fn(table: &str, key_col: &str) -> String {

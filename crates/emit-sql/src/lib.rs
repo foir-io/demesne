@@ -5,6 +5,7 @@ mod app_surface;
 mod asynch;
 mod changelog;
 mod closure;
+mod conditions;
 mod definers;
 mod error;
 mod files;

@@ -29,6 +29,8 @@ pub struct Spec {
     pub table_schema: Option<String>,
     pub identifiers: Option<String>,
     pub changelog: Option<Changelog>,
+    /// Extensions the spec says its database has.
+    pub extensions: Vec<Extension>,
 }
 
 impl Spec {
@@ -79,6 +81,21 @@ impl Spec {
     #[must_use]
     pub fn closure_by_table(&self, table: &str) -> Option<&Closure> {
         self.closures.iter().find(|c| c.table == table)
+    }
+}
+
+/// An `extension` declaration: an extension the database has, and the schema its functions are in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Extension {
+    pub name: String,
+    pub schema: Option<String>,
+}
+
+impl Extension {
+    /// Returns the schema the extension's functions are called in, `public` when none is named.
+    #[must_use]
+    pub fn schema(&self) -> &str {
+        self.schema.as_deref().unwrap_or("public")
     }
 }
 
@@ -523,6 +540,7 @@ pub enum Repr {
     Object(ViaObject),
     MemberIn(ViaMemberIn),
     Grant(ViaGrant),
+    Conditions(ViaConditions),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -563,6 +581,28 @@ pub struct DeclaredScope {
     /// `where <column> = "<value>"`: only declared rows holding the value are counted.
     pub filter: Option<(String, String)>,
     pub body: PermNode,
+}
+
+/// `via conditions`: conditions stored for a row, each compared with a value the caller's claim carries.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ViaConditions {
+    pub table: String,
+    pub object_col: String,
+    pub term_col: String,
+    pub op_col: String,
+    pub num_col: String,
+    pub txt_col: String,
+    pub at_col: String,
+    /// The column holding a stored list of text, for `includes`.
+    pub list_col: Option<String>,
+    /// The latitude and longitude columns, for `within_km`.
+    pub point_cols: Option<(String, String)>,
+    /// `key <column>`: the conditions belong to the element a `some` has bound.
+    pub key: Option<String>,
+    /// The row column the conditions are stored against.
+    pub on: String,
+    /// The claim holding the caller's values, a JSON object keyed by term.
+    pub claim: String,
 }
 
 /// A `some` scope: one element of a row's array column, and the expression that must hold for it.

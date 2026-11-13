@@ -321,6 +321,7 @@ impl Sql<'_> {
         self.def_emit_group(&mut defs);
         self.def_emit_keyed_edges(&mut defs);
         self.def_emit_declared(&mut defs);
+        defs.add_each_once(self.conditions_definers());
         self.def_emit_cross_object(&mut defs, &virt)?;
         self.def_emit_composition(&mut defs, &virt)?;
         self.def_emit_store_manage(&mut defs, &virt)?;

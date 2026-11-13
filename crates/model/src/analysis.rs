@@ -45,6 +45,7 @@ pub fn go_type_name(r: &Repr) -> &'static str {
         Repr::Object(_) => "demesne.ViaObject",
         Repr::MemberIn(_) => "demesne.ViaMemberIn",
         Repr::Grant(_) => "demesne.ViaGrant",
+        Repr::Conditions(_) => "demesne.ViaConditions",
     }
 }
 

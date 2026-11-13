@@ -38,7 +38,7 @@ fn every_refuses_when_a_declared_row_fails_and_none_when_one_matches() {
     let every = format!(
         "NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'require' AND ({edge} OR (demesne_slot.kind = 'grant') AND (auth.doc_acl_grants(SUB, docs.id, 'read'))) IS NOT TRUE)"
     );
-    let none = format!("NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'except' AND ({edge}))");
+    let none = format!("NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'except' AND ({edge}) IS NOT FALSE)");
     assert!(using.contains(&format!("WHERE (({every}) AND ({none}))")), "{using}");
     let (unfiltered, _) = emitted(&view("some r in rules_live (every s in rule_slots(rule_id) (@slot(kind, \"edge\") and edge_slot))"));
     assert!(unfiltered.contains(&format!("NOT EXISTS (SELECT 1 FROM {ROWS} WHERE ({edge}) IS NOT TRUE)")), "{unfiltered}");

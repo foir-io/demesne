@@ -778,7 +778,11 @@ fn perm_positive(n: &PermNode) -> bool {
 }
 
 fn keyed_relation(rels: &Rels, t: &Term) -> bool {
-    rels.get(t.ident()).is_some_and(|r| matches!(&r.repr, Repr::Edge(e) if e.key.is_some()))
+    rels.get(t.ident()).is_some_and(|r| match &r.repr {
+        Repr::Edge(e) => e.key.is_some(),
+        Repr::Conditions(c) => c.key.is_some(),
+        _ => false,
+    })
 }
 
 fn slot_bound_relation(rels: &Rels, t: &Term) -> bool {
@@ -789,8 +793,11 @@ fn slot_bound_relation(rels: &Rels, t: &Term) -> bool {
     })
 }
 
-fn check_brackets(what: &str, body: &PermNode) -> Vec<String> {
+fn check_brackets(what: &str, body: &PermNode, rels: &Rels) -> Vec<String> {
     let mut errs = Vec::new();
+    if let Some(t) = conditions_admitting(body, rels) {
+        errs.push(format!("uses `{what}` in which {} would admit a caller by itself — {CONDITIONS_NARROW}", t.display()));
+    }
     if body.is_nil() || !perm_positive(body) {
         errs.push(format!("uses `{what}` whose brackets hold no positive term — a `not` inside them must be combined with `and` with a positive term"));
     }
@@ -811,7 +818,7 @@ fn check_brackets(what: &str, body: &PermNode) -> Vec<String> {
 fn check_declared_scope(some: &str, t: &Term, rels: &Rels) -> Vec<String> {
     let Some(scope) = t.declared_scope() else { return Vec::new() };
     let what = format!("{} {}", if scope.quantifier == demesne_syntax::Quantifier::Every { "every" } else { "none" }, scope.var);
-    let mut errs = check_brackets(&what, &scope.body);
+    let mut errs = check_brackets(&what, &scope.body, rels);
     for inner in scope.body.leaves() {
         if matches!(inner.builtin(), "some" | "declared") {
             errs.push(format!("nests {} inside `{what}` in `some {some}` — one element and one declared row are bound at a time", inner.display()));
@@ -833,7 +840,7 @@ fn check_some_scopes(tree: &PermNode, rels: &Rels) -> Vec<String> {
             errs.push(format!("uses keyed relation {} outside a `some` — its `key` column is matched against the element a `some` binds", quote(t.ident())));
         }
         let Some(scope) = t.some_scope() else { continue };
-        errs.extend(check_brackets(&format!("some {}", scope.var), &scope.body));
+        errs.extend(check_brackets(&format!("some {}", scope.var), &scope.body, rels));
         for inner in scope.body.leaves() {
             if inner.builtin() == "some" {
                 errs.push(format!("nests a `some` inside `some {}` — one element is bound at a time", scope.var));
@@ -918,6 +925,42 @@ fn row_term_admitting_conjunction(kids: &[PermNode]) -> Option<&Term> {
     if row_term.is_some() && !grants { row_term } else { None }
 }
 
+fn conditions_leaf<'a>(n: &'a PermNode, rels: &Rels) -> Option<&'a Term> {
+    let leaf = match n {
+        PermNode::Not(inner) => inner.as_ref(),
+        other => other,
+    };
+    leaf.term().filter(|t| rels.get(t.ident()).is_some_and(|r| matches!(r.repr, Repr::Conditions(_))))
+}
+
+fn conditions_admitting<'a>(n: &'a PermNode, rels: &Rels) -> Option<&'a Term> {
+    if let Some(t) = conditions_leaf(n, rels) {
+        return Some(t);
+    }
+    match n {
+        PermNode::Leaf(_) => None,
+        PermNode::Not(k) => conditions_admitting(k, rels),
+        PermNode::Or(kids) => kids.iter().find_map(|k| conditions_admitting(k, rels)),
+        PermNode::And(kids) => {
+            let mut narrowing = None;
+            let mut grants = false;
+            for k in kids {
+                if let Some(t) = conditions_leaf(k, rels) {
+                    narrowing = Some(t);
+                } else if let Some(t) = conditions_admitting(k, rels) {
+                    return Some(t);
+                } else {
+                    grants |= perm_positive(k) && !is_row_leaf(k);
+                }
+            }
+            narrowing.filter(|_| !grants)
+        }
+    }
+}
+
+const CONDITIONS_NARROW: &str =
+    "stored conditions hold for a row that stores none, so they only narrow another term: write the relation inside an `and`, beside a term that grants";
+
 fn check_perm_polarity(o: &Object, pm: &Perm) -> Option<Finding> {
     if !pm.tree.is_nil() && !perm_positive(&pm.tree) {
         return Some(Finding::at(
@@ -926,6 +969,12 @@ fn check_perm_polarity(o: &Object, pm: &Perm) -> Option<Finding> {
                 "permission {}.{} is not positively gated — a `not` (exclusion) must be combined with `and` with a positive grant, never used alone or as a union (`+`/`or`) branch",
                 o.name, pm.verb
             ),
+        ));
+    }
+    if let Some(t) = conditions_admitting(&pm.tree, &crate::analysis::rels_of(o)) {
+        return Some(Finding::at(
+            pm.pos.line,
+            format!("permission {}.{} uses {} where it would admit a caller by itself — {CONDITIONS_NARROW}", o.name, pm.verb, t.display()),
         ));
     }
     if let Some(t) = row_term_admitting(&pm.tree) {
