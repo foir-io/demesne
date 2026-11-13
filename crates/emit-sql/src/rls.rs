@@ -6,7 +6,7 @@ use demesne_model::analysis::{
     Rels, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
 };
 use demesne_model::closure::{self, Direction};
-use demesne_model::conditional::{mode_row_sql, row_term_sql};
+use demesne_model::conditional::{ELEMENT, mode_row_sql, row_term_sql};
 use demesne_model::topology;
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
@@ -646,8 +646,9 @@ impl Sql<'_> {
                 }
             }
             PermNode::Or(kids) => {
+                let is_some = |k: &&PermNode| k.term().is_some_and(|t| t.some_scope().is_some());
                 let mut out = Vec::new();
-                for k in kids {
+                for k in kids.iter().filter(|k| !is_some(k)).chain(kids.iter().filter(is_some)) {
                     out.extend(self.node_frags_mode(obj, pm, k, rels, cust_claim, require)?);
                 }
                 Ok(out)
@@ -739,7 +740,7 @@ impl Sql<'_> {
             "kind" => Ok(vec![format!("{} = {}", self.claim("kind"), quote_literal(t.kind_val()))]),
             "claim" if t.claim_absent() => Ok(vec![format!("{} IS NULL", self.claim(t.claim_key()))]),
             "claim" => Ok(vec![format!("{} = {}", self.claim(t.claim_key()), quote_literal(t.claim_val()))]),
-            "row" => Ok(vec![row_term_sql(t)]),
+            "row" | "element" => Ok(vec![row_term_sql(t)]),
             "within" => {
                 let col = self.s.scope_col(obj, t.within_level());
                 let claim = self.id_claim(&self.s.claim_key_for_level(t.within_level()));
@@ -753,6 +754,7 @@ impl Sql<'_> {
             }
             "holds" => self.rls_emit_holds(obj, t),
             "holds_every" => self.rls_emit_holds_every(obj, t),
+            "some" => self.rls_emit_some(obj, pm, t, rels, cust_claim),
             "" => {
                 if is_perm_key_lit(t.ident()) {
                     Err(format!("capability term {} belongs to the PDP, not RLS", quote(t.ident())))
@@ -790,6 +792,23 @@ impl Sql<'_> {
         }
         args.push(quote_literal(perm));
         Ok(vec![format!("{}.{}({})", self.s.definer_schema(), self.s.holds_perm_fn(rs), args.join(", "))])
+    }
+
+    fn rls_emit_some(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
+        let scope = t.some_scope().ok_or_else(|| format!("{} is no `some` term", t.display()))?;
+        let body = self.node_frags(obj, pm, &scope.body, rels, cust_claim)?;
+        if body.is_empty() {
+            return Err(format!("`some {}` on {}: its brackets compile to no predicate", scope.var, quote(&obj.name)));
+        }
+        let mut bound = Vec::new();
+        if let Some(prefix) = &scope.prefix {
+            bound.push(format!("starts_with({ELEMENT}, {})", quote_literal(prefix)));
+        }
+        if let Some(held) = &scope.held {
+            bound.push(format!("{ELEMENT} = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text({}::jsonb) e))", self.claim(held)));
+        }
+        bound.push(format!("({})", body.join(" OR ")));
+        Ok(vec![format!("EXISTS (SELECT 1 FROM unnest({}.{}) AS demesne_element(v) WHERE {})", obj.table, scope.col, bound.join(" AND "))])
     }
 
     pub(crate) fn holds_every_fn(&self, rs: &demesne_syntax::RoleStore, level: &str) -> String {
@@ -922,6 +941,12 @@ impl Sql<'_> {
                     base = format!("({} AND {} = {})", base, d, quote_literal(vc.discrim_val.as_deref().unwrap_or("")));
                 }
                 Ok(vec![base])
+            }
+            Repr::Edge(e) if e.key.is_some() => {
+                let claim_key = self.s.relation_claim(Some(r), cust_claim);
+                req_claim(claim_key, obj, &format!("keyed relation {}", t.ident()))?;
+                let object = e.on.as_ref().map_or(pk, |col| format!("{}.{col}", obj.table));
+                Ok(vec![format!("{}.{}({}, {}, {ELEMENT})", schema, keyed_edge_fn(obj, r), self.id_claim(claim_key), object)])
             }
             Repr::Edge(e) => {
                 req_claim(cust_claim, obj, &format!("edge relation {}", t.ident()))?;
@@ -1141,6 +1166,10 @@ impl Sql<'_> {
         }
         Ok(set.into_iter().collect())
     }
+}
+
+pub(crate) fn keyed_edge_fn(obj: &Object, r: &Relation) -> String {
+    format!("{}_{}_keyed", obj.name, r.name)
 }
 
 pub(crate) fn composition_probe(obj: &Object, vc: &ViaComposition) -> String {

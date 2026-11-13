@@ -1,4 +1,4 @@
-use demesne_syntax::{Object, Perm, PermNode, Pos, Relation, Repr, Term, TermKind, ViaGrant};
+use demesne_syntax::{Builtin, Object, Perm, PermNode, Pos, Relation, Repr, SomeScope, Term, TermKind, ViaGrant};
 use std::collections::HashMap;
 
 pub const ORDERED_TABLE_OPS: [&str; 4] = ["select", "insert", "update", "delete"];
@@ -171,11 +171,12 @@ pub fn without_composition(o: &Object) -> Object {
 fn prune_comp_leaves(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
     match n {
         PermNode::Leaf(t) => {
-            if comp.contains(&t.ident()) {
-                None
-            } else {
-                Some(n.clone())
+            if let Some(scope) = t.some_scope() {
+                let body = without_comp_branches(&scope.body, comp)?;
+                let pruned = SomeScope { body, ..scope.clone() };
+                return Some(PermNode::Leaf(Term { kind: TermKind::Builtin(Builtin::Some(Box::new(pruned))), pos: t.pos }));
             }
+            if comp.contains(&t.ident()) { None } else { Some(n.clone()) }
         }
         PermNode::Or(kids) | PermNode::And(kids) => {
             if kids.is_empty() {
@@ -191,6 +192,22 @@ fn prune_comp_leaves(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
             Some(if matches!(n, PermNode::Or(_)) { PermNode::Or(out) } else { PermNode::And(out) })
         }
         PermNode::Not(k) => prune_comp_leaves(k, comp).map(|pk| PermNode::Not(Box::new(pk))),
+    }
+}
+
+fn without_comp_branches(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
+    match n {
+        PermNode::Leaf(t) => (!comp.contains(&t.ident())).then(|| n.clone()),
+        PermNode::And(kids) => kids.iter().map(|k| without_comp_branches(k, comp)).collect::<Option<Vec<_>>>().map(PermNode::And),
+        PermNode::Not(k) => without_comp_branches(k, comp).map(|pk| PermNode::Not(Box::new(pk))),
+        PermNode::Or(kids) => {
+            let mut kept: Vec<PermNode> = kids.iter().filter_map(|k| without_comp_branches(k, comp)).collect();
+            match kept.len() {
+                0 => None,
+                1 => kept.pop(),
+                _ => Some(PermNode::Or(kept)),
+            }
+        }
     }
 }
 

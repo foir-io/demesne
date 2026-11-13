@@ -2,8 +2,8 @@ use crate::Error;
 use crate::ast::{
     Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes,
     Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm, PermNode, PermissionExport, Pos,
-    Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind,
-    Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Relation, RelationKind, Repr, Require, RoleStore, SomeScope, Spec, Subject, Template, Term,
+    TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -839,7 +839,13 @@ impl Parser {
             if cols.len() < 2 || cols.len() > 3 {
                 return Err(self.err(format!("via edge needs 2 or 3 columns, got {}", cols.len())));
             }
-            return Ok(Repr::Edge(ViaEdge { table, cols }));
+            let key = if self.accept_kw("key") { Some(self.ident()?) } else { None };
+            let on = if key.is_some() && self.accept_kw("on") { Some(self.ident()?) } else { None };
+            let filter = if key.is_some() { self.parse_where()? } else { None };
+            if key.is_some() && cols.len() != 2 {
+                return Err(self.err(format!("a keyed edge names 2 columns (principal, object), got {}", cols.len())));
+            }
+            return Ok(Repr::Edge(ViaEdge { table, cols, key, on, filter }));
         }
         if self.accept_kw("role") {
             return Ok(Repr::Role);
@@ -1162,6 +1168,9 @@ impl Parser {
             let builtin = if b == "row" { self.parse_term_row()? } else { self.parse_term_builtin(b)? };
             return Ok(Term { kind: TermKind::Builtin(builtin), pos });
         }
+        if self.is_kw("some") && self.toks.get(self.i + 2).is_some_and(|t| t.kind == Tok::Ident && t.lit == "in") {
+            return Ok(Term { kind: TermKind::Builtin(self.parse_some()?), pos });
+        }
         if self.is_kw("mode") {
             self.advance();
             let col = self.ident()?;
@@ -1191,6 +1200,24 @@ impl Parser {
             walk_verb = Some(self.ident()?);
         }
         Ok(Term { kind: TermKind::Ref { ident, walk_verb }, pos })
+    }
+
+    fn parse_some(&mut self) -> PResult<Builtin> {
+        self.advance();
+        let var = self.ident()?;
+        self.expect_kw("in")?;
+        let col = self.ident()?;
+        let prefix = if self.accept_kw("prefix") { Some(self.string()?) } else { None };
+        let held = if self.accept_kw("held") { Some(self.ident()?) } else { None };
+        if self.depth == MAX_NESTING {
+            return Err(self.err(format!("parentheses nest more than {MAX_NESTING} deep")));
+        }
+        self.expect(Tok::LParen)?;
+        self.depth += 1;
+        let body = self.parse_perm_union()?;
+        self.depth -= 1;
+        self.expect(Tok::RParen)?;
+        Ok(Builtin::Some(Box::new(SomeScope { var, col, prefix, held, body })))
     }
 
     fn parse_app_scope_excludes(&mut self) -> PResult<Vec<String>> {
@@ -1231,6 +1258,10 @@ impl Parser {
                 let val = self.string()?;
                 self.expect(Tok::RParen)?;
                 Builtin::Claim { key, val }
+            }
+            "element" => {
+                self.expect_kw("prefix")?;
+                Builtin::ElementPrefix(self.string()?)
             }
             "self" => Builtin::SelfCol(self.paren_ident()?),
             "within" => {

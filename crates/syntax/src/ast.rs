@@ -536,6 +536,24 @@ pub struct ViaColumn {
 pub struct ViaEdge {
     pub table: String,
     pub cols: Vec<String>,
+    /// `key <column>`: the edge column that must equal the element a `some` has bound.
+    pub key: Option<String>,
+    /// `on <column>` on a keyed edge: the row column the edge's object must equal, the primary key when absent.
+    pub on: Option<String>,
+    /// `where <column> = "<value>"` on a keyed edge: a literal the edge must also hold.
+    pub filter: Option<(String, String)>,
+}
+
+/// A `some` scope: one element of a row's array column, and the expression that must hold for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SomeScope {
+    pub var: String,
+    pub col: String,
+    /// `prefix "<text>"`: only elements that start with the text are bound.
+    pub prefix: Option<String>,
+    /// `held <claim>`: only elements the claim's JSON array also holds are bound.
+    pub held: Option<String>,
+    pub body: PermNode,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -687,7 +705,7 @@ impl Perm {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermNode {
     Leaf(Term),
     Or(Vec<PermNode>),
@@ -722,6 +740,19 @@ impl PermNode {
     pub fn leaves(&self) -> Vec<&Term> {
         let mut out = Vec::new();
         self.collect_leaves(&mut out);
+        out
+    }
+
+    /// Returns every leaf term, and the leaves inside each `some` term's brackets after it.
+    #[must_use]
+    pub fn leaves_deep(&self) -> Vec<&Term> {
+        let mut out = Vec::new();
+        for t in self.leaves() {
+            out.push(t);
+            if let Some(scope) = t.some_scope() {
+                out.extend(scope.body.leaves());
+            }
+        }
         out
     }
 
@@ -839,7 +870,7 @@ pub struct Guard {
     pub pos: Pos,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
     pub kind: TermKind,
     pub pos: Pos,
@@ -872,6 +903,10 @@ pub enum Builtin {
         args: Vec<ExternalArg>,
     },
     Holds(String),
+    /// `some <name> in <column> … ( <expression> )`.
+    Some(Box<SomeScope>),
+    /// `@element prefix "<text>"`: the element a `some` has bound starts with the text.
+    ElementPrefix(String),
     /// `@holds(<perm> every <column> at <level>)`: the permission is held at every value an array column names at a level.
     HoldsEvery {
         perm: String,
@@ -904,6 +939,12 @@ impl Builtin {
             Builtin::Within { level, nullable: true } => format!("@within({level} nullable)"),
             Builtin::Within { level, nullable: false } => format!("@within({level})"),
             Builtin::Holds(p) => format!("@holds({p})"),
+            Builtin::Some(scope) => {
+                let prefix = scope.prefix.as_ref().map(|p| format!(" prefix {}", quote(p))).unwrap_or_default();
+                let held = scope.held.as_ref().map(|h| format!(" held {h}")).unwrap_or_default();
+                format!("some {} in {}{prefix}{held} ({})", scope.var, scope.col, scope.body.display())
+            }
+            Builtin::ElementPrefix(p) => format!("@element prefix {}", quote(p)),
             Builtin::HoldsEvery { perm, col, level } => format!("@holds({perm} every {col} at {level})"),
             Builtin::External { func, .. } => format!("@external({func})"),
             Builtin::Row { col, val } => format!("@row({col}, {})", quote(val)),
@@ -925,6 +966,8 @@ impl Builtin {
             Builtin::Within { .. } | Builtin::WithinExact(_) => "within",
             Builtin::External { .. } => "external",
             Builtin::Holds(_) => "holds",
+            Builtin::Some(_) => "some",
+            Builtin::ElementPrefix(_) => "element",
             Builtin::HoldsEvery { .. } => "holds_every",
             Builtin::Row { .. } | Builtin::RowNull(_) => "row",
             Builtin::Other(name) => name,
@@ -1092,6 +1135,24 @@ impl Term {
         match self.builtin_ref() {
             Some(Builtin::Holds(p)) => p,
             _ => "",
+        }
+    }
+
+    /// Returns the scope of a `some` term.
+    #[must_use]
+    pub fn some_scope(&self) -> Option<&SomeScope> {
+        match self.builtin_ref() {
+            Some(Builtin::Some(scope)) => Some(scope),
+            _ => None,
+        }
+    }
+
+    /// Returns the text of `@element prefix "<text>"`.
+    #[must_use]
+    pub fn element_prefix(&self) -> Option<&str> {
+        match self.builtin_ref() {
+            Some(Builtin::ElementPrefix(p)) => Some(p),
+            _ => None,
         }
     }
 

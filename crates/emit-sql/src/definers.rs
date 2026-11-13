@@ -1,7 +1,7 @@
 use crate::Sql;
 use crate::error::Error;
 use crate::genfn::{DefinerArm, Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
-use crate::rls::{Virtual, owner_col_present_pub, platform_role_fn};
+use crate::rls::{Virtual, keyed_edge_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -319,6 +319,7 @@ impl Sql<'_> {
         self.def_emit_structural_accessors(&mut defs)?;
         self.def_emit_closure(&mut defs);
         self.def_emit_group(&mut defs);
+        self.def_emit_keyed_edges(&mut defs);
         self.def_emit_cross_object(&mut defs, &virt)?;
         self.def_emit_composition(&mut defs, &virt)?;
         self.def_emit_store_manage(&mut defs, &virt)?;
@@ -506,14 +507,14 @@ impl Sql<'_> {
     }
 
     fn def_emit_holds_perm(&self, defs: &mut Definers) -> R<()> {
-        for (obj, pm, t) in self.s.perm_terms() {
-            if t.builtin() == "holds" {
+        for (obj, pm) in self.s.objects.iter().flat_map(|o| o.perms.iter().map(move |pm| (o, pm))) {
+            for t in pm.tree.leaves_deep().into_iter().filter(|t| t.builtin() == "holds") {
                 self.def_add_holds_perm(defs, obj, pm, t)?;
             }
         }
         for obj in &self.s.objects {
             let trees = obj.perms.iter().map(|pm| &pm.tree).chain(obj.requires.iter().map(|rq| &rq.tree)).chain(obj.admits.iter().map(|a| &a.tree));
-            for t in trees.flat_map(PermNode::leaves).filter(|t| t.holds_every().is_some()) {
+            for t in trees.flat_map(PermNode::leaves_deep).filter(|t| t.holds_every().is_some()) {
                 self.def_add_holds_every(defs, obj, t)?;
             }
         }
@@ -899,6 +900,25 @@ impl Sql<'_> {
             });
         }
         out
+    }
+
+    fn def_emit_keyed_edges(&self, defs: &mut Definers) {
+        let id_t = self.s.id_type();
+        for (obj, r) in self.s.relations() {
+            let Repr::Edge(e) = &r.repr else { continue };
+            let (Some(key), [principal, object]) = (&e.key, e.cols.as_slice()) else { continue };
+            let mut conds = vec![format!("{principal} = p_principal"), format!("{object} = p_object"), format!("{key} = p_key")];
+            if let Some((col, val)) = &e.filter {
+                conds.push(format!("{col} = {}", quote_literal(val)));
+            }
+            defs.add_once(GenFn {
+                name: keyed_edge_fn(obj, r),
+                sig: format!("p_principal {id_t}, p_object {id_t}, p_key text"),
+                strict: true,
+                body: grant_edge_exists(&e.table, &conds),
+                ..Default::default()
+            });
+        }
     }
 
     fn def_emit_group(&self, defs: &mut Definers) {

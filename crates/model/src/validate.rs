@@ -17,8 +17,8 @@ use demesne_syntax::{
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 const KNOWN_LAYERS: [&str; 4] = ["rls", "pdp", "kernel", "check"];
-const KNOWN_BUILTINS: [&str; 13] =
-    ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "holds_every", "claim", "row"];
+const KNOWN_BUILTINS: [&str; 15] =
+    ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "holds_every", "claim", "row", "some", "element"];
 const EXPORT_PARAMETER_TYPES: [&str; 12] =
     ["text", "uuid", "smallint", "integer", "bigint", "boolean", "json", "jsonb", "numeric", "timestamptz", "timestamp", "date"];
 
@@ -760,6 +760,48 @@ fn perm_positive(n: &PermNode) -> bool {
     }
 }
 
+fn keyed_relation(rels: &Rels, t: &Term) -> bool {
+    rels.get(t.ident()).is_some_and(|r| matches!(&r.repr, Repr::Edge(e) if e.key.is_some()))
+}
+
+fn check_some_scopes(tree: &PermNode, rels: &Rels) -> Vec<String> {
+    let mut errs = Vec::new();
+    for t in tree.leaves() {
+        if t.builtin() == "element" {
+            errs.push(format!("uses {} outside a `some` — it tests the element a `some` has bound", t.display()));
+        } else if keyed_relation(rels, t) {
+            errs.push(format!("uses keyed relation {} outside a `some` — its `key` column is matched against the element a `some` binds", quote(t.ident())));
+        }
+        let Some(scope) = t.some_scope() else { continue };
+        if scope.body.is_nil() || !perm_positive(&scope.body) {
+            errs.push(format!(
+                "uses `some {}` whose brackets hold no positive term — a `not` inside them must be combined with `and` with a positive term",
+                scope.var
+            ));
+        }
+        if let Some(row) = row_term_admitting(&scope.body) {
+            errs.push(format!(
+                "uses `some {}` in which {} would admit a caller by itself — a test of the row or the element only narrows another term",
+                scope.var,
+                row.display()
+            ));
+        }
+        for inner in scope.body.leaves() {
+            let b = inner.builtin();
+            if b == "some" {
+                errs.push(format!("nests a `some` inside `some {}` — one element is bound at a time", scope.var));
+            } else if !inner.grant_ref().is_empty() || matches!(b, "scoped" | "public" | "open" | "self") {
+                errs.push(format!(
+                    "uses {} inside `some {}` — a term that is placed outside the object's containment cannot be bound to an element",
+                    inner.display(),
+                    scope.var
+                ));
+            }
+        }
+    }
+    errs
+}
+
 fn check_holds_every(s: &Spec, o: &Object, t: &Term) -> Vec<String> {
     let Some((_, _, level)) = t.holds_every() else { return Vec::new() };
     let Some(lvl) = s.level_by_name(level).filter(|l| !l.is_virtual) else {
@@ -1023,7 +1065,11 @@ fn check_perm_terms(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<Finding
     let mut errs = Vec::new();
     let has_pred = has_rls || has_check;
     let at = |what: &str| Finding::at(pm.pos.line, format!("permission {}.{} {what}", o.name, pm.verb));
-    for t in pm.tree.leaves() {
+    errs.extend(check_some_scopes(&pm.tree, rels).iter().map(|e| at(e)));
+    for t in pm.tree.leaves_deep() {
+        if matches!(t.builtin(), "some" | "element") {
+            continue;
+        }
         if !t.grant_ref().is_empty() {
             match s.grant_by_name(t.grant_ref()) {
                 None => errs.push(at(&format!("references unknown grant {} (via grant)", quote(t.grant_ref())))),
@@ -1254,8 +1300,12 @@ fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<F
     if !rq.tree.is_nil() && !require_positive(&rq.tree) {
         errs.push(at("is not positively gated — a `not` must be combined with `and` with a positive term".into()));
     }
-    for t in rq.tree.leaves() {
+    errs.extend(check_some_scopes(&rq.tree, rels).into_iter().map(&at));
+    for t in rq.tree.leaves_deep() {
         let b = t.builtin();
+        if matches!(b, "some" | "element") {
+            continue;
+        }
         errs.extend(check_holds_every(s, o, t).into_iter().map(&at));
         if b == "within" && s.level_by_name(t.within_level()).is_none() {
             errs.push(at(format!("uses @within({}) which is not a topology level", quote(t.within_level()))));

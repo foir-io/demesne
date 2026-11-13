@@ -80,6 +80,9 @@ pub trait ConditionalExt: SpecExt {
     }
 
     fn conditional_term(&self, t: &Term, rels: &Rels) -> Option<ConditionalAdmission> {
+        if let Some(scope) = t.some_scope() {
+            return Some(ConditionalAdmission { source: "some".into(), row_cond: format!("cardinality({}) > 0", scope.col), ..Default::default() });
+        }
         if t.builtin() == "claim" {
             return Some(ConditionalAdmission {
                 source: "claim".into(),

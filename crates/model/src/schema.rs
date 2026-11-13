@@ -195,8 +195,11 @@ fn check_relation_refs(b: &mut Binder, o: &Object, r: &Relation) {
             }
         }
         Repr::Edge(e) => {
+            if let Some(on) = &e.on {
+                b.req_col(&o.table, on, &rc);
+            }
             if b.req_table(&e.table, &rc) {
-                for c in &e.cols {
+                for c in e.cols.iter().chain(&e.key).chain(e.filter.as_ref().map(|(col, _)| col)) {
                     b.req_col(&e.table, c, &rc);
                 }
             }
