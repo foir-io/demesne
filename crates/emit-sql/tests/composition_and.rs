@@ -25,6 +25,7 @@ fn the_parent_is_judged_without_any_branch_that_needs_a_composition() {
         ("owner + (@kind(\"auditor\") and not parent)", "owner_id = SUB"),
         ("owner + (@kind(\"auditor\") and (parent + @kind(\"clerk\")))", "owner_id = SUB OR (KIND = 'auditor') AND (KIND = 'clerk'"),
         ("(owner + parent) and @kind(\"auditor\")", "(owner_id = SUB) AND (KIND = 'auditor'"),
+        ("owner + (@kind(\"auditor\") and not (parent and @kind(\"clerk\")))", "owner_id = SUB OR (KIND = 'auditor') AND (((KIND = 'clerk')) IS NOT TRUE"),
     ] {
         assert_eq!(cascade(view), parent_judged_by, "{view}");
     }

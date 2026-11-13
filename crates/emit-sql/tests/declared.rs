@@ -90,11 +90,13 @@ fn the_cascade_judges_an_ancestor_without_the_branches_that_need_a_composition()
     let arm = &defs.iter().find(|d| d.name == "doc_composition_borrow").expect("the cascade").arms[0].body;
     assert!(arm.contains("doc_edge_slot_keyed(") && arm.contains(ROWS), "the ancestor still admits by its declared edges:\n{arm}");
     assert!(!arm.contains("doc_composition_borrow(") && !arm.contains("demesne_slot.kind = 'borrow'"), "{arm}");
-    let (_, only) = emitted(&view("owner + some r in rules_live (named and none s in rule_slots(rule_id) (@slot(kind, \"borrow\") and borrow))"));
-    let arm = &only.iter().find(|d| d.name == "doc_composition_borrow").expect("the cascade").arms[0].body;
+    let (_, barred) = emitted(&view(
+        "owner + some r in rules_live (named and none s in rule_slots(rule_id) where role = \"except\" ((@slot(kind, \"borrow\") and borrow) + (@slot(kind, \"edge\") and edge_slot)))",
+    ));
+    let arm = &barred.iter().find(|d| d.name == "doc_composition_borrow").expect("the cascade").arms[0].body;
     assert!(
-        arm.contains("doc_named_keyed(") && !arm.contains("rule_slots_declared"),
-        "a `none` that can bar only through a composition bars nothing at the ancestor:\n{arm}"
+        arm.contains(&format!("NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'except' AND ((demesne_slot.kind = 'borrow') OR (demesne_slot.kind = 'edge') AND (auth.doc_edge_slot_keyed(")),
+        "at the ancestor a declared exception that needs a composition bars by being declared, since one hop cannot tell whether it matches:\n{arm}"
     );
     let (_, every) = emitted(&view("owner + some r in rules_live (named and every s in rule_slots(rule_id) (@slot(kind, \"borrow\") and borrow))"));
     let arm = &every.iter().find(|d| d.name == "doc_composition_borrow").expect("the cascade").arms[0].body;

@@ -13,7 +13,7 @@ fn spec() -> String {
     )
 }
 
-const SLOTS: [(&str, &str, &str, &str, &str); 9] = [
+const SLOTS: [(&str, &str, &str, &str, &str); 11] = [
     ("read.one", "1", "edge", "", "require"),
     ("read.two", "1", "edge", "", "require"),
     ("read.two", "2", "edge", "", "require"),
@@ -23,8 +23,10 @@ const SLOTS: [(&str, &str, &str, &str, &str); 9] = [
     ("read.team", "1", "borrow", "team", "require"),
     ("read.both", "1", "edge", "", "require"),
     ("read.both", "2", "grant", "", "require"),
+    ("read.xb", "1", "edge", "", "require"),
+    ("read.xb", "2", "borrow", "team", "except"),
 ];
-const DOCS: [(&str, &[&str]); 10] = [
+const DOCS: [(&str, &[&str]); 12] = [
     ("d_none", &[]),
     ("d_free", &["read.free"]),
     ("d_one", &["read.one"]),
@@ -35,8 +37,10 @@ const DOCS: [(&str, &[&str]); 10] = [
     ("d_both", &["read.both"]),
     ("d_chain", &["read.team"]),
     ("d_wrong_field", &["read.team"]),
+    ("d_xb", &["read.xb"]),
+    ("d_under_xb", &["read.team"]),
 ];
-const EDGES: [(&str, &str, &str, &str); 9] = [
+const EDGES: [(&str, &str, &str, &str); 10] = [
     ("bob", "d_one", "read.one", "1"),
     ("bob", "d_two", "read.two", "1"),
     ("bob", "d_two", "read.two", "2"),
@@ -46,11 +50,17 @@ const EDGES: [(&str, &str, &str, &str); 9] = [
     ("cat", "d_bar", "read.bar", "2"),
     ("bob", "d_both", "read.both", "1"),
     ("cat", "d_both", "read.both", "1"),
+    ("bob", "d_xb", "read.xb", "1"),
 ];
 const GRANTS: [(&str, &str); 3] = [("bob", "d_grant"), ("cat", "d_both"), ("dan", "d_both")];
-const HOPS: [(&str, &str, &str); 4] =
-    [("d_team", "d_one", "team"), ("d_team", "d_two", "project"), ("d_chain", "d_team", "team"), ("d_wrong_field", "d_one", "project")];
-const ALL: [&str; 7] = ["read.free", "read.one", "read.two", "read.bar", "read.grant", "read.team", "read.both"];
+const HOPS: [(&str, &str, &str); 5] = [
+    ("d_team", "d_one", "team"),
+    ("d_team", "d_two", "project"),
+    ("d_chain", "d_team", "team"),
+    ("d_wrong_field", "d_one", "project"),
+    ("d_under_xb", "d_xb", "team"),
+];
+const ALL: [&str; 8] = ["read.free", "read.one", "read.two", "read.bar", "read.grant", "read.team", "read.both", "read.xb"];
 
 fn install(db: &mut Client) {
     let s = demesne_syntax::parse(&spec()).expect("the spec parses");
@@ -98,11 +108,12 @@ struct Caller<'a> {
     held: &'a [&'a str],
 }
 
-fn slot_matches(c: Caller, doc: &str, (rule, slot, kind, param, _): &Slot, hop: bool) -> bool {
+fn slot_matches(c: Caller, doc: &str, (rule, slot, kind, param, role): &Slot, hop: bool) -> bool {
     match *kind {
         "edge" => EDGES.contains(&(c.who, doc, rule, slot)),
         "grant" => GRANTS.contains(&(c.who, doc)),
-        "borrow" => hop && HOPS.iter().any(|(from, to, field)| *from == doc && field == param && reads(c, to, false)),
+        "borrow" if hop => HOPS.iter().any(|(from, to, field)| *from == doc && field == param && reads(c, to, false)),
+        "borrow" => *role == "except",
         _ => false,
     }
 }
@@ -166,6 +177,8 @@ fn every_declared_row_must_match_and_no_excepted_one_may() {
         ("bob", "d_team", true, "a borrow through the declared field to a row the caller reads"),
         ("cat", "d_team", false, "a hop exists only through another field"),
         ("bob", "d_wrong_field", false, "a hop to a row the caller reads, through a field the slot does not declare"),
+        ("bob", "d_xb", true, "the required edge, and an excepted borrow that reaches nothing"),
+        ("bob", "d_under_xb", false, "its ancestor declares an exception one hop cannot rule out, so the ancestor is judged barred"),
         ("bob", "d_chain", false, "the ancestor admits only through its own borrow, which one hop does not follow"),
     ] {
         assert_eq!(visible(&mut db, who, &ALL).contains(doc), want, "{who} on {doc}: {why}");

@@ -178,35 +178,67 @@ fn rebuilt(t: &Term, b: Builtin) -> Pruned {
     Pruned::Kept(PermNode::Leaf(Term { kind: TermKind::Builtin(b), pos: t.pos }))
 }
 
-fn pruned_leaf(t: &Term, comp: &[&str]) -> Pruned {
-    if comp.contains(&t.ident()) {
-        return Pruned::Never;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bound {
+    AtMost,
+    AtLeast,
+}
+
+impl Bound {
+    fn unknown(self) -> Pruned {
+        match self {
+            Bound::AtMost => Pruned::Never,
+            Bound::AtLeast => Pruned::Always,
+        }
     }
-    if let Some(scope) = t.some_scope() {
-        return match pruned_branches(&scope.body, comp) {
-            Pruned::Kept(body) => rebuilt(t, Builtin::Some(Box::new(SomeScope { body, ..scope.clone() }))),
-            Pruned::Never | Pruned::Always => Pruned::Never,
-        };
-    }
-    let Some(scope) = t.declared_scope() else { return Pruned::Kept(PermNode::Leaf(t.clone())) };
-    match (pruned_branches(&scope.body, comp), scope.quantifier) {
-        (Pruned::Kept(body), _) => rebuilt(t, Builtin::Declared(Box::new(DeclaredScope { body, ..scope.clone() }))),
-        (Pruned::Never, Quantifier::None) => Pruned::Always,
-        (Pruned::Never | Pruned::Always, Quantifier::Every) | (Pruned::Always, Quantifier::None) => Pruned::Never,
+
+    fn flipped(self) -> Bound {
+        match self {
+            Bound::AtMost => Bound::AtLeast,
+            Bound::AtLeast => Bound::AtMost,
+        }
     }
 }
 
-fn pruned_branches(n: &PermNode, comp: &[&str]) -> Pruned {
+fn pruned_leaf(t: &Term, comp: &[&str], bound: Bound) -> Pruned {
+    if comp.contains(&t.ident()) {
+        return bound.unknown();
+    }
+    if let Some(scope) = t.some_scope() {
+        return match pruned_branches(&scope.body, comp, bound) {
+            Pruned::Kept(body) => rebuilt(t, Builtin::Some(Box::new(SomeScope { body, ..scope.clone() }))),
+            Pruned::Never => Pruned::Never,
+            Pruned::Always => bound.unknown(),
+        };
+    }
+    let Some(scope) = t.declared_scope() else { return Pruned::Kept(PermNode::Leaf(t.clone())) };
+    let rows_decide = |scope: &DeclaredScope, body: PermNode| rebuilt(t, Builtin::Declared(Box::new(DeclaredScope { body, ..scope.clone() })));
+    match scope.quantifier {
+        Quantifier::Every => match pruned_branches(&scope.body, comp, bound) {
+            Pruned::Kept(body) => rows_decide(scope, body),
+            Pruned::Always => Pruned::Always,
+            Pruned::Never => bound.unknown(),
+        },
+        Quantifier::None => match pruned_branches(&scope.body, comp, bound.flipped()) {
+            Pruned::Kept(body) => rows_decide(scope, body),
+            Pruned::Never => Pruned::Always,
+            Pruned::Always => bound.unknown(),
+        },
+    }
+}
+
+fn pruned_branches(n: &PermNode, comp: &[&str], bound: Bound) -> Pruned {
     match n {
-        PermNode::Leaf(t) => pruned_leaf(t, comp),
-        PermNode::Not(k) => match pruned_branches(k, comp) {
+        PermNode::Leaf(t) => pruned_leaf(t, comp, bound),
+        PermNode::Not(k) => match pruned_branches(k, comp, bound.flipped()) {
             Pruned::Kept(pk) => Pruned::Kept(PermNode::Not(Box::new(pk))),
-            Pruned::Never | Pruned::Always => Pruned::Never,
+            Pruned::Never => Pruned::Always,
+            Pruned::Always => Pruned::Never,
         },
         PermNode::And(kids) => {
             let mut kept = Vec::new();
             for k in kids {
-                match pruned_branches(k, comp) {
+                match pruned_branches(k, comp, bound) {
                     Pruned::Never => return Pruned::Never,
                     Pruned::Always => {}
                     Pruned::Kept(pk) => kept.push(pk),
@@ -217,7 +249,7 @@ fn pruned_branches(n: &PermNode, comp: &[&str]) -> Pruned {
         PermNode::Or(kids) => {
             let mut kept = Vec::new();
             for k in kids {
-                match pruned_branches(k, comp) {
+                match pruned_branches(k, comp, bound) {
                     Pruned::Never => {}
                     Pruned::Always => return Pruned::Always,
                     Pruned::Kept(pk) => kept.push(pk),
@@ -233,7 +265,7 @@ fn pruned_branches(n: &PermNode, comp: &[&str]) -> Pruned {
 }
 
 fn without_comp_branches(n: &PermNode, comp: &[&str]) -> Option<PermNode> {
-    match pruned_branches(n, comp) {
+    match pruned_branches(n, comp, Bound::AtMost) {
         Pruned::Kept(body) => Some(body),
         Pruned::Never | Pruned::Always => None,
     }
