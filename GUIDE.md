@@ -1002,6 +1002,33 @@ in the spec but kept as separate physical stores, never one generic tuple table.
 
 ---
 
+## A changelog the application writes
+
+`via grant ... tracked`, `track owner` and `track visibility` keep a changelog
+of access changes in `<definers>._authz_changelog`. By default the generated
+triggers write each row and send it with `NOTIFY`. An application that writes
+its own events in the writer's transaction, through an outbox for example, can
+take that over:
+
+```demesne
+changelog checked
+```
+
+The triggers on the tracked tables then write nothing and send nothing. They
+become deferred constraint triggers that run at commit and refuse the
+transaction, with `check_violation` and the constraint
+`<table>_changelog_written`, unless the changelog holds a row for each change,
+written by the same transaction. The row a change needs is the one the default
+trigger would have written: the same `rel`, `resource_id`, `principal_kind`,
+`principal_id` and `op`. A new owner needs a `revoke` for the old owner and a
+`grant` for the new one, and a visibility change needs a `visibility` row with
+empty principal columns.
+
+The changelog table gains a `txid` column, which defaults to the writing
+transaction, and that is how a row is matched to its change. The application's
+role needs INSERT on the table. Order within the transaction doesn't matter,
+since the check runs at commit.
+
 ## The runtime glue
 
 Enforcement lives in the database, but your app still needs a little runtime: to

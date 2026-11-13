@@ -1,9 +1,9 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Builtin, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant,
-    GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset, ProcEntry,
-    Procedures, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure,
-    ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes,
+    Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset,
+    ProcEntry, Procedures, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned,
+    ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -91,6 +91,7 @@ pub(crate) enum Kind {
     Identifiers,
     External,
     Closure,
+    Changelog,
 }
 
 impl Kind {
@@ -112,6 +113,7 @@ impl Kind {
             "identifiers" => Kind::Identifiers,
             "external" => Kind::External,
             "closure" => Kind::Closure,
+            "changelog" => Kind::Changelog,
             _ => return None,
         })
     }
@@ -134,11 +136,12 @@ impl Kind {
             Kind::Identifiers => "identifiers",
             Kind::External => "external",
             Kind::Closure => "closure",
+            Kind::Changelog => "changelog",
         }
     }
 
     pub(crate) fn single(self) -> bool {
-        matches!(self, Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers)
+        matches!(self, Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers | Kind::Changelog)
     }
 
     fn declared(self, s: &Spec) -> usize {
@@ -154,7 +157,7 @@ impl Kind {
             Kind::Grant => s.grants.len(),
             Kind::External => s.externals.len(),
             Kind::Closure => s.closures.len(),
-            Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers => 0,
+            Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers | Kind::Changelog => 0,
         }
     }
 }
@@ -302,6 +305,14 @@ impl Parser {
             }
             "external" => self.parse_external(s)?,
             "closure" => s.closures.push(self.parse_closure()?),
+            "changelog" => {
+                self.advance();
+                self.expect_kw("checked")?;
+                if s.changelog.is_some() {
+                    return Err(self.err("duplicate changelog declaration"));
+                }
+                s.changelog = Some(Changelog::Checked);
+            }
             other => return Err(self.err(format!("unknown declaration {}", quote(other)))),
         }
         Ok(())

@@ -28,6 +28,7 @@ pub struct Spec {
     pub definer_schema: Option<String>,
     pub table_schema: Option<String>,
     pub identifiers: Option<String>,
+    pub changelog: Option<Changelog>,
 }
 
 impl Spec {
@@ -79,6 +80,13 @@ impl Spec {
     pub fn closure_by_table(&self, table: &str) -> Option<&Closure> {
         self.closures.iter().find(|c| c.table == table)
     }
+}
+
+/// Who writes the rows of the access changelog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Changelog {
+    /// `changelog checked`: the application writes each row, and a commit that changes a tracked source without its row is refused.
+    Checked,
 }
 
 /// A `closure` declaration: a transitive-closure table, its edge, and how it is maintained.

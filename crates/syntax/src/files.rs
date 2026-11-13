@@ -146,12 +146,14 @@ fn merge(into: &mut Spec, fragment: Fragment) -> Result<(), Error> {
         definer_schema,
         table_schema,
         identifiers,
+        changelog,
     } = from;
     into.topology = topology.or(into.topology.take());
     into.claims = claims.or(into.claims.take());
     into.definer_schema = definer_schema.or(into.definer_schema.take());
     into.table_schema = table_schema.or(into.table_schema.take());
     into.identifiers = identifiers.or(into.identifiers.take());
+    into.changelog = changelog.or(into.changelog.take());
     let marked = |kind: Kind| -> Vec<Replace> { replaces.iter().filter(|r| r.kind == kind).copied().collect() };
     let external_replaces = marked(Kind::External);
     for (i, e) in externals.iter().enumerate() {
@@ -201,6 +203,7 @@ fn single_declared(s: &Spec, kind: Kind) -> bool {
         Kind::Definers => s.definer_schema.is_some(),
         Kind::Tables => s.table_schema.is_some(),
         Kind::Identifiers => s.identifiers.is_some(),
+        Kind::Changelog => s.changelog.is_some(),
         _ => false,
     }
 }
@@ -211,6 +214,7 @@ fn duplicate_single(kind: Kind) -> &'static str {
         Kind::Claims => "duplicate claims block",
         Kind::Definers => "duplicate definers block",
         Kind::Tables => "duplicate tables block",
+        Kind::Changelog => "duplicate changelog declaration",
         _ => "duplicate identifiers declaration",
     }
 }

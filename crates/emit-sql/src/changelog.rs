@@ -1,9 +1,25 @@
 use crate::Sql;
 use demesne_model::SpecExt;
 use demesne_runtime::quote_literal;
-use demesne_syntax::Repr;
+use demesne_syntax::{Changelog, Repr};
 use std::collections::HashSet;
 use std::fmt::Write as _;
+
+fn written_check(changelog: &str, table: &str, indent: &str, event: [&str; 5]) -> String {
+    let [rel, resource, kind, principal, op] = event;
+    format!(
+        "{indent}IF NOT EXISTS (SELECT 1 FROM {changelog} WHERE txid = pg_current_xact_id() AND rel = {rel} AND resource_id = ({resource})::text AND principal_kind = {kind} AND principal_id = ({principal})::text AND op = {op}) THEN\n{indent}  RAISE EXCEPTION {} USING ERRCODE = 'check_violation', CONSTRAINT = {}, TABLE = {};\n{indent}END IF;\n",
+        quote_literal(&format!("a change to {table} was committed without its row in the access changelog")),
+        quote_literal(&format!("{table}_changelog_written")),
+        quote_literal(table)
+    )
+}
+
+fn checking_function(name: &str, body: &str) -> String {
+    format!(
+        "CREATE OR REPLACE FUNCTION {name}()\nRETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = pg_catalog, public\nAS $$\nBEGIN\n{body}  RETURN NULL;\nEND;\n$$;"
+    )
+}
 
 pub const CHANGELOG_CHANNEL: &str = "demesne_authz_changelog";
 
@@ -21,6 +37,7 @@ pub struct ChangelogTrigger {
     pub kind_col: String,
     pub principal_col: String,
     pub discrim_col: String,
+    pub checked: bool,
 }
 
 impl ChangelogTrigger {
@@ -35,8 +52,21 @@ impl ChangelogTrigger {
         quote_literal(&self.table)
     }
 
+    fn checking_sql(&self) -> String {
+        let event = |row: &str, op: &str| {
+            let (rel, rc, kc, pc) =
+                (self.rel_expr(row), format!("{row}.{}", self.record_col), format!("{row}.{}", self.kind_col), format!("{row}.{}", self.principal_col));
+            written_check(&self.changelog, &self.table, "    ", [&rel, &rc, &kc, &pc, op])
+        };
+        let body = format!("  IF (TG_OP = 'INSERT') THEN\n{}  ELSIF (TG_OP = 'DELETE') THEN\n{}  END IF;\n", event("NEW", "'grant'"), event("OLD", "'revoke'"));
+        checking_function(&self.fn_name(), &body)
+    }
+
     #[must_use]
     pub fn function_sql(&self) -> String {
+        if self.checked {
+            return self.checking_sql();
+        }
         format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
@@ -74,6 +104,13 @@ $$;",
     pub fn trigger_sql(&self) -> String {
         let name = format!("{}_changelog", self.table);
         let ts = or_default(&self.table_schema, "public");
+        if self.checked {
+            return format!(
+                "DROP TRIGGER IF EXISTS {name} ON {ts}.{t};\nCREATE CONSTRAINT TRIGGER {name} AFTER INSERT OR DELETE ON {ts}.{t} DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {f}();\n",
+                t = self.table,
+                f = self.fn_name()
+            );
+        }
         format!(
             "DROP TRIGGER IF EXISTS {name} ON {ts}.{t};\nCREATE TRIGGER {name} AFTER INSERT OR DELETE ON {ts}.{t} FOR EACH ROW EXECUTE FUNCTION {f}();\n",
             t = self.table,
@@ -93,6 +130,7 @@ pub struct ObjectChangelogTrigger {
     pub owner_id_col: String,
     pub owner_kind_col: String,
     pub mode_col: String,
+    pub checked: bool,
 }
 
 impl ObjectChangelogTrigger {
@@ -112,8 +150,37 @@ impl ObjectChangelogTrigger {
         cols
     }
 
+    fn checking_sql(&self) -> String {
+        let rel = quote_literal(&self.rel);
+        let resource = format!("NEW.{}", self.pk);
+        let check =
+            |indent: &str, kind: &str, principal: &str, op: &str| written_check(&self.changelog, &self.table, indent, [&rel, &resource, kind, principal, op]);
+        let mut body = String::new();
+        if !self.owner_id_col.is_empty() {
+            let (id, kind) = (&self.owner_id_col, &self.owner_kind_col);
+            writeln!(body, "  IF (OLD.{id} IS DISTINCT FROM NEW.{id}) OR (OLD.{kind} IS DISTINCT FROM NEW.{kind}) THEN")
+                .expect("fmt::Write for String never fails");
+            for (row, op) in [("OLD", "'revoke'"), ("NEW", "'grant'")] {
+                writeln!(body, "    IF {row}.{id} IS NOT NULL THEN").expect("fmt::Write for String never fails");
+                body.push_str(&check("      ", &format!("COALESCE({row}.{kind}, '')"), &format!("{row}.{id}"), op));
+                body.push_str("    END IF;\n");
+            }
+            body.push_str("  END IF;\n");
+        }
+        if !self.mode_col.is_empty() {
+            let m = &self.mode_col;
+            writeln!(body, "  IF (OLD.{m} IS DISTINCT FROM NEW.{m}) THEN").expect("fmt::Write for String never fails");
+            body.push_str(&check("    ", "''", "''", "'visibility'"));
+            body.push_str("  END IF;\n");
+        }
+        checking_function(&self.fn_name(), &body)
+    }
+
     #[must_use]
     pub fn function_sql(&self) -> String {
+        if self.checked {
+            return self.checking_sql();
+        }
         let cols = "(rel, resource_id, principal_kind, principal_id, op)";
         let (cl, rel, pk, ch) = (&self.changelog, quote_literal(&self.rel), &self.pk, quote_literal(CHANGELOG_CHANNEL));
         let mut body = String::new();
@@ -158,8 +225,9 @@ impl ObjectChangelogTrigger {
     pub fn trigger_sql(&self) -> String {
         let name = format!("{}_obj_changelog", self.table);
         let ts = or_default(&self.table_schema, "public");
+        let (kind, timing) = if self.checked { ("CONSTRAINT TRIGGER", " DEFERRABLE INITIALLY DEFERRED") } else { ("TRIGGER", "") };
         format!(
-            "DROP TRIGGER IF EXISTS {name} ON {ts}.{t};\nCREATE TRIGGER {name} AFTER UPDATE OF {cols} ON {ts}.{t} FOR EACH ROW EXECUTE FUNCTION {f}();\n",
+            "DROP TRIGGER IF EXISTS {name} ON {ts}.{t};\nCREATE {kind} {name} AFTER UPDATE OF {cols} ON {ts}.{t}{timing} FOR EACH ROW EXECUTE FUNCTION {f}();\n",
             t = self.table,
             cols = self.tracked_cols().join(", "),
             f = self.fn_name()
@@ -168,6 +236,10 @@ impl ObjectChangelogTrigger {
 }
 
 impl Sql<'_> {
+    fn changelog_checked(&self) -> bool {
+        self.s.changelog == Some(Changelog::Checked)
+    }
+
     fn changelog_table(&self) -> String {
         format!("{}._authz_changelog", self.s.definer_schema())
     }
@@ -175,11 +247,15 @@ impl Sql<'_> {
     #[must_use]
     pub fn changelog_table_sql(&self) -> String {
         let t = self.changelog_table();
-        let txid = if self.s.has_async() { ",\n  txid xid8 NOT NULL DEFAULT pg_current_xact_id()" } else { "" };
+        let txid = if self.s.has_async() || self.changelog_checked() { ",\n  txid xid8 NOT NULL DEFAULT pg_current_xact_id()" } else { "" };
         let mut base = format!(
             "CREATE TABLE IF NOT EXISTS {t} (\n  seq bigserial PRIMARY KEY,\n  rel text NOT NULL,\n  resource_id text NOT NULL,\n  principal_kind text NOT NULL,\n  principal_id text NOT NULL,\n  op text NOT NULL,\n  at timestamptz NOT NULL DEFAULT now(){txid}\n);\nCREATE INDEX IF NOT EXISTS _authz_changelog_seq_idx ON {t} (seq);\nCREATE INDEX IF NOT EXISTS _authz_changelog_principal_idx ON {t} (principal_kind, principal_id);\n"
         );
-        if self.s.has_async() {
+        if self.changelog_checked() {
+            writeln!(base, "ALTER TABLE {t} ADD COLUMN IF NOT EXISTS txid xid8 NOT NULL DEFAULT pg_current_xact_id();")
+                .expect("fmt::Write for String never fails");
+        }
+        if self.s.has_async() || self.changelog_checked() {
             writeln!(base, "CREATE INDEX IF NOT EXISTS _authz_changelog_rel_txid_idx ON {t} (rel, txid);").expect("fmt::Write for String never fails");
         }
         base
@@ -203,6 +279,7 @@ impl Sql<'_> {
                 kind_col: g.kind_col.clone(),
                 principal_col: g.principal_col.clone(),
                 discrim_col: g.discrim_col.clone().unwrap_or_default(),
+                checked: self.changelog_checked(),
             });
         }
         out.sort_by(|a, b| a.table.cmp(&b.table));
@@ -223,6 +300,7 @@ impl Sql<'_> {
                 table: obj.table.clone(),
                 rel: obj.name.clone(),
                 pk: obj.pk().into(),
+                checked: self.changelog_checked(),
                 ..Default::default()
             };
             if obj.track_owner

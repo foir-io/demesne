@@ -16,6 +16,19 @@ widens for the operation, and inside a `require`.
 
 `demesne_syntax::ViaObject` gains `pinned`.
 
+### `changelog checked`: the application writes the changelog
+
+With `changelog checked`, the triggers generated for `tracked` grants and for
+`track owner` and `track visibility` stop writing changelog rows and sending
+`NOTIFY`. They become deferred constraint triggers that refuse a commit, with
+`check_violation` and `<table>_changelog_written`, when the transaction changed
+a tracked source without writing the matching changelog row itself. The
+changelog table gains `txid`. Without the declaration the triggers write and
+notify as before.
+
+`demesne_syntax::Spec` gains `changelog`, and `ChangelogTrigger` and
+`ObjectChangelogTrigger` in `demesne-emit-sql` gain `checked`.
+
 ## v3.0.0
 
 The crates are 3.0.0 because public types of `demesne-syntax`, `demesne-model`
