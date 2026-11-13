@@ -150,6 +150,11 @@ pub(crate) fn check_object_refs(s: &Spec, b: &mut Binder, o: &Object) {
     for r in &o.relations {
         check_relation_refs(b, o, r);
     }
+    for probe in &o.probes {
+        for param in &probe.params {
+            b.req_col(&o.table, &param.column, &format!("{oc} probe {}", probe.name));
+        }
+    }
     for pm in &o.perms {
         if let Some(sc) = &pm.self_check {
             b.req_col(&o.table, sc, &format!("{oc} selfcheck"));

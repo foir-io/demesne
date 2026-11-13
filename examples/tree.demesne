@@ -47,6 +47,9 @@ object space {
   table spaces
   level space
   scoped estate > space
+  probe space_named(name text)
+  probe spaces_in_estate() count
+  probe space_by_name(name text as wanted) key
   permission view = @scoped and @row(status, "open") @rls maps select
 }
 

@@ -29,6 +29,16 @@ notify as before.
 `demesne_syntax::Spec` gains `changelog`, and `ChangelogTrigger` and
 `ObjectChangelogTrigger` in `demesne-emit-sql` gain `checked`.
 
+### `probe` asks about rows the caller cannot read
+
+`probe <name>(<column> <type>, ...)` on an object emits a function that answers
+whether a row matches the given values inside the caller's containment,
+whatever the object's permissions say. `count` answers how many and `key`
+answers a matching row's key. The containment comes from the caller's claims
+and never from an argument. A probe on an object no claim contains is refused.
+
+`demesne_syntax::Object` gains `probes`, a list of the new `Probe`.
+
 ## v3.0.0
 
 The crates are 3.0.0 because public types of `demesne-syntax`, `demesne-model`

@@ -16,7 +16,10 @@ exit: 0
     "auth.paths_reachable(text, text)",
     "auth.paths_up_reach(text, text)",
     "auth.paths_up_reach_set(text)",
-    "auth.space_can_view(text)"
+    "auth.space_by_name(text)",
+    "auth.space_can_view(text)",
+    "auth.space_named(text)",
+    "auth.spaces_in_estate()"
   ],
   "policies": [
     {

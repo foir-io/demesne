@@ -2,8 +2,8 @@ use crate::Error;
 use crate::ast::{
     Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes,
     Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset,
-    ProcEntry, Procedures, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned,
-    ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Probe, ProbeAnswer, ProcEntry, Procedures, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry,
+    Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -650,6 +650,8 @@ impl Parser {
         } else if self.is_kw("field") {
             let f = self.parse_field_rule(o)?;
             o.fields.push(f);
+        } else if self.is_kw("probe") {
+            self.parse_probe(o)?;
         } else if self.is_kw("export") {
             self.parse_permission_export(o)?;
         } else if self.is_kw("reach") {
@@ -1524,13 +1526,7 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_permission_export(&mut self, o: &mut Object) -> PResult<()> {
-        let pos = self.pos();
-        self.advance();
-        let verb = self.ident()?;
-        self.expect_kw("as")?;
-        let name = self.ident()?;
-        self.expect(Tok::LParen)?;
+    fn parse_bound_columns(&mut self) -> PResult<Vec<ExportParameter>> {
         let mut params = Vec::new();
         loop {
             let column = self.ident()?;
@@ -1541,12 +1537,40 @@ impl Parser {
             }
             params.push(ExportParameter { column, ty, name: pname });
             if self.peek() != Tok::Comma {
-                break;
+                return Ok(params);
             }
             self.advance();
         }
+    }
+
+    fn parse_permission_export(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let verb = self.ident()?;
+        self.expect_kw("as")?;
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let params = self.parse_bound_columns()?;
         self.expect(Tok::RParen)?;
         o.exports.push(PermissionExport { verb, name, params, pos });
+        Ok(())
+    }
+
+    fn parse_probe(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let params = if self.peek() == Tok::RParen { Vec::new() } else { self.parse_bound_columns()? };
+        self.expect(Tok::RParen)?;
+        let answer = if self.accept_kw("count") {
+            ProbeAnswer::Count
+        } else if self.accept_kw("key") {
+            ProbeAnswer::Key
+        } else {
+            ProbeAnswer::Exists
+        };
+        o.probes.push(Probe { name, params, answer, pos });
         Ok(())
     }
 }

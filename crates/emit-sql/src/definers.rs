@@ -17,9 +17,10 @@ use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Closure, Grant, Object, Perm, PermNode, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
+    Closure, Grant, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject,
+    Vocabulary,
 };
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 type R<T> = Result<T, String>;
@@ -324,6 +325,7 @@ impl Sql<'_> {
         self.def_emit_materialized_flat_members(&mut defs);
         let mut out = defs.fns;
         self.def_emit_permission_exports(&mut out, &virt)?;
+        self.def_emit_probes(&mut out)?;
         for f in &mut out {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
@@ -1646,6 +1648,41 @@ impl Sql<'_> {
             .position(|l| l.name == level)
             .and_then(|i| rs.scope_cols.get(i).cloned())
             .unwrap_or_else(|| format!("{level}_id"))
+    }
+
+    fn def_emit_probes(&self, out: &mut Vec<GenFn>) -> R<()> {
+        let mut seen: HashSet<String> = out.iter().map(|f| f.name.clone()).collect();
+        for (obj, probe) in self.s.objects.iter().flat_map(|o| o.probes.iter().map(move |p| (o, p))) {
+            if !seen.insert(probe.name.clone()) {
+                return Err(format!("probe {} collides with a generated function", quote(&probe.name)));
+            }
+            let contained = self.rls_containment_block(obj, leaf(obj), &BTreeMap::new(), "select")?;
+            if contained.is_empty() {
+                return Err(format!(
+                    "probe {}: object {} has no containment, so the probe would answer for every row of {}",
+                    quote(&probe.name),
+                    quote(&obj.name),
+                    obj.table
+                ));
+            }
+            let mut conds = vec![format!("({contained})")];
+            conds.extend(probe.params.iter().map(|p| format!("{} = {}.{}", p.column, probe.name, p.name())));
+            let matching = format!("FROM {} WHERE {}", obj.table, conds.join(" AND "));
+            let (returns, body) = match probe.answer {
+                ProbeAnswer::Exists => (String::new(), format!("EXISTS (SELECT 1 {matching})")),
+                ProbeAnswer::Count => ("bigint".to_string(), format!("count(*) {matching}")),
+                ProbeAnswer::Key => (self.s.id_type().to_string(), format!("{pk} {matching} ORDER BY {pk} LIMIT 1", pk = obj.pk())),
+            };
+            out.push(GenFn {
+                name: probe.name.clone(),
+                sig: probe.params.iter().map(|p| format!("{} {}", p.name(), p.ty)).collect::<Vec<_>>().join(", "),
+                strict: !probe.params.is_empty(),
+                returns,
+                body,
+                ..Default::default()
+            });
+        }
+        Ok(())
     }
 
     fn def_emit_permission_exports(&self, out: &mut Vec<GenFn>, virt: &Virtual) -> R<()> {

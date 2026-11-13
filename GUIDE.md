@@ -1002,6 +1002,41 @@ in the spec but kept as separate physical stores, never one generic tuple table.
 
 ---
 
+## Probes: asking about rows the caller cannot read
+
+Before it writes, an application sometimes has to ask about rows its caller is
+not allowed to read. Is this name already taken in the estate? How many spaces
+does the estate have? A query under the caller's policies cannot answer,
+because the rows that matter are hidden from it.
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  probe space_named(name text)
+  probe spaces_in_estate() count
+  probe space_by_name(name text as wanted) key
+  permission view = @scoped and @row(status, "open") @rls maps select
+}
+```
+
+`probe <name>(<column> <type> [as <parameter>], ...)` emits a function in the
+definer schema that answers whether any row matches the given values. `count`
+answers how many, and `key` answers the primary key of a matching row, the
+least when several match, or NULL.
+
+A probe is confined by the object's containment and nothing else. It reads the
+caller's claims for that, as the read policy does, and never takes a scope as
+an argument, so it cannot be pointed at another estate. Inside that containment
+it ignores the object's permissions, which is its purpose: a closed space the
+caller cannot read is still found by `space_named`. It returns one fact and no
+row.
+
+So a probe is a deliberate disclosure. Declare one only for a fact every caller
+inside the containment may learn. The compiler refuses a probe on an object no
+claim contains, since it would answer for the whole table.
+
 ## A changelog the application writes
 
 `via grant ... tracked`, `track owner` and `track visibility` keep a changelog

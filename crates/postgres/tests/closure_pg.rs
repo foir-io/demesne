@@ -11,7 +11,7 @@ CREATE TABLE folders (id text PRIMARY KEY, estate_id text NOT NULL, space_id tex
 CREATE TABLE paths (ancestor_id text NOT NULL, descendant_id text NOT NULL, space_id text NOT NULL, depth integer NOT NULL, PRIMARY KEY (ancestor_id, descendant_id));
 CREATE TABLE templates (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text, body text);
 CREATE TABLE atlases (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text);
-CREATE TABLE spaces (id text PRIMARY KEY, estate_id text NOT NULL, status text NOT NULL);
+CREATE TABLE spaces (id text PRIMARY KEY, estate_id text NOT NULL, status text NOT NULL, name text);
 CREATE TABLE pages (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL);
 CREATE TABLE sheets (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL);
 CREATE TABLE notices (id text PRIMARY KEY, estate_id text NOT NULL, space_id text, body text);
@@ -101,6 +101,7 @@ fn the_closure_follows_its_base_and_reads_answer_in_both_directions() {
     two_way_reach(&mut db);
     exact_tier(&mut db);
     pinned_borrow(&mut db);
+    probes(&mut db);
     require_terms(&mut db);
     a_caller_grows_the_tree_beneath_itself_alone(&mut db);
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
@@ -384,7 +385,7 @@ fn visible_and_calls(db: &mut Client, who: &str, table: &str) -> (BTreeSet<Strin
 
 fn pinned_borrow(db: &mut Client) {
     db.batch_execute(
-        "INSERT INTO spaces VALUES ('s1', 'e1', 'open'), ('s2', 'e1', 'closed'), ('s3', 'e2', 'open');
+        "INSERT INTO spaces VALUES ('s1', 'e1', 'open', 'north'), ('s2', 'e1', 'closed', 'south'), ('s3', 'e2', 'open', 'east');
          INSERT INTO pages VALUES ('p1', 'e1', 's1'), ('p2', 'e1', 's1'), ('p3', 'e1', 's1'), ('p4', 'e1', 's2'), ('p5', 'e2', 's3');
          INSERT INTO sheets SELECT * FROM pages;",
     )
@@ -413,6 +414,36 @@ fn pinned_borrow(db: &mut Client) {
     }
     let who = claims(&[("estate_id", Some("e1")), ("space_id", Some("s1"))]);
     assert_eq!((visible_and_calls(db, &who, "pages").1, visible_and_calls(db, &who, "sheets").1), (1, 3), "three rows: one call pinned, three per row");
+}
+
+type Answers = (Option<bool>, Option<i64>, Option<String>, Vec<String>);
+
+fn ask(db: &mut Client, estate: Option<&str>, name: Option<&str>) -> Answers {
+    let mut tx = db.transaction().expect("a transaction");
+    tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims(&[("estate_id", estate), ("space_id", Some("s1"))])]).expect("the claims");
+    let row = tx.query_one(&format!("SELECT {AUTH}.space_named($1), {AUTH}.spaces_in_estate(), {AUTH}.space_by_name($1)"), &[&name]).expect("the probes");
+    let readable = tx.query("SELECT name FROM spaces WHERE name = $1", &[&name]).expect("the read").iter().map(|r| r.get(0)).collect();
+    tx.rollback().expect("rollback");
+    (row.get(0), row.get(1), row.get(2), readable)
+}
+
+fn probes(db: &mut Client) {
+    let hidden: Vec<String> = Vec::new();
+    assert_eq!(ask(db, Some("e1"), Some("north")), (Some(true), Some(2), Some("s1".into()), vec!["north".to_string()]), "a space the caller reads");
+    assert_eq!(
+        ask(db, Some("e1"), Some("south")),
+        (Some(true), Some(2), Some("s2".into()), hidden.clone()),
+        "a closed space the caller cannot read is still found, and counted"
+    );
+    assert_eq!(ask(db, Some("e1"), Some("east")), (Some(false), Some(2), None, hidden.clone()), "another estate's space is not found");
+    assert_eq!(
+        ask(db, Some("e2"), Some("east")),
+        (Some(true), Some(1), Some("s3".into()), vec!["east".to_string()]),
+        "it is found, and read, from its own estate"
+    );
+    assert_eq!(ask(db, Some("e1"), None), (None, Some(2), None, hidden.clone()), "no value to match is no answer");
+    assert_eq!(ask(db, None, Some("north")), (Some(false), Some(0), None, hidden), "a caller with no estate claim is inside no containment");
 }
 
 fn require_terms(db: &mut Client) {

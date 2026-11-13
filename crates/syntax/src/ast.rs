@@ -398,6 +398,7 @@ pub struct Object {
     pub reach_uses: Vec<GrantUse>,
     pub admits: Vec<Admit>,
     pub exports: Vec<PermissionExport>,
+    pub probes: Vec<Probe>,
     pub relations: Vec<Relation>,
     pub perms: Vec<Perm>,
     pub requires: Vec<Require>,
@@ -1143,6 +1144,27 @@ pub struct PermissionExport {
     pub verb: String,
     pub name: String,
     pub params: Vec<ExportParameter>,
+    pub pos: Pos,
+}
+
+/// What a `probe` answers about the rows that match its parameters inside the caller's containment.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ProbeAnswer {
+    /// Whether any row matches.
+    #[default]
+    Exists,
+    /// How many rows match.
+    Count,
+    /// The key of a matching row, the least when several match.
+    Key,
+}
+
+/// A `probe`: a question about rows inside the caller's containment that the caller may be unable to read.
+#[derive(Debug, Clone)]
+pub struct Probe {
+    pub name: String,
+    pub params: Vec<ExportParameter>,
+    pub answer: ProbeAnswer,
     pub pos: Pos,
 }
 

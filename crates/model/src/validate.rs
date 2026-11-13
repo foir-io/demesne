@@ -11,8 +11,8 @@ use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_syntax::{
-    Finding, Grant, GrantUse, Level, Object, Perm, PermNode, PermissionExport, Relation, Repr, Require, Spec, Subject, Term, ViaClosure, ViaGrant, ViaObject,
-    Vocabulary,
+    Finding, Grant, GrantUse, Level, Object, Perm, PermNode, PermissionExport, ProbeAnswer, Relation, Repr, Require, Spec, Subject, Term, ViaClosure, ViaGrant,
+    ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -60,6 +60,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_predicate_only_referenced(s));
     errs.extend(validate_grant_reach(s));
     errs.extend(validate_permission_exports(s));
+    errs.extend(validate_probes(s));
     errs.extend(validate_grant_stores(s));
     errs.extend(validate_store_manage(s));
     errs.extend(check_emit_sites(s, &vocab_names));
@@ -1707,6 +1708,37 @@ fn validate_permission_exports(s: &Spec) -> Vec<Finding> {
             }
             names.insert(export.name.clone());
             errs.extend(validate_permission_export(s, obj, export));
+        }
+    }
+    errs
+}
+
+fn validate_probes(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    let mut names: HashSet<&str> = s.objects.iter().flat_map(|o| o.exports.iter().map(|e| e.name.as_str())).collect();
+    for (obj, probe) in s.objects.iter().flat_map(|o| o.probes.iter().map(move |p| (o, p))) {
+        let at = |msg: String| Finding::at(probe.pos.line, format!("probe {} {msg}", quote(&probe.name)));
+        if !names.insert(&probe.name) {
+            errs.push(at("shares its name with another probe or an export".into()));
+        }
+        if obj.scoped.iter().all(|l| s.level_is_virtual(l) || (obj.is_level_entity() && l == obj.level())) {
+            errs.push(at(format!(
+                "is on object {}, which no claim contains — a probe answers inside the caller's containment and never for the whole table",
+                quote(&obj.name)
+            )));
+        }
+        if probe.answer == ProbeAnswer::Key && !obj.point_checkable() {
+            errs.push(at(format!("answers with a key, but object {} has a composite key", quote(&obj.name))));
+        }
+        let mut columns = HashSet::new();
+        let mut params = HashSet::new();
+        for param in &probe.params {
+            if !columns.insert(param.column.as_str()) || !params.insert(param.name()) {
+                errs.push(at(format!("binds column {} or parameter {} twice", quote(&param.column), quote(&param.name()))));
+            }
+            if !EXPORT_PARAMETER_TYPES.contains(&param.ty.as_str()) {
+                errs.push(at(format!("parameter {} has unsupported type {}", quote(&param.name()), quote(&param.ty))));
+            }
         }
     }
     errs
