@@ -38,7 +38,7 @@
     },
     "declarations": {
       "comment": "top-level declaration blocks",
-      "match": "\\b(topology|vocabulary|subject|object|template|procedures|ungoverned|fieldscopes|rolestore|grant|claims|definers|tables|identifiers|external|closure)\\b",
+      "match": "\\b(topology|vocabulary|subject|object|template|procedures|ungoverned|fieldscopes|rolestore|grant|claims|definers|tables|identifiers|external|closure|changelog)\\b",
       "name": "keyword.other.declaration.demesne"
     },
     "keywords": {

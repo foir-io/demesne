@@ -7,6 +7,7 @@ exit: 0
 {
   "manifest": 1,
   "functions": [
+    "auth.folder_path()",
     "auth.paths_ancestors(text)",
     "auth.paths_descendants(text)",
     "auth.paths_maintain()",
@@ -15,7 +16,13 @@ exit: 0
     "auth.paths_reach_set(text)",
     "auth.paths_reachable(text, text)",
     "auth.paths_up_reach(text, text)",
-    "auth.paths_up_reach_set(text)"
+    "auth.paths_up_reach_set(text)",
+    "auth.space_by_name(text)",
+    "auth.space_can_view(text)",
+    "auth.space_cards()",
+    "auth.space_named(text)",
+    "auth.spaces_in_estate()",
+    "auth.theme_color(text)"
   ],
   "policies": [
     {
@@ -79,6 +86,18 @@ exit: 0
       "name": "notices_update"
     },
     {
+      "table": "public.pages",
+      "name": "pages_select"
+    },
+    {
+      "table": "public.sheets",
+      "name": "sheets_select"
+    },
+    {
+      "table": "public.spaces",
+      "name": "spaces_select"
+    },
+    {
       "table": "public.templates",
       "name": "templates_delete"
     },
@@ -97,6 +116,10 @@ exit: 0
     {
       "table": "public.templates",
       "name": "templates_update"
+    },
+    {
+      "table": "public.themes",
+      "name": "themes_select"
     }
   ],
   "triggers": [
@@ -121,7 +144,11 @@ exit: 0
     "public.folders",
     "public.ledgers",
     "public.notices",
-    "public.templates"
+    "public.pages",
+    "public.sheets",
+    "public.spaces",
+    "public.templates",
+    "public.themes"
   ]
 }
 

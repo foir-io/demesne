@@ -28,6 +28,7 @@ pub struct Spec {
     pub definer_schema: Option<String>,
     pub table_schema: Option<String>,
     pub identifiers: Option<String>,
+    pub changelog: Option<Changelog>,
 }
 
 impl Spec {
@@ -79,6 +80,13 @@ impl Spec {
     pub fn closure_by_table(&self, table: &str) -> Option<&Closure> {
         self.closures.iter().find(|c| c.table == table)
     }
+}
+
+/// Who writes the rows of the access changelog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Changelog {
+    /// `changelog checked`: the application writes each row, and a commit that changes a tracked source without its row is refused.
+    Checked,
 }
 
 /// A `closure` declaration: a transitive-closure table, its edge, and how it is maintained.
@@ -390,6 +398,9 @@ pub struct Object {
     pub reach_uses: Vec<GrantUse>,
     pub admits: Vec<Admit>,
     pub exports: Vec<PermissionExport>,
+    pub probes: Vec<Probe>,
+    pub nearests: Vec<Nearest>,
+    pub projections: Vec<Projection>,
     pub relations: Vec<Relation>,
     pub perms: Vec<Perm>,
     pub requires: Vec<Require>,
@@ -567,6 +578,8 @@ pub struct ViaObject {
     pub verb: String,
     pub col: String,
     pub op: Option<String>,
+    /// `pinned`: the object's containment holds `col` equal to the caller's claim, so the borrow is asked once, at the claim.
+    pub pinned: bool,
 }
 
 impl ViaObject {
@@ -859,6 +872,12 @@ pub enum Builtin {
         args: Vec<ExternalArg>,
     },
     Holds(String),
+    /// `@holds(<perm> every <column> at <level>)`: the permission is held at every value an array column names at a level.
+    HoldsEvery {
+        perm: String,
+        col: String,
+        level: String,
+    },
     Row {
         col: String,
         val: String,
@@ -885,6 +904,7 @@ impl Builtin {
             Builtin::Within { level, nullable: true } => format!("@within({level} nullable)"),
             Builtin::Within { level, nullable: false } => format!("@within({level})"),
             Builtin::Holds(p) => format!("@holds({p})"),
+            Builtin::HoldsEvery { perm, col, level } => format!("@holds({perm} every {col} at {level})"),
             Builtin::External { func, .. } => format!("@external({func})"),
             Builtin::Row { col, val } => format!("@row({col}, {})", quote(val)),
             Builtin::RowNull(col) => format!("@row({col}, null)"),
@@ -905,6 +925,7 @@ impl Builtin {
             Builtin::Within { .. } | Builtin::WithinExact(_) => "within",
             Builtin::External { .. } => "external",
             Builtin::Holds(_) => "holds",
+            Builtin::HoldsEvery { .. } => "holds_every",
             Builtin::Row { .. } | Builtin::RowNull(_) => "row",
             Builtin::Other(name) => name,
         }
@@ -1074,6 +1095,15 @@ impl Term {
         }
     }
 
+    /// Returns the permission, array column and level of `@holds(<perm> every <column> at <level>)`.
+    #[must_use]
+    pub fn holds_every(&self) -> Option<(&str, &str, &str)> {
+        match self.builtin_ref() {
+            Some(Builtin::HoldsEvery { perm, col, level }) => Some((perm, col, level)),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn external_fn(&self) -> &str {
         match self.builtin_ref() {
@@ -1133,6 +1163,55 @@ pub struct PermissionExport {
     pub verb: String,
     pub name: String,
     pub params: Vec<ExportParameter>,
+    pub pos: Pos,
+}
+
+/// A `projection`: named columns of the rows an expression admits, read without the object's own permission.
+#[derive(Debug, Clone)]
+pub struct Projection {
+    pub name: String,
+    pub columns: Vec<ExportParameter>,
+    pub tree: PermNode,
+    pub pos: Pos,
+}
+
+impl Projection {
+    /// Returns the projection's expression as the select arm it is compiled as.
+    #[must_use]
+    pub fn admit(&self) -> Admit {
+        Admit { ops: vec!["select".to_string()], tree: self.tree.clone(), pos: self.pos }
+    }
+}
+
+/// A `nearest` lookup: the value a column holds on the nearest row at or above a node of a closure.
+#[derive(Debug, Clone)]
+pub struct Nearest {
+    pub name: String,
+    pub value_col: String,
+    pub ty: String,
+    pub closure: String,
+    pub node_col: String,
+    pub pos: Pos,
+}
+
+/// What a `probe` answers about the rows that match its parameters inside the caller's containment.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ProbeAnswer {
+    /// Whether any row matches.
+    #[default]
+    Exists,
+    /// How many rows match.
+    Count,
+    /// The key of a matching row, the least when several match.
+    Key,
+}
+
+/// A `probe`: a question about rows inside the caller's containment that the caller may be unable to read.
+#[derive(Debug, Clone)]
+pub struct Probe {
+    pub name: String,
+    pub params: Vec<ExportParameter>,
+    pub answer: ProbeAnswer,
     pub pos: Pos,
 }
 

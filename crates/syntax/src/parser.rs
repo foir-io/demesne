@@ -1,9 +1,9 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Builtin, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant,
-    GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Object, Perm, PermNode, PermissionExport, Pos, Preset, ProcEntry,
-    Procedures, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure,
-    ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, ExportParameter, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes,
+    Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm, PermNode, PermissionExport, Pos,
+    Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Relation, RelationKind, Repr, Require, RoleStore, Spec, Subject, Template, Term, TermKind,
+    Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -91,6 +91,7 @@ pub(crate) enum Kind {
     Identifiers,
     External,
     Closure,
+    Changelog,
 }
 
 impl Kind {
@@ -112,6 +113,7 @@ impl Kind {
             "identifiers" => Kind::Identifiers,
             "external" => Kind::External,
             "closure" => Kind::Closure,
+            "changelog" => Kind::Changelog,
             _ => return None,
         })
     }
@@ -134,11 +136,12 @@ impl Kind {
             Kind::Identifiers => "identifiers",
             Kind::External => "external",
             Kind::Closure => "closure",
+            Kind::Changelog => "changelog",
         }
     }
 
     pub(crate) fn single(self) -> bool {
-        matches!(self, Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers)
+        matches!(self, Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers | Kind::Changelog)
     }
 
     fn declared(self, s: &Spec) -> usize {
@@ -154,7 +157,7 @@ impl Kind {
             Kind::Grant => s.grants.len(),
             Kind::External => s.externals.len(),
             Kind::Closure => s.closures.len(),
-            Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers => 0,
+            Kind::Topology | Kind::Claims | Kind::Definers | Kind::Tables | Kind::Identifiers | Kind::Changelog => 0,
         }
     }
 }
@@ -302,6 +305,14 @@ impl Parser {
             }
             "external" => self.parse_external(s)?,
             "closure" => s.closures.push(self.parse_closure()?),
+            "changelog" => {
+                self.advance();
+                self.expect_kw("checked")?;
+                if s.changelog.is_some() {
+                    return Err(self.err("duplicate changelog declaration"));
+                }
+                s.changelog = Some(Changelog::Checked);
+            }
             other => return Err(self.err(format!("unknown declaration {}", quote(other)))),
         }
         Ok(())
@@ -639,6 +650,12 @@ impl Parser {
         } else if self.is_kw("field") {
             let f = self.parse_field_rule(o)?;
             o.fields.push(f);
+        } else if self.is_kw("projection") {
+            self.parse_projection(o)?;
+        } else if self.is_kw("nearest") {
+            self.parse_nearest(o)?;
+        } else if self.is_kw("probe") {
+            self.parse_probe(o)?;
         } else if self.is_kw("export") {
             self.parse_permission_export(o)?;
         } else if self.is_kw("reach") {
@@ -939,10 +956,11 @@ impl Parser {
         let verb = self.ident()?;
         self.expect_kw("on")?;
         let col = self.ident()?;
-        let mut v = ViaObject { object, verb, col, op: None };
+        let mut v = ViaObject { object, verb, col, op: None, pinned: false };
         if self.accept_kw("for") {
             v.op = Some(self.ident()?);
         }
+        v.pinned = self.accept_kw("pinned");
         Ok(Repr::Object(v))
     }
 
@@ -1245,6 +1263,13 @@ impl Parser {
                         return Err(self.err(format!("@holds needs a permission verb (`@holds(<domain>:<verb>)`), got {}", self.got())));
                     }
                 };
+                if self.accept_kw("every") {
+                    let col = self.ident()?;
+                    self.expect_kw("at")?;
+                    let level = self.ident()?;
+                    self.expect(Tok::RParen)?;
+                    return Ok(Builtin::HoldsEvery { perm, col, level });
+                }
                 self.expect(Tok::RParen)?;
                 Builtin::Holds(perm)
             }
@@ -1512,13 +1537,7 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_permission_export(&mut self, o: &mut Object) -> PResult<()> {
-        let pos = self.pos();
-        self.advance();
-        let verb = self.ident()?;
-        self.expect_kw("as")?;
-        let name = self.ident()?;
-        self.expect(Tok::LParen)?;
+    fn parse_bound_columns(&mut self) -> PResult<Vec<ExportParameter>> {
         let mut params = Vec::new();
         loop {
             let column = self.ident()?;
@@ -1529,12 +1548,70 @@ impl Parser {
             }
             params.push(ExportParameter { column, ty, name: pname });
             if self.peek() != Tok::Comma {
-                break;
+                return Ok(params);
             }
             self.advance();
         }
+    }
+
+    fn parse_permission_export(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let verb = self.ident()?;
+        self.expect_kw("as")?;
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let params = self.parse_bound_columns()?;
         self.expect(Tok::RParen)?;
         o.exports.push(PermissionExport { verb, name, params, pos });
+        Ok(())
+    }
+
+    fn parse_projection(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let columns = self.parse_bound_columns()?;
+        self.expect(Tok::RParen)?;
+        self.expect(Tok::Eq)?;
+        let tree = self.parse_perm_union()?;
+        o.projections.push(Projection { name, columns, tree, pos });
+        Ok(())
+    }
+
+    fn parse_nearest(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let value_col = self.ident()?;
+        let ty = self.ident()?;
+        self.expect(Tok::RParen)?;
+        self.expect_kw("via")?;
+        self.expect_kw("closure")?;
+        let closure = self.ident()?;
+        self.expect_kw("on")?;
+        let node_col = self.ident()?;
+        o.nearests.push(Nearest { name, value_col, ty, closure, node_col, pos });
+        Ok(())
+    }
+
+    fn parse_probe(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let params = if self.peek() == Tok::RParen { Vec::new() } else { self.parse_bound_columns()? };
+        self.expect(Tok::RParen)?;
+        let answer = if self.accept_kw("count") {
+            ProbeAnswer::Count
+        } else if self.accept_kw("key") {
+            ProbeAnswer::Key
+        } else {
+            ProbeAnswer::Exists
+        };
+        o.probes.push(Probe { name, params, answer, pos });
         Ok(())
     }
 }

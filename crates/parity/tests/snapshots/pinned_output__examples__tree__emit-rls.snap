@@ -69,6 +69,18 @@ CREATE POLICY notices_update ON public.notices FOR UPDATE TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')))
     WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
 
+DROP POLICY IF EXISTS pages_select ON public.pages;
+CREATE POLICY pages_select ON public.pages FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT auth.space_can_view((SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')))))));
+
+DROP POLICY IF EXISTS sheets_select ON public.sheets;
+CREATE POLICY sheets_select ON public.sheets FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.space_can_view(space_id)))));
+
+DROP POLICY IF EXISTS spaces_select ON public.spaces;
+CREATE POLICY spaces_select ON public.spaces FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((status = 'open'))));
+
 DROP POLICY IF EXISTS templates_delete ON public.templates;
 CREATE POLICY templates_delete ON public.templates FOR DELETE TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR folder_id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))));
@@ -89,6 +101,10 @@ DROP POLICY IF EXISTS templates_update ON public.templates;
 CREATE POLICY templates_update ON public.templates FOR UPDATE TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR folder_id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))))
     WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR folder_id IN (SELECT auth.paths_descendants((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))))))));
+
+DROP POLICY IF EXISTS themes_select ON public.themes;
+CREATE POLICY themes_select ON public.themes FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
 
 
 --- stderr ---

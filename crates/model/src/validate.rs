@@ -11,13 +11,14 @@ use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_syntax::{
-    Finding, Grant, GrantUse, Level, Object, Perm, PermNode, PermissionExport, Relation, Repr, Require, Spec, Subject, Term, ViaClosure, ViaGrant, ViaObject,
-    Vocabulary,
+    Finding, Grant, GrantUse, Level, Object, Perm, PermNode, PermissionExport, ProbeAnswer, Relation, Repr, Require, Spec, Subject, Term, ViaClosure, ViaGrant,
+    ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 const KNOWN_LAYERS: [&str; 4] = ["rls", "pdp", "kernel", "check"];
-const KNOWN_BUILTINS: [&str; 12] = ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "claim", "row"];
+const KNOWN_BUILTINS: [&str; 13] =
+    ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "holds_every", "claim", "row"];
 const EXPORT_PARAMETER_TYPES: [&str; 12] =
     ["text", "uuid", "smallint", "integer", "bigint", "boolean", "json", "jsonb", "numeric", "timestamptz", "timestamp", "date"];
 
@@ -60,6 +61,9 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_predicate_only_referenced(s));
     errs.extend(validate_grant_reach(s));
     errs.extend(validate_permission_exports(s));
+    errs.extend(validate_probes(s));
+    errs.extend(validate_nearests(s));
+    errs.extend(validate_projections(s));
     errs.extend(validate_grant_stores(s));
     errs.extend(validate_store_manage(s));
     errs.extend(check_emit_sites(s, &vocab_names));
@@ -756,6 +760,29 @@ fn perm_positive(n: &PermNode) -> bool {
     }
 }
 
+fn check_holds_every(s: &Spec, o: &Object, t: &Term) -> Vec<String> {
+    let Some((_, _, level)) = t.holds_every() else { return Vec::new() };
+    let Some(lvl) = s.level_by_name(level).filter(|l| !l.is_virtual) else {
+        return vec![format!("uses {}, but {} is not a level that carries a scope column", t.display(), quote(level))];
+    };
+    let Some(entity) = s.objects.iter().find(|e| e.level() == lvl.name) else {
+        return vec![format!("uses {}, but no object declares `level {level}`, so nothing says which values exist there", t.display())];
+    };
+    entity
+        .scoped
+        .iter()
+        .filter(|l| *l != level && !s.level_is_virtual(l) && !contains(&o.scoped, l))
+        .map(|l| {
+            format!(
+                "uses {}, but object {} is not scoped at {}, so a value's place there cannot be checked against the row's",
+                t.display(),
+                quote(&o.name),
+                quote(l)
+            )
+        })
+        .collect()
+}
+
 fn require_positive(n: &PermNode) -> bool {
     match n {
         PermNode::Leaf(_) => true,
@@ -1022,6 +1049,11 @@ fn check_perm_terms(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<Finding
             if !has_pred {
                 errs.push(at("uses @row but compiles no row predicate — a row term is a test of the row and the decision point cannot read it"));
             }
+        } else if t.holds_every().is_some() {
+            errs.extend(check_holds_every(s, o, t).iter().map(|e| at(e)));
+            if !has_pred {
+                errs.push(at("uses @holds … every but compiles no row predicate — it reads an array column of the row, which the decision point cannot"));
+            }
         } else if !t.builtin().is_empty() {
             errs.extend(check_builtin_term(s, o, pm, t, rels, has_pred, has_pdp));
         } else if let Some((_, access)) = grant_selector(t.ident(), rels) {
@@ -1224,6 +1256,7 @@ fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<F
     }
     for t in rq.tree.leaves() {
         let b = t.builtin();
+        errs.extend(check_holds_every(s, o, t).into_iter().map(&at));
         if b == "within" && s.level_by_name(t.within_level()).is_none() {
             errs.push(at(format!("uses @within({}) which is not a topology level", quote(t.within_level()))));
         }
@@ -1707,6 +1740,93 @@ fn validate_permission_exports(s: &Spec) -> Vec<Finding> {
             }
             names.insert(export.name.clone());
             errs.extend(validate_permission_export(s, obj, export));
+        }
+    }
+    errs
+}
+
+fn validate_projections(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    let taken = |o: &'_ Object| -> Vec<String> {
+        o.exports.iter().map(|e| e.name.clone()).chain(o.probes.iter().map(|p| p.name.clone())).chain(o.nearests.iter().map(|n| n.name.clone())).collect()
+    };
+    let mut names: HashSet<String> = s.objects.iter().flat_map(taken).collect();
+    for (obj, p) in s.objects.iter().flat_map(|o| o.projections.iter().map(move |p| (o, p))) {
+        let at = |msg: String| Finding::at(p.pos.line, format!("projection {} {msg}", quote(&p.name)));
+        if !names.insert(p.name.clone()) {
+            errs.push(at("shares its name with another generated function of the spec".into()));
+        }
+        let mut returned = HashSet::new();
+        for c in &p.columns {
+            if !returned.insert(c.name.as_deref().unwrap_or(&c.column)) {
+                errs.push(at(format!("returns {} twice", quote(c.name.as_deref().unwrap_or(&c.column)))));
+            }
+            if !EXPORT_PARAMETER_TYPES.contains(&c.ty.as_str()) {
+                errs.push(at(format!("column {} has unsupported type {}", quote(&c.column), quote(&c.ty))));
+            }
+        }
+        let pm = p.admit().perm("select");
+        errs.extend(check_perm_polarity(obj, &pm));
+        errs.extend(check_perm_terms(s, obj, &pm, &crate::analysis::rels_of(obj)));
+    }
+    errs
+}
+
+fn validate_nearests(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    let mut names: HashSet<&str> =
+        s.objects.iter().flat_map(|o| o.exports.iter().map(|e| e.name.as_str()).chain(o.probes.iter().map(|p| p.name.as_str()))).collect();
+    for n in s.objects.iter().flat_map(|o| &o.nearests) {
+        let at = |msg: String| Finding::at(n.pos.line, format!("nearest {} {msg}", quote(&n.name)));
+        if !names.insert(&n.name) {
+            errs.push(at("shares its name with another generated function of the spec".into()));
+        }
+        if !EXPORT_PARAMETER_TYPES.contains(&n.ty.as_str()) {
+            errs.push(at(format!("returns unsupported type {}", quote(&n.ty))));
+        }
+        let closure = s.closure_by_table(&n.closure);
+        if closure.is_none() {
+            errs.push(at(format!(
+                "reads closure {}, which the spec does not declare — declare it with `closure {}(…) depth <column>`",
+                quote(&n.closure),
+                n.closure
+            )));
+        } else if closure.is_some_and(|c| c.depth_col.is_none()) {
+            errs.push(at(format!("reads closure {}, which declares no `depth` column to say which row is nearest", quote(&n.closure))));
+        }
+        if n.value_col == n.node_col {
+            errs.push(at(format!("names {} as both its value and its node column", quote(&n.value_col))));
+        }
+    }
+    errs
+}
+
+fn validate_probes(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    let mut names: HashSet<&str> = s.objects.iter().flat_map(|o| o.exports.iter().map(|e| e.name.as_str())).collect();
+    for (obj, probe) in s.objects.iter().flat_map(|o| o.probes.iter().map(move |p| (o, p))) {
+        let at = |msg: String| Finding::at(probe.pos.line, format!("probe {} {msg}", quote(&probe.name)));
+        if !names.insert(&probe.name) {
+            errs.push(at("shares its name with another probe or an export".into()));
+        }
+        if obj.scoped.iter().all(|l| s.level_is_virtual(l) || (obj.is_level_entity() && l == obj.level())) {
+            errs.push(at(format!(
+                "is on object {}, which no claim contains — a probe answers inside the caller's containment and never for the whole table",
+                quote(&obj.name)
+            )));
+        }
+        if probe.answer == ProbeAnswer::Key && !obj.point_checkable() {
+            errs.push(at(format!("answers with a key, but object {} has a composite key", quote(&obj.name))));
+        }
+        let mut columns = HashSet::new();
+        let mut params = HashSet::new();
+        for param in &probe.params {
+            if !columns.insert(param.column.as_str()) || !params.insert(param.name()) {
+                errs.push(at(format!("binds column {} or parameter {} twice", quote(&param.column), quote(&param.name()))));
+            }
+            if !EXPORT_PARAMETER_TYPES.contains(&param.ty.as_str()) {
+                errs.push(at(format!("parameter {} has unsupported type {}", quote(&param.name()), quote(&param.ty))));
+            }
         }
     }
     errs

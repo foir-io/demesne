@@ -17,9 +17,10 @@ use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Closure, Grant, Object, Perm, PermNode, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
+    Closure, Grant, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject,
+    Vocabulary,
 };
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 type R<T> = Result<T, String>;
@@ -324,6 +325,9 @@ impl Sql<'_> {
         self.def_emit_materialized_flat_members(&mut defs);
         let mut out = defs.fns;
         self.def_emit_permission_exports(&mut out, &virt)?;
+        self.def_emit_probes(&mut out)?;
+        self.def_emit_nearests(&mut out)?;
+        self.def_emit_projections(&mut out, &virt)?;
         for f in &mut out {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
@@ -507,6 +511,63 @@ impl Sql<'_> {
                 self.def_add_holds_perm(defs, obj, pm, t)?;
             }
         }
+        for obj in &self.s.objects {
+            let trees = obj.perms.iter().map(|pm| &pm.tree).chain(obj.requires.iter().map(|rq| &rq.tree)).chain(obj.admits.iter().map(|a| &a.tree));
+            for t in trees.flat_map(PermNode::leaves).filter(|t| t.holds_every().is_some()) {
+                self.def_add_holds_every(defs, obj, t)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn def_add_holds_every(&self, defs: &mut Definers, obj: &Object, t: &Term) -> R<()> {
+        let (rs, levels) = self.holds_every_levels(obj, t)?;
+        let (_, _, level) = t.holds_every().expect("holds_every_levels accepted the term");
+        let holds = self.s.holds_perm_fn(rs);
+        if defs.claim(&holds) {
+            let mut implied_by = String::new();
+            if let Ok(vocab) = self.s.rolestore_vocab(rs)
+                && !vocab.implications.is_empty()
+            {
+                let f = self.perm_implied_by_definer(rs, vocab)?;
+                implied_by = format!("{}.{}", self.s.definer_schema(), f.name);
+                defs.add_once(f);
+            }
+            defs.fns.push(self.holds_perm_definer(&holds, rs, &implied_by));
+        }
+        let name = self.holds_every_fn(rs, level);
+        if !defs.claim(&name) {
+            return Ok(());
+        }
+        let Some(entity) = self.s.objects.iter().find(|o| o.level() == level) else {
+            return Err(format!("{} on {}: no object declares `level {level}`, so nothing says which values exist there", t.display(), quote(&obj.name)));
+        };
+        let id_t = self.s.id_type();
+        let mut sig = vec![format!("user_id {id_t}")];
+        let mut held = vec!["user_id".to_string()];
+        let mut inside = vec![format!("e.{} = v.id", entity.pk())];
+        for l in &levels {
+            if l == level {
+                sig.push(format!("check_{l}_ids {id_t}[]"));
+                held.push("v.id".into());
+                continue;
+            }
+            sig.push(format!("check_{l}_id {id_t}"));
+            held.push(format!("check_{l}_id"));
+            if contains(&entity.scoped, l) {
+                inside.push(format!("e.{} = check_{l}_id", self.s.scope_col(entity, l)));
+            }
+        }
+        sig.push("p_perm text".into());
+        held.push("p_perm".into());
+        let schema = self.s.definer_schema();
+        let body = format!(
+            "cardinality(check_{level}_ids) > 0 AND NOT EXISTS (SELECT 1 FROM unnest(check_{level}_ids) AS v(id) WHERE NOT EXISTS (SELECT 1 FROM {} e WHERE {}) OR {schema}.{holds}({}) IS NOT TRUE)",
+            entity.table,
+            inside.join(" AND "),
+            held.join(", ")
+        );
+        defs.fns.push(GenFn { name, sig: sig.join(", "), body, ..Default::default() });
         Ok(())
     }
 
@@ -1646,6 +1707,102 @@ impl Sql<'_> {
             .position(|l| l.name == level)
             .and_then(|i| rs.scope_cols.get(i).cloned())
             .unwrap_or_else(|| format!("{level}_id"))
+    }
+
+    fn def_emit_probes(&self, out: &mut Vec<GenFn>) -> R<()> {
+        let mut seen: HashSet<String> = out.iter().map(|f| f.name.clone()).collect();
+        for (obj, probe) in self.s.objects.iter().flat_map(|o| o.probes.iter().map(move |p| (o, p))) {
+            if !seen.insert(probe.name.clone()) {
+                return Err(format!("probe {} collides with a generated function", quote(&probe.name)));
+            }
+            let contained = self.rls_containment_block(obj, leaf(obj), &BTreeMap::new(), "select")?;
+            if contained.is_empty() {
+                return Err(format!(
+                    "probe {}: object {} has no containment, so the probe would answer for every row of {}",
+                    quote(&probe.name),
+                    quote(&obj.name),
+                    obj.table
+                ));
+            }
+            let mut conds = vec![format!("({contained})")];
+            conds.extend(probe.params.iter().map(|p| format!("{} = {}.{}", p.column, probe.name, p.name())));
+            let matching = format!("FROM {} WHERE {}", obj.table, conds.join(" AND "));
+            let (returns, body) = match probe.answer {
+                ProbeAnswer::Exists => (String::new(), format!("EXISTS (SELECT 1 {matching})")),
+                ProbeAnswer::Count => ("bigint".to_string(), format!("count(*) {matching}")),
+                ProbeAnswer::Key => (self.s.id_type().to_string(), format!("{pk} {matching} ORDER BY {pk} LIMIT 1", pk = obj.pk())),
+            };
+            out.push(GenFn {
+                name: probe.name.clone(),
+                sig: probe.params.iter().map(|p| format!("{} {}", p.name(), p.ty)).collect::<Vec<_>>().join(", "),
+                strict: !probe.params.is_empty(),
+                returns,
+                body,
+                ..Default::default()
+            });
+        }
+        Ok(())
+    }
+
+    fn def_emit_projections(&self, out: &mut Vec<GenFn>, virt: &Virtual) -> R<()> {
+        let mut seen: HashSet<String> = out.iter().map(|f| f.name.clone()).collect();
+        for (obj, p) in self.s.objects.iter().flat_map(|o| o.projections.iter().map(move |p| (o, p))) {
+            if !seen.insert(p.name.clone()) {
+                return Err(format!("projection {} collides with a generated function", quote(&p.name)));
+            }
+            let pred = self.admit_arm_predicate(obj, &p.admit(), "select", self.s.owner_subject(leaf(obj)), virt)?;
+            let returned: Vec<String> = p.columns.iter().map(|c| format!("{} {}", c.name.as_deref().unwrap_or(&c.column), c.ty)).collect();
+            let selected: Vec<String> = p.columns.iter().map(|c| format!("{}.{}::{}", obj.table, c.column, c.ty)).collect();
+            out.push(GenFn {
+                name: p.name.clone(),
+                returns: format!("TABLE({})", returned.join(", ")),
+                raw_body: true,
+                body: format!("  SELECT {} FROM {} WHERE {pred};", selected.join(", "), obj.table),
+                ..Default::default()
+            });
+        }
+        Ok(())
+    }
+
+    fn def_emit_nearests(&self, out: &mut Vec<GenFn>) -> R<()> {
+        let mut seen: HashSet<String> = out.iter().map(|f| f.name.clone()).collect();
+        for (obj, n) in self.s.objects.iter().flat_map(|o| o.nearests.iter().map(move |n| (o, n))) {
+            if !seen.insert(n.name.clone()) {
+                return Err(format!("nearest {} collides with a generated function", quote(&n.name)));
+            }
+            let declared = self.s.closure_by_table(&n.closure).and_then(|c| c.depth_col.as_deref().map(|d| (c, d)));
+            let Some((c, depth)) = declared else {
+                return Err(format!(
+                    "nearest {}: closure {} must be declared with a `depth` column to say which row is nearest",
+                    quote(&n.name),
+                    quote(&n.closure)
+                ));
+            };
+            let (t, val, node) = (&obj.table, &n.value_col, &n.node_col);
+            let mut rows = format!(
+                "SELECT t.{val} AS v, c.{depth} AS d FROM {} c JOIN {t} t ON t.{node} = c.{} WHERE c.{} = p_node AND t.{val} IS NOT NULL",
+                c.table, c.ancestor_col, c.descendant_col
+            );
+            if let Some(scope) = c.scope_col.as_deref().filter(|scope| obj.scoped.iter().any(|l| self.s.scope_col(obj, l) == *scope)) {
+                write!(
+                    rows,
+                    "\n    UNION ALL\n    SELECT t.{val}, NULL FROM {t} t WHERE t.{node} IS NULL AND t.{val} IS NOT NULL AND t.{scope} = (SELECT s.{scope} FROM {} s WHERE s.{} = p_node AND s.{} = p_node)",
+                    c.table, c.ancestor_col, c.descendant_col
+                )
+                .expect("fmt::Write for String never fails");
+            }
+            out.push(GenFn {
+                name: n.name.clone(),
+                sig: format!("p_node {}", self.s.id_type()),
+                strict: true,
+                returns: n.ty.clone(),
+                raw_body: true,
+                body: format!("  SELECT x.v FROM (\n    {rows}\n  ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;"),
+                execute: Execute::Granted,
+                ..Default::default()
+            });
+        }
+        Ok(())
     }
 
     fn def_emit_permission_exports(&self, out: &mut Vec<GenFn>, virt: &Virtual) -> R<()> {

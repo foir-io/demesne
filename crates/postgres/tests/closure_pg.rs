@@ -7,10 +7,14 @@ const AUTH: &str = "demesne_tree_auth";
 const CALLER: &str = "demesne_tree_caller";
 
 const TABLES: &str = "
-CREATE TABLE folders (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, parent_id text);
+CREATE TABLE folders (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, parent_id text, name text);
 CREATE TABLE paths (ancestor_id text NOT NULL, descendant_id text NOT NULL, space_id text NOT NULL, depth integer NOT NULL, PRIMARY KEY (ancestor_id, descendant_id));
 CREATE TABLE templates (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text, body text);
 CREATE TABLE atlases (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text);
+CREATE TABLE spaces (id text PRIMARY KEY, estate_id text NOT NULL, status text NOT NULL, name text);
+CREATE TABLE pages (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL);
+CREATE TABLE sheets (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL);
+CREATE TABLE themes (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text, color text);
 CREATE TABLE notices (id text PRIMARY KEY, estate_id text NOT NULL, space_id text, body text);
 CREATE TABLE drafts (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, visibility text);
 CREATE TABLE ledgers (id text PRIMARY KEY, estate_id text NOT NULL, space_id text, amount integer);
@@ -56,7 +60,7 @@ fn install(db: &mut Client) {
     }
     db.batch_execute(&format!(
         "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER};
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers TO {CALLER};
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.spaces, {ROWS}.pages, {ROWS}.sheets, {ROWS}.themes, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers TO {CALLER};
          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {AUTH} TO {CALLER};
          SET search_path = {ROWS};"
     ))
@@ -97,6 +101,10 @@ fn the_closure_follows_its_base_and_reads_answer_in_both_directions() {
     reads_and_writes(&mut db);
     two_way_reach(&mut db);
     exact_tier(&mut db);
+    pinned_borrow(&mut db);
+    probes(&mut db);
+    nearest(&mut db);
+    projections(&mut db);
     require_terms(&mut db);
     a_caller_grows_the_tree_beneath_itself_alone(&mut db);
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
@@ -364,6 +372,154 @@ fn exact_tier(db: &mut Client) {
         }
     }
     grid.finish("notices");
+}
+
+fn visible_and_calls(db: &mut Client, who: &str, table: &str) -> (BTreeSet<String>, i64) {
+    let mut tx = db.transaction().expect("a transaction");
+    tx.batch_execute(&format!("SET LOCAL track_functions = 'all'; SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&who]).expect("the claims");
+    let counted = format!("SELECT COALESCE(pg_stat_get_xact_function_calls('{AUTH}.space_can_view(text)'::regprocedure), 0)");
+    let before: i64 = tx.query_one(&counted, &[]).expect("the call count").get(0);
+    let ids = tx.query(&format!("SELECT id FROM {table}"), &[]).expect("the read").iter().map(|r| r.get(0)).collect();
+    let after: i64 = tx.query_one(&counted, &[]).expect("the call count").get(0);
+    tx.rollback().expect("rollback");
+    (ids, after - before)
+}
+
+fn pinned_borrow(db: &mut Client) {
+    db.batch_execute(
+        "INSERT INTO spaces VALUES ('s1', 'e1', 'open', 'north'), ('s2', 'e1', 'closed', 'south'), ('s3', 'e2', 'open', 'east');
+         INSERT INTO pages VALUES ('p1', 'e1', 's1'), ('p2', 'e1', 's1'), ('p3', 'e1', 's1'), ('p4', 'e1', 's2'), ('p5', 'e2', 's3');
+         INSERT INTO sheets SELECT * FROM pages;",
+    )
+    .expect("spaces, pages and sheets");
+    let own = |ids: &[&str]| -> BTreeSet<String> { ids.iter().map(|id| (*id).to_string()).collect() };
+    let cases = [
+        (Some("e1"), Some("s1"), own(&["p1", "p2", "p3"]), "an open space's pages"),
+        (Some("e1"), Some("s2"), own(&[]), "a closed space's pages"),
+        (Some("e2"), Some("s3"), own(&["p5"]), "another estate's open space"),
+        (Some("e1"), Some("s3"), own(&[]), "a space claimed under the wrong estate"),
+        (Some("e1"), None, own(&[]), "no space claimed"),
+        (None, Some("s1"), own(&[]), "no estate claimed"),
+    ];
+    for (estate, space, want, what) in cases {
+        let who = claims(&[("estate_id", estate), ("space_id", space)]);
+        let (pinned, pinned_calls) = visible_and_calls(db, &who, "pages");
+        let (per_row, per_row_calls) = visible_and_calls(db, &who, "sheets");
+        assert_eq!(pinned, want, "{what}");
+        assert_eq!(pinned, per_row, "{what}: the pinned borrow admits the rows the per-row borrow admits");
+        assert!(pinned_calls <= 1, "{what}: the pinned borrow was asked {pinned_calls} times in one statement");
+        assert!(
+            per_row_calls >= i64::try_from(want.len()).expect("a small count"),
+            "{what}: the per-row borrow was asked {per_row_calls} times for {} rows",
+            want.len()
+        );
+    }
+    let who = claims(&[("estate_id", Some("e1")), ("space_id", Some("s1"))]);
+    assert_eq!((visible_and_calls(db, &who, "pages").1, visible_and_calls(db, &who, "sheets").1), (1, 3), "three rows: one call pinned, three per row");
+}
+
+type Answers = (Option<bool>, Option<i64>, Option<String>, Vec<String>);
+
+fn ask(db: &mut Client, estate: Option<&str>, name: Option<&str>) -> Answers {
+    let mut tx = db.transaction().expect("a transaction");
+    tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims(&[("estate_id", estate), ("space_id", Some("s1"))])]).expect("the claims");
+    let row = tx.query_one(&format!("SELECT {AUTH}.space_named($1), {AUTH}.spaces_in_estate(), {AUTH}.space_by_name($1)"), &[&name]).expect("the probes");
+    let readable = tx.query("SELECT name FROM spaces WHERE name = $1", &[&name]).expect("the read").iter().map(|r| r.get(0)).collect();
+    tx.rollback().expect("rollback");
+    (row.get(0), row.get(1), row.get(2), readable)
+}
+
+fn probes(db: &mut Client) {
+    let hidden: Vec<String> = Vec::new();
+    assert_eq!(ask(db, Some("e1"), Some("north")), (Some(true), Some(2), Some("s1".into()), vec!["north".to_string()]), "a space the caller reads");
+    assert_eq!(
+        ask(db, Some("e1"), Some("south")),
+        (Some(true), Some(2), Some("s2".into()), hidden.clone()),
+        "a closed space the caller cannot read is still found, and counted"
+    );
+    assert_eq!(ask(db, Some("e1"), Some("east")), (Some(false), Some(2), None, hidden.clone()), "another estate's space is not found");
+    assert_eq!(
+        ask(db, Some("e2"), Some("east")),
+        (Some(true), Some(1), Some("s3".into()), vec!["east".to_string()]),
+        "it is found, and read, from its own estate"
+    );
+    assert_eq!(ask(db, Some("e1"), None), (None, Some(2), None, hidden.clone()), "no value to match is no answer");
+    assert_eq!(ask(db, None, Some("north")), (Some(false), Some(0), None, hidden), "a caller with no estate claim is inside no containment");
+}
+
+fn nearest(db: &mut Client) {
+    db.batch_execute(
+        "INSERT INTO themes VALUES ('th_a', 'e1', 's1', 'a', 'red'), ('th_b', 'e1', 's1', 'b', NULL), ('th_c', 'e1', 's1', 'c', 'green'),
+           ('th_s1', 'e1', 's1', NULL, 'grey'), ('th_unset', 'e1', 's1', NULL, NULL), ('th_y', 'e1', 's2', 'y', 'blue');",
+    )
+    .expect("themes");
+    let color = |db: &mut Client, node: Option<&str>| -> Option<String> {
+        db.query_one(&format!("SELECT {AUTH}.theme_color($1)"), &[&node]).expect("the lookup").get(0)
+    };
+    for (node, want, why) in [
+        (Some("c"), Some("green"), "its own row"),
+        (Some("b"), Some("red"), "its own row sets nothing, so the parent's"),
+        (Some("d"), Some("red"), "the parent's"),
+        (Some("a"), Some("red"), "its own row"),
+        (Some("e"), Some("grey"), "no row above, so the space's own"),
+        (Some("y"), Some("blue"), "its own row, in another space"),
+        (Some("x"), None, "no row above and its space has none of its own"),
+        (Some("nowhere"), None, "a node the closure does not hold"),
+        (None, None, "no node"),
+    ] {
+        assert_eq!(color(db, node).as_deref(), want, "the colour at {node:?}: {why}");
+    }
+    db.batch_execute("UPDATE folders SET parent_id = 'c' WHERE id = 'e'").expect("a move");
+    assert_eq!(color(db, Some("e")).as_deref(), Some("green"), "after a move the nearest row is the new parent's");
+    db.batch_execute("UPDATE folders SET parent_id = NULL WHERE id = 'e'").expect("the move undone");
+    let public: bool = db
+        .query_one(
+            &format!(
+                "SELECT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(p.proacl) a WHERE p.oid = '{AUTH}.theme_color(text)'::regprocedure AND a.grantee = 0)"
+            ),
+            &[],
+        )
+        .expect("the lookup's privileges")
+        .get(0);
+    assert!(!public, "the lookup returns a row's value for any node, so PUBLIC cannot run it");
+}
+
+fn projected(db: &mut Client, who: &str, call: &str) -> Vec<(String, Option<String>)> {
+    let mut tx = db.transaction().expect("a transaction");
+    tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&who]).expect("the claims");
+    let rows =
+        tx.query(&format!("SELECT id, title FROM {AUTH}.{call}() ORDER BY id"), &[]).expect("the projection").iter().map(|r| (r.get(0), r.get(1))).collect();
+    tx.rollback().expect("rollback");
+    rows
+}
+
+fn projections(db: &mut Client) {
+    db.batch_execute("UPDATE folders SET name = 'folder ' || id").expect("folder names");
+    let card = |id: &str, title: &str| (id.to_string(), Some(title.to_string()));
+    let member = |estate: &str| claims(&[("estate_id", Some(estate)), ("space_id", Some("s1")), ("kind", Some("member"))]);
+    assert_eq!(projected(db, &member("e1"), "space_cards"), [card("s1", "north"), card("s2", "south")], "every space of the estate, the closed one too");
+    assert_eq!(projected(db, &member("e2"), "space_cards"), [card("s3", "east")], "another estate's cards");
+    let robot = claims(&[("estate_id", Some("e1")), ("space_id", Some("s1")), ("kind", Some("robot"))]);
+    assert_eq!(projected(db, &robot, "space_cards"), [], "the projection's own expression refuses a caller it does not name");
+    assert!(!attempt(db, &member("e1"), "spaces", "s2", Op::Select, &[]), "the closed space's row stays unreadable through the table");
+    let columns: Vec<String> = db
+        .query(&format!("SELECT a.attname::text FROM pg_proc p, unnest(p.proargnames) AS a(attname) WHERE p.oid = '{AUTH}.space_cards()'::regprocedure"), &[])
+        .expect("the projection's columns")
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(columns, ["id", "title"], "it returns the named columns and never the status");
+    let at = |folder: Option<&str>| claims(&[("estate_id", Some("e1")), ("space_id", Some("s1")), ("folder_id", folder)]);
+    assert_eq!(
+        projected(db, &at(Some("c")), "folder_path"),
+        [card("a", "folder a"), card("b", "folder b"), card("c", "folder c")],
+        "the folders on the caller's path"
+    );
+    assert_eq!(projected(db, &at(Some("e")), "folder_path"), [card("e", "folder e")]);
+    assert_eq!(projected(db, &at(None), "folder_path"), [], "a caller standing at no folder has no path");
 }
 
 fn require_terms(db: &mut Client) {

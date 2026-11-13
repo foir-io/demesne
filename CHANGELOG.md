@@ -1,5 +1,77 @@
 # Changelog
 
+## v4.0.0
+
+The crates are 4.0.0 because public types of `demesne-syntax` and
+`demesne-emit-sql` gain fields and variants, named under each change. A spec
+that uses none of the constructs below emits exactly what v3.0.0 did. The Go
+module's API doesn't change, so it is `go/v1.5.0`.
+
+### A borrowed permission can be asked once a statement
+
+`relation r: s via object space->view on space_id pinned` compiles the borrow
+to `(SELECT auth.space_can_view(<space claim>))` where it was
+`auth.space_can_view(space_id)`. Postgres evaluates the first once for the
+statement and the second for every row. The rows admitted are the same: the
+marker is accepted only on a scope column the object's containment holds equal
+to the caller's claim, and is refused on a nullable level, on a level a reach
+widens for the operation, and inside a `require`.
+
+`demesne_syntax::ViaObject` gains `pinned`.
+
+### `changelog checked`: the application writes the changelog
+
+With `changelog checked`, the triggers generated for `tracked` grants and for
+`track owner` and `track visibility` stop writing changelog rows and sending
+`NOTIFY`. They become deferred constraint triggers that refuse a commit, with
+`check_violation` and `<table>_changelog_written`, when the transaction changed
+a tracked source without writing the matching changelog row itself. The
+changelog table gains `txid`. Without the declaration the triggers write and
+notify as before.
+
+`demesne_syntax::Spec` gains `changelog`, and `ChangelogTrigger` and
+`ObjectChangelogTrigger` in `demesne-emit-sql` gain `checked`.
+
+### `probe` asks about rows the caller cannot read
+
+`probe <name>(<column> <type>, ...)` on an object emits a function that answers
+whether a row matches the given values inside the caller's containment,
+whatever the object's permissions say. `count` answers how many and `key`
+answers a matching row's key. The containment comes from the caller's claims
+and never from an argument. A probe on an object no claim contains is refused.
+
+`demesne_syntax::Object` gains `probes`, a list of the new `Probe`.
+
+### `@holds` over every value of an array column
+
+`@holds(<permission> every <column> at <level>)` is true when the array column
+is not empty and the caller holds the permission at every value in it, each
+taken as the scope at the level. Every value must be a row of the object that
+declares the level, inside the row's own scope above it. It compiles to a
+generated `<admin>_has_perm_every_<level>` function.
+
+`demesne_syntax::Builtin` gains `HoldsEvery`, whose `name()` is `holds_every`.
+
+### `nearest` reads the value declared closest above a node
+
+`nearest <name>(<column> <type>) via closure <closure> on <node column>` on an
+object emits `<name>(<node>)`, which returns the column from the nearest row at
+or above the node that sets it. The closure must be declared with `depth`. With
+a `scope` the object shares, a row naming no node is the fallback for its
+scope. `EXECUTE` on the function is revoked from PUBLIC.
+
+`demesne_syntax::Object` gains `nearests`, a list of the new `Nearest`.
+
+### `projection` shows some columns to callers who cannot read the row
+
+`projection <name>(<column> <type>, ...) = <expression>` on an object emits a
+function that returns the named columns of the rows the expression admits. The
+expression is compiled as an `admit` arm, inside the object's containment and
+apart from its permissions, so a caller the read policy hides a row from can
+still be shown part of it, by claim and not by database role.
+
+`demesne_syntax::Object` gains `projections`, a list of the new `Projection`.
+
 ## v3.0.0
 
 The crates are 3.0.0 because public types of `demesne-syntax`, `demesne-model`

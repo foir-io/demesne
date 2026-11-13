@@ -845,6 +845,39 @@ SQL definer tests the role's array against a generated
 `<admin>_perm_implied_by(p_perm)` reverse closure with an array overlap. A NULL
 `permissions` column fails closed.
 
+### A permission held at every value of an array
+
+`@holds` asks whether the caller holds a permission at the row's scope. Some
+rows name several places at once. An invitation to three spaces should be
+written only by someone who may invite to all three:
+
+```demesne
+object invite {
+  table invites
+  scoped estate
+  permission view   = @holds(invites:read)  + @holds(invites:read every space_ids at space)  @rls maps select
+  permission create = @holds(invites:write) + @holds(invites:write every space_ids at space) @rls maps insert
+}
+```
+
+`@holds(<permission> every <column> at <level>)` reads an array column of the
+row. It is true when the array is not empty and the caller holds the permission
+at every value in it, each taken as the scope at `<level>`, beside the row's own
+scope columns at the levels above. An assignment pinned to one space satisfies
+its space and no other, and an estate-wide assignment satisfies them all.
+
+Every value must also be a real place inside the row's own scope. The compiler
+finds the object that declares `level <level>` and requires each value to be a
+row of it whose parent columns equal the row's. A value from another estate, an
+id that names nothing, and a NULL element each make the term false. So does a
+NULL array.
+
+The term compiles to one generated function, `<admin>_has_perm_every_<level>`,
+which the policy calls with the array. The object must be scoped at every level
+above `<level>`, and the rolestore must hold assignments at `<level>`. A reader
+listing cannot name these callers, so an object whose listing would need to is
+refused, as with any term the listing cannot state.
+
 ### A rolestore's role relation may be a view
 
 `rolejoin <fk> <relation> <id> <key>` names a **relation**, not specifically a
@@ -1001,6 +1034,103 @@ at different granularities — a level subtree versus a single row. They're unif
 in the spec but kept as separate physical stores, never one generic tuple table.
 
 ---
+
+## Probes: asking about rows the caller cannot read
+
+Before it writes, an application sometimes has to ask about rows its caller is
+not allowed to read. Is this name already taken in the estate? How many spaces
+does the estate have? A query under the caller's policies cannot answer,
+because the rows that matter are hidden from it.
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  probe space_named(name text)
+  probe spaces_in_estate() count
+  probe space_by_name(name text as wanted) key
+  permission view = @scoped and @row(status, "open") @rls maps select
+}
+```
+
+`probe <name>(<column> <type> [as <parameter>], ...)` emits a function in the
+definer schema that answers whether any row matches the given values. `count`
+answers how many, and `key` answers the primary key of a matching row, the
+least when several match, or NULL.
+
+A probe is confined by the object's containment and nothing else. It reads the
+caller's claims for that, as the read policy does, and never takes a scope as
+an argument, so it cannot be pointed at another estate. Inside that containment
+it ignores the object's permissions, which is its purpose: a closed space the
+caller cannot read is still found by `space_named`. It returns one fact and no
+row.
+
+So a probe is a deliberate disclosure. Declare one only for a fact every caller
+inside the containment may learn. The compiler refuses a probe on an object no
+claim contains, since it would answer for the whole table.
+
+## Projections: some columns of rows the caller cannot read whole
+
+A policy admits a row or hides it. It cannot show two columns of a row and
+keep the rest. Field rules can, but they work through database roles, so with
+one connection role for every request they cannot tell one caller from another.
+
+A `projection` is a second way into a table that carries its own columns and
+its own rule:
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  projection space_cards(id text, name text as title) = @kind("member")
+  permission view = @scoped and @row(status, "open") @rls maps select
+}
+```
+
+`projection <name>(<column> <type> [as <output>], ...) = <expression>` emits a
+function, `<name>()`, that returns the named columns of every row the
+expression admits. Above, any member of the estate lists the id and name of
+every space, including a closed one whose row `view` hides, and never sees
+`status`. Query it like a table: `SELECT id, title FROM auth.space_cards()`.
+
+The expression is compiled as an `admit` arm is: inside the object's
+containment, with the same terms and the same validation, and with no part of
+the object's own permissions. The columns are a fixed list, so adding a column
+to the table exposes nothing new.
+
+A projection is not inlined into the query that calls it. It computes every
+admitted row first and the caller filters afterwards, so it suits small tables
+of declarations, not large tables of content. Callers a projection admits are
+not in the object's reader listing, which lists who reads whole rows.
+
+## A changelog the application writes
+
+`via grant ... tracked`, `track owner` and `track visibility` keep a changelog
+of access changes in `<definers>._authz_changelog`. By default the generated
+triggers write each row and send it with `NOTIFY`. An application that writes
+its own events in the writer's transaction, through an outbox for example, can
+take that over:
+
+```demesne
+changelog checked
+```
+
+The triggers on the tracked tables then write nothing and send nothing. They
+become deferred constraint triggers that run at commit and refuse the
+transaction, with `check_violation` and the constraint
+`<table>_changelog_written`, unless the changelog holds a row for each change,
+written by the same transaction. The row a change needs is the one the default
+trigger would have written: the same `rel`, `resource_id`, `principal_kind`,
+`principal_id` and `op`. A new owner needs a `revoke` for the old owner and a
+`grant` for the new one, and a visibility change needs a `visibility` row with
+empty principal columns.
+
+The changelog table gains a `txid` column, which defaults to the writing
+transaction, and that is how a row is matched to its change. The application's
+role needs INSERT on the table. Order within the transaction doesn't matter,
+since the check runs at commit.
 
 ## The runtime glue
 
@@ -1172,7 +1302,7 @@ wazero, with no cgo:
 
 ```
 demesne emit authz.demesne --target go framework authz > internal/authz/authz.go
-go get github.com/foir-io/demesne/go@v1.4.0
+go get github.com/foir-io/demesne/go@v1.5.0
 ```
 
 Its checks hang off a `Surface` that `authz.New(runtime)` builds from a `demesne.Runtime`:
@@ -1466,6 +1596,33 @@ it must already be right.
   `<closure>_scope_fixed` for a changed scope column. Insert a parent before
   its children. Within one statement that means listing it first.
 
+#### The nearest declaration
+
+Settings often inherit down a tree: a folder uses its own theme, or its
+parent's, or the nearest one above that sets a colour. Folding that in the
+application takes the path and one read per level. A `nearest` lookup answers
+in one call:
+
+```demesne
+object theme {
+  table themes
+  scoped estate > space
+  nearest theme_color(color text) via closure paths on folder_id
+  permission view = @scoped @rls maps select
+}
+```
+
+`theme_color(<node>)` returns `color` from the nearest row at or above the
+node, counting only rows where the column is set. The closure must be declared
+with `depth`. When the closure has a `scope` the object is also scoped by, a
+row that names no node is the last resort for every node in its scope: above,
+a theme with a NULL `folder_id` is the space's own.
+
+The function takes a node and returns a column's value whatever the caller may
+read, so `EXECUTE` is revoked from PUBLIC. Grant it to the roles that should
+ask: a role your policies run as, if a policy calls it, or the owner of a
+trigger that refuses a write against the inherited value.
+
 `named <name>` on the declaration replaces the closure's table name at the
 front of every generated function and trigger. Use it when a function of the
 default name already exists.
@@ -1498,6 +1655,41 @@ object version {
 This emits `template_reach_can_bound_for_select` beside `template_reach_can_bound`.
 `for` applies only to a predicate-only permission; a permission that maps an
 operation already has one.
+
+### A borrow asked once a statement
+
+A borrowed permission is a function call on the row's column, and Postgres runs
+it for every row the statement reads:
+
+```demesne
+relation open_space: member via object space->view on space_id
+```
+
+When the column is one the object is contained by, every row the policy admits
+holds the same value there, the caller's claim, and the answer is the same for
+all of them. `pinned` says so:
+
+```demesne
+object page {
+  table pages
+  scoped estate > space
+  relation open_space: member via object space->view on space_id pinned
+  permission view = @scoped and open_space @rls maps select
+}
+```
+
+The call becomes `(SELECT auth.space_can_view(<space claim>))`, which Postgres
+evaluates once for the statement. The rows admitted are the same, since the
+containment term beside it already requires `space_id` to equal that claim.
+
+The compiler accepts the marker only where that holds, and refuses it:
+
+- on a column that is not one of the object's scope columns;
+- on a `wildcard` or `exact` level, whose column may be NULL;
+- on a level that a grant or a claim reach widens for the operation, since a
+  row reached that way holds another value;
+- inside a `require`, which is compiled outside the permission's containment.
+  Borrow there without `pinned`.
 
 ### Credential confinement, admit arms and exported permissions
 

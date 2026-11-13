@@ -17,6 +17,7 @@ object folder {
   relation beneath:        member via closure paths(ancestor_id, descendant_id) on id        from claim folder_id missing allow
   relation beneath_parent: member via closure paths(ancestor_id, descendant_id) on parent_id from claim folder_id missing allow
   relation above:          member via closure paths(descendant_id, ancestor_id) on id        from claim folder_id missing deny
+  projection folder_path(id text, name text as title) = above
   permission view   = @scoped and (beneath + above) @rls maps select
   permission create = @scoped and beneath_parent    @rls maps insert
   permission edit   = @scoped and beneath           @rls maps update
@@ -41,6 +42,38 @@ object atlas {
   reach descendants via descendants, ancestors for select
   permission view = @scoped @rls maps select
   permission edit = @scoped @rls maps update
+}
+
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  probe space_named(name text)
+  probe spaces_in_estate() count
+  probe space_by_name(name text as wanted) key
+  projection space_cards(id text, name text as title) = @kind("member")
+  permission view = @scoped and @row(status, "open") @rls maps select
+}
+
+object page {
+  table pages
+  scoped estate > space
+  relation open_space: member via object space->view on space_id pinned
+  permission view = @scoped and open_space @rls maps select
+}
+
+object sheet {
+  table sheets
+  scoped estate > space
+  relation open_space: member via object space->view on space_id
+  permission view = @scoped and open_space @rls maps select
+}
+
+object theme {
+  table themes
+  scoped estate > space
+  nearest theme_color(color text) via closure paths on folder_id
+  permission view = @scoped @rls maps select
 }
 
 object notice {

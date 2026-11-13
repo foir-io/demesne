@@ -114,6 +114,74 @@ export const atlas = {
   },
 };
 
+export const space = {
+  async canView(q: Querier, id: string): Promise<Decision> {
+    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM spaces WHERE id = $1)", [id]);
+    return composeCan(true, Boolean(rows[0]?.exists), Decision.NotGoverned);
+  },
+
+  async listResources(q: Querier, after: string | null, limit: number): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM spaces WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", [after, limit]);
+    return rows.map((r) => r["id"] as string);
+  },
+
+  async checkMany(q: Querier, ids: string[]): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM spaces WHERE id = ANY($1)", [ids]);
+    return rows.map((r) => r["id"] as string);
+  },
+};
+
+export const page = {
+  async canView(q: Querier, id: string): Promise<Decision> {
+    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM pages WHERE id = $1)", [id]);
+    return composeCan(true, Boolean(rows[0]?.exists), Decision.NotGoverned);
+  },
+
+  async listResources(q: Querier, after: string | null, limit: number): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM pages WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", [after, limit]);
+    return rows.map((r) => r["id"] as string);
+  },
+
+  async checkMany(q: Querier, ids: string[]): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM pages WHERE id = ANY($1)", [ids]);
+    return rows.map((r) => r["id"] as string);
+  },
+};
+
+export const sheet = {
+  async canView(q: Querier, id: string): Promise<Decision> {
+    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM sheets WHERE id = $1)", [id]);
+    return composeCan(true, Boolean(rows[0]?.exists), Decision.NotGoverned);
+  },
+
+  async listResources(q: Querier, after: string | null, limit: number): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM sheets WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", [after, limit]);
+    return rows.map((r) => r["id"] as string);
+  },
+
+  async checkMany(q: Querier, ids: string[]): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM sheets WHERE id = ANY($1)", [ids]);
+    return rows.map((r) => r["id"] as string);
+  },
+};
+
+export const theme = {
+  async canView(q: Querier, id: string): Promise<Decision> {
+    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM themes WHERE id = $1)", [id]);
+    return composeCan(true, Boolean(rows[0]?.exists), Decision.NotGoverned);
+  },
+
+  async listResources(q: Querier, after: string | null, limit: number): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM themes WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", [after, limit]);
+    return rows.map((r) => r["id"] as string);
+  },
+
+  async checkMany(q: Querier, ids: string[]): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM themes WHERE id = ANY($1)", [ids]);
+    return rows.map((r) => r["id"] as string);
+  },
+};
+
 export const notice = {
   async canView(q: Querier, id: string): Promise<Decision> {
     const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM notices WHERE id = $1)", [id]);
@@ -189,6 +257,14 @@ export async function check(q: Querier, object: string, verb: string, id: string
       return atlas.canView(q, id);
     case "atlas.edit":
       return atlas.canEdit(q, id);
+    case "space.view":
+      return space.canView(q, id);
+    case "page.view":
+      return page.canView(q, id);
+    case "sheet.view":
+      return sheet.canView(q, id);
+    case "theme.view":
+      return theme.canView(q, id);
     case "notice.view":
       return notice.canView(q, id);
     case "notice.edit":
