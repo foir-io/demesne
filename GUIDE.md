@@ -845,6 +845,39 @@ SQL definer tests the role's array against a generated
 `<admin>_perm_implied_by(p_perm)` reverse closure with an array overlap. A NULL
 `permissions` column fails closed.
 
+### A permission held at every value of an array
+
+`@holds` asks whether the caller holds a permission at the row's scope. Some
+rows name several places at once. An invitation to three spaces should be
+written only by someone who may invite to all three:
+
+```demesne
+object invite {
+  table invites
+  scoped estate
+  permission view   = @holds(invites:read)  + @holds(invites:read every space_ids at space)  @rls maps select
+  permission create = @holds(invites:write) + @holds(invites:write every space_ids at space) @rls maps insert
+}
+```
+
+`@holds(<permission> every <column> at <level>)` reads an array column of the
+row. It is true when the array is not empty and the caller holds the permission
+at every value in it, each taken as the scope at `<level>`, beside the row's own
+scope columns at the levels above. An assignment pinned to one space satisfies
+its space and no other, and an estate-wide assignment satisfies them all.
+
+Every value must also be a real place inside the row's own scope. The compiler
+finds the object that declares `level <level>` and requires each value to be a
+row of it whose parent columns equal the row's. A value from another estate, an
+id that names nothing, and a NULL element each make the term false. So does a
+NULL array.
+
+The term compiles to one generated function, `<admin>_has_perm_every_<level>`,
+which the policy calls with the array. The object must be scoped at every level
+above `<level>`, and the rolestore must hold assignments at `<level>`. A reader
+listing cannot name these callers, so an object whose listing would need to is
+refused, as with any term the listing cannot state.
+
 ### A rolestore's role relation may be a view
 
 `rolejoin <fk> <relation> <id> <key>` names a **relation**, not specifically a

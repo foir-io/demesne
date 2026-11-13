@@ -17,7 +17,8 @@ use demesne_syntax::{
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 const KNOWN_LAYERS: [&str; 4] = ["rls", "pdp", "kernel", "check"];
-const KNOWN_BUILTINS: [&str; 12] = ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "claim", "row"];
+const KNOWN_BUILTINS: [&str; 13] =
+    ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "holds_every", "claim", "row"];
 const EXPORT_PARAMETER_TYPES: [&str; 12] =
     ["text", "uuid", "smallint", "integer", "bigint", "boolean", "json", "jsonb", "numeric", "timestamptz", "timestamp", "date"];
 
@@ -757,6 +758,29 @@ fn perm_positive(n: &PermNode) -> bool {
     }
 }
 
+fn check_holds_every(s: &Spec, o: &Object, t: &Term) -> Vec<String> {
+    let Some((_, _, level)) = t.holds_every() else { return Vec::new() };
+    let Some(lvl) = s.level_by_name(level).filter(|l| !l.is_virtual) else {
+        return vec![format!("uses {}, but {} is not a level that carries a scope column", t.display(), quote(level))];
+    };
+    let Some(entity) = s.objects.iter().find(|e| e.level() == lvl.name) else {
+        return vec![format!("uses {}, but no object declares `level {level}`, so nothing says which values exist there", t.display())];
+    };
+    entity
+        .scoped
+        .iter()
+        .filter(|l| *l != level && !s.level_is_virtual(l) && !contains(&o.scoped, l))
+        .map(|l| {
+            format!(
+                "uses {}, but object {} is not scoped at {}, so a value's place there cannot be checked against the row's",
+                t.display(),
+                quote(&o.name),
+                quote(l)
+            )
+        })
+        .collect()
+}
+
 fn require_positive(n: &PermNode) -> bool {
     match n {
         PermNode::Leaf(_) => true,
@@ -1023,6 +1047,11 @@ fn check_perm_terms(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<Finding
             if !has_pred {
                 errs.push(at("uses @row but compiles no row predicate — a row term is a test of the row and the decision point cannot read it"));
             }
+        } else if t.holds_every().is_some() {
+            errs.extend(check_holds_every(s, o, t).iter().map(|e| at(e)));
+            if !has_pred {
+                errs.push(at("uses @holds … every but compiles no row predicate — it reads an array column of the row, which the decision point cannot"));
+            }
         } else if !t.builtin().is_empty() {
             errs.extend(check_builtin_term(s, o, pm, t, rels, has_pred, has_pdp));
         } else if let Some((_, access)) = grant_selector(t.ident(), rels) {
@@ -1225,6 +1254,7 @@ fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<F
     }
     for t in rq.tree.leaves() {
         let b = t.builtin();
+        errs.extend(check_holds_every(s, o, t).into_iter().map(&at));
         if b == "within" && s.level_by_name(t.within_level()).is_none() {
             errs.push(at(format!("uses @within({}) which is not a topology level", quote(t.within_level()))));
         }

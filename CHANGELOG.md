@@ -39,6 +39,16 @@ and never from an argument. A probe on an object no claim contains is refused.
 
 `demesne_syntax::Object` gains `probes`, a list of the new `Probe`.
 
+### `@holds` over every value of an array column
+
+`@holds(<permission> every <column> at <level>)` is true when the array column
+is not empty and the caller holds the permission at every value in it, each
+taken as the scope at the level. Every value must be a row of the object that
+declares the level, inside the row's own scope above it. It compiles to a
+generated `<admin>_has_perm_every_<level>` function.
+
+`demesne_syntax::Builtin` gains `HoldsEvery`, whose `name()` is `holds_every`.
+
 ## v3.0.0
 
 The crates are 3.0.0 because public types of `demesne-syntax`, `demesne-model`

@@ -509,6 +509,63 @@ impl Sql<'_> {
                 self.def_add_holds_perm(defs, obj, pm, t)?;
             }
         }
+        for obj in &self.s.objects {
+            let trees = obj.perms.iter().map(|pm| &pm.tree).chain(obj.requires.iter().map(|rq| &rq.tree)).chain(obj.admits.iter().map(|a| &a.tree));
+            for t in trees.flat_map(PermNode::leaves).filter(|t| t.holds_every().is_some()) {
+                self.def_add_holds_every(defs, obj, t)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn def_add_holds_every(&self, defs: &mut Definers, obj: &Object, t: &Term) -> R<()> {
+        let (rs, levels) = self.holds_every_levels(obj, t)?;
+        let (_, _, level) = t.holds_every().expect("holds_every_levels accepted the term");
+        let holds = self.s.holds_perm_fn(rs);
+        if defs.claim(&holds) {
+            let mut implied_by = String::new();
+            if let Ok(vocab) = self.s.rolestore_vocab(rs)
+                && !vocab.implications.is_empty()
+            {
+                let f = self.perm_implied_by_definer(rs, vocab)?;
+                implied_by = format!("{}.{}", self.s.definer_schema(), f.name);
+                defs.add_once(f);
+            }
+            defs.fns.push(self.holds_perm_definer(&holds, rs, &implied_by));
+        }
+        let name = self.holds_every_fn(rs, level);
+        if !defs.claim(&name) {
+            return Ok(());
+        }
+        let Some(entity) = self.s.objects.iter().find(|o| o.level() == level) else {
+            return Err(format!("{} on {}: no object declares `level {level}`, so nothing says which values exist there", t.display(), quote(&obj.name)));
+        };
+        let id_t = self.s.id_type();
+        let mut sig = vec![format!("user_id {id_t}")];
+        let mut held = vec!["user_id".to_string()];
+        let mut inside = vec![format!("e.{} = v.id", entity.pk())];
+        for l in &levels {
+            if l == level {
+                sig.push(format!("check_{l}_ids {id_t}[]"));
+                held.push("v.id".into());
+                continue;
+            }
+            sig.push(format!("check_{l}_id {id_t}"));
+            held.push(format!("check_{l}_id"));
+            if contains(&entity.scoped, l) {
+                inside.push(format!("e.{} = check_{l}_id", self.s.scope_col(entity, l)));
+            }
+        }
+        sig.push("p_perm text".into());
+        held.push("p_perm".into());
+        let schema = self.s.definer_schema();
+        let body = format!(
+            "cardinality(check_{level}_ids) > 0 AND NOT EXISTS (SELECT 1 FROM unnest(check_{level}_ids) AS v(id) WHERE NOT EXISTS (SELECT 1 FROM {} e WHERE {}) OR {schema}.{holds}({}) IS NOT TRUE)",
+            entity.table,
+            inside.join(" AND "),
+            held.join(", ")
+        );
+        defs.fns.push(GenFn { name, sig: sig.join(", "), body, ..Default::default() });
         Ok(())
     }
 

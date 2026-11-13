@@ -870,6 +870,12 @@ pub enum Builtin {
         args: Vec<ExternalArg>,
     },
     Holds(String),
+    /// `@holds(<perm> every <column> at <level>)`: the permission is held at every value an array column names at a level.
+    HoldsEvery {
+        perm: String,
+        col: String,
+        level: String,
+    },
     Row {
         col: String,
         val: String,
@@ -896,6 +902,7 @@ impl Builtin {
             Builtin::Within { level, nullable: true } => format!("@within({level} nullable)"),
             Builtin::Within { level, nullable: false } => format!("@within({level})"),
             Builtin::Holds(p) => format!("@holds({p})"),
+            Builtin::HoldsEvery { perm, col, level } => format!("@holds({perm} every {col} at {level})"),
             Builtin::External { func, .. } => format!("@external({func})"),
             Builtin::Row { col, val } => format!("@row({col}, {})", quote(val)),
             Builtin::RowNull(col) => format!("@row({col}, null)"),
@@ -916,6 +923,7 @@ impl Builtin {
             Builtin::Within { .. } | Builtin::WithinExact(_) => "within",
             Builtin::External { .. } => "external",
             Builtin::Holds(_) => "holds",
+            Builtin::HoldsEvery { .. } => "holds_every",
             Builtin::Row { .. } | Builtin::RowNull(_) => "row",
             Builtin::Other(name) => name,
         }
@@ -1082,6 +1090,15 @@ impl Term {
         match self.builtin_ref() {
             Some(Builtin::Holds(p)) => p,
             _ => "",
+        }
+    }
+
+    /// Returns the permission, array column and level of `@holds(<perm> every <column> at <level>)`.
+    #[must_use]
+    pub fn holds_every(&self) -> Option<(&str, &str, &str)> {
+        match self.builtin_ref() {
+            Some(Builtin::HoldsEvery { perm, col, level }) => Some((perm, col, level)),
+            _ => None,
         }
     }
 

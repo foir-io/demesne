@@ -1259,6 +1259,13 @@ impl Parser {
                         return Err(self.err(format!("@holds needs a permission verb (`@holds(<domain>:<verb>)`), got {}", self.got())));
                     }
                 };
+                if self.accept_kw("every") {
+                    let col = self.ident()?;
+                    self.expect_kw("at")?;
+                    let level = self.ident()?;
+                    self.expect(Tok::RParen)?;
+                    return Ok(Builtin::HoldsEvery { perm, col, level });
+                }
                 self.expect(Tok::RParen)?;
                 Builtin::Holds(perm)
             }

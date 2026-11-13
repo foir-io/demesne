@@ -752,6 +752,7 @@ impl Sql<'_> {
                 }
             }
             "holds" => self.rls_emit_holds(obj, t),
+            "holds_every" => self.rls_emit_holds_every(obj, t),
             "" => {
                 if is_perm_key_lit(t.ident()) {
                     Err(format!("capability term {} belongs to the PDP, not RLS", quote(t.ident())))
@@ -789,6 +790,43 @@ impl Sql<'_> {
         }
         args.push(quote_literal(perm));
         Ok(vec![format!("{}.{}({})", self.s.definer_schema(), self.s.holds_perm_fn(rs), args.join(", "))])
+    }
+
+    pub(crate) fn holds_every_fn(&self, rs: &demesne_syntax::RoleStore, level: &str) -> String {
+        format!("{}_every_{level}", self.s.holds_perm_fn(rs))
+    }
+
+    pub(crate) fn holds_every_levels(&self, obj: &Object, t: &Term) -> R<(&demesne_syntax::RoleStore, Vec<String>)> {
+        let (perm, _, level) = t.holds_every().ok_or_else(|| format!("{} is no `@holds … every` term", t.display()))?;
+        let refuse = |why: String| format!("{} on {}: {why}", t.display(), quote(&obj.name));
+        let rs = self.s.holds_role_store(perm).map_err(|e| refuse(e.to_string()))?;
+        if rs.perms_col.is_none() {
+            return Err(refuse(format!("rolestore {} declares no `permissions` column", quote(&rs.name))));
+        }
+        let depth = self.s.rolestore_plane_depth(rs).min(rs.scope_cols.len());
+        let levels: Vec<String> =
+            topology::chain(self.s).map_err(|e| e.to_string())?.into_iter().filter(|l| !l.is_virtual).take(depth).map(|l| l.name.clone()).collect();
+        if !levels.iter().any(|l| l == level) {
+            return Err(refuse(format!("rolestore {} holds no assignment at level {}", quote(&rs.name), quote(level))));
+        }
+        Ok((rs, levels))
+    }
+
+    fn rls_emit_holds_every(&self, obj: &Object, t: &Term) -> R<Vec<String>> {
+        let (rs, levels) = self.holds_every_levels(obj, t)?;
+        let (perm, col, level) = t.holds_every().expect("holds_every_levels accepted the term");
+        let mut args = vec![self.id_claim(self.s.admin_identify())];
+        for l in &levels {
+            if l == level {
+                args.push(col.to_string());
+            } else if contains(&obj.scoped, l) {
+                args.push(self.s.scope_col(obj, l));
+            } else {
+                args.push("NULL".into());
+            }
+        }
+        args.push(quote_literal(perm));
+        Ok(vec![format!("{}.{}({})", self.s.definer_schema(), self.holds_every_fn(rs, level), args.join(", "))])
     }
 
     fn rls_emit_app_scope(&self, obj: &Object, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
