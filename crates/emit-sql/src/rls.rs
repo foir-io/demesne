@@ -1170,10 +1170,33 @@ impl Sql<'_> {
     }
 
     pub(crate) fn perm_require_sql(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>) -> R<String> {
-        match obj.require_for(&pm.verb) {
-            None => Ok(String::new()),
-            Some(rq) => self.require_predicate(obj, pm, rq, cust),
+        let own = match obj.require_for(&pm.verb) {
+            None => String::new(),
+            Some(rq) => self.require_predicate(obj, pm, rq, cust)?,
+        };
+        let marked = self.marker_conditions(obj, pm.maps());
+        if marked.is_empty() {
+            return Ok(own);
         }
+        if own.is_empty() {
+            return Ok(marked.join(" AND "));
+        }
+        Ok(format!("({own}) AND {}", marked.join(" AND ")))
+    }
+
+    pub(crate) fn marker_fn(container: &Object, m: &demesne_syntax::Marker) -> String {
+        format!("{}_{}_marker_admits", container.table, m.col)
+    }
+
+    fn marker_conditions(&self, obj: &Object, op: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for container in self.s.objects.iter().filter(|c| c.is_level_entity() && c.table != obj.table && contains(&obj.scoped, c.level())) {
+            let col = self.s.scope_col(obj, container.level());
+            for m in container.markers.iter().filter(|m| m.ops.iter().any(|o| o == op)) {
+                out.push(format!("({col} IS NULL OR {}.{}({col}, {}))", self.s.definer_schema(), Self::marker_fn(container, m), self.claim(&m.claim)));
+            }
+        }
+        out
     }
 
     pub(crate) fn perm_predicate(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {

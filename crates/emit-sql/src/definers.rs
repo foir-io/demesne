@@ -330,6 +330,7 @@ impl Sql<'_> {
         self.def_emit_permission_exports(&mut out, &virt)?;
         self.def_emit_probes(&mut out)?;
         self.def_emit_nearests(&mut out)?;
+        self.def_emit_markers(&mut out)?;
         self.def_emit_projections(&mut out, &virt)?;
         for f in &mut out {
             f.schema = self.s.definer_schema().to_string();
@@ -1832,6 +1833,28 @@ impl Sql<'_> {
                 body: format!("  SELECT {} FROM {} WHERE {pred};", selected.join(", "), obj.table),
                 ..Default::default()
             });
+        }
+        Ok(())
+    }
+
+    fn def_emit_markers(&self, out: &mut Vec<GenFn>) -> R<()> {
+        let mut seen: HashSet<String> = out.iter().map(|f| f.name.clone()).collect();
+        for (obj, m) in self.s.objects.iter().flat_map(|o| o.markers.iter().map(move |m| (o, m))) {
+            let name = Self::marker_fn(obj, m);
+            if !seen.insert(name.clone()) {
+                return Err(format!("object {}: marker {} collides with the generated function {}", quote(&obj.name), quote(&m.col), quote(&name)));
+            }
+            let (t, pk, col) = (&obj.table, obj.pk(), &m.col);
+            let mut body = format!("EXISTS (SELECT 1 FROM {t} m WHERE m.{pk} = p_container AND (m.{col} IS NULL OR m.{col}::text = p_claim))");
+            if let Some(c) = m.closure.as_deref().and_then(|c| self.s.closure_by_table(c)) {
+                write!(
+                    body,
+                    " AND NOT EXISTS (SELECT 1 FROM {} c JOIN {t} m ON m.{pk} = c.{} WHERE c.{} = p_container AND m.{col} IS NOT NULL AND m.{col}::text IS DISTINCT FROM p_claim)",
+                    c.table, c.ancestor_col, c.descendant_col
+                )
+                .expect("fmt::Write for String never fails");
+            }
+            out.push(GenFn { name, sig: format!("p_container {}, p_claim text", self.s.id_type()), body, ..Default::default() });
         }
         Ok(())
     }

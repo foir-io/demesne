@@ -420,6 +420,7 @@ pub struct Object {
     pub probes: Vec<Probe>,
     pub nearests: Vec<Nearest>,
     pub projections: Vec<Projection>,
+    pub markers: Vec<Marker>,
     pub relations: Vec<Relation>,
     pub perms: Vec<Perm>,
     pub requires: Vec<Require>,
@@ -1344,6 +1345,17 @@ pub struct PermissionExport {
     pub verb: String,
     pub name: String,
     pub params: Vec<ExportParameter>,
+    pub pos: Pos,
+}
+
+/// A `marker` on a level's object: rows beneath a marked row are written only by a session whose claim equals the marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marker {
+    pub col: String,
+    pub claim: String,
+    pub ops: Vec<String>,
+    /// `through closure <table>`: a marked row above the row's own container confines too.
+    pub closure: Option<String>,
     pub pos: Pos,
 }
 

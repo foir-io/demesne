@@ -11,8 +11,8 @@ use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_syntax::{
-    Finding, Grant, GrantUse, Level, Object, Perm, PermNode, PermissionExport, ProbeAnswer, Relation, Repr, Require, Spec, Subject, Term, ViaClosure, ViaGrant,
-    ViaObject, Vocabulary,
+    Finding, Grant, GrantUse, Level, Marker, Object, Perm, PermNode, PermissionExport, ProbeAnswer, Relation, Repr, Require, Spec, Subject, Term, ViaClosure,
+    ViaGrant, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -82,6 +82,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_probes(s));
     errs.extend(validate_nearests(s));
     errs.extend(validate_projections(s));
+    errs.extend(validate_markers(s));
     errs.extend(validate_grant_stores(s));
     errs.extend(validate_store_manage(s));
     errs.extend(check_emit_sites(s, &vocab_names));
@@ -1919,6 +1920,45 @@ fn validate_projections(s: &Spec) -> Vec<Finding> {
         errs.extend(check_perm_terms(s, obj, &pm, &crate::analysis::rels_of(obj)));
     }
     errs
+}
+
+fn validate_markers(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    for o in &s.objects {
+        let mut cols: HashSet<&str> = HashSet::new();
+        for m in &o.markers {
+            let at = |msg: String| Finding::at(m.pos.line, format!("object {}: marker {} {msg}", quote(&o.name), quote(&m.col)));
+            if !o.is_level_entity() {
+                errs.push(at("is on an object that declares no `level`, so no other object's rows sit beneath its rows".into()));
+            }
+            if !cols.insert(&m.col) {
+                errs.push(at("is declared twice".into()));
+            }
+            errs.extend(marker_faults(s, o, m).into_iter().map(at));
+        }
+    }
+    errs
+}
+
+fn marker_faults(s: &Spec, o: &Object, m: &Marker) -> Vec<String> {
+    let mut faults = Vec::new();
+    let mut ops: HashSet<&str> = HashSet::new();
+    for op in &m.ops {
+        if !ORDERED_TABLE_OPS.contains(&op.as_str()) {
+            faults.push(format!("confines {}, which is no table operation", quote(op)));
+        } else if !ops.insert(op) {
+            faults.push(format!("confines {} twice", quote(op)));
+        }
+    }
+    let Some(name) = &m.closure else { return faults };
+    match s.closure_by_table(name) {
+        None => faults.push(format!("reads closure {}, which the spec does not declare", quote(name))),
+        Some(c) if c.base.as_ref().is_none_or(|b| b.table != o.table) => {
+            faults.push(format!("reads closure {}, whose base is not table {}", quote(name), quote(&o.table)));
+        }
+        Some(_) => {}
+    }
+    faults
 }
 
 fn validate_nearests(s: &Spec) -> Vec<Finding> {

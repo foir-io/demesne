@@ -1,8 +1,8 @@
 use crate::Error;
 use crate::ast::{
     Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, DeclaredScope, ExportParameter, Extension, External, ExternalArg, FieldRule,
-    FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Membership, Nearest, Object, Perm,
-    PermNode, PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr, Require,
+    FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker, Membership, Nearest, Object,
+    Perm, PermNode, PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr, Require,
     RoleStore, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaConditions,
     ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
@@ -667,6 +667,8 @@ impl Parser {
         } else if self.is_kw("field") {
             let f = self.parse_field_rule(o)?;
             o.fields.push(f);
+        } else if self.is_kw("marker") {
+            self.parse_marker(o)?;
         } else if self.is_kw("projection") {
             self.parse_projection(o)?;
         } else if self.is_kw("nearest") {
@@ -1695,6 +1697,25 @@ impl Parser {
         let params = self.parse_bound_columns()?;
         self.expect(Tok::RParen)?;
         o.exports.push(PermissionExport { verb, name, params, pos });
+        Ok(())
+    }
+
+    fn parse_marker(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let col = self.ident()?;
+        self.expect_kw("from")?;
+        self.expect_kw("claim")?;
+        let claim = self.ident()?;
+        self.expect_kw("confines")?;
+        let ops = self.ident_list()?;
+        let closure = if self.accept_kw("through") {
+            self.expect_kw("closure")?;
+            Some(self.ident()?)
+        } else {
+            None
+        };
+        o.markers.push(Marker { col, claim, ops, closure, pos });
         Ok(())
     }
 
