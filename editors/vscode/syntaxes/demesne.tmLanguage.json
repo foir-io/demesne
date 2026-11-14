@@ -30,7 +30,7 @@
     },
     "via": {
       "comment": "`via <repr>` — highlight the relation representation kind",
-      "match": "\\b(via)\\s+(role|edge|grant|closure|group|object|composition|memberin|membership)\\b",
+      "match": "\\b(via)\\s+(role|edge|grant|closure|group|object|composition|memberin|membership|conditions)\\b",
       "captures": {
         "1": { "name": "keyword.control.via.demesne" },
         "2": { "name": "entity.name.type.repr.demesne" }
@@ -38,12 +38,12 @@
     },
     "declarations": {
       "comment": "top-level declaration blocks",
-      "match": "\\b(topology|vocabulary|subject|object|template|procedures|ungoverned|fieldscopes|rolestore|grant|claims|definers|tables|identifiers|external|closure|changelog)\\b",
+      "match": "\\b(topology|vocabulary|subject|object|template|procedures|ungoverned|fieldscopes|rolestore|grant|claims|definers|tables|identifiers|external|closure|changelog|extension)\\b",
       "name": "keyword.other.declaration.demesne"
     },
     "keywords": {
       "comment": "block/clause keywords + reach/binding/boolean words",
-      "match": "\\b(level|virtual|parent|parents|col|claim|permission|require|predicate|preset|rank|assignments|kind|scope|plane|rolejoin|revoked|permissions|pk|granted|by|created|column|at|active|expires|anchor|reach|identifies|roles|configurable|none|binds|transient|set|membership|table|scoped|relation|use|omit|guard|maps|where|mode|schema|self|descendants|owner|admin|public|and|or|not)\\b",
+      "match": "\\b(level|virtual|parent|parents|col|claim|permission|require|predicate|preset|rank|assignments|kind|scope|plane|rolejoin|revoked|permissions|pk|granted|by|created|column|at|active|expires|anchor|reach|identifies|roles|configurable|none|binds|transient|set|membership|table|scoped|relation|use|omit|guard|maps|where|mode|schema|self|descendants|owner|admin|public|and|or|not|some|every|in|prefix|held|key|slot|path|along|nested|marker|confines|through|form|absent|reads|unversioned|base|values|reached)\\b",
       "name": "keyword.control.demesne"
     },
     "permkeys": {

@@ -582,6 +582,27 @@ new functions, as an exposed schema on Supabase often does, revoke it from
 those roles too. `demesne diff` reports it as changed when PUBLIC may execute
 it live.
 
+The enumerators are emitted the same way. `<table>_accessors`,
+`<table>_accessors_conditional`, `<table>_direct_accessors` and
+`<table>_<verb>_accessors` name the principals that reach whatever row id they
+are given, so PUBLIC cannot run them either: grant them to the role that lists
+accessors.
+
+**Every other generated function answers only about the caller.** Each is
+`SECURITY DEFINER`, and a policy runs as the caller, so PUBLIC must be able to
+run it. A function that takes a principal therefore answers only when that
+argument is one of the caller's own identity claims, and returns false for any
+other. A policy always passes the claim, so nothing a rule decides depends on
+this; it stops a caller running the function directly to ask about someone
+else. A statement of your own that must ask about another principal reads the
+tables itself, under a role that may.
+
+One function has a second side. A rule on the admin table itself may pass a
+row's column as the principal and a claim as the scope
+(`via memberin tenant(id, @tenant_id)`), so `<admin>_memberin_<level>` then
+also answers for the scope that claim names, and for no other scope. A spec
+with no such rule gets the principal binding alone.
+
 A select `admit` arm adds a conditional row to the listing, with the `admit`
 source and the claims and row conditions the arm states. A conjunct no row can
 state, such as a relation confined by a claim, is left out of that row, so the
@@ -1101,7 +1122,10 @@ true.
 
 The declared rows come through one generated function per table and key,
 `<table>_declared_by_<key>`, which returns the columns the spec reads and no
-others.
+others. It takes the key as an argument and answers for any key: a policy
+calls it with a row's own element, so it cannot be bound to a claim. What it
+returns is the rule vocabulary, not a tenant's rows. Keep nothing in a declared
+table that a caller of any tenant should not learn.
 
 ### `via conditions`: comparisons stored as rows
 
@@ -1211,6 +1235,18 @@ element)` is emitted for each operation whose permission has a `some`, on an
 object that declares `nested`. A row is admitted by a rule that is one `some`
 exactly when the function holds for one of the row's elements, so it answers
 "which rule let this caller in".
+
+**What a chain costs.** A row its own rule admits is judged inside the
+policy's statement. A row reached through a chain is judged behind a function,
+because the caller cannot read the closure, and the ancestor's whole rule is
+set up and run again for each such row. On Postgres 17, on a loaded
+development machine, a row admitted directly cost about 17 µs, a row admitted
+through one hop about 100 µs, and each further hop judged live about 40 µs
+more. Nothing is kept between rows or statements, so a change at any hop
+counts in the same transaction. Each hop is judged inside the chain
+function's own statement, and the helper functions a chain calls are
+PL/pgSQL, so that their plans are kept. Measure on your own data before you
+put a chain on a list read.
 
 A write permission that repeats the read rule, `edit = <write terms> and <the
 read rule>`, follows the read rule's compositions for writing. The compiler
@@ -1618,7 +1654,7 @@ wazero, with no cgo:
 
 ```
 demesne emit authz.demesne --target go framework authz > internal/authz/authz.go
-go get github.com/foir-io/demesne/go@v1.5.0
+go get github.com/foir-io/demesne/go@v1.6.0
 ```
 
 Its checks hang off a `Surface` that `authz.New(runtime)` builds from a `demesne.Runtime`:
@@ -1862,6 +1898,12 @@ Over an undeclared one it stays the per-row lookup
 upward direction. Declaring the closure is how a spec moves to the set form.
 `<closure>_reachable(ancestor, descendant)` is generated either way.
 
+These functions answer only for the caller's own node. Each keeps its
+argument, since the policy passes the claim, and returns nothing when the
+argument is not the claim the relations over the closure read. A caller cannot
+run one to list another node's tree. Code of your own that needs any node's
+ancestors or descendants reads the closure table, under a role that may.
+
 `missing allow` admits a caller that carries no folder claim, and `missing deny`
 refuses one. Above, a session standing at the space, with no folder, reads and
 writes every template in it. A row with a NULL `folder_id` is in neither set, so
@@ -1878,7 +1920,9 @@ closure paths(ancestor_id, descendant_id) depth depth
 for a folder and itself, 1 for its parent. With it the compiler also emits
 `<closure>_path(<node>)`, which returns the node's ancestors and the node
 itself, root first, each with its depth. Code that folds what each level
-declares into what the node is served reads the levels in that order.
+declares into what the node is served reads the levels in that order. No
+policy calls it and it answers for any node, so `EXECUTE` is revoked from
+PUBLIC: grant it to the role that folds.
 
 #### Maintenance from the declaration
 
@@ -1938,6 +1982,39 @@ The function takes a node and returns a column's value whatever the caller may
 read, so `EXECUTE` is revoked from PUBLIC. Grant it to the roles that should
 ask: a role your policies run as, if a policy calls it, or the owner of a
 trigger that refuses a write against the inherited value.
+
+`where <column> = "<value>"` after the node column counts only the rows whose
+column holds the value, at every level and for the last resort alike:
+
+```demesne
+object skin {
+  table skins
+  scoped estate > space
+  nearest live_skin(id text) via closure paths on folder_id where status = "live"
+  permission view = @scoped @rls maps select
+}
+
+object banner {
+  table banners
+  scoped estate > space
+  permission view = @scoped @rls maps select
+  require view    = @claim("folder_id", null) + @nearest(live_skin, skin_id from claim folder_id)
+}
+```
+
+`@nearest(<lookup>, <column> from claim <key>)` is true of a row whose column
+equals what the lookup answers at the node the caller's claim names. Above, a
+caller standing in a folder reads only the banners of the live skin that serves
+that folder: the nearest one at or above it, else the space's own. It is
+written only in a `require`, because it names nobody. Where nothing serves the
+node, or the caller carries no such claim, the term is unknown and the floor
+admits nothing, so say which callers stand outside it, as `@claim("folder_id",
+null)` does here. The lookup is read live, once a statement, so a change of
+the nearest row counts at once.
+
+The lookup is not PUBLIC's, and a policy runs as the caller. So the term calls
+`<lookup>_own(<node>)`, emitted only when a term asks for it, which answers at
+the caller's own claimed node and at no other.
 
 `named <name>` on the declaration replaces the closure's table name at the
 front of every generated function and trigger. Use it when a function of the

@@ -1,12 +1,60 @@
 # Changelog
 
-## Unreleased
+## v5.0.0
 
-The crates will be 5.0.0 because public types of `demesne-syntax`,
+The crates are 5.0.0 because public types of `demesne-syntax`,
 `demesne-model` and `demesne-emit-sql` gain fields and variants, named under
 each change, and `demesne_emit_sql::Sql` gains private fields, so it is built
-with `Sql::new`. A spec that uses none of the constructs below emits exactly
-what v4.0.0 did, with the two exceptions under "Fixed".
+with `Sql::new`. A spec that uses none of the constructs below emits the
+policies v4.0.0 did, with the two exceptions under "Fixed". Its generated
+functions change: see "Breaking" first. The Go module's API doesn't change, so
+it is `go/v1.6.0`.
+
+### Breaking: a generated function answers only about the caller, or PUBLIC cannot run it
+
+Every generated function is `SECURITY DEFINER`, and Postgres lets PUBLIC
+execute a new function. Many took an identity or a node as an argument and
+answered for any value. A caller could run one directly and ask about someone
+else: list another node's subtree, read which levels another principal is
+granted, or learn whether another principal holds a role.
+
+From this release one rule holds for every generated function. **It answers
+only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
+
+- **Bound to the caller.** A function that takes a principal (`user_id`,
+  `p_principal`, `p_member`, the first argument of
+  `<principal>_can_access_<object>`), a closure node (`<closure>_descendants`,
+  `_ancestors`, `_reachable`), a marker's claim value or a stored condition's
+  claim values now answers only when that argument is the caller's own claim.
+  For any other value it answers false, the empty set, or NULL where the
+  function can already say "undecided". The signatures are unchanged.
+  `<admin>_memberin_<level>(principal, scope)` is bound on its principal. Where
+  a rule passes a row's column as the principal and a claim as the scope
+  (`via memberin tenant(id, @tenant_id)`), it also answers for the scope that
+  claim names, and for no other scope: such a rule already shows the caller
+  which principals are members of the scope the caller stands in.
+- **Revoked from PUBLIC.** `<table>_accessors`, `<table>_accessors_conditional`,
+  `<table>_direct_accessors` and `<table>_<verb>_accessors` name the principals
+  that reach any row id, and `<closure>_path` returns any node's ancestors. No
+  policy calls them. `<table>_admits` and a `nearest` lookup were revoked
+  already.
+- **Left as it was.** `<table>_declared_by_<key>` returns the rows a rule table
+  declares for a key. A policy calls it with a row's value, and what it returns
+  is the rule vocabulary, not a tenant's rows.
+
+Policies always passed the caller's claim, so no policy changes and no rule
+admits or refuses anyone it did not before.
+
+What breaks for an adopter:
+
+- **SQL of your own that calls a bound function with another principal's id,
+  or another node, now gets false or nothing.** So does a call made with no
+  claims set. Read the tables in that statement instead, under a role that may.
+- **A role that lists accessors or reads `<closure>_path` needs
+  `GRANT EXECUTE`** on those functions. `demesne emit … manifest` lists every
+  function the SQL revokes.
+
+Re-emit and apply the definers; nothing else moves.
 
 ### `some`: one element of an array column, and what must hold for it
 
@@ -193,10 +241,33 @@ so what cannot be followed does not admit. A composition under `not` or inside
 `none` is followed by the upper bound, so what cannot be followed, or cannot be
 decided, bars. Only the functions something calls are emitted.
 
+A hop is judged inside the chain function's own statement, and a helper
+function a chain calls is emitted as PL/pgSQL, so that its plan is kept
+between rows. Nothing is kept between rows or statements. A row reached
+through a chain still costs several times a row its own rule admits; the guide
+gives the figures.
+
 `demesne_syntax` gains `CompPath`; `ViaComposition` gains `path`, `Object` gains
 `nested`, `Builtin` gains `HoldsAt`, and the lexer reads a whole number.
 `demesne_model::analysis` gains `Cut`, `CutAt`, `Bounded`, `composition_cut`
 and `cut_tree`.
+
+### `nearest … where`, and `@nearest`: a column compared with the nearest value at the caller's node
+
+```demesne
+nearest live_skin(id text) via closure paths on folder_id where status = "live"
+require view = @claim("folder_id", null) + @nearest(live_skin, skin_id from claim folder_id)
+```
+
+`where <column> = "<value>"` on a `nearest` counts only the rows whose column
+holds the value. `@nearest(<lookup>, <column> from claim <key>)`, written only
+in a `require`, is true of a row whose column equals what the lookup answers at
+the node the caller's claim names. It is read live, once a statement. The term
+calls `<lookup>_own(<node>)`, emitted when a term asks for it, which answers
+only at the caller's own claimed node; the lookup itself stays revoked from
+PUBLIC.
+
+`demesne_syntax::Nearest` gains `filter`, and `Builtin` gains `Nearest`.
 
 ### Fixed: a composition under `not` or inside `none` was judged by a lower bound
 
