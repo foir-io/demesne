@@ -1,4 +1,4 @@
-use demesne_emit_sql::{GenFn, Sql};
+use demesne_emit_sql::{GenFn, Language, Sql};
 
 const HEAD: &str = "topology { level estate }\nsubject member { anchor estate; reach self; identifies sub; roles none }\n";
 const HOPS: &str = "(every h in doc_trail_hops(trail) ((@slot(kind, \"claim\") and @slot(rule held rules_held)) + (@slot(kind, \"live\") and @holds_at(doc_id, rule slot field))))";
@@ -86,29 +86,41 @@ fn the_policy_follows_a_composition_that_widens_by_its_lower_bound_and_one_that_
     );
 }
 
+const ALONG: &str = " THEN (NOT EXISTS (SELECT 1 FROM auth.doc_trail_hops_declared_by_trail(";
+const HOP: &str = "(SELECT CASE WHEN demesne_hop.record IS NULL OR demesne_hop.element IS NULL";
+
+fn own_and_hop<'a>(defs: &'a [GenFn], name: &str) -> (&'a str, &'a str) {
+    let arm = &named(defs, name).arms[0].body;
+    let (own, along) = arm.split_once(ALONG).unwrap_or_else(|| panic!("no path in {arm}"));
+    let at = along.find(HOP).unwrap_or_else(|| panic!("no hop judged in {along}"));
+    (own, &along[at..])
+}
+
 #[test]
 fn a_hop_counts_only_when_every_row_declared_for_its_path_key_holds() {
     let (_, defs) = emitted("  nested 1");
     let followed = &named(&defs, "doc_composition_lent").arms[0].body;
     assert!(followed.starts_with("EXISTS (SELECT 1 FROM doc_lends e WHERE e.borrower_id = p_doc_id AND e.field::text = p_slot AND CASE WHEN EXISTS (SELECT 1 FROM docs WHERE docs.id = e.lender_id AND ((estate_id = ESTATE AND"), "{followed}");
+    holds(
+        followed,
+        &[&format!(
+            "{ALONG}e.trail::text) AS demesne_slot WHERE (((demesne_slot.kind = 'claim') AND (demesne_slot.rule = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text(HELD::jsonb) e)))) OR ((demesne_slot.kind = 'live') AND ({HOP} OR demesne_hop.slot IS NULL THEN NULL ELSE EXISTS (SELECT 1 FROM docs WHERE docs.id = demesne_hop.record AND "
+        )],
+    );
     assert!(
-        followed.ends_with(
-            " THEN (NOT EXISTS (SELECT 1 FROM auth.doc_trail_hops_declared_by_trail(e.trail::text) AS demesne_slot WHERE (((demesne_slot.kind = 'claim') AND (demesne_slot.rule = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text(HELD::jsonb) e)))) OR ((demesne_slot.kind = 'live') AND (auth.doc_select_holds_at_lent_1(demesne_slot.doc_id, demesne_slot.rule, demesne_slot.field)))) IS NOT TRUE)) ELSE false END)"
-        ),
+        followed.ends_with(" END FROM (SELECT demesne_slot.doc_id AS record, demesne_slot.rule AS element, demesne_slot.field AS slot) AS demesne_hop)))) IS NOT TRUE)) ELSE false END)"),
         "{followed}"
     );
-    holds(followed, &[&format!("{EXCEPT} (auth.doc_composition_lent_0_upper(docs.id, 'read', demesne_slot.param))) IS NOT FALSE)")]);
-    lacks(followed, &["demesne_slot.kind = 'tree'", "auth.doc_composition_lent(", "auth.doc_composition_under"]);
-    let lowest = &named(&defs, "doc_composition_lent_0").arms[0].body;
-    holds(
-        lowest,
-        &[
-            "demesne_slot.role = 'except' AND ((demesne_slot.kind = 'lend')) IS NOT FALSE)",
-            "auth.doc_select_holds_at_lent_0(demesne_slot.doc_id, demesne_slot.rule, demesne_slot.field)",
-        ],
-    );
+    let (own, _) = own_and_hop(&defs, "doc_composition_lent");
+    holds(own, &[&format!("{EXCEPT} (auth.doc_composition_lent_0_upper(docs.id, 'read', demesne_slot.param))) IS NOT FALSE)")]);
+    lacks(own, &["demesne_slot.kind = 'tree'", "auth.doc_composition_lent(", "auth.doc_composition_under"]);
+    let (lowest, _) = own_and_hop(&defs, "doc_composition_lent_0");
+    holds(lowest, &["demesne_slot.role = 'except' AND ((demesne_slot.kind = 'lend')) IS NOT FALSE)"]);
     let tree = &named(&defs, "doc_composition_under").arms[0].body;
-    holds(tree, &["doc_trail_hops_declared_by_trail(e.seen::text)", "auth.doc_select_holds_at_under_1(demesne_slot.doc_id, demesne_slot.rule)"]);
+    holds(
+        tree,
+        &["doc_trail_hops_declared_by_trail(e.seen::text)", " END FROM (SELECT demesne_slot.doc_id AS record, demesne_slot.rule AS element) AS demesne_hop)"],
+    );
     let rows = named(&defs, "doc_trail_hops_declared_by_trail");
     assert_eq!(rows.returns, "TABLE(doc_id text, field text, kind text, rule text)");
 }
@@ -116,28 +128,30 @@ fn a_hop_counts_only_when_every_row_declared_for_its_path_key_holds() {
 #[test]
 fn a_hop_is_judged_with_its_own_composition_taken_as_followed_and_the_others_one_level_down() {
     let (_, defs) = emitted("  nested 1");
-    let lent = named(&defs, "doc_select_holds_at_lent_1");
-    assert_eq!((lent.sig.as_str(), lent.strict), ("p_record text, p_element text, p_slot text", true));
-    assert!(lent.body.starts_with("EXISTS (SELECT 1 FROM docs WHERE docs.id = p_record AND estate_id = ESTATE AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE demesne_element.v = p_element AND demesne_element.v = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text(HELD::jsonb) e)) AND "), "{}", lent.body);
+    let (_, lent) = own_and_hop(&defs, "doc_composition_lent");
     holds(
-        &lent.body,
+        lent,
         &[
-            "(demesne_slot.kind = 'lend') AND ((demesne_slot.param = p_slot OR auth.doc_composition_lent_0(docs.id, 'read', demesne_slot.param)))",
+            "EXISTS (SELECT 1 FROM docs WHERE docs.id = demesne_hop.record AND estate_id = ESTATE AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE demesne_element.v = demesne_hop.element AND demesne_element.v = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text(HELD::jsonb) e)) AND ",
+            "(demesne_slot.kind = 'lend') AND ((demesne_slot.param = demesne_hop.slot OR auth.doc_composition_lent_0(docs.id, 'read', demesne_slot.param)))",
             "(demesne_slot.kind = 'tree') AND (auth.doc_composition_under_0(docs.id, 'read'))",
-            &format!("{EXCEPT} ((demesne_slot.param = p_slot OR auth.doc_composition_lent_0_upper(docs.id, 'read', demesne_slot.param)))) IS NOT FALSE)"),
+            &format!(
+                "{EXCEPT} ((demesne_slot.param = demesne_hop.slot OR auth.doc_composition_lent_0_upper(docs.id, 'read', demesne_slot.param)))) IS NOT FALSE)"
+            ),
         ],
     );
-    let lowest = named(&defs, "doc_select_holds_at_lent_0");
-    holds(&lowest.body, &["(demesne_slot.kind = 'lend') AND (demesne_slot.param = p_slot)", &format!("{EXCEPT} (true)) IS NOT FALSE)")]);
-    lacks(&lowest.body, &["demesne_slot.kind = 'tree'", "auth.doc_composition"]);
-    let tree = named(&defs, "doc_select_holds_at_under_1");
-    assert_eq!(tree.sig, "p_record text, p_element text");
+    let (_, lowest) = own_and_hop(&defs, "doc_composition_lent_0");
+    holds(lowest, &["(demesne_slot.kind = 'lend') AND (demesne_slot.param = demesne_hop.slot)", &format!("{EXCEPT} (true)) IS NOT FALSE)")]);
+    lacks(lowest, &["demesne_slot.kind = 'tree'", "auth.doc_composition"]);
+    let (_, tree) = own_and_hop(&defs, "doc_composition_under");
+    lacks(tree, &["demesne_hop.slot"]);
     holds(
-        &tree.body,
+        tree,
         &["(demesne_slot.kind = 'tree') AND (true)", "(demesne_slot.kind = 'lend') AND (auth.doc_composition_lent_0(docs.id, 'read', demesne_slot.param))"],
     );
     let whole = named(&defs, "doc_select_holds_at");
-    assert_eq!(whole.sig, "p_record text, p_element text");
+    assert_eq!((whole.sig.as_str(), whole.strict), ("p_record text, p_element text", true));
+    assert!(whole.body.starts_with("EXISTS (SELECT 1 FROM docs WHERE docs.id = p_record AND estate_id = ESTATE AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE demesne_element.v = p_element AND "), "{}", whole.body);
     holds(
         &whole.body,
         &[
@@ -151,58 +165,51 @@ fn a_hop_is_judged_with_its_own_composition_taken_as_followed_and_the_others_one
 #[test]
 fn an_upper_bound_counts_what_cannot_be_decided_and_what_lies_deeper_than_the_nesting() {
     let (_, defs) = emitted("  nested 1");
-    let lowest = named(&defs, "doc_select_holds_at_lent_0_upper");
+    let (_, lowest) = own_and_hop(&defs, "doc_composition_lent_0_upper");
     holds(
-        &lowest.body,
+        lowest,
         &[
             "(demesne_slot.kind = 'lend') AND (true)",
             "OR (demesne_slot.kind = 'tree')) IS FALSE)",
-            &format!("{EXCEPT} (demesne_slot.param = p_slot)) IS TRUE)"),
+            &format!("{EXCEPT} (demesne_slot.param = demesne_hop.slot)) IS TRUE)"),
+            " IS NOT FALSE))) END FROM (SELECT demesne_slot.doc_id AS record",
         ],
     );
-    assert!(lowest.body.ends_with(" IS NOT FALSE)))"), "{}", lowest.body);
-    let above = named(&defs, "doc_select_holds_at_lent_1_upper");
+    let (own, above) = own_and_hop(&defs, "doc_composition_lent_upper");
     holds(
-        &above.body,
+        above,
         &[
-            "(demesne_slot.param = p_slot OR auth.doc_composition_lent_0_upper(docs.id, 'read', demesne_slot.param))",
+            "(demesne_slot.param = demesne_hop.slot OR auth.doc_composition_lent_0_upper(docs.id, 'read', demesne_slot.param))",
             "auth.doc_composition_under_0_upper(docs.id, 'read')",
-            &format!("{EXCEPT} ((demesne_slot.param = p_slot OR auth.doc_composition_lent_0(docs.id, 'read', demesne_slot.param)))) IS TRUE)"),
+            &format!("{EXCEPT} ((demesne_slot.param = demesne_hop.slot OR auth.doc_composition_lent_0(docs.id, 'read', demesne_slot.param)))) IS TRUE)"),
         ],
     );
-    let lent = &named(&defs, "doc_composition_lent_upper").arms[0].body;
-    holds(
-        lent,
-        &[
-            " IS NOT FALSE) THEN (NOT EXISTS (SELECT 1 FROM auth.doc_trail_hops_declared_by_trail(e.trail::text)",
-            "auth.doc_select_holds_at_lent_1_upper(demesne_slot.doc_id, demesne_slot.rule, demesne_slot.field)))) IS FALSE)) ELSE false END)",
-        ],
-    );
-    lacks(lent, &["demesne_slot.kind = 'tree'", "demesne_slot.param = p_slot"]);
+    assert!(own.ends_with(" IS NOT FALSE)"), "{own}");
+    assert!(above.ends_with(" AS demesne_hop)))) IS FALSE)) ELSE false END)"), "{above}");
+    lacks(own, &["demesne_slot.kind = 'tree'", "demesne_hop"]);
 }
 
 #[test]
-fn only_the_functions_something_calls_are_emitted() {
+fn only_the_functions_something_calls_are_emitted_and_those_a_chain_calls_keep_their_plans() {
     let names = |defs: &[GenFn]| {
         defs.iter().map(|d| d.name.clone()).filter(|n| n.contains("holds_at") || n.contains("composition")).collect::<std::collections::BTreeSet<_>>()
     };
+    let languages = |defs: &[GenFn]| ["doc_shared_keyed", "rule_slots_declared_by_rule", "doc_select_holds_at"].map(|n| named(defs, n).language);
     let widening = "some r in rules_live held rules_held (every s in rule_slots(rule) ((@slot(kind, \"edge\") and shared) + (@slot(kind, \"lend\") and lent) + (@slot(kind, \"tree\") and under)))";
     let src = spec("  nested 1", &path(), widening);
     let (_, defs) = compiled(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
     assert_eq!(
         names(&defs).into_iter().collect::<Vec<_>>(),
-        [
-            "doc_composition_lent",
-            "doc_composition_lent_0",
-            "doc_composition_under",
-            "doc_composition_under_0",
-            "doc_select_holds_at",
-            "doc_select_holds_at_lent_0",
-            "doc_select_holds_at_lent_1",
-            "doc_select_holds_at_under_0",
-            "doc_select_holds_at_under_1"
-        ],
-        "nothing narrows by a composition, so no upper bound is emitted"
+        ["doc_composition_lent", "doc_composition_lent_0", "doc_composition_under", "doc_composition_under_0", "doc_select_holds_at"],
+        "nothing narrows by a composition, so no upper bound is emitted, and a hop is judged where it is followed"
+    );
+    assert_eq!(languages(&defs), [Language::Plpgsql, Language::Plpgsql, Language::Sql]);
+    let edge = named(&defs, "doc_shared_keyed").create_sql();
+    assert!(edge.ends_with("AS $$\n#variable_conflict use_column\nBEGIN\n  RETURN EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key);\nEND\n$$;"), "{edge}");
+    let rows = named(&defs, "rule_slots_declared_by_rule").create_sql();
+    assert!(
+        rows.ends_with("BEGIN\n  RETURN QUERY SELECT rule_slots.kind::text, rule_slots.param::text FROM rule_slots WHERE rule_slots.rule = p_key;\nEND\n$$;"),
+        "{rows}"
     );
     let src = spec("", "", widening);
     let (_, defs) = compiled(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
@@ -211,6 +218,7 @@ fn only_the_functions_something_calls_are_emitted() {
         ["doc_composition_lent", "doc_composition_under"],
         "a spec with no path and no nesting emits what it did"
     );
+    assert_eq!([named(&defs, "doc_shared_keyed").language, named(&defs, "rule_slots_declared_by_rule").language], [Language::Sql, Language::Sql]);
 }
 
 #[test]

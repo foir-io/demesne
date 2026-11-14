@@ -364,8 +364,8 @@ impl Sql<'_> {
         self.def_emit_declared(&mut defs);
         defs.add_each_once(self.conditions_definers());
         self.def_emit_cross_object(&mut defs, &virt)?;
-        let mut optional = self.def_emit_composition(&mut defs, &virt)?;
-        optional.extend(self.def_emit_evaluators(&mut defs, &virt)?);
+        let optional = self.def_emit_composition(&mut defs, &virt)?;
+        self.def_emit_evaluators(&mut defs, &virt)?;
         self.def_emit_store_manage(&mut defs, &virt)?;
         self.def_emit_materialized_flat_members(&mut defs);
         let mut out = defs.fns;
@@ -378,7 +378,7 @@ impl Sql<'_> {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
         }
-        Ok(order_by_calls(crate::chains::reached(out, &optional)))
+        Ok(order_by_calls(crate::chains::plans_kept(crate::chains::reached(out, &optional), &self.chain_fns())))
     }
 
     fn def_emit_membership(&self, out: &mut Vec<GenFn>) -> R<()> {

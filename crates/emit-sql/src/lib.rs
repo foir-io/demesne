@@ -41,12 +41,19 @@ pub struct Sql<'a> {
     upper: bool,
     negated: bool,
     given: Option<(&'a str, bool)>,
+    binds: Binds,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Binds {
+    Parameters,
+    HopRow,
 }
 
 impl<'a> Sql<'a> {
     #[must_use]
     pub fn new(s: &'a Spec) -> Self {
-        Sql { s, definer_body: false, nest: None, upper: false, negated: false, given: None }
+        Sql { s, definer_body: false, nest: None, upper: false, negated: false, given: None, binds: Binds::Parameters }
     }
 }
 

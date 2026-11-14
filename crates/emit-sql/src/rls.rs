@@ -1,5 +1,6 @@
-use crate::Sql;
+use crate::chains::HOP;
 use crate::error::Error;
+use crate::{Binds, Sql};
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -851,8 +852,12 @@ impl Sql<'_> {
         self.upper != self.negated
     }
 
+    pub(crate) fn hop_arg(&self, name: &str) -> String {
+        if self.binds == Binds::HopRow { format!("{HOP}.{name}") } else { format!("p_{name}") }
+    }
+
     pub(crate) fn judged(&self, nest: Option<usize>, upper: bool) -> Self {
-        Sql { s: self.s, definer_body: false, nest, upper, negated: false, given: None }
+        Sql { s: self.s, definer_body: false, nest, upper, negated: false, given: None, binds: Binds::Parameters }
     }
 
     pub(crate) fn composition_fn(&self, obj: &Object, r: &Relation) -> String {
@@ -1042,8 +1047,8 @@ impl Sql<'_> {
                 let floor = self.given.is_some_and(|(_, floor)| floor);
                 Ok(vec![match (&vc.slot, followed) {
                     (_, false) => self.probed(&composition_probe(obj, vc), call),
-                    (Some((_, from)), true) if floor && !self.bounds_above() => format!("{SLOT}.{from} = p_slot"),
-                    (Some((_, from)), true) if !floor => format!("({SLOT}.{from} = p_slot OR {call})"),
+                    (Some((_, from)), true) if floor && !self.bounds_above() => format!("{SLOT}.{from} = {}", self.hop_arg("slot")),
+                    (Some((_, from)), true) if !floor => format!("({SLOT}.{from} = {} OR {call})", self.hop_arg("slot")),
                     (_, true) => "true".into(),
                 }])
             }
