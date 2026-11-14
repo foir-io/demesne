@@ -1202,6 +1202,9 @@ impl Sql<'_> {
         if b == "self" {
             return Ok(vec![format!("{} = {}", t.self_col(), self.id_claim(self.s.admin_identify()))]);
         }
+        if let Some((lookup, col, claim)) = t.nearest() {
+            return Ok(vec![format!("{col} = (SELECT {}.{}({}))", self.s.definer_schema(), nearest_own_fn(lookup), self.id_claim(claim))]);
+        }
         if rels.get(t.ident()).is_some_and(|r| matches!(&r.repr, Repr::Object(vo) if vo.pinned)) {
             return Err(format!(
                 "object {} require {}: relation {} is `pinned` — a pinned borrow is asked at the caller's claim, which equals the row's column only under the permission's containment; a `require` stands outside it, so borrow there without `pinned`",
@@ -1306,6 +1309,10 @@ pub(crate) fn held_fn(holds_perm_fn: &str) -> String {
 
 pub(crate) fn conditions_fn(obj: &Object, r: &Relation) -> String {
     format!("{}_{}_hold", obj.name, r.name)
+}
+
+pub(crate) fn nearest_own_fn(lookup: &str) -> String {
+    format!("{lookup}_own")
 }
 
 pub(crate) fn declared_fn(table: &str, key_col: &str) -> String {

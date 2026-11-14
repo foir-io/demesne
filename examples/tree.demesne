@@ -99,3 +99,17 @@ object ledger {
   permission edit = @scoped @rls maps update
   require edit    = @within(space exact)
 }
+
+object skin {
+  table skins
+  scoped estate > space
+  nearest live_skin(id text) via closure paths on folder_id where status = "live"
+  permission view = @scoped @rls maps select
+}
+
+object banner {
+  table banners
+  scoped estate > space
+  permission view = @scoped @rls maps select
+  require view    = @claim("folder_id", null) + @nearest(live_skin, skin_id from claim folder_id)
+}

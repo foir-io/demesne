@@ -1050,6 +1050,12 @@ pub enum Builtin {
     ClaimAbsent(String),
     /// `@within(<level> exact)`: true when the row's column at the level is not distinct from the request's claim.
     WithinExact(String),
+    /// `@nearest(<lookup>, <column> from claim <key>)`: the row's column equals what a `nearest` lookup answers at the node the claim names.
+    Nearest {
+        lookup: String,
+        col: String,
+        claim: String,
+    },
     Other(String),
 }
 
@@ -1094,6 +1100,7 @@ impl Builtin {
             Builtin::RowNull(col) => format!("@row({col}, null)"),
             Builtin::ClaimAbsent(key) => format!("@claim({}, null)", quote(key)),
             Builtin::WithinExact(level) => format!("@within({level} exact)"),
+            Builtin::Nearest { lookup, col, claim } => format!("@nearest({lookup}, {col} from claim {claim})"),
             Builtin::Session(None) | Builtin::AppScope(_) | Builtin::Other(_) => format!("@{}", self.name()),
         }
     }
@@ -1118,6 +1125,7 @@ impl Builtin {
             Builtin::HoldsAt { .. } => "holds_at",
             Builtin::HoldsEvery { .. } => "holds_every",
             Builtin::Row { .. } | Builtin::RowNull(_) => "row",
+            Builtin::Nearest { .. } => "nearest",
             Builtin::Other(name) => name,
         }
     }
@@ -1373,6 +1381,15 @@ impl Term {
         }
     }
 
+    /// Returns the lookup, the row column and the claim key of an `@nearest` term.
+    #[must_use]
+    pub fn nearest(&self) -> Option<(&str, &str, &str)> {
+        match self.builtin_ref() {
+            Some(Builtin::Nearest { lookup, col, claim }) => Some((lookup, col, claim)),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn external_fn(&self) -> &str {
         match self.builtin_ref() {
@@ -1471,6 +1488,8 @@ pub struct Nearest {
     pub ty: String,
     pub closure: String,
     pub node_col: String,
+    /// `where <column> = "<value>"`: only rows whose column holds the value are counted.
+    pub filter: Option<(String, String)>,
     pub pos: Pos,
 }
 

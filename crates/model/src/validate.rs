@@ -17,7 +17,8 @@ use demesne_syntax::{
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 const KNOWN_LAYERS: [&str; 4] = ["rls", "pdp", "kernel", "check"];
-const KNOWN_BUILTINS: [&str; 20] = [
+const KNOWN_BUILTINS: [&str; 21] = [
+    "nearest",
     "clock",
     "app_scope",
     "scoped",
@@ -1234,16 +1235,24 @@ fn check_perm_terms(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<Finding
     errs
 }
 
+fn require_only(t: &Term) -> Option<String> {
+    match t.builtin() {
+        "external" => Some(format!(
+            "uses @external({}) — an adopter-supplied predicate may appear only in a `require` clause, so it can subtract authority and never add it (V14)",
+            t.external_fn()
+        )),
+        "nearest" => Some(format!("uses {} — a comparison with a nearest value names nobody, so it may appear only in a `require` clause", t.display())),
+        _ => None,
+    }
+}
+
 #[expect(clippy::many_single_char_names, reason = "s, o, t, g and u name the spec, object, term, grant and grant use throughout this crate")]
 fn check_builtin_term(s: &Spec, o: &Object, pm: &Perm, t: &Term, rels: &Rels, has_rls: bool, has_pdp: bool) -> Vec<Finding> {
     let mut errs = Vec::new();
     let at = |what: &str| Finding::at(pm.pos.line, format!("permission {}.{} {what}", o.name, pm.verb));
     let b = t.builtin();
-    if b == "external" {
-        errs.push(at(&format!(
-            "uses @external({}) — an adopter-supplied predicate may appear only in a `require` clause, so it can subtract authority and never add it (V14)",
-            t.external_fn()
-        )));
+    if let Some(refusal) = require_only(t) {
+        errs.push(at(&refusal));
     } else if !KNOWN_BUILTINS.contains(&b) {
         errs.push(at(&format!("uses unknown builtin @{b} (app_scope|scoped|session|open|store_manage|public|kind|self|within|holds)")));
     }
@@ -1423,6 +1432,11 @@ fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<F
         errs.extend(check_holds_every(s, o, t).into_iter().map(&at));
         if b == "within" && s.level_by_name(t.within_level()).is_none() {
             errs.push(at(format!("uses @within({}) which is not a topology level", quote(t.within_level()))));
+        }
+        if let Some((lookup, _, _)) = t.nearest()
+            && !s.objects.iter().flat_map(|other| &other.nearests).any(|n| n.name == lookup)
+        {
+            errs.push(at(format!("uses {}, which names no `nearest {lookup}(…)` lookup of the spec", t.display())));
         }
         if b == "external" {
             let f = t.external_fn();

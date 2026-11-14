@@ -1,7 +1,7 @@
 use crate::Sql;
 use crate::error::Error;
 use crate::genfn::{Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
-use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, owner_col_present_pub, platform_role_fn};
+use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -17,8 +17,8 @@ use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Closure, DeclaredScope, Grant, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Subject, Term, ViaClosure, ViaColumn, ViaComposition,
-    ViaGrant, ViaGroup, ViaObject, Vocabulary,
+    Closure, DeclaredScope, Grant, Nearest, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Subject, Term, ViaClosure, ViaColumn,
+    ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -1908,14 +1908,15 @@ impl Sql<'_> {
                 ));
             };
             let (t, val, node) = (&obj.table, &n.value_col, &n.node_col);
+            let counted = n.filter.as_ref().map(|(col, value)| format!(" AND t.{col} = {}", quote_literal(value))).unwrap_or_default();
             let mut rows = format!(
-                "SELECT t.{val} AS v, c.{depth} AS d FROM {} c JOIN {t} t ON t.{node} = c.{} WHERE c.{} = p_node AND t.{val} IS NOT NULL",
+                "SELECT t.{val} AS v, c.{depth} AS d FROM {} c JOIN {t} t ON t.{node} = c.{} WHERE c.{} = p_node AND t.{val} IS NOT NULL{counted}",
                 c.table, c.ancestor_col, c.descendant_col
             );
             if let Some(scope) = c.scope_col.as_deref().filter(|scope| obj.scoped.iter().any(|l| self.s.scope_col(obj, l) == *scope)) {
                 write!(
                     rows,
-                    "\n    UNION ALL\n    SELECT t.{val}, NULL FROM {t} t WHERE t.{node} IS NULL AND t.{val} IS NOT NULL AND t.{scope} = (SELECT s.{scope} FROM {} s WHERE s.{} = p_node AND s.{} = p_node)",
+                    "\n    UNION ALL\n    SELECT t.{val}, NULL FROM {t} t WHERE t.{node} IS NULL AND t.{val} IS NOT NULL{counted} AND t.{scope} = (SELECT s.{scope} FROM {} s WHERE s.{} = p_node AND s.{} = p_node)",
                     c.table, c.ancestor_col, c.descendant_col
                 )
                 .expect("fmt::Write for String never fails");
@@ -1930,8 +1931,30 @@ impl Sql<'_> {
                 execute: Execute::Granted,
                 ..Default::default()
             });
+            let own = self.nearest_own_definer(n);
+            if let Some(taken) = own.as_ref().filter(|own| !seen.insert(own.name.clone())) {
+                return Err(format!("nearest {}: its claim-bound form {} collides with a generated function", quote(&n.name), quote(&taken.name)));
+            }
+            out.extend(own);
         }
         Ok(())
+    }
+
+    fn nearest_own_definer(&self, n: &Nearest) -> Option<GenFn> {
+        let asked = self.s.objects.iter().flat_map(|o| &o.requires).flat_map(|rq| rq.tree.leaves_deep()).filter_map(Term::nearest);
+        let callers = self.claims_once(asked.filter(|(lookup, _, _)| *lookup == n.name).map(|(_, _, claim)| claim));
+        if callers.is_empty() {
+            return None;
+        }
+        Some(GenFn {
+            name: nearest_own_fn(&n.name),
+            sig: format!("p_node {}", self.s.id_type()),
+            strict: true,
+            returns: n.ty.clone(),
+            raw_body: true,
+            body: format!("  SELECT {}.{}(p_node) WHERE {};", self.s.definer_schema(), n.name, is_the_callers("p_node", &callers)),
+            ..Default::default()
+        })
     }
 
     fn def_emit_permission_exports(&self, out: &mut Vec<GenFn>, virt: &Virtual) -> R<()> {

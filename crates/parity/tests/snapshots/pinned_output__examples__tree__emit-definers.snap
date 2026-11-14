@@ -152,6 +152,33 @@ AS $$
 $$;
 REVOKE EXECUTE ON FUNCTION auth.theme_color(text) FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION auth.live_skin(p_node text)
+RETURNS text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT x.v FROM (
+    SELECT t.id AS v, c.depth AS d FROM paths c JOIN skins t ON t.folder_id = c.ancestor_id WHERE c.descendant_id = p_node AND t.id IS NOT NULL AND t.status = 'live'
+    UNION ALL
+    SELECT t.id, NULL FROM skins t WHERE t.folder_id IS NULL AND t.id IS NOT NULL AND t.status = 'live' AND t.space_id = (SELECT s.space_id FROM paths s WHERE s.ancestor_id = p_node AND s.descendant_id = p_node)
+  ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;
+$$;
+REVOKE EXECUTE ON FUNCTION auth.live_skin(text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION auth.live_skin_own(p_node text)
+RETURNS text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT auth.live_skin(p_node) WHERE p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
+$$;
+
 CREATE OR REPLACE FUNCTION auth.folder_path()
 RETURNS TABLE(id text, title text)
 LANGUAGE sql

@@ -1410,6 +1410,17 @@ impl Parser {
                 Builtin::External { func, args }
             }
             "holds" => self.parse_term_holds()?,
+            "nearest" => {
+                self.expect(Tok::LParen)?;
+                let lookup = self.ident()?;
+                self.expect(Tok::Comma)?;
+                let col = self.ident()?;
+                self.expect_kw("from")?;
+                self.expect_kw("claim")?;
+                let claim = self.ident()?;
+                self.expect(Tok::RParen)?;
+                Builtin::Nearest { lookup, col, claim }
+            }
             _ => Builtin::Other(name),
         })
     }
@@ -1829,7 +1840,8 @@ impl Parser {
         let closure = self.ident()?;
         self.expect_kw("on")?;
         let node_col = self.ident()?;
-        o.nearests.push(Nearest { name, value_col, ty, closure, node_col, pos });
+        let filter = self.parse_where()?;
+        o.nearests.push(Nearest { name, value_col, ty, closure, node_col, filter, pos });
         Ok(())
     }
 

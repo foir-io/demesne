@@ -152,6 +152,33 @@ AS $$
 $$;
 REVOKE EXECUTE ON FUNCTION auth.theme_color(text) FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION auth.live_skin(p_node text)
+RETURNS text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT x.v FROM (
+    SELECT t.id AS v, c.depth AS d FROM paths c JOIN skins t ON t.folder_id = c.ancestor_id WHERE c.descendant_id = p_node AND t.id IS NOT NULL AND t.status = 'live'
+    UNION ALL
+    SELECT t.id, NULL FROM skins t WHERE t.folder_id IS NULL AND t.id IS NOT NULL AND t.status = 'live' AND t.space_id = (SELECT s.space_id FROM paths s WHERE s.ancestor_id = p_node AND s.descendant_id = p_node)
+  ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;
+$$;
+REVOKE EXECUTE ON FUNCTION auth.live_skin(text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION auth.live_skin_own(p_node text)
+RETURNS text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT auth.live_skin(p_node) WHERE p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
+$$;
+
 CREATE OR REPLACE FUNCTION auth.folder_path()
 RETURNS TABLE(id text, title text)
 LANGUAGE sql
@@ -175,6 +202,8 @@ $$;
 
 ALTER TABLE public.atlases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.atlases FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.banners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.banners FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.drafts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.drafts FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
@@ -187,6 +216,8 @@ ALTER TABLE public.pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pages FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.sheets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sheets FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.skins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.skins FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.spaces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.spaces FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
@@ -202,6 +233,14 @@ DROP POLICY IF EXISTS atlases_update ON public.atlases;
 CREATE POLICY atlases_update ON public.atlases FOR UPDATE TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')))
     WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')));
+
+DROP POLICY IF EXISTS banners_select ON public.banners;
+CREATE POLICY banners_select ON public.banners FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS banners_select_require ON public.banners;
+CREATE POLICY banners_select_require ON public.banners AS RESTRICTIVE FOR SELECT TO authenticated
+    USING ((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR skin_id = (SELECT auth.live_skin_own((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))));
 
 DROP POLICY IF EXISTS drafts_select ON public.drafts;
 CREATE POLICY drafts_select ON public.drafts FOR SELECT TO authenticated
@@ -266,6 +305,10 @@ CREATE POLICY pages_select ON public.pages FOR SELECT TO authenticated
 DROP POLICY IF EXISTS sheets_select ON public.sheets;
 CREATE POLICY sheets_select ON public.sheets FOR SELECT TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.space_can_view(space_id)))));
+
+DROP POLICY IF EXISTS skins_select ON public.skins;
+CREATE POLICY skins_select ON public.skins FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
 
 DROP POLICY IF EXISTS spaces_select ON public.spaces;
 CREATE POLICY spaces_select ON public.spaces FOR SELECT TO authenticated

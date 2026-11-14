@@ -18,6 +18,8 @@ CREATE TABLE themes (id text PRIMARY KEY, estate_id text NOT NULL, space_id text
 CREATE TABLE notices (id text PRIMARY KEY, estate_id text NOT NULL, space_id text, body text);
 CREATE TABLE drafts (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, visibility text);
 CREATE TABLE ledgers (id text PRIMARY KEY, estate_id text NOT NULL, space_id text, amount integer);
+CREATE TABLE skins (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, folder_id text, status text NOT NULL);
+CREATE TABLE banners (id text PRIMARY KEY, estate_id text NOT NULL, space_id text NOT NULL, skin_id text);
 ";
 
 const RECOMPUTED: &str = "
@@ -60,7 +62,7 @@ fn install(db: &mut Client) {
     }
     db.batch_execute(&format!(
         "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER};
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.spaces, {ROWS}.pages, {ROWS}.sheets, {ROWS}.themes, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers TO {CALLER};
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.spaces, {ROWS}.pages, {ROWS}.sheets, {ROWS}.themes, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers, {ROWS}.skins, {ROWS}.banners TO {CALLER};
          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {AUTH} TO {CALLER};
          SET search_path = {ROWS};"
     ))
@@ -107,6 +109,7 @@ fn the_closure_follows_its_base_and_reads_answer_in_both_directions() {
     nearest(&mut db);
     projections(&mut db);
     require_terms(&mut db);
+    the_nearest_floor(&mut db);
     a_caller_grows_the_tree_beneath_itself_alone(&mut db);
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
 }
@@ -482,6 +485,81 @@ fn probes(db: &mut Client) {
     );
     assert_eq!(ask(db, Some("e1"), None), (None, Some(2), None, hidden.clone()), "no value to match is no answer");
     assert_eq!(ask(db, None, Some("north")), (Some(false), Some(0), None, hidden), "a caller with no estate claim is inside no containment");
+}
+
+const SKINS: [(&str, &str, Option<&str>, &str); 7] = [
+    ("sk_a", "s1", Some("a"), "live"),
+    ("sk_a_old", "s1", Some("a"), "retired"),
+    ("sk_b", "s1", Some("b"), "draft"),
+    ("sk_d", "s1", Some("d"), "live"),
+    ("sk_s1", "s1", None, "live"),
+    ("sk_s1_old", "s1", None, "retired"),
+    ("sk_x", "s2", Some("x"), "live"),
+];
+
+fn serving_skin(parents: &BTreeMap<&str, Option<&str>>, space: &str, folder: &str) -> Option<&'static str> {
+    let live_at = |node: Option<&str>| SKINS.iter().find(|(_, s, f, status)| *s == space && *f == node && *status == "live").map(|(id, ..)| *id);
+    let mut node = Some(folder);
+    while let Some(at) = node {
+        if let Some(found) = live_at(Some(at)) {
+            return Some(found);
+        }
+        node = parents.get(at).copied().flatten();
+    }
+    live_at(None)
+}
+
+fn the_nearest_floor(db: &mut Client) {
+    let parents: BTreeMap<&str, Option<&str>> = TREE.iter().map(|(id, _, parent)| (*id, *parent)).collect();
+    for (id, space, folder, status) in SKINS {
+        db.execute("INSERT INTO skins VALUES ($1, 'e1', $2, $3, $4)", &[&id, &space, &folder, &status]).expect("a skin");
+        db.execute("INSERT INTO banners VALUES ($1, 'e1', $2, $3)", &[&format!("bn_{id}"), &space, &id]).expect("a banner");
+    }
+    db.batch_execute("INSERT INTO banners VALUES ('bn_none', 'e1', 's1', NULL), ('bn_none_s2', 'e1', 's2', NULL)").expect("banners with no skin");
+    let read = |db: &mut Client, space: &str, folder: Option<&str>| -> BTreeSet<String> {
+        let who = claims(&[("estate_id", Some("e1")), ("space_id", Some(space)), ("folder_id", folder)]);
+        let mut tx = db.transaction().expect("a transaction");
+        tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+        tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&who]).expect("the claims");
+        let seen = tx.query("SELECT id FROM banners", &[]).expect("the read").iter().map(|r| r.get(0)).collect();
+        tx.rollback().expect("rollback");
+        seen
+    };
+    let (mut cells, mut both) = (0, [0, 0]);
+    for (folder, space, _) in TREE {
+        let serving = serving_skin(&parents, space, folder);
+        let wanted: BTreeSet<String> = serving.iter().map(|skin| format!("bn_{skin}")).collect();
+        assert_eq!(read(db, space, Some(folder)), wanted, "a caller at {folder} reads the banners of the skin that serves it, {serving:?}, and no other");
+        cells += SKINS.len() + 1;
+        both[usize::from(wanted.is_empty())] += 1;
+    }
+    assert_eq!((cells, both), (56, [7, 0]), "every folder is served by some skin here");
+    assert_eq!(read(db, "s1", Some("y")), BTreeSet::new(), "a node of another space is served by no skin of this one");
+    let every_s1: BTreeSet<String> =
+        SKINS.iter().filter(|(_, space, ..)| *space == "s1").map(|(id, ..)| format!("bn_{id}")).chain(["bn_none".to_string()]).collect();
+    assert_eq!(read(db, "s1", None), every_s1, "a caller confined to no folder is outside the floor");
+    db.batch_execute("UPDATE skins SET status = 'retired' WHERE id = 'sk_d'").expect("retire a skin");
+    assert_eq!(read(db, "s1", Some("d")), BTreeSet::from(["bn_sk_a".to_string()]), "a change of the nearest row is followed at once");
+    db.batch_execute("UPDATE skins SET status = 'retired' WHERE id IN ('sk_a', 'sk_s1')").expect("retire the rest");
+    assert_eq!(read(db, "s1", Some("d")), BTreeSet::new(), "with no live skin at or above the node, or for its space, the floor admits nothing");
+    db.batch_execute("UPDATE skins SET status = 'live' WHERE id IN ('sk_a', 'sk_d', 'sk_s1')").expect("restore");
+    for (at, asked, wanted) in [(Some("b"), "b", Some("sk_a")), (Some("b"), "d", None), (Some("b"), "a", None), (None, "b", None)] {
+        let got = asked_one(db, at, &format!("live_skin_own('{asked}')"));
+        assert_eq!(got.as_deref(), wanted, "a caller at {at:?} asks the lookup about {asked}");
+    }
+    let public: bool =
+        db.query_one(&format!("SELECT has_function_privilege('public', '{AUTH}.live_skin(text)', 'EXECUTE')"), &[]).expect("the privilege").get(0);
+    assert!(!public, "the lookup itself answers for any node, so PUBLIC may not run it");
+}
+
+fn asked_one(db: &mut Client, folder: Option<&str>, call: &str) -> Option<String> {
+    let mut tx = db.transaction().expect("a transaction");
+    tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims(&[("estate_id", Some("e1")), ("space_id", Some("s1")), ("folder_id", folder)])])
+        .expect("the claims");
+    let answer = tx.query_one(&format!("SELECT {AUTH}.{call}"), &[]).unwrap_or_else(|e| panic!("{call}: {e}")).get(0);
+    tx.rollback().expect("rollback");
+    answer
 }
 
 fn nearest(db: &mut Client) {

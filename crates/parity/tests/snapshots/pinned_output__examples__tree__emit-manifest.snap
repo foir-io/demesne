@@ -8,6 +8,8 @@ exit: 0
   "manifest": 1,
   "functions": [
     "auth.folder_path()",
+    "auth.live_skin(text)",
+    "auth.live_skin_own(text)",
     "auth.paths_ancestors(text)",
     "auth.paths_descendants(text)",
     "auth.paths_maintain()",
@@ -32,6 +34,14 @@ exit: 0
     {
       "table": "public.atlases",
       "name": "atlases_update"
+    },
+    {
+      "table": "public.banners",
+      "name": "banners_select"
+    },
+    {
+      "table": "public.banners",
+      "name": "banners_select_require"
     },
     {
       "table": "public.drafts",
@@ -94,6 +104,10 @@ exit: 0
       "name": "sheets_select"
     },
     {
+      "table": "public.skins",
+      "name": "skins_select"
+    },
+    {
       "table": "public.spaces",
       "name": "spaces_select"
     },
@@ -140,12 +154,14 @@ exit: 0
   "tables": [],
   "rls": [
     "public.atlases",
+    "public.banners",
     "public.drafts",
     "public.folders",
     "public.ledgers",
     "public.notices",
     "public.pages",
     "public.sheets",
+    "public.skins",
     "public.spaces",
     "public.templates",
     "public.themes"
