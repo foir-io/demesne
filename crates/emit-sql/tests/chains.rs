@@ -265,6 +265,9 @@ fn a_chain_is_refused_where_nothing_could_judge_it() {
         let err = compiled(&src).map(|(using, _)| using).expect_err(what);
         assert!(err.contains(want), "{what}: {err}");
     }
+    let unmapped = demesne_syntax::parse(&spec("  nested 0", &path().replace("path trail", "path update a"), VIEW)).expect("parses");
+    let err = demesne_emit_sql::validate(&unmapped).map_err(|e| e.to_string()).expect_err("the validator refuses it before anything is emitted");
+    assert!(err.contains("names no path column for select, which a permission of the object maps"), "{err}");
 }
 
 #[test]
