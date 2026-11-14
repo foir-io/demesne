@@ -61,6 +61,7 @@ AS $$
   SELECT 'grant'::text, principal_kind, principal_id, access
     FROM acl WHERE resource_id = p_id AND resource_type = 'doc'
 $$;
+REVOKE EXECUTE ON FUNCTION auth.docs_accessors(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.docs_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -101,6 +102,7 @@ AS $$
     JOIN LATERAL auth.docs_accessors(t.doc_id) a ON true
     WHERE t.id = p_id
 $$;
+REVOKE EXECUTE ON FUNCTION auth.notes_accessors(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.doc_can_view(p_doc_id text)
 RETURNS boolean

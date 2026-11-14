@@ -193,3 +193,18 @@ fn a_session_on_a_role_relation_lists_that_roles_holders() {
     assert!(session.contains("rr.key IN ('viewer')"), "{session}");
     assert_eq!(session, role_rows("permission view = owner + editor + grantee:read @rls maps select"));
 }
+
+#[test]
+fn no_listing_of_who_reaches_a_row_is_publics_to_run() {
+    let mut listings = 0;
+    for name in ["accessors-holds", "accessors-session", "accessors-kind", "accessors-role", "accessors-tree-holds"] {
+        let src = std::fs::read_to_string(format!("{}/../../testdata/gaps/{name}.demesne", env!("CARGO_MANIFEST_DIR"))).expect("the fixture reads");
+        for listing in definers(&src).iter().filter(|d| d.returns.starts_with("TABLE(source text, principal_kind text")) {
+            let sql = listing.create_sql();
+            let revoked = format!("REVOKE EXECUTE ON FUNCTION {}.{}(text) FROM PUBLIC;", listing.schema(), listing.name);
+            assert!(sql.ends_with(&revoked), "{name}: {} names the principals of any row it is asked about, so only a granted role runs it", listing.name);
+            listings += 1;
+        }
+    }
+    assert!(listings >= 5, "{listings} listings checked");
+}

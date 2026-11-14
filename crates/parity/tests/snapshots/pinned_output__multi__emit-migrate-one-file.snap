@@ -50,6 +50,7 @@ AS $$
   SELECT 'grant'::text, principal_kind, principal_id, access
     FROM acl WHERE resource_id = p_id AND resource_type = 'doc'
 $$;
+REVOKE EXECUTE ON FUNCTION auth.docs_accessors(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.docs_admits(p_id text, p_claims jsonb)
 RETURNS boolean

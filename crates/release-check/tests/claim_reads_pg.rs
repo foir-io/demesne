@@ -721,8 +721,12 @@ fn bound_ends(rest: &str) -> usize {
     end
 }
 
-fn answering_any_caller(sql: &str) -> String {
+fn answering_any_caller(sql: &str, before: &str) -> String {
+    let revoked_since = |line: &&str| line.starts_with("REVOKE EXECUTE ON FUNCTION ") && !before.lines().any(|kept| kept == *line);
     let mut out = sql.replace(" AND false", "");
+    for line in sql.lines().filter(revoked_since) {
+        out = out.replace(&format!("\n{line}"), "");
+    }
     for prefix in OWN {
         while let Some(at) = out.find(prefix) {
             let from = at + prefix.rfind('(').unwrap_or(prefix.len());
@@ -739,7 +743,11 @@ fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads_and_in_whose_node_a_set_a
     for (name, src) in specs() {
         match (ddl_now(&src), ddl_before(&src)) {
             (Some((_, now)), Some(before)) => {
-                assert_eq!(answering_any_caller(&read_per_row(&now)), before, "{name}: the SQL changed beyond its claim reads and the callers its sets answer");
+                assert_eq!(
+                    answering_any_caller(&read_per_row(&now), &before),
+                    before,
+                    "{name}: the SQL changed beyond its claim reads and the callers its sets answer"
+                );
                 compared += 1;
                 reads += now.matches("(SELECT current_setting(").count() + now.matches("(SELECT NULLIF(current_setting(").count();
             }

@@ -75,6 +75,7 @@ AS $$
   SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text[], NULL::text[]
     FROM assets WHERE asset_pk = p_id AND share = 'open'
 $$;
+REVOKE EXECUTE ON FUNCTION auth.assets_accessors_conditional(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.assets_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -112,6 +113,7 @@ AS $$
     FROM spaces e JOIN crew_grants ra ON ra.member_kind = 'crew' AND ra.killed_at IS NULL AND ra.tenant_ref = e.tenant_ref AND ra.space_ref = e.space_pk JOIN crew_roles rr ON rr.row_id = ra.role_ref AND rr.slug IN ('editor', 'viewer')
     WHERE e.space_pk = p_id
 $$;
+REVOKE EXECUTE ON FUNCTION auth.spaces_accessors(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.spaces_admits(p_id text, p_claims jsonb)
 RETURNS boolean

@@ -55,6 +55,7 @@ AS $$
     JOIN LATERAL auth.docs_accessors(t.doc_id) a ON true
     WHERE t.id = p_id
 $$;
+REVOKE EXECUTE ON FUNCTION auth.notes_accessors(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.doc_can_view(p_doc_id text)
 RETURNS boolean

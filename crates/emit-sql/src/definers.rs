@@ -141,6 +141,7 @@ fn accessor_gen_fn_named(name: String, id_t: &str, branches: &[String]) -> GenFn
         returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text)"),
         raw_body: true,
         body: format!("  {}", branches.join("\n  UNION ALL\n  ")),
+        execute: Execute::Granted,
         ..Default::default()
     }
 }
@@ -1327,6 +1328,7 @@ impl Sql<'_> {
             returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text, via_claim_keys text[], via_claim_values text[])"),
             raw_body: true,
             body: format!("  {}", branches.join("\n  UNION ALL\n  ")),
+            execute: Execute::Granted,
             ..Default::default()
         }
     }
@@ -1654,6 +1656,7 @@ impl Sql<'_> {
             returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text)"),
             raw_body: true,
             body: format!("  {}", branches.join("\n  UNION\n  ")),
+            execute: Execute::Granted,
             ..Default::default()
         }))
     }
