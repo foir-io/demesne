@@ -17,8 +17,8 @@ use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Closure, DeclaredScope, Grant, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant,
-    ViaGroup, ViaObject, Vocabulary,
+    Closure, DeclaredScope, Grant, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Subject, Term, ViaClosure, ViaColumn, ViaComposition,
+    ViaGrant, ViaGroup, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -93,6 +93,14 @@ fn revoked_cond(rs: &RoleStore, alias: &str) -> Vec<String> {
 
 fn or(o: Option<&str>) -> &str {
     o.unwrap_or("")
+}
+
+fn is_the_callers(arg: &str, callers: &[String]) -> String {
+    match callers {
+        [] => "false".to_string(),
+        [only] => format!("{arg} = {only}"),
+        _ => format!("{arg} IN ({})", callers.join(", ")),
+    }
 }
 
 fn leaf(obj: &Object) -> &str {
@@ -425,6 +433,7 @@ impl Sql<'_> {
         }
         let mut set_conj = vec![conj[0].clone()];
         set_conj.extend(unscoped[2..].iter().cloned());
+        set_conj.push(is_the_callers("user_id", &self.grant_callers()));
         let unscoped_sig = format!("user_id {id_t}, check_{}_id {id_t}", g.level);
         let set_sig = format!("user_id {id_t}");
         let mut out = vec![
@@ -463,6 +472,10 @@ impl Sql<'_> {
         out
     }
 
+    fn grant_callers(&self) -> Vec<String> {
+        self.claims_once(self.s.subjects.iter().filter(|sub| sub.reach() == "grant").map(Subject::identifies))
+    }
+
     fn def_emit_grant_reach(&self, out: &mut Vec<GenFn>) {
         let mut gseen = HashSet::new();
         let id_t = self.s.id_type();
@@ -493,6 +506,7 @@ impl Sql<'_> {
             });
             let mut set_conj = vec![format!("{} = user_id", g.grantee_col())];
             set_conj.extend(scoped[2..].iter().cloned());
+            set_conj.push(is_the_callers("user_id", &self.grant_callers()));
             let set_sig = format!("user_id {id_t}");
             out.push(GenFn {
                 name: format!("{name}_set"),
@@ -924,15 +938,37 @@ impl Sql<'_> {
                 continue;
             }
             let sig = "p_ancestor text, p_descendant text".to_string();
-            let conj = vec![format!("{} = p_ancestor", edge.ancestor_col), format!("{} = p_descendant", edge.descendant_col)];
+            let callers = self.closure_callers(edge.table);
+            let as_text: Vec<String> = callers.iter().map(|caller| format!("{caller}::text")).collect();
+            let conj = vec![
+                format!("{} = p_ancestor", edge.ancestor_col),
+                format!("{} = p_descendant", edge.descendant_col),
+                format!("({} OR {})", is_the_callers("p_ancestor", &as_text), is_the_callers("p_descendant", &as_text)),
+            ];
             defs.fns.push(GenFn { name, strict: binds_every(&sig, &[&conj]), sig, body: grant_edge_exists(edge.table, &conj), ..Default::default() });
             if let Some(declared) = edge.declared {
-                defs.add_each_once(self.closure_set_definers(declared));
+                defs.add_each_once(self.closure_set_definers(declared, &callers));
             }
         }
     }
 
-    fn closure_set_definers(&self, c: &Closure) -> Vec<GenFn> {
+    fn closure_callers(&self, table: &str) -> Vec<String> {
+        let identities = || self.s.subjects.iter().map(Subject::identifies).collect::<Vec<_>>();
+        let named = closure::relations_over(self.s, table).flat_map(|relation| relation.claim.as_deref().map_or_else(identities, |key| vec![key]));
+        self.claims_once(named)
+    }
+
+    fn claims_once<'k>(&self, keys: impl Iterator<Item = &'k str>) -> Vec<String> {
+        let mut once: Vec<&str> = Vec::new();
+        for key in keys.filter(|key| !key.is_empty()) {
+            if !once.contains(&key) {
+                once.push(key);
+            }
+        }
+        once.into_iter().map(|key| self.session_claim(key)).collect()
+    }
+
+    fn closure_set_definers(&self, c: &Closure, callers: &[String]) -> Vec<GenFn> {
         let id_t = self.s.id_type();
         let base = c.definer_base();
         let sig = format!("p_node {id_t}");
@@ -941,7 +977,7 @@ impl Sql<'_> {
             strict: true,
             sig: sig.clone(),
             returns: format!("SETOF {id_t}"),
-            body: format!("{returned} FROM {} WHERE {bound} = p_node", c.table),
+            body: format!("{returned} FROM {} WHERE {bound} = p_node AND {}", c.table, is_the_callers("p_node", callers)),
             ..Default::default()
         };
         let mut out =
@@ -949,6 +985,7 @@ impl Sql<'_> {
         if let Some(depth) = &c.depth_col {
             out.push(GenFn {
                 name: format!("{base}_path"),
+                execute: Execute::Granted,
                 strict: true,
                 sig,
                 returns: format!("TABLE(node {id_t}, depth integer)"),

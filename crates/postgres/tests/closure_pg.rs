@@ -99,6 +99,7 @@ fn the_closure_follows_its_base_and_reads_answer_in_both_directions() {
     plant_tree(&mut db);
     path(&mut db);
     reads_and_writes(&mut db);
+    only_the_callers_own_node_is_answered(&mut db);
     two_way_reach(&mut db);
     exact_tier(&mut db);
     pinned_borrow(&mut db);
@@ -212,6 +213,40 @@ enum Op {
     Insert,
     Update,
     Delete,
+}
+
+fn asked(db: &mut Client, folder: Option<&str>, call: &str) -> BTreeSet<String> {
+    let mut tx = db.transaction().expect("a transaction");
+    tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims(&[("estate_id", Some("e1")), ("space_id", Some("s1")), ("folder_id", folder)])])
+        .expect("the claims");
+    let answered =
+        tx.query(&format!("SELECT x::text FROM {AUTH}.{call} AS x"), &[]).unwrap_or_else(|e| panic!("{call}: {e}")).iter().map(|r| r.get(0)).collect();
+    tx.rollback().expect("rollback");
+    answered
+}
+
+fn only_the_callers_own_node_is_answered(db: &mut Client) {
+    let set = |ids: &[&str]| ids.iter().map(ToString::to_string).collect::<BTreeSet<String>>();
+    let sets = ["paths_descendants", "paths_ancestors", "paths_reach_set", "paths_up_reach_set"];
+    let own = [set(&["b", "c"]), set(&["a", "b"]), set(&["b", "c"]), set(&["a", "b"])];
+    for (function, wanted) in sets.iter().zip(&own) {
+        assert_eq!(&asked(db, Some("b"), &format!("{function}('b')")), wanted, "{function}: the caller's own node");
+        for other in ["a", "c", "e", "x", "y"] {
+            assert_eq!(asked(db, Some("b"), &format!("{function}('{other}')")), set(&[]), "{function}: a caller at b asks about {other}");
+            assert_eq!(asked(db, None, &format!("{function}('{other}')")), set(&[]), "{function}: a caller at no node asks about {other}");
+        }
+    }
+    let reachable = |db: &mut Client, folder: Option<&str>, pair: (&str, &str)| {
+        asked(db, folder, &format!("paths_reachable('{}', '{}')", pair.0, pair.1)) == set(&["true"])
+    };
+    for (pair, wanted) in [(("b", "c"), true), (("a", "b"), true), (("b", "b"), true), (("a", "c"), false), (("x", "y"), false), (("b", "d"), false)] {
+        assert_eq!(reachable(db, Some("b"), pair), wanted, "a caller at b asks whether {} reaches {}", pair.0, pair.1);
+        assert!(!reachable(db, None, pair), "a caller at no node asks whether {} reaches {}", pair.0, pair.1);
+    }
+    let public: bool =
+        db.query_one(&format!("SELECT has_function_privilege('public', '{AUTH}.paths_path(text)', 'EXECUTE')"), &[]).expect("the privilege").get(0);
+    assert!(!public, "no rule calls the path, so PUBLIC may not run it");
 }
 
 const OPS: [Op; 4] = [Op::Select, Op::Insert, Op::Update, Op::Delete];

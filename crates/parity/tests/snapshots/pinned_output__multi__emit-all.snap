@@ -23,7 +23,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT tenant_id FROM support_grants WHERE holder_id = user_id AND ended_at IS NULL;
+  SELECT tenant_id FROM support_grants WHERE holder_id = user_id AND ended_at IS NULL AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub');
 $$;
 
 CREATE OR REPLACE FUNCTION auth.acl_grants_doc(p_member_id text, p_doc_id text, p_access text)

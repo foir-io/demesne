@@ -51,7 +51,12 @@ fn an_undeclared_closure_looks_each_row_up_with_the_caller_on_the_side_its_relat
         assert_eq!(names(&defs), ["paths_reachable"], "an undeclared closure keeps its one lookup");
         let reach = definer(&defs, "paths_reachable");
         assert_eq!(reach.sig, "p_ancestor text, p_descendant text");
-        assert_eq!(reach.body, format!("EXISTS (SELECT 1 FROM paths WHERE {lookup})"), "the lookup takes the first relation's columns in its order");
+        let own = format!("{}::text", sql.session_claim("folder_id"));
+        assert_eq!(
+            reach.body,
+            format!("EXISTS (SELECT 1 FROM paths WHERE {lookup} AND (p_ancestor = {own} OR p_descendant = {own}))"),
+            "the lookup takes the first relation's columns in its order, and answers only where one side is the caller's own node"
+        );
         assert!(reach.strict);
     }
 }
@@ -77,10 +82,18 @@ fn a_declared_closure_reads_each_direction_as_a_set_computed_once() {
             let defs = sql.emit_definers().expect("the definers compile");
             assert_eq!(names(&defs), [format!("{base}_reachable"), format!("{base}_descendants"), format!("{base}_ancestors")]);
             let (below, above) = (definer(&defs, &format!("{base}_descendants")), definer(&defs, &format!("{base}_ancestors")));
-            assert_eq!((below.sig.as_str(), below.returns.as_str(), below.body.as_str()), ("p_node text", "SETOF text", "des FROM paths WHERE anc = p_node"));
-            assert_eq!((above.sig.as_str(), above.returns.as_str(), above.body.as_str()), ("p_node text", "SETOF text", "anc FROM paths WHERE des = p_node"));
+            let own = sql.session_claim("folder_id");
+            assert_eq!((below.sig.as_str(), below.returns.as_str()), ("p_node text", "SETOF text"));
+            assert_eq!((above.sig.as_str(), above.returns.as_str()), ("p_node text", "SETOF text"));
+            assert_eq!(below.body, format!("des FROM paths WHERE anc = p_node AND p_node = {own}"), "the set is the caller's own node's, never another's");
+            assert_eq!(above.body, format!("anc FROM paths WHERE des = p_node AND p_node = {own}"));
             assert!(below.strict && above.strict, "a caller with no node reaches the empty set");
-            assert_eq!(definer(&defs, &format!("{base}_reachable")).body, "EXISTS (SELECT 1 FROM paths WHERE anc = p_ancestor AND des = p_descendant)");
+            assert_eq!(
+                definer(&defs, &format!("{base}_reachable")).body,
+                format!(
+                    "EXISTS (SELECT 1 FROM paths WHERE anc = p_ancestor AND des = p_descendant AND (p_ancestor = {own}::text OR p_descendant = {own}::text))"
+                )
+            );
         }
     }
 }
@@ -97,7 +110,7 @@ fn the_declaration_fixes_the_edge_whatever_order_the_relations_come_in() {
         "a relation naming the declared descendant first reaches above:\n{edit}"
     );
     let defs = sql.emit_definers().expect("the definers compile");
-    assert_eq!(definer(&defs, "paths_ancestors").body, "des FROM paths WHERE anc = p_node");
+    assert_eq!(definer(&defs, "paths_ancestors").body, format!("des FROM paths WHERE anc = p_node AND p_node = {}", sql.session_claim("folder_id")));
 }
 
 #[test]
@@ -109,7 +122,13 @@ fn a_declared_depth_adds_the_ordered_path_and_an_identifier_type_carries_through
     assert_eq!((path.sig.as_str(), path.returns.as_str()), ("p_node uuid", "TABLE(node uuid, depth integer)"));
     assert_eq!(path.body, "  SELECT anc, hops::integer FROM paths WHERE des = p_node ORDER BY hops DESC, anc;");
     assert!(path.strict && path.raw_body);
-    assert_eq!(definer(&defs, "paths_descendants").returns, "SETOF uuid");
+    assert!(
+        path.create_sql().ends_with("REVOKE EXECUTE ON FUNCTION auth.paths_path(uuid) FROM PUBLIC;"),
+        "no rule calls the path, so only a granted role reads it"
+    );
+    let below = definer(&defs, "paths_descendants");
+    assert_eq!(below.returns, "SETOF uuid");
+    assert_eq!(below.body, "des FROM paths WHERE anc = p_node AND false", "a closure no relation reads by a claim answers for no node");
     let no_depth = compile(&format!("{HEAD}closure paths(anc, des)\n"));
     assert!(!names(&Sql::new(&no_depth).emit_definers().expect("the definers compile")).contains(&"paths_path"), "no depth column, no path");
 }
@@ -321,4 +340,18 @@ fn a_reach_through_two_grants_contains_by_either_set_on_the_operations_it_names(
         one_way.contains(&format!("(folder_id IS NULL OR folder_id = {claim}) OR {up})")) && !one_way.contains(&down),
         "one grant stays unbracketed:\n{one_way}"
     );
+}
+
+#[test]
+fn a_grants_reach_sets_answer_for_the_callers_own_identity_alone() {
+    let path = format!("{}/../../examples/reach.demesne", env!("CARGO_MANIFEST_DIR"));
+    let s = compile(&std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}")));
+    let sql = Sql::new(&s);
+    let own = format!("AND user_id IN ({}, {})", sql.session_claim("sub"), sql.session_claim("folder_id"));
+    let defs = sql.emit_definers().expect("the definers compile");
+    for name in ["approvals_reach_set", "approvals_reach_unscoped_set", "paths_reach_set", "paths_up_reach_set"] {
+        let set = definer(&defs, name);
+        assert!(set.returns.starts_with("SETOF"), "{name} returns a set");
+        assert!(set.body.ends_with(&own), "{name} answers for an identity the caller's claims carry, and no other:\n{}", set.body);
+    }
 }

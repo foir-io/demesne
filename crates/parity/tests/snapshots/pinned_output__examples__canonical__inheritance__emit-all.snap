@@ -12,7 +12,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM folder_closure WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant);
+  SELECT EXISTS (SELECT 1 FROM folder_closure WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant AND (p_ancestor = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'viewer_folder')::text OR p_descendant = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'viewer_folder')::text));
 $$;
 
 

@@ -105,7 +105,13 @@ fn inheritance_reaches_documents_through_unbounded_folder_ancestry() {
     }
     let defs = sql.emit_definers().expect("the inheritance example's definers emit");
     let reach = definer(&defs, "folder_closure_reachable");
-    assert_eq!(reach.body, "EXISTS (SELECT 1 FROM folder_closure WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant)");
+    let own = format!("{}::text", sql.session_claim("viewer_folder"));
+    assert_eq!(
+        reach.body,
+        format!(
+            "EXISTS (SELECT 1 FROM folder_closure WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant AND (p_ancestor = {own} OR p_descendant = {own}))"
+        )
+    );
     assert!(reach.create_sql().contains("SECURITY DEFINER"), "{}", reach.create_sql());
     let triggers = sql.emit_triggers();
     assert_eq!(triggers.iter().map(|t| (t.closure.as_str(), t.base.as_str())).collect::<Vec<_>>(), [("folder_closure", "folders")]);

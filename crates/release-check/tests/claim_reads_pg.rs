@@ -699,13 +699,47 @@ fn read_per_row(sql: &str) -> String {
     sql.replace("(SELECT current_setting(", "(current_setting(").replace("(SELECT NULLIF(current_setting(", "(NULLIF(current_setting(")
 }
 
+const OWN: [&str; 5] = [" AND user_id = ", " AND user_id IN ", " AND p_node = ", " AND p_node IN ", " AND (p_ancestor "];
+
+fn bound_ends(rest: &str) -> usize {
+    let mut depth = 0_usize;
+    let mut end = rest.len();
+    for (at, ch) in rest.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth == 1 => {
+                end = at + 1;
+                break;
+            }
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    while let Some(cast) = rest[end..].strip_prefix("::") {
+        end += 2 + cast.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(cast.len());
+    }
+    end
+}
+
+fn answering_any_caller(sql: &str) -> String {
+    let mut out = sql.replace(" AND false", "");
+    for prefix in OWN {
+        while let Some(at) = out.find(prefix) {
+            let from = at + prefix.rfind('(').unwrap_or(prefix.len());
+            let end = from + bound_ends(&out[from..]);
+            out.replace_range(at..end, "");
+        }
+    }
+    out
+}
+
 #[test]
-fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads() {
+fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads_and_in_whose_node_a_set_answers_for() {
     let (mut compared, mut refused, mut reads) = (0, 0, 0);
     for (name, src) in specs() {
         match (ddl_now(&src), ddl_before(&src)) {
             (Some((_, now)), Some(before)) => {
-                assert_eq!(read_per_row(&now), before, "{name}: the SQL changed beyond its claim reads");
+                assert_eq!(answering_any_caller(&read_per_row(&now)), before, "{name}: the SQL changed beyond its claim reads and the callers its sets answer");
                 compared += 1;
                 reads += now.matches("(SELECT current_setting(").count() + now.matches("(SELECT NULLIF(current_setting(").count();
             }
