@@ -117,7 +117,8 @@ impl Sql<'_> {
             raw_body: true,
             language: Language::Plpgsql,
             body: format!(
-                "DECLARE\n  c record;\n  x_v jsonb;\n  x_num double precision;\n  x_txt text;\n  x_at timestamptz;\n  x_scalar text;\n  x_lat double precision;\n  x_lng double precision;\n  holds boolean;\n  undecided boolean := false;\nBEGIN\n  IF p_object IS NULL THEN\n    RETURN NULL;\n  END IF;\n  FOR c IN SELECT s.* FROM {table} s WHERE s.{object} = p_object{keyed} LOOP\n{caller}    CASE c.{op}{cases}\n      ELSE holds := NULL;\n    END CASE;\n    IF holds IS FALSE THEN\n      RETURN false;\n    END IF;\n    undecided := undecided OR holds IS NULL;\n  END LOOP;\n  RETURN CASE WHEN undecided THEN NULL ELSE true END;\nEND",
+                "DECLARE\n  c record;\n  x_v jsonb;\n  x_num double precision;\n  x_txt text;\n  x_at timestamptz;\n  x_scalar text;\n  x_lat double precision;\n  x_lng double precision;\n  holds boolean;\n  undecided boolean := false;\nBEGIN\n  IF p_object IS NULL OR NOT (p_values IS NOT DISTINCT FROM {own}) THEN\n    RETURN NULL;\n  END IF;\n  FOR c IN SELECT s.* FROM {table} s WHERE s.{object} = p_object{keyed} LOOP\n{caller}    CASE c.{op}{cases}\n      ELSE holds := NULL;\n    END CASE;\n    IF holds IS FALSE THEN\n      RETURN false;\n    END IF;\n    undecided := undecided OR holds IS NULL;\n  END LOOP;\n  RETURN CASE WHEN undecided THEN NULL ELSE true END;\nEND",
+                own = self.session_claim_object(&c.claim),
                 table = c.table,
                 object = c.object_col,
                 op = c.op_col,

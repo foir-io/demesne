@@ -721,7 +721,37 @@ fn bound_ends(rest: &str) -> usize {
     end
 }
 
+fn guard_start(text: &str, read: usize) -> Option<usize> {
+    let head = text[..read].strip_suffix(" = ").or_else(|| text[..read].strip_suffix(" IN ("))?;
+    let name = head.len() - head.chars().rev().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').count();
+    (name < head.len()).then_some(name)
+}
+
+fn without_leading_guards(sql: &str) -> String {
+    const READ: &str = "(NULLIF(current_setting(";
+    let mut out = sql.to_string();
+    let mut from = 0;
+    while let Some(found) = out[from..].find(READ) {
+        let read = from + found;
+        from = read + READ.len();
+        let Some(name) = guard_start(&out, read) else { continue };
+        let either_side = out[..name].ends_with('(') && out[name - 1 + bound_ends(&out[name - 1..])..].starts_with(" AND (");
+        let (start, group) = if either_side { (name - 1, name - 1) } else { (name, if out[..read].ends_with('(') { read - 1 } else { read }) };
+        let guarded = group + bound_ends(&out[group..]);
+        if !out[guarded..].starts_with(" AND (") {
+            continue;
+        }
+        let open = guarded + " AND ".len();
+        let close = open + bound_ends(&out[open..]) - 1;
+        out.replace_range(close..=close, "");
+        out.replace_range(start..=open, "");
+        from = start;
+    }
+    out
+}
+
 fn answering_any_caller(sql: &str, before: &str) -> String {
+    let sql = &without_leading_guards(sql);
     let revoked_since = |line: &&str| line.starts_with("REVOKE EXECUTE ON FUNCTION ") && !before.lines().any(|kept| kept == *line);
     let mut out = sql.replace(" AND false", "");
     for line in sql.lines().filter(revoked_since) {

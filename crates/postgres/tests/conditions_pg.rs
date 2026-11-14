@@ -404,8 +404,18 @@ fn an_exception_whose_condition_cannot_be_decided_bars() {
     }
     let answers: Vec<Option<bool>> = ["{\"level\":3}", "{\"level\":9}", "{}", "{\"level\":\"high\"}"]
         .iter()
-        .map(|facts| db.query_one(&format!("SELECT {auth}.doc_bar_terms_hold('d', 'r1', $1::text::jsonb)"), &[facts]).expect("the function").get(0))
+        .map(|facts| {
+            db.execute("SELECT set_config('request.jwt.claims', $1, false)", &[&format!("{{\"facts\":{facts}}}")]).expect("the caller's own facts");
+            db.query_one(&format!("SELECT {auth}.doc_bar_terms_hold('d', 'r1', $1::text::jsonb)"), &[facts]).expect("the function").get(0)
+        })
         .collect();
     assert_eq!(answers, [Some(true), Some(false), None, None], "true and false when decided, NULL when not");
+    for claims in ["", "{\"facts\":{\"level\":9}}"] {
+        db.execute("SELECT set_config('request.jwt.claims', $1, false)", &[&claims]).expect("another caller's facts");
+        let other: Option<bool> =
+            db.query_one(&format!("SELECT {auth}.doc_bar_terms_hold('d', 'r1', '{{\"level\":3}}'::jsonb)"), &[]).expect("the function").get(0);
+        assert_eq!(other, None, "values that are not the caller's own decide nothing, under claims {claims:?}");
+    }
+    db.batch_execute("RESET request.jwt.claims").expect("reset the claims");
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");
 }

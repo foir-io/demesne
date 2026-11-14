@@ -12,7 +12,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM support_grants WHERE holder_id = user_id AND tenant_id = check_tenant_id AND ended_at IS NULL);
+  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id')) AND (EXISTS (SELECT 1 FROM support_grants WHERE holder_id = user_id AND tenant_id = check_tenant_id AND ended_at IS NULL));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.support_grants_reach_set(user_id text)

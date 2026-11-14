@@ -12,7 +12,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM ops_users WHERE user_ref = user_id AND is_ops AND state = 'ON');
+  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (EXISTS (SELECT 1 FROM ops_users WHERE user_ref = user_id AND is_ops AND state = 'ON'));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.is_tenant_crew(user_id text, check_tenant_id text)
@@ -22,7 +22,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT auth.is_ops(user_id) OR EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref IS NULL AND ra.killed_at IS NULL AND r.slug IN ('boss'));
+  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (auth.is_ops(user_id) OR EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref IS NULL AND ra.killed_at IS NULL AND r.slug IN ('boss')));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.crew_has_space_role(user_id text, check_tenant_id text, check_space_id text)
@@ -32,7 +32,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref = check_space_id AND ra.killed_at IS NULL AND r.slug IN ('editor', 'viewer'));
+  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref = check_space_id AND ra.killed_at IS NULL AND r.slug IN ('editor', 'viewer')));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.member_can_access_asset(p_member_id text, p_asset_id text, p_access text)
@@ -42,7 +42,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM assets r WHERE r.asset_pk = p_asset_id AND r.holder_ref = p_member_id);
+  SELECT p_member_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (EXISTS (SELECT 1 FROM assets r WHERE r.asset_pk = p_asset_id AND r.holder_ref = p_member_id));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.asset_acl_grants(p_member_id text, p_asset_id text, p_access text)

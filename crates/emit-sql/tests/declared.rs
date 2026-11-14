@@ -69,7 +69,7 @@ fn a_slot_binds_into_a_keyed_edge_and_into_the_hops_a_composition_follows() {
     assert_eq!(edge.sig, "p_principal text, p_object text, p_key text, p_slot text");
     assert_eq!(
         edge.body,
-        "EXISTS (SELECT 1 FROM doc_edges WHERE principal_id = p_principal AND object_id = p_object AND rule_id = p_key AND part::text = p_slot)"
+        "p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM doc_edges WHERE principal_id = p_principal AND object_id = p_object AND rule_id = p_key AND part::text = p_slot))"
     );
     assert!(
         using.contains("auth.doc_by_part_keyed(SUB, docs.id, demesne_element.v, demesne_slot.slot)"),

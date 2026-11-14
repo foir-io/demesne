@@ -45,7 +45,7 @@ fn the_policy_passes_the_array_where_the_level_goes_and_the_definer_checks_every
     assert_eq!(every.sig, "user_id text, check_estate_id text, check_space_ids text[], p_perm text");
     assert_eq!(
         every.body,
-        "cardinality(check_space_ids) > 0 AND NOT EXISTS (SELECT 1 FROM unnest(check_space_ids) AS v(id) WHERE NOT EXISTS (SELECT 1 FROM spaces e WHERE e.id = v.id AND e.estate_id = check_estate_id) OR auth.staff_has_perm(user_id, check_estate_id, v.id, p_perm) IS NOT TRUE)"
+        "user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (cardinality(check_space_ids) > 0 AND NOT EXISTS (SELECT 1 FROM unnest(check_space_ids) AS v(id) WHERE NOT EXISTS (SELECT 1 FROM spaces e WHERE e.id = v.id AND e.estate_id = check_estate_id) OR auth.staff_has_perm(user_id, check_estate_id, v.id, p_perm) IS NOT TRUE))"
     );
     assert!(!every.strict, "a NULL array must answer false, not NULL through strictness alone");
     assert_eq!(defs.iter().filter(|d| d.name == "staff_has_perm").count(), 1);

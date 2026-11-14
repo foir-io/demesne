@@ -29,14 +29,14 @@ const PICKED: &str = "CASE COALESCE(CHANNEL, 'live') WHEN 'draft' THEN r.permiss
 #[test]
 fn a_store_with_none_of_the_lines_emits_what_it_did() {
     let defs = definers(&spec("")).expect("compiles");
-    assert!(holds(&defs).ends_with("AND p_perm = ANY(r.permissions))"), "{}", holds(&defs));
+    assert!(holds(&defs).ends_with("AND p_perm = ANY(r.permissions)))"), "{}", holds(&defs));
     assert!(!text(&defs).contains("CASE COALESCE"));
 }
 
 #[test]
 fn the_claim_picks_the_form_a_role_is_read_in_and_an_unnamed_value_picks_none() {
     let defs = definers(&spec(FORMS)).expect("compiles");
-    assert!(holds(&defs).ends_with(&format!("AND p_perm = ANY(({PICKED})))")), "{}", holds(&defs));
+    assert!(holds(&defs).ends_with(&format!("AND p_perm = ANY(({PICKED}))))")), "{}", holds(&defs));
     let other = definers(&spec(&FORMS.replace("reads \"live\"", "reads \"draft\""))).expect("compiles");
     assert!(holds(&other).contains("COALESCE(CHANNEL, 'draft')"), "the spec names the form an absent claim takes:\n{}", holds(&other));
 }
@@ -45,7 +45,7 @@ fn the_claim_picks_the_form_a_role_is_read_in_and_an_unnamed_value_picks_none() 
 fn an_unversioned_role_is_read_from_the_base_whatever_the_claim_says() {
     let defs = definers(&spec(&format!("{FORMS}  unversioned estate_id null\n  unversioned source = \"builtin\"\n"))).expect("compiles");
     assert!(
-        holds(&defs).ends_with(&format!("AND p_perm = ANY((CASE WHEN r.estate_id IS NULL OR r.source = 'builtin' THEN r.permissions ELSE {PICKED} END)))")),
+        holds(&defs).ends_with(&format!("AND p_perm = ANY((CASE WHEN r.estate_id IS NULL OR r.source = 'builtin' THEN r.permissions ELSE {PICKED} END))))")),
         "{}",
         holds(&defs)
     );
@@ -54,7 +54,7 @@ fn an_unversioned_role_is_read_from_the_base_whatever_the_claim_says() {
 #[test]
 fn a_role_that_is_not_in_force_is_no_role_on_any_read() {
     let defs = definers(&spec("  active disabled_at null\n  active state = \"on\"\n")).expect("compiles");
-    assert!(holds(&defs).ends_with("AND r.disabled_at IS NULL AND r.state = 'on' AND p_perm = ANY(r.permissions))"), "{}", holds(&defs));
+    assert!(holds(&defs).ends_with("AND r.disabled_at IS NULL AND r.state = 'on' AND p_perm = ANY(r.permissions)))"), "{}", holds(&defs));
     let with_forms = definers(&spec(&format!("{FORMS}  active disabled_at null\n"))).expect("compiles");
     for d in with_forms.iter().filter(|d| d.body.contains(" roles r") || d.body.contains(" roles ro") || d.body.contains(" roles rr")) {
         assert!(d.body.contains("disabled_at IS NULL"), "{} reads the roles table without the in-force test:\n{}", d.name, d.body);

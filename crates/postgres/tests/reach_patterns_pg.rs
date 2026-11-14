@@ -263,17 +263,24 @@ fn check_ladder(d: &mut Db, tr: &ReachTree) {
         ("folder rung refuses a sibling folder", claims(&[("space_id", "s1"), ("folder_id", tr.other)]), "h_folder", false),
         ("unpinned approval needs no claims", claims(&[]), "h_estate", true),
     ] {
-        let got = d.truth(&c, &probe, &[&holder]);
+        let mut own = c.clone();
+        own.insert("sub".to_string(), holder.to_string());
+        let got = d.truth(&own, &probe, &[&holder]);
         if got != want {
             t.errorf(format!("{name}: approvals_reach({holder}) = {got}, want {want}"));
+        }
+        let mut another = c;
+        another.insert("sub".to_string(), "h_ended".to_string());
+        if d.truth(&another, &probe, &[&holder]) {
+            t.errorf(format!("{name}: approvals_reach({holder}) answered a caller who is not {holder}"));
         }
     }
     d.exec("SAVEPOINT empty_claims", &[]);
     d.exec("SELECT set_config('request.jwt.claims', '', true)", &[]);
-    match d.tx.query_one(&probe, &[&"h_estate"]).and_then(|r| r.try_get::<_, bool>(0)) {
-        Ok(true) => {}
-        Ok(false) => t.errorf("a direct call with an empty claims setting must answer rather than raise: false <nil>"),
-        Err(e) => t.errorf(format!("a direct call with an empty claims setting must answer rather than raise: false {e}")),
+    match d.tx.query_one(&probe, &[&"h_estate"]).and_then(|r| r.try_get::<_, Option<bool>>(0)) {
+        Ok(None | Some(false)) => {}
+        Ok(Some(true)) => t.errorf("a direct call with an empty claims setting is nobody's own, so it must not answer true"),
+        Err(e) => t.errorf(format!("a direct call with an empty claims setting must answer rather than raise: {e}")),
     }
     d.exec("ROLLBACK TO SAVEPOINT empty_claims", &[]);
 
@@ -288,9 +295,12 @@ fn check_ladder(d: &mut Db, tr: &ReachTree) {
         (&in_folder, vec!["h_folder", "s1", tr.root], true),
         (&in_space, vec!["h_folder", "s2"], false),
     ] {
-        let got = d.truth(&claims(&[]), sql, &args(&a));
+        let got = d.truth(&claims(&[("sub", a[0])]), sql, &args(&a));
         if got != want {
             t.errorf(format!("{sql} {a:?} = {got}, want {want}"));
+        }
+        if d.truth(&claims(&[("sub", "h_ended")]), sql, &args(&a)) || d.truth(&claims(&[]), sql, &args(&a)) {
+            t.errorf(format!("{sql} {a:?} answered a caller who is not {}", a[0]));
         }
     }
 }

@@ -96,12 +96,19 @@ fn a_keyed_edge_matches_principal_object_and_key_and_a_literal_when_it_names_one
     let get = |name: &str| defs.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("no {name}"));
     let named = get("doc_named_keyed");
     assert_eq!((named.sig.as_str(), named.strict), ("p_principal text, p_object text, p_key text", true));
-    assert_eq!(named.body, "EXISTS (SELECT 1 FROM doc_edges WHERE principal_id = p_principal AND object_id = p_object AND rule_id = p_key)");
+    assert_eq!(
+        named.body,
+        "p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM doc_edges WHERE principal_id = p_principal AND object_id = p_object AND rule_id = p_key))",
+        "the edge is the caller's own, never another principal's"
+    );
     assert_eq!(
         get("doc_second_keyed").body,
-        "EXISTS (SELECT 1 FROM doc_edges WHERE principal_id = p_principal AND object_id = p_object AND rule_id = p_key AND slot = '2')"
+        "p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM doc_edges WHERE principal_id = p_principal AND object_id = p_object AND rule_id = p_key AND slot = '2'))"
     );
-    assert_eq!(get("doc_barred_keyed").body, "EXISTS (SELECT 1 FROM doc_bars WHERE principal_id = p_principal AND object_id = p_object AND rule_id = p_key)");
+    assert_eq!(
+        get("doc_barred_keyed").body,
+        "p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM doc_bars WHERE principal_id = p_principal AND object_id = p_object AND rule_id = p_key))"
+    );
 }
 
 #[test]

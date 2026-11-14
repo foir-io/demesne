@@ -12,7 +12,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = user_id AND descendant_id = check_folder_id);
+  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')) AND (EXISTS (SELECT 1 FROM paths WHERE ancestor_id = user_id AND descendant_id = check_folder_id));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.paths_reach_set(user_id text)
@@ -34,7 +34,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM paths WHERE descendant_id = user_id AND ancestor_id = check_folder_id);
+  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')) AND (EXISTS (SELECT 1 FROM paths WHERE descendant_id = user_id AND ancestor_id = check_folder_id));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.paths_up_reach_set(user_id text)

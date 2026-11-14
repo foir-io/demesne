@@ -64,7 +64,11 @@ fn the_definer_reads_the_container_whoever_asks_and_fails_closed() {
     let (_, defs) = compiled(&spec(MADE_BY, "")).expect("compiles");
     let f = defs.iter().find(|d| d.name == "spaces_made_by_marker_admits").expect("the definer");
     assert_eq!((f.sig.as_str(), f.strict), ("p_container text, p_claim text", false));
-    assert_eq!(f.body, "EXISTS (SELECT 1 FROM spaces m WHERE m.id = p_container AND (m.made_by IS NULL OR m.made_by::text = p_claim))");
+    assert_eq!(
+        f.body,
+        "p_claim IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'job_id') AND EXISTS (SELECT 1 FROM spaces m WHERE m.id = p_container AND (m.made_by IS NULL OR m.made_by::text = p_claim))",
+        "the value compared is the caller's own claim, and no other"
+    );
 }
 
 #[test]
@@ -74,7 +78,7 @@ fn through_a_closure_every_marked_container_above_confines_too() {
     let f = defs.iter().find(|d| d.name == "spaces_made_by_marker_admits").expect("the definer");
     assert_eq!(
         f.body,
-        "EXISTS (SELECT 1 FROM spaces m WHERE m.id = p_container AND (m.made_by IS NULL OR m.made_by::text = p_claim)) AND NOT EXISTS (SELECT 1 FROM paths c JOIN spaces m ON m.id = c.anc WHERE c.des = p_container AND m.made_by IS NOT NULL AND m.made_by::text IS DISTINCT FROM p_claim)"
+        "p_claim IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'job_id') AND EXISTS (SELECT 1 FROM spaces m WHERE m.id = p_container AND (m.made_by IS NULL OR m.made_by::text = p_claim)) AND NOT EXISTS (SELECT 1 FROM paths c JOIN spaces m ON m.id = c.anc WHERE c.des = p_container AND m.made_by IS NOT NULL AND m.made_by::text IS DISTINCT FROM p_claim)"
     );
 }
 

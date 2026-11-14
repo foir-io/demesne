@@ -17,7 +17,7 @@ use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Closure, DeclaredScope, Grant, Nearest, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Subject, Term, ViaClosure, ViaColumn,
+    ArgSrc, Closure, DeclaredScope, Grant, Nearest, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Subject, Term, ViaClosure, ViaColumn,
     ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -93,6 +93,20 @@ fn revoked_cond(rs: &RoleStore, alias: &str) -> Vec<String> {
 
 fn or(o: Option<&str>) -> &str {
     o.unwrap_or("")
+}
+
+fn claimed(side: &ArgSrc) -> Option<&str> {
+    match side {
+        ArgSrc::Claim(key) => Some(key.as_str()),
+        ArgSrc::Col(_) => None,
+    }
+}
+
+fn caller_parameter(f: &GenFn) -> Option<(String, String)> {
+    let mut parameters = f.sig.split(',').map(|p| p.split_whitespace().collect::<Vec<_>>());
+    let named = |p: &Vec<&str>| p.first().is_some_and(|name| matches!(*name, "user_id" | "p_principal" | "p_member"));
+    let found = if f.name.contains("_can_access_") { parameters.next() } else { parameters.find(named) }?;
+    Some((found.first()?.to_string(), found.get(1..)?.join(" ")))
 }
 
 fn is_the_callers(arg: &str, callers: &[String]) -> String {
@@ -383,6 +397,7 @@ impl Sql<'_> {
         self.def_emit_nearests(&mut out)?;
         self.def_emit_markers(&mut out)?;
         self.def_emit_projections(&mut out, &virt)?;
+        self.bind_callers(&mut out);
         for f in &mut out {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
@@ -471,6 +486,34 @@ impl Sql<'_> {
             });
         }
         out
+    }
+
+    fn bind_callers(&self, fns: &mut [GenFn]) {
+        let identities = self.claims_once(self.s.subjects.iter().map(Subject::identifies));
+        let as_text: Vec<String> = identities.iter().map(|identity| format!("{identity}::text")).collect();
+        let id_t = self.s.id_type();
+        for f in fns.iter_mut().filter(|f| f.execute == Execute::Public && f.returns.is_empty() && !f.raw_body && f.arms.is_empty()) {
+            let Some((parameter, ty)) = caller_parameter(f) else { continue };
+            let membership = f.name.strip_prefix(&format!("{}_memberin_", self.s.admin_name())).map(|level| self.membership_callers(level));
+            let own = membership.unwrap_or_else(|| is_the_callers(&parameter, if ty == id_t { &identities } else { &as_text }));
+            f.body = format!("{own} AND ({})", f.body);
+        }
+    }
+
+    fn membership_callers(&self, level: &str) -> String {
+        let asked = || {
+            self.s.relations().filter_map(move |(_, r)| match &r.repr {
+                Repr::MemberIn(mi) if mi.level == level => Some(mi),
+                _ => None,
+            })
+        };
+        let principals = self.claims_once(asked().filter_map(|mi| claimed(&mi.principal)).chain([self.s.admin_identify()]));
+        let scopes = self.claims_once(asked().filter(|mi| claimed(&mi.principal).is_none()).filter_map(|mi| claimed(&mi.scope)));
+        let principal = is_the_callers("p_principal", &principals);
+        if scopes.is_empty() {
+            return principal;
+        }
+        format!("({principal} OR {})", is_the_callers(&format!("p_{level}"), &scopes))
     }
 
     fn grant_callers(&self) -> Vec<String> {
@@ -1879,7 +1922,10 @@ impl Sql<'_> {
                 return Err(format!("object {}: marker {} collides with the generated function {}", quote(&obj.name), quote(&m.col), quote(&name)));
             }
             let (t, pk, col) = (&obj.table, obj.pk(), &m.col);
-            let mut body = format!("EXISTS (SELECT 1 FROM {t} m WHERE m.{pk} = p_container AND (m.{col} IS NULL OR m.{col}::text = p_claim))");
+            let mut body = format!(
+                "p_claim IS NOT DISTINCT FROM {} AND EXISTS (SELECT 1 FROM {t} m WHERE m.{pk} = p_container AND (m.{col} IS NULL OR m.{col}::text = p_claim))",
+                self.claim(&m.claim)
+            );
             if let Some(c) = m.closure.as_deref().and_then(|c| self.s.closure_by_table(c)) {
                 write!(
                     body,

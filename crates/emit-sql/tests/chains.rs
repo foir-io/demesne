@@ -205,7 +205,12 @@ fn only_the_functions_something_calls_are_emitted_and_those_a_chain_calls_keep_t
     );
     assert_eq!(languages(&defs), [Language::Plpgsql, Language::Plpgsql, Language::Sql]);
     let edge = named(&defs, "doc_shared_keyed").create_sql();
-    assert!(edge.ends_with("AS $$\n#variable_conflict use_column\nBEGIN\n  RETURN EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key);\nEND\n$$;"), "{edge}");
+    assert!(
+        edge.ends_with(
+            "AS $$\n#variable_conflict use_column\nBEGIN\n  RETURN p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));\nEND\n$$;"
+        ),
+        "{edge}"
+    );
     let rows = named(&defs, "rule_slots_declared_by_rule").create_sql();
     assert!(
         rows.ends_with("BEGIN\n  RETURN QUERY SELECT rule_slots.kind::text, rule_slots.param::text FROM rule_slots WHERE rule_slots.rule = p_key;\nEND\n$$;"),
