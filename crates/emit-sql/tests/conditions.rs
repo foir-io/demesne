@@ -39,39 +39,33 @@ fn the_function_is_false_when_a_condition_fails_and_unknown_when_one_cannot_be_d
     let (_, defs) = emitted(&spec("", VIEW));
     let keyed = &defs.iter().find(|d| d.name == "doc_matches_hold").expect("the function").body;
     let lacking: Vec<&str> = [
-        "BEGIN\n  IF p_object IS NULL THEN\n    RETURN NULL;\n  END IF;\n  IF NOT EXISTS (SELECT 1 FROM rule_terms c WHERE c.object_id = p_object AND c.rule_id = p_key) THEN\n    RETURN true;\n  END IF;",
-        "RETURN (SELECT CASE WHEN bool_or(h.holds IS FALSE) THEN false WHEN bool_or(h.holds IS NULL) THEN NULL ELSE true END",
-        "SELECT (CASE c.op",
-        "END) AS holds",
-        "FROM rule_terms c CROSS JOIN LATERAL (",
-        "WHERE c.object_id = p_object AND c.rule_id = p_key\n  ) h);\nEND",
-        "WHEN 'eq' THEN CASE WHEN c.num IS NOT NULL THEN c.num = x.num WHEN c.at IS NOT NULL THEN c.at = x.at ELSE c.txt = x.txt COLLATE \"C\" END",
-        "WHEN 'lt' THEN CASE WHEN c.num IS NOT NULL THEN c.num < x.num WHEN c.at IS NOT NULL THEN c.at < x.at END",
-        "WHEN 'not_in' THEN NOT (CASE WHEN jsonb_typeof(x.v) = 'array' THEN EXISTS (",
-        "WHEN 'includes' THEN x.scalar = ANY(c.list)",
-        "WHEN 'not_includes' THEN CASE WHEN x.scalar IS NOT NULL AND c.list IS NOT NULL THEN NOT (x.scalar = ANY(c.list)) END",
-        "WHEN 'not_contains' THEN CASE WHEN x.txt IS NOT NULL AND c.txt IS NOT NULL THEN NOT (strpos(c.txt, x.txt) > 0) END",
-        "WHEN 'caller_prefix' THEN starts_with(x.txt, c.txt)",
-        "WHEN 'suffix' THEN right(c.txt, length(x.txt)) = x.txt COLLATE \"C\"",
-        "WHEN 'not_before' THEN now() >= c.at",
-        "WHEN 'not_after' THEN now() <= c.at",
-        "CASE WHEN jsonb_typeof(p_values -> c.term) = 'number' THEN (p_values ->> c.term)::double precision END AS num",
-        "THEN auth.demesne_instant(p_values ->> c.term) END AS at",
-        "THEN 6371.0 * 2 * atan2(sqrt(least(1.0, (sin(radians(x.lat - c.lat) / 2) ^ 2 + cos(radians(c.lat)) * cos(radians(x.lat)) * sin(radians(x.lng - c.lng) / 2) ^ 2))), sqrt(greatest(0.0, 1.0 - (",
+        "BEGIN\n  IF p_object IS NULL THEN\n    RETURN NULL;\n  END IF;\n  FOR c IN SELECT s.* FROM rule_terms s WHERE s.object_id = p_object AND s.rule_id = p_key LOOP\n    x_v := p_values -> c.term;",
+        "    CASE c.op\n      WHEN 'eq' THEN holds := ",
+        "      ELSE holds := NULL;\n    END CASE;\n    IF holds IS FALSE THEN\n      RETURN false;\n    END IF;\n    undecided := undecided OR holds IS NULL;\n  END LOOP;\n  RETURN CASE WHEN undecided THEN NULL ELSE true END;\nEND",
+        "WHEN \'eq\' THEN holds := CASE WHEN c.num IS NOT NULL THEN c.num = x_num WHEN c.at IS NOT NULL THEN c.at = x_at ELSE c.txt = x_txt COLLATE \"C\" END",
+        "WHEN \'lt\' THEN holds := CASE WHEN c.num IS NOT NULL THEN c.num < x_num WHEN c.at IS NOT NULL THEN c.at < x_at END",
+        "WHEN \'not_in\' THEN holds := NOT (CASE WHEN jsonb_typeof(x_v) = 'array' THEN EXISTS (",
+        "WHEN \'includes\' THEN holds := x_scalar = ANY(c.list)",
+        "WHEN \'not_includes\' THEN holds := CASE WHEN x_scalar IS NOT NULL AND c.list IS NOT NULL THEN NOT (x_scalar = ANY(c.list)) END",
+        "WHEN \'not_contains\' THEN holds := CASE WHEN x_txt IS NOT NULL AND c.txt IS NOT NULL THEN NOT (strpos(c.txt, x_txt) > 0) END",
+        "WHEN \'caller_prefix\' THEN holds := starts_with(x_txt, c.txt)",
+        "WHEN \'suffix\' THEN holds := right(c.txt, length(x_txt)) = x_txt COLLATE \"C\"",
+        "WHEN \'not_before\' THEN holds := now() >= c.at",
+        "WHEN \'not_after\' THEN holds := now() <= c.at",
+        "x_num := CASE WHEN jsonb_typeof(x_v) = 'number' THEN (x_v #>> '{}')::double precision END;",
+        "x_at := CASE WHEN c.at IS NOT NULL AND x_txt IS NOT NULL THEN auth.demesne_instant(x_txt) END;",
+        "THEN 6371.0 * 2 * atan2(sqrt(least(1.0, (sin(radians(x_lat - c.lat) / 2) ^ 2 + cos(radians(c.lat)) * cos(radians(x_lat)) * sin(radians(x_lng - c.lng) / 2) ^ 2))), sqrt(greatest(0.0, 1.0 - (",
         "<= c.num END",
-        "c.lat BETWEEN -90 AND 90 AND c.lng BETWEEN -180 AND 180 AND x.lat BETWEEN -90 AND 90 AND x.lng BETWEEN -180 AND 180 AND c.num >= 0",
+        "c.lat BETWEEN -90 AND 90 AND c.lng BETWEEN -180 AND 180 AND x_lat BETWEEN -90 AND 90 AND x_lng BETWEEN -180 AND 180 AND c.num >= 0",
     ]
     .into_iter()
     .filter(|frag| !keyed.contains(frag))
     .collect();
     assert_eq!(lacking, [] as [&str; 0], "{keyed}");
-    let per_operator = &keyed[keyed.find("SELECT (CASE c.op").expect("the operators")..keyed.find("END) AS holds").expect("their end")];
+    let per_operator = &keyed[keyed.find("    CASE c.op").expect("the operators")..keyed.find("      ELSE holds := NULL;").expect("their end")];
     assert!(!per_operator.contains("ELSE true") && !per_operator.contains("ELSE false"), "an operator that cannot decide answers neither way:\n{per_operator}");
     let plain = &defs.iter().find(|d| d.name == "doc_fits_hold").expect("the function").body;
-    assert!(
-        plain.contains("WHERE c.object_id = p_object\n  ) h);") && plain.contains("FROM doc_terms c WHERE c.object_id = p_object) THEN\n    RETURN true;"),
-        "an unkeyed relation matches the row alone:\n{plain}"
-    );
+    assert!(plain.contains("FOR c IN SELECT s.* FROM doc_terms s WHERE s.object_id = p_object LOOP\n"), "an unkeyed relation matches the row alone:\n{plain}");
     assert!(!plain.contains("within_km") && !plain.contains("'includes'"), "an operator whose columns the relation does not name is not offered:\n{plain}");
 }
 
@@ -85,7 +79,7 @@ fn postgis_is_used_for_distance_only_when_the_spec_declares_it_and_in_the_schema
     assert!(distance("").contains("atan2(") && !distance("").contains("ST_"), "{}", distance(""));
     let public = distance("extension postgis\n");
     assert!(
-        public.ends_with("THEN public.ST_DWithin(public.ST_SetSRID(public.ST_MakePoint(c.lng, c.lat), 4326)::public.geography, public.ST_SetSRID(public.ST_MakePoint(x.lng, x.lat), 4326)::public.geography, c.num * 1000.0) END"),
+        public.ends_with("THEN public.ST_DWithin(public.ST_SetSRID(public.ST_MakePoint(c.lng, c.lat), 4326)::public.geography, public.ST_SetSRID(public.ST_MakePoint(x_lng, x_lat), 4326)::public.geography, c.num * 1000.0) END;"),
         "{public}"
     );
     assert!(!public.contains("atan2("), "{public}");
