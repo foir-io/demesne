@@ -269,6 +269,13 @@ PUBLIC.
 
 `demesne_syntax::Nearest` gains `filter`, and `Builtin` gains `Nearest`.
 
+### A worked example: `examples/chains.demesne`
+
+One spec that uses this release's constructs together: a chain whose hops are
+judged for the caller, a stored condition, a membership check asked both by
+the caller and by the space the caller stands in, and a `nearest … where`
+floor. `crates/postgres/tests/chains_example_pg.rs` runs it against Postgres.
+
 ### Fixed: a composition under `not` or inside `none` was judged by a lower bound
 
 `member and not parent` asked the same generated function a widening `parent`

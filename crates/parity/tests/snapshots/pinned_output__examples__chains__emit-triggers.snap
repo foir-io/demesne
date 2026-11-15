@@ -1,0 +1,66 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+-- ===== Closure maintenance (via closure / via group) =====
+-- COST: each of these triggers write-amplifies the base table — a change
+-- fans out to the transitive closure. This is the explicit, opt-in price of
+-- O(1) indexed reachability (`via closure`) / membership (`via group`).
+
+CREATE OR REPLACE FUNCTION auth.paths_maintain()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF (TG_OP = 'DELETE') THEN
+    PERFORM pg_advisory_xact_lock(hashtext('paths'), COALESCE(hashtext(OLD.space_id::text), 0));
+    DELETE FROM paths WHERE descendant_id = OLD.id OR ancestor_id = OLD.id;
+    RETURN OLD;
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtext('paths'), COALESCE(hashtext(NEW.space_id::text), 0));
+  IF (TG_OP = 'UPDATE') THEN
+    IF NEW.space_id IS DISTINCT FROM OLD.space_id THEN
+      RAISE EXCEPTION 'a row of folders keeps its space_id: the closure paths is partitioned by it' USING ERRCODE = 'check_violation', CONSTRAINT = 'paths_scope_fixed', TABLE = 'folders';
+    END IF;
+    IF NEW.parent_id IS NOT NULL AND EXISTS (SELECT 1 FROM paths WHERE ancestor_id = NEW.id AND descendant_id = NEW.parent_id) THEN
+      RAISE EXCEPTION 'a row of folders cannot sit beneath itself' USING ERRCODE = 'check_violation', CONSTRAINT = 'paths_acyclic', TABLE = 'folders';
+    END IF;
+    DELETE FROM paths
+      WHERE descendant_id IN (SELECT descendant_id FROM paths WHERE ancestor_id = NEW.id)
+        AND ancestor_id IN (SELECT ancestor_id FROM paths WHERE descendant_id = NEW.id AND ancestor_id <> NEW.id);
+  ELSE
+    IF NEW.parent_id = NEW.id THEN
+      RAISE EXCEPTION 'a row of folders cannot sit beneath itself' USING ERRCODE = 'check_violation', CONSTRAINT = 'paths_acyclic', TABLE = 'folders';
+    END IF;
+    INSERT INTO paths (ancestor_id, descendant_id, space_id, depth) VALUES (NEW.id, NEW.id, NEW.space_id, 0) ON CONFLICT DO NOTHING;
+  END IF;
+  IF NEW.parent_id IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = NEW.parent_id AND descendant_id = NEW.parent_id AND space_id IS NOT DISTINCT FROM NEW.space_id) THEN
+      RAISE EXCEPTION 'the parent_id of a row of folders names no row the closure paths holds' USING ERRCODE = 'check_violation', CONSTRAINT = 'paths_parent_known', TABLE = 'folders';
+    END IF;
+    INSERT INTO paths (ancestor_id, descendant_id, space_id, depth)
+      SELECT p.ancestor_id, sub.descendant_id, NEW.space_id, p.depth + sub.depth + 1
+        FROM paths p
+        CROSS JOIN paths sub
+        WHERE p.descendant_id = NEW.parent_id AND sub.ancestor_id = NEW.id
+      ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS paths_maintain_ins ON public.folders;
+CREATE TRIGGER paths_maintain_ins AFTER INSERT ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.paths_maintain();
+DROP TRIGGER IF EXISTS paths_maintain_upd ON public.folders;
+CREATE TRIGGER paths_maintain_upd AFTER UPDATE ON public.folders FOR EACH ROW WHEN (OLD.parent_id IS DISTINCT FROM NEW.parent_id OR OLD.space_id IS DISTINCT FROM NEW.space_id) EXECUTE FUNCTION auth.paths_maintain();
+DROP TRIGGER IF EXISTS paths_maintain_del ON public.folders;
+CREATE TRIGGER paths_maintain_del AFTER DELETE ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.paths_maintain();
+
+
+--- stderr ---
+
+--- end ---

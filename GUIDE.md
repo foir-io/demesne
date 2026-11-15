@@ -1256,6 +1256,11 @@ because there the write could admit a row the read does not show: mark the
 permission `blind`, or keep such an exception out of the rule the write
 repeats.
 
+`examples/chains.demesne` is the worked spec: a chain with a stored condition,
+a membership asked by the caller and by the space the caller stands in, and a
+`nearest … where` floor. Its live-Postgres proof is
+`crates/postgres/tests/chains_example_pg.rs`.
+
 ## A role store's held permissions
 
 ```demesne

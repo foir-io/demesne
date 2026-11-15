@@ -1,0 +1,71 @@
+topology { level estate level space parent estate level folder parent space }
+
+vocabulary keeper {
+  permission docs:read
+  preset space_keeper @ space = docs:read
+}
+
+rolestore keeper {
+  assignments role_grants
+  kind        principal_kind = "keeper"
+  subject     principal_id
+  scope       estate_id space_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+
+closure paths(ancestor_id, descendant_id)
+  base folders(id, parent_id)
+  scope space_id
+  depth depth
+
+subject member { anchor estate; reach self; identifies sub; roles none }
+subject keeper { anchor estate; reach descendants; identifies sub; roles configurable keeper; binds admin }
+
+object doc {
+  table docs
+  scoped estate
+  nested 1
+  relation shared: member via edge doc_shares(member_id, doc_id) key rule
+  relation terms:  member via conditions doc_terms(doc_id, term, op) values (num, txt, at) key rule on id from claim facts
+  relation lent:   member via composition doc_lends(borrower_id, lender_id) slot field from param
+      path trail along (
+        every h in trail_hops(trail) (
+            (@slot(kind, "claim") and @slot(rule held rules_held))
+          + (@slot(kind, "live") and @holds_at(doc_id, rule slot field for select)) ) )
+  permission view = some r in rules_live prefix "read." held rules_held (
+      every s in rule_slots(rule) where role = "require" (
+          (@slot(kind, "share") and shared) + (@slot(kind, "lend") and lent) )
+      and terms
+  ) @rls maps select
+}
+
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  relation kept: keeper via memberin space(@sub, id)
+  permission view = kept @rls maps select
+}
+
+object keeper_profile {
+  table keeper_profiles
+  scoped estate
+  relation self:    keeper via id
+  relation cokeeper: keeper via memberin space(id, @space_id)
+  permission view = self + cokeeper @rls maps select
+}
+
+object skin {
+  table skins
+  scoped estate > space
+  nearest live_skin(id text) via closure paths on folder_id where status = "live"
+  permission view = @scoped @rls maps select
+}
+
+object banner {
+  table banners
+  scoped estate > space
+  permission view = @scoped @rls maps select
+  require view    = @claim("folder_id", null) + @nearest(live_skin, skin_id from claim folder_id)
+}

@@ -1,0 +1,295 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+CREATE OR REPLACE FUNCTION auth.keeper_memberin_space(p_principal text, p_space text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT (p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') OR p_space = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'space_id')) AND (EXISTS (SELECT 1 FROM role_grants WHERE principal_id = p_principal AND space_id = p_space AND principal_kind = 'keeper' AND revoked_at IS NULL));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.spaces_accessors(p_id text)
+RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT 'role'::text, 'keeper'::text, ra.principal_id, 'read'::text
+    FROM spaces e JOIN role_grants ra ON ra.principal_kind = 'keeper' AND ra.revoked_at IS NULL AND ra.space_id = e.id
+    WHERE e.id = p_id
+$$;
+REVOKE EXECUTE ON FUNCTION auth.spaces_accessors(text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION auth.spaces_admits(p_id text, p_claims jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+DECLARE
+  prior text := current_setting('request.jwt.claims', true);
+  admitted boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', p_claims::text, true);
+  admitted := EXISTS (SELECT 1 FROM spaces WHERE id = p_id AND ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND (auth.keeper_memberin_space((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), id)))));
+  PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
+  RETURN admitted;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION auth.spaces_admits(text, jsonb) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION auth.paths_reachable(p_ancestor text, p_descendant text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant AND (false OR false));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_descendants(p_node text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT descendant_id FROM paths WHERE ancestor_id = p_node AND false;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_ancestors(p_node text)
+RETURNS SETOF text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT ancestor_id FROM paths WHERE descendant_id = p_node AND false;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.paths_path(p_node text)
+RETURNS TABLE(node text, depth integer)
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT ancestor_id, depth::integer FROM paths WHERE descendant_id = p_node ORDER BY depth DESC, ancestor_id;
+$$;
+REVOKE EXECUTE ON FUNCTION auth.paths_path(text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION auth.doc_shared_keyed(p_principal text, p_object text, p_key text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+BEGIN
+  RETURN p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));
+END
+$$;
+
+CREATE OR REPLACE FUNCTION auth.rule_slots_declared_by_rule(p_key text)
+RETURNS TABLE(kind text, param text, role text)
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+BEGIN
+  RETURN QUERY SELECT rule_slots.kind::text, rule_slots.param::text, rule_slots.role::text FROM rule_slots WHERE rule_slots.rule = p_key;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION auth.trail_hops_declared_by_trail(p_key text)
+RETURNS TABLE(doc_id text, field text, kind text, rule text)
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+BEGIN
+  RETURN QUERY SELECT trail_hops.doc_id::text, trail_hops.field::text, trail_hops.kind::text, trail_hops.rule::text FROM trail_hops WHERE trail_hops.trail = p_key;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION auth.demesne_instant(p_text text)
+RETURNS timestamptz
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF p_text !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$' THEN
+    RETURN NULL;
+  END IF;
+  RETURN p_text::timestamptz;
+EXCEPTION WHEN others THEN
+  RETURN NULL;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION auth.doc_terms_hold(p_object text, p_key text, p_values jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  c record;
+  x_v jsonb;
+  x_num double precision;
+  x_txt text;
+  x_at timestamptz;
+  x_scalar text;
+  x_lat double precision;
+  x_lng double precision;
+  holds boolean;
+  undecided boolean := false;
+BEGIN
+  IF p_object IS NULL OR NOT (p_values IS NOT DISTINCT FROM (SELECT (NULLIF(current_setting('request.jwt.claims', true), '')::json -> 'facts')::jsonb)) THEN
+    RETURN NULL;
+  END IF;
+  FOR c IN SELECT s.* FROM doc_terms s WHERE s.doc_id = p_object AND s.rule = p_key LOOP
+    x_v := p_values -> c.term;
+    x_num := CASE WHEN jsonb_typeof(x_v) = 'number' THEN (x_v #>> '{}')::double precision END;
+    x_txt := CASE WHEN jsonb_typeof(x_v) = 'string' THEN x_v #>> '{}' END;
+    x_at := CASE WHEN c.at IS NOT NULL AND x_txt IS NOT NULL THEN auth.demesne_instant(x_txt) END;
+    x_scalar := CASE WHEN jsonb_typeof(x_v) IN ('string', 'number') THEN x_v #>> '{}' END;
+    x_lat := CASE WHEN jsonb_typeof(x_v -> 'lat') = 'number' THEN (x_v ->> 'lat')::double precision END;
+    x_lng := CASE WHEN jsonb_typeof(x_v -> 'lng') = 'number' THEN (x_v ->> 'lng')::double precision END;
+    CASE c.op
+      WHEN 'eq' THEN holds := CASE WHEN c.num IS NOT NULL THEN c.num = x_num WHEN c.at IS NOT NULL THEN c.at = x_at ELSE c.txt = x_txt COLLATE "C" END;
+      WHEN 'ne' THEN holds := CASE WHEN c.num IS NOT NULL THEN c.num <> x_num WHEN c.at IS NOT NULL THEN c.at <> x_at ELSE c.txt <> x_txt COLLATE "C" END;
+      WHEN 'lt' THEN holds := CASE WHEN c.num IS NOT NULL THEN c.num < x_num WHEN c.at IS NOT NULL THEN c.at < x_at END;
+      WHEN 'le' THEN holds := CASE WHEN c.num IS NOT NULL THEN c.num <= x_num WHEN c.at IS NOT NULL THEN c.at <= x_at END;
+      WHEN 'gt' THEN holds := CASE WHEN c.num IS NOT NULL THEN c.num > x_num WHEN c.at IS NOT NULL THEN c.at > x_at END;
+      WHEN 'ge' THEN holds := CASE WHEN c.num IS NOT NULL THEN c.num >= x_num WHEN c.at IS NOT NULL THEN c.at >= x_at END;
+      WHEN 'in' THEN holds := CASE WHEN jsonb_typeof(x_v) = 'array' THEN EXISTS (SELECT 1 FROM jsonb_array_elements(x_v) e WHERE (jsonb_typeof(e) = 'number' AND (e #>> '{}')::double precision = c.num) OR (jsonb_typeof(e) = 'string' AND (e #>> '{}') = c.txt COLLATE "C")) END;
+      WHEN 'not_in' THEN holds := NOT (CASE WHEN jsonb_typeof(x_v) = 'array' THEN EXISTS (SELECT 1 FROM jsonb_array_elements(x_v) e WHERE (jsonb_typeof(e) = 'number' AND (e #>> '{}')::double precision = c.num) OR (jsonb_typeof(e) = 'string' AND (e #>> '{}') = c.txt COLLATE "C")) END);
+      WHEN 'not_contains' THEN holds := CASE WHEN x_txt IS NOT NULL AND c.txt IS NOT NULL THEN NOT (strpos(c.txt, x_txt) > 0) END;
+      WHEN 'contains' THEN holds := strpos(c.txt, x_txt) > 0;
+      WHEN 'not_prefix' THEN holds := CASE WHEN x_txt IS NOT NULL AND c.txt IS NOT NULL THEN NOT (starts_with(c.txt, x_txt)) END;
+      WHEN 'prefix' THEN holds := starts_with(c.txt, x_txt);
+      WHEN 'not_suffix' THEN holds := CASE WHEN x_txt IS NOT NULL AND c.txt IS NOT NULL THEN NOT (right(c.txt, length(x_txt)) = x_txt COLLATE "C") END;
+      WHEN 'suffix' THEN holds := right(c.txt, length(x_txt)) = x_txt COLLATE "C";
+      WHEN 'not_caller_contains' THEN holds := CASE WHEN x_txt IS NOT NULL AND c.txt IS NOT NULL THEN NOT (strpos(x_txt, c.txt) > 0) END;
+      WHEN 'caller_contains' THEN holds := strpos(x_txt, c.txt) > 0;
+      WHEN 'not_caller_prefix' THEN holds := CASE WHEN x_txt IS NOT NULL AND c.txt IS NOT NULL THEN NOT (starts_with(x_txt, c.txt)) END;
+      WHEN 'caller_prefix' THEN holds := starts_with(x_txt, c.txt);
+      WHEN 'not_caller_suffix' THEN holds := CASE WHEN x_txt IS NOT NULL AND c.txt IS NOT NULL THEN NOT (right(x_txt, length(c.txt)) = c.txt COLLATE "C") END;
+      WHEN 'caller_suffix' THEN holds := right(x_txt, length(c.txt)) = c.txt COLLATE "C";
+      WHEN 'not_before' THEN holds := now() >= c.at;
+      WHEN 'not_after' THEN holds := now() <= c.at;
+      ELSE holds := NULL;
+    END CASE;
+    IF holds IS FALSE THEN
+      RETURN false;
+    END IF;
+    undecided := undecided OR holds IS NULL;
+  END LOOP;
+  RETURN CASE WHEN undecided THEN NULL ELSE true END;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION auth.doc_composition_lent_0(p_doc_id text, p_access text, p_slot text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+BEGIN
+  IF p_access = 'read' THEN
+    RETURN EXISTS (SELECT 1 FROM doc_lends e WHERE e.borrower_id = p_doc_id AND e.field::text = p_slot AND CASE WHEN EXISTS (SELECT 1 FROM docs WHERE docs.id = e.lender_id AND ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with(demesne_element.v, 'read.') AND demesne_element.v = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((SELECT current_setting('request.jwt.claims', true)::json ->> 'rules_held')::jsonb) e)) AND ((NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule(demesne_element.v) AS demesne_slot WHERE demesne_slot.role = 'require' AND ((demesne_slot.kind = 'share') AND (auth.doc_shared_keyed((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), docs.id, demesne_element.v))) IS NOT TRUE)) AND (auth.doc_terms_hold(docs.id, demesne_element.v, (SELECT (current_setting('request.jwt.claims', true)::json -> 'facts')::jsonb))))))))) THEN (NOT EXISTS (SELECT 1 FROM auth.trail_hops_declared_by_trail(e.trail::text) AS demesne_slot WHERE (((demesne_slot.kind = 'claim') AND (demesne_slot.rule = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((SELECT current_setting('request.jwt.claims', true)::json ->> 'rules_held')::jsonb) e)))) OR ((demesne_slot.kind = 'live') AND ((SELECT CASE WHEN demesne_hop.record IS NULL OR demesne_hop.element IS NULL OR demesne_hop.slot IS NULL THEN NULL ELSE EXISTS (SELECT 1 FROM docs WHERE docs.id = demesne_hop.record AND estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE demesne_element.v = demesne_hop.element AND starts_with(demesne_element.v, 'read.') AND demesne_element.v = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((SELECT current_setting('request.jwt.claims', true)::json ->> 'rules_held')::jsonb) e)) AND ((NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule(demesne_element.v) AS demesne_slot WHERE demesne_slot.role = 'require' AND ((demesne_slot.kind = 'share') AND (auth.doc_shared_keyed((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), docs.id, demesne_element.v)) OR (demesne_slot.kind = 'lend') AND (demesne_slot.param = demesne_hop.slot)) IS NOT TRUE)) AND (auth.doc_terms_hold(docs.id, demesne_element.v, (SELECT (current_setting('request.jwt.claims', true)::json -> 'facts')::jsonb))))))) END FROM (SELECT demesne_slot.doc_id AS record, demesne_slot.rule AS element, demesne_slot.field AS slot) AS demesne_hop)))) IS NOT TRUE)) ELSE false END);
+  END IF;
+  RETURN false;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION auth.doc_composition_lent(p_doc_id text, p_access text, p_slot text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+BEGIN
+  IF p_access = 'read' THEN
+    RETURN EXISTS (SELECT 1 FROM doc_lends e WHERE e.borrower_id = p_doc_id AND e.field::text = p_slot AND CASE WHEN EXISTS (SELECT 1 FROM docs WHERE docs.id = e.lender_id AND ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with(demesne_element.v, 'read.') AND demesne_element.v = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((SELECT current_setting('request.jwt.claims', true)::json ->> 'rules_held')::jsonb) e)) AND ((NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule(demesne_element.v) AS demesne_slot WHERE demesne_slot.role = 'require' AND ((demesne_slot.kind = 'share') AND (auth.doc_shared_keyed((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), docs.id, demesne_element.v))) IS NOT TRUE)) AND (auth.doc_terms_hold(docs.id, demesne_element.v, (SELECT (current_setting('request.jwt.claims', true)::json -> 'facts')::jsonb))))))))) THEN (NOT EXISTS (SELECT 1 FROM auth.trail_hops_declared_by_trail(e.trail::text) AS demesne_slot WHERE (((demesne_slot.kind = 'claim') AND (demesne_slot.rule = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((SELECT current_setting('request.jwt.claims', true)::json ->> 'rules_held')::jsonb) e)))) OR ((demesne_slot.kind = 'live') AND ((SELECT CASE WHEN demesne_hop.record IS NULL OR demesne_hop.element IS NULL OR demesne_hop.slot IS NULL THEN NULL ELSE EXISTS (SELECT 1 FROM docs WHERE docs.id = demesne_hop.record AND estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE demesne_element.v = demesne_hop.element AND starts_with(demesne_element.v, 'read.') AND demesne_element.v = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((SELECT current_setting('request.jwt.claims', true)::json ->> 'rules_held')::jsonb) e)) AND ((NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule(demesne_element.v) AS demesne_slot WHERE demesne_slot.role = 'require' AND ((demesne_slot.kind = 'share') AND (auth.doc_shared_keyed((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), docs.id, demesne_element.v)) OR (demesne_slot.kind = 'lend') AND ((demesne_slot.param = demesne_hop.slot OR auth.doc_composition_lent_0(docs.id, 'read', demesne_slot.param)))) IS NOT TRUE)) AND (auth.doc_terms_hold(docs.id, demesne_element.v, (SELECT (current_setting('request.jwt.claims', true)::json -> 'facts')::jsonb))))))) END FROM (SELECT demesne_slot.doc_id AS record, demesne_slot.rule AS element, demesne_slot.field AS slot) AS demesne_hop)))) IS NOT TRUE)) ELSE false END);
+  END IF;
+  RETURN false;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION auth.doc_select_holds_at(p_record text, p_element text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_record AND estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE demesne_element.v = p_element AND starts_with(demesne_element.v, 'read.') AND demesne_element.v = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((SELECT current_setting('request.jwt.claims', true)::json ->> 'rules_held')::jsonb) e)) AND ((NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule(demesne_element.v) AS demesne_slot WHERE demesne_slot.role = 'require' AND ((demesne_slot.kind = 'share') AND (auth.doc_shared_keyed((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), docs.id, demesne_element.v)) OR (demesne_slot.kind = 'lend') AND (auth.doc_composition_lent(docs.id, 'read', demesne_slot.param))) IS NOT TRUE)) AND (auth.doc_terms_hold(docs.id, demesne_element.v, (SELECT (current_setting('request.jwt.claims', true)::json -> 'facts')::jsonb)))))));
+$$;
+
+CREATE OR REPLACE FUNCTION auth.live_skin(p_node text)
+RETURNS text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT x.v FROM (
+    SELECT t.id AS v, c.depth AS d FROM paths c JOIN skins t ON t.folder_id = c.ancestor_id WHERE c.descendant_id = p_node AND t.id IS NOT NULL AND t.status = 'live'
+    UNION ALL
+    SELECT t.id, NULL FROM skins t WHERE t.folder_id IS NULL AND t.id IS NOT NULL AND t.status = 'live' AND t.space_id = (SELECT s.space_id FROM paths s WHERE s.ancestor_id = p_node AND s.descendant_id = p_node)
+  ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;
+$$;
+REVOKE EXECUTE ON FUNCTION auth.live_skin(text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION auth.live_skin_own(p_node text)
+RETURNS text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT auth.live_skin(p_node) WHERE p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
+$$;
+
+
+--- stderr ---
+
+--- end ---

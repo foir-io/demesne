@@ -515,8 +515,10 @@ fn the_policy_and_the_evaluator_answer_as_the_rule_says_for_every_caller_row_and
             }
         }
         assert!(outcomes[0] > 0 && outcomes[1] > 0, "{op} is both admitted and refused: {outcomes:?}");
+        eprintln!("chains grid, {op}: {} callers, {} admitted, {} refused", CALLERS.len(), outcomes[1], outcomes[0]);
     }
     assert_eq!(cells, 3 * 9 * 46);
+    eprintln!("chains grid: {cells} cells agree with the rule, policy and evaluator both");
 
     let ann = CALLERS[0];
     let read = reached(&mut db, ann, "select");

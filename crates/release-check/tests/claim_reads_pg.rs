@@ -557,7 +557,7 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-const SPECS_V1_1_0_CANNOT_PARSE: [&str; 1] = ["examples/tree.demesne"];
+const SPECS_V1_1_0_CANNOT_PARSE: [&str; 2] = ["examples/chains.demesne", "examples/tree.demesne"];
 
 fn specs() -> Vec<(String, String)> {
     every_spec().into_iter().filter(|(name, _)| !SPECS_V1_1_0_CANNOT_PARSE.contains(&name.as_str())).collect()
@@ -816,6 +816,15 @@ fn every_rule_admits_the_rows_v1_1_0_admitted() {
         .expect("drop the scratch database");
     let mut summary = String::new();
     writeln!(summary, "{tally:#?}").expect("fmt::Write for String never fails");
+    eprintln!(
+        "v1.1.0 differential: {} specs, {} compared, {} rules, {} both admitted and refused a row, {} checks, {} differing",
+        tally.specs,
+        tally.compared,
+        tally.rules,
+        tally.both_ways,
+        tally.checks,
+        tally.differing.len()
+    );
     assert!(tally.differing.is_empty(), "rules admit different rows:\n{summary}");
     let stuck: Vec<&str> = tally.uninstallable.iter().map(|u| u.split(": ").next().unwrap_or(u)).collect();
     assert_eq!(stuck, UUID_SPECS_WHOSE_DEFINERS_TAKE_TEXT, "the specs whose SQL no schema can hold:\n{summary}");

@@ -1,0 +1,82 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.demesne_instant(text)",
+    "auth.doc_composition_lent(text, text, text)",
+    "auth.doc_composition_lent_0(text, text, text)",
+    "auth.doc_select_holds_at(text, text)",
+    "auth.doc_shared_keyed(text, text, text)",
+    "auth.doc_terms_hold(text, text, jsonb)",
+    "auth.keeper_memberin_space(text, text)",
+    "auth.live_skin(text)",
+    "auth.live_skin_own(text)",
+    "auth.paths_ancestors(text)",
+    "auth.paths_descendants(text)",
+    "auth.paths_maintain()",
+    "auth.paths_path(text)",
+    "auth.paths_reachable(text, text)",
+    "auth.rule_slots_declared_by_rule(text)",
+    "auth.spaces_accessors(text)",
+    "auth.spaces_admits(text, jsonb)",
+    "auth.trail_hops_declared_by_trail(text)"
+  ],
+  "policies": [
+    {
+      "table": "public.banners",
+      "name": "banners_select"
+    },
+    {
+      "table": "public.banners",
+      "name": "banners_select_require"
+    },
+    {
+      "table": "public.docs",
+      "name": "docs_select"
+    },
+    {
+      "table": "public.keeper_profiles",
+      "name": "keeper_profiles_select"
+    },
+    {
+      "table": "public.skins",
+      "name": "skins_select"
+    },
+    {
+      "table": "public.spaces",
+      "name": "spaces_select"
+    }
+  ],
+  "triggers": [
+    {
+      "table": "public.folders",
+      "name": "paths_maintain_del"
+    },
+    {
+      "table": "public.folders",
+      "name": "paths_maintain_ins"
+    },
+    {
+      "table": "public.folders",
+      "name": "paths_maintain_upd"
+    }
+  ],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.banners",
+    "public.docs",
+    "public.keeper_profiles",
+    "public.skins",
+    "public.spaces"
+  ]
+}
+
+--- stderr ---
+
+--- end ---
