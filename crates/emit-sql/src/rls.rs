@@ -170,14 +170,46 @@ pub(crate) fn owner_col_present_pub(vc: &ViaColumn) -> String {
 enum GrantReach {
     Contained { level: String, predicate: String },
     Top(String),
+    Beside(String),
 }
 
-impl GrantReach {
-    fn place(self, top: &mut Vec<String>, inject: &mut Inject) {
-        match self {
-            Self::Contained { level, predicate } => inject.entry(level).or_default().push(predicate),
-            Self::Top(predicate) => top.push(predicate),
+#[derive(Debug, Default)]
+pub(crate) struct Branches {
+    pub(crate) top: Vec<String>,
+    pub(crate) inject: Inject,
+    beside: Vec<String>,
+}
+
+impl Branches {
+    fn place(&mut self, reach: GrantReach) {
+        match reach {
+            GrantReach::Contained { level, predicate } => self.inject.entry(level).or_default().push(predicate),
+            GrantReach::Top(predicate) => self.top.push(predicate),
+            GrantReach::Beside(predicate) => {
+                self.top.push(predicate.clone());
+                self.beside.push(predicate);
+            }
         }
+    }
+
+    fn bound_by_terms(&mut self, named: &[String], block: &str, terms: &[String], bears_containment: bool) -> String {
+        let beside: Vec<String> = self.beside.iter().filter(|reach| !named.contains(reach)).cloned().collect();
+        if beside.is_empty() || (terms.is_empty() && bears_containment) {
+            return joined_with_terms(block.to_string(), terms);
+        }
+        self.top.retain(|arm| !beside.contains(arm));
+        if block.is_empty() || !bears_containment {
+            return joined_with_terms(block.to_string(), terms);
+        }
+        joined_with_terms(format!("({} OR ({block}))", beside.join(" OR ")), terms)
+    }
+}
+
+fn joined_with_terms(block: String, terms: &[String]) -> String {
+    match (block.is_empty(), terms.is_empty()) {
+        (_, true) => block,
+        (true, false) => terms.join(" OR "),
+        (false, false) => format!("{block} AND ({})", terms.join(" OR ")),
     }
 }
 
@@ -318,7 +350,7 @@ impl Sql<'_> {
         let cust_claim = cust.map_or("", demesne_syntax::Subject::identifies);
         let rels = rels_of(obj);
         let obj_leaf = leaf(obj);
-        let (_, inject) = self.rls_subject_branches(obj, virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op);
+        let inject = self.rls_subject_branches(obj, virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op).inject;
         let perm = a.perm(op);
         let terms = self.node_frags(obj, &perm, &a.tree, &rels, cust_claim)?;
         if terms.is_empty() {
@@ -346,18 +378,13 @@ impl Sql<'_> {
         let obj_leaf = leaf(obj);
         let obj_is_global = virt.contains(obj_leaf);
         let has_staff = self.s.object_references_staff(obj);
-        let (top, inject) = self.rls_subject_branches(obj, virt, obj_leaf, obj_is_global, has_staff, pm.maps());
-        let (top, scoped_grant) = self.rls_expr_top_branches(obj, pm, top, &inject)?;
+        let mut branches = self.rls_subject_branches(obj, virt, obj_leaf, obj_is_global, has_staff, pm.maps());
+        let (named, scoped_grant) = self.rls_expr_top_branches(obj, pm, &mut branches)?;
         let block_terms = self.node_frags(obj, pm, &pm.tree, &rels, cust_claim)?;
-        let mut block = self.rls_containment_block(obj, obj_leaf, &inject, pm.maps())?;
-        if !block_terms.is_empty() {
-            if block.is_empty() {
-                block = block_terms.join(" OR ");
-            } else {
-                block = format!("{} AND ({})", block, block_terms.join(" OR "));
-            }
-        }
+        let containment = self.rls_containment_block(obj, obj_leaf, &branches.inject, pm.maps())?;
         let containment_bearing = scoped_grant || !block_terms.is_empty();
+        let block = branches.bound_by_terms(&named, &containment, &block_terms, containment_bearing);
+        let top = branches.top;
         if top.is_empty() && !containment_bearing {
             return Err("no emittable grant terms".into());
         }
@@ -384,36 +411,28 @@ impl Sql<'_> {
         let obj_leaf = leaf(obj);
         let obj_is_global = virt.contains(obj_leaf);
         let has_staff = self.s.object_references_staff(obj);
-        self.rls_subject_branches(obj, virt, obj_leaf, obj_is_global, has_staff, op).0
+        let branches = self.rls_subject_branches(obj, virt, obj_leaf, obj_is_global, has_staff, op);
+        branches.top.into_iter().filter(|arm| !branches.beside.contains(arm)).collect()
     }
 
-    pub(crate) fn rls_subject_branches(
-        &self,
-        obj: &Object,
-        virt: &Virtual,
-        obj_leaf: &str,
-        obj_is_global: bool,
-        has_staff: bool,
-        op: &str,
-    ) -> (Vec<String>, Inject) {
-        let mut top = Vec::new();
-        let mut inject = Inject::new();
+    pub(crate) fn rls_subject_branches(&self, obj: &Object, virt: &Virtual, obj_leaf: &str, obj_is_global: bool, has_staff: bool, op: &str) -> Branches {
+        let mut branches = Branches::default();
         let schema = self.s.definer_schema();
         for sub in &self.s.subjects {
             if let Some(m) = &sub.membership
                 && virt.contains(sub.anchor())
             {
-                top.push(self.membership_branch(obj, sub, m, obj_leaf, obj_is_global));
+                branches.top.push(self.membership_branch(obj, sub, m, obj_leaf, obj_is_global));
             } else if self.s.is_platform_role_subject(sub) && (has_staff || (obj_is_global && sub.anchor() == obj_leaf)) {
-                top.push(format!("{}.{}({})", schema, platform_role_fn(sub.anchor()), self.id_claim(sub.identifies())));
+                branches.top.push(format!("{}.{}({})", schema, platform_role_fn(sub.anchor()), self.id_claim(sub.identifies())));
             } else if sub.reach() == "grant"
                 && let Some(reach) = self.grant_reach_for_subject(obj, sub, obj_leaf, obj_is_global, op)
             {
-                reach.place(&mut top, &mut inject);
+                branches.place(reach);
             }
         }
-        self.rls_apply_claim_reach(obj, obj_is_global, &mut inject, op);
-        (top, inject)
+        self.rls_apply_claim_reach(obj, obj_is_global, &mut branches.inject, op);
+        branches
     }
 
     fn membership_branch(&self, obj: &Object, sub: &Subject, m: &Membership, obj_leaf: &str, obj_is_global: bool) -> String {
@@ -444,8 +463,10 @@ impl Sql<'_> {
         let predicate = self.grant_reach_predicate(obj, g, sub.identifies(), op)?;
         Some(if Self::grant_reach_is_contained(obj, sub, g, obj_leaf, obj_is_global) {
             GrantReach::Contained { level: g.level.clone(), predicate }
-        } else {
+        } else if obj_is_global || obj.grant_use(&g.name, op).is_some() {
             GrantReach::Top(predicate)
+        } else {
+            GrantReach::Beside(predicate)
         })
     }
 
@@ -459,7 +480,9 @@ impl Sql<'_> {
         sub.anchor() == g.level
     }
 
-    fn rls_expr_top_branches(&self, obj: &Object, pm: &Perm, mut top: Vec<String>, inject: &Inject) -> R<(Vec<String>, bool)> {
+    fn rls_expr_top_branches(&self, obj: &Object, pm: &Perm, branches: &mut Branches) -> R<(Vec<String>, bool)> {
+        let Branches { top, inject, .. } = branches;
+        let mut named = Vec::new();
         let leaves = pm.tree.leaves();
         let scoped_grant = leaves.iter().any(|t| t.builtin() == "scoped");
         for t in &leaves {
@@ -475,12 +498,19 @@ impl Sql<'_> {
             if reach.is_empty() {
                 continue;
             }
-            if inject.values().any(|rs| rs.contains(&reach)) {
-                continue;
+            if let Some((level, _)) = inject.iter().find(|(_, reaches)| reaches.contains(&reach)) {
+                return Err(format!(
+                    "object {} permission {}: `via grant {}` adds nothing here: the grant already widens level {} for the callers it reaches, and the permission's other terms still bind them; remove the term",
+                    quote(&obj.name),
+                    quote(&pm.verb),
+                    t.grant_ref(),
+                    quote(level)
+                ));
             }
             if !top.contains(&reach) {
-                top.push(reach);
+                top.push(reach.clone());
             }
+            named.push(reach);
         }
         for t in &leaves {
             if t.builtin() == "public" && !top.iter().any(|x| x == "true") {
@@ -496,7 +526,7 @@ impl Sql<'_> {
                 top.push(frag);
             }
         }
-        Ok((top, scoped_grant))
+        Ok((named, scoped_grant))
     }
 
     pub(crate) fn rls_containment_block(&self, obj: &Object, obj_leaf: &str, inject: &Inject, op: &str) -> R<String> {
@@ -1106,7 +1136,13 @@ impl Sql<'_> {
         if !paths.iter().all(|path| path.iter().any(|l| &l.name == level)) {
             return Err(refuse(format!("level {} is not on every path to {}", quote(level), quote(obj_leaf))));
         }
-        let (_, inject) = self.rls_subject_branches(obj, &virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op);
+        let branches = self.rls_subject_branches(obj, &virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op);
+        if !branches.beside.is_empty() {
+            return Err(refuse(
+                "a grant reaches rows of this object outside its containment for this operation, and the permission's terms bind those callers too, so the column is not always the caller's claim".into(),
+            ));
+        }
+        let inject = branches.inject;
         if inject.get(level).is_some_and(|reaches| !reaches.is_empty()) {
             return Err(refuse(format!(
                 "a grant reaches rows at other values of {} for this operation, so the column is not always the caller's claim",

@@ -559,6 +559,29 @@ fn root() -> PathBuf {
 
 const SPECS_V1_1_0_CANNOT_PARSE: [&str; 2] = ["examples/chains.demesne", "examples/tree.demesne"];
 
+const SPECS_WHERE_TERMS_NOW_BIND_A_GRANTS_REACH: [&str; 8] = [
+    "testdata/corpus/fixtures/1f18a238f968d83f.demesne",
+    "testdata/corpus/fixtures/26584f0e4c9ae6a1.demesne",
+    "testdata/corpus/fixtures/26ecf6f96c07e480.demesne",
+    "testdata/corpus/fixtures/38d02b53bac27607.demesne",
+    "testdata/corpus/fixtures/66e5cc6fd058fb60.demesne",
+    "testdata/corpus/fixtures/7b734f125d1f2f8a.demesne",
+    "testdata/corpus/fixtures/9f89b69b6515b612.demesne",
+    "testdata/corpus/fixtures/fdf0cc61cbd9ee98.demesne",
+];
+
+fn terms_now_bind_a_reach(name: &str) -> bool {
+    SPECS_WHERE_TERMS_NOW_BIND_A_GRANTS_REACH.contains(&name)
+}
+
+fn admits_no_row_more(before: &[Outcome], now: &[Outcome]) -> bool {
+    before.len() == now.len()
+        && before.iter().zip(now).all(|(b, n)| match (b, n) {
+            (Ok(b), Ok(n)) => n.iter().all(|row| b.contains(row)),
+            (b, n) => b == n,
+        })
+}
+
 fn specs() -> Vec<(String, String)> {
     every_spec().into_iter().filter(|(name, _)| !SPECS_V1_1_0_CANNOT_PARSE.contains(&name.as_str())).collect()
 }
@@ -625,6 +648,7 @@ struct Tally {
     checks: usize,
     one_way: BTreeMap<String, Vec<String>>,
     differing: Vec<String>,
+    narrowed: Vec<String>,
 }
 
 fn varies(outcomes: &[Outcome]) -> bool {
@@ -681,17 +705,33 @@ fn compare_spec(config: &Config, name: &str, src: &str, tally: &mut Tally) {
     }
     tally.checks += new.checks.len();
     assert_eq!(old.rules.keys().collect::<Vec<_>>(), new.rules.keys().collect::<Vec<_>>(), "{name}: the same rules on both sides");
+    let bound = terms_now_bind_a_reach(name);
     for (rule, outcomes) in &old.rules {
         if new.rules.get(rule) != Some(outcomes) {
             let at = outcomes.iter().zip(&new.rules[rule]).position(|(a, b)| a != b).unwrap_or(0);
-            tally.differing.push(format!("{name}: rule {rule} under claims {:?}: before {:?}, now {:?}", claims[at], outcomes[at], new.rules[rule][at]));
+            let what = format!("{name}: rule {rule} under claims {:?}: before {:?}, now {:?}", claims[at], outcomes[at], new.rules[rule][at]);
+            if bound && admits_no_row_more(outcomes, &new.rules[rule]) {
+                tally.narrowed.push(what);
+            } else {
+                tally.differing.push(what);
+            }
         }
     }
     if old.visible != new.visible {
-        tally.differing.push(format!("{name}: the rows the role sees differ"));
+        let narrower = old.visible.len() == new.visible.len()
+            && old.visible.iter().all(|(table, before)| new.visible.get(table).is_some_and(|now| admits_no_row_more(before, now)));
+        if bound && narrower {
+            tally.narrowed.push(format!("{name}: the role sees fewer rows"));
+        } else {
+            tally.differing.push(format!("{name}: the rows the role sees differ"));
+        }
     }
     if old.checks != new.checks {
-        tally.differing.push(format!("{name}: a point check answers differently"));
+        if bound {
+            tally.narrowed.push(format!("{name}: a point check answers differently"));
+        } else {
+            tally.differing.push(format!("{name}: a point check answers differently"));
+        }
     }
 }
 
@@ -769,15 +809,20 @@ fn answering_any_caller(sql: &str, before: &str) -> String {
 
 #[test]
 fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads_and_in_whose_node_a_set_answers_for() {
-    let (mut compared, mut refused, mut reads) = (0, 0, 0);
+    let (mut compared, mut refused, mut reads, mut bound) = (0, 0, 0, 0);
     for (name, src) in specs() {
         match (ddl_now(&src), ddl_before(&src)) {
             (Some((_, now)), Some(before)) => {
-                assert_eq!(
-                    answering_any_caller(&read_per_row(&now), &before),
-                    before,
-                    "{name}: the SQL changed beyond its claim reads and the callers its sets answer"
-                );
+                if terms_now_bind_a_reach(&name) {
+                    assert_ne!(answering_any_caller(&read_per_row(&now), &before), before, "{name}: no term binds a grant's reach here any more");
+                    bound += 1;
+                } else {
+                    assert_eq!(
+                        answering_any_caller(&read_per_row(&now), &before),
+                        before,
+                        "{name}: the SQL changed beyond its claim reads and the callers its sets answer"
+                    );
+                }
                 compared += 1;
                 reads += now.matches("(SELECT current_setting(").count() + now.matches("(SELECT NULLIF(current_setting(").count();
             }
@@ -786,7 +831,26 @@ fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads_and_in_whose_node_a_set_a
         }
     }
     assert_eq!((compared, refused), (158, 188), "the specs both releases emit, and those both refuse");
+    assert_eq!(bound, SPECS_WHERE_TERMS_NOW_BIND_A_GRANTS_REACH.len(), "every spec listed as changed is in the corpus");
     assert!(reads > compared, "{reads} claim reads over {compared} specs");
+}
+
+#[test]
+fn a_grant_named_where_it_already_widens_a_level_added_nothing_in_v1_1_0_and_is_refused_now() {
+    let name = "testdata/corpus/fixtures/9f89b69b6515b612.demesne";
+    let all = every_spec();
+    let (_, src) = all.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name} is not in the corpus"));
+    assert!(!src.contains("+ via grant orgreach"), "{name} no longer names the grant in a permission");
+    let plain = "permission view   = owner @rls maps select";
+    let at = src.rfind(plain).unwrap_or_else(|| panic!("{name} has the permission the grant was named in"));
+    let mut named = src.clone();
+    named.replace_range(at..at + plain.len(), "permission view   = owner + via grant orgreach @rls maps select");
+    assert_eq!(named.matches("+ via grant orgreach").count(), 1, "the grant is named in one permission");
+    assert_eq!(ddl_before(&named), ddl_before(src), "v1.1.0 emitted the same SQL with the grant named and without");
+    assert!(ddl_before(src).is_some());
+    let s = demesne_syntax::parse(&named).expect("the spec parses");
+    let refused = demesne_emit_sql::validate(&s).expect_err("naming the grant there is refused").to_string();
+    assert!(refused.contains("`via grant orgreach` adds nothing here") && refused.contains("level \"org\""), "{refused}");
 }
 
 #[test]
@@ -817,14 +881,16 @@ fn every_rule_admits_the_rows_v1_1_0_admitted() {
     let mut summary = String::new();
     writeln!(summary, "{tally:#?}").expect("fmt::Write for String never fails");
     eprintln!(
-        "v1.1.0 differential: {} specs, {} compared, {} rules, {} both admitted and refused a row, {} checks, {} differing",
+        "v1.1.0 differential: {} specs, {} compared, {} rules, {} both admitted and refused a row, {} checks, {} differing, {} narrowed where terms now bind a grant's reach",
         tally.specs,
         tally.compared,
         tally.rules,
         tally.both_ways,
         tally.checks,
-        tally.differing.len()
+        tally.differing.len(),
+        tally.narrowed.len()
     );
+    assert!(!tally.narrowed.is_empty(), "no rule narrowed, so nothing shows the terms binding a reach:\n{summary}");
     assert!(tally.differing.is_empty(), "rules admit different rows:\n{summary}");
     let stuck: Vec<&str> = tally.uninstallable.iter().map(|u| u.split(": ").next().unwrap_or(u)).collect();
     assert_eq!(stuck, UUID_SPECS_WHOSE_DEFINERS_TAKE_TEXT, "the specs whose SQL no schema can hold:\n{summary}");

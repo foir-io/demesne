@@ -41,6 +41,6 @@ object shared {
   table  shareds
   scoped tenant > project > org
   relation owner: member via customer_id
-  permission view   = owner + via grant orgreach @rls maps select
-  permission create = owner + via grant orgreach @rls maps insert
+  permission view   = owner @rls maps select
+  permission create = owner @rls maps insert
 }

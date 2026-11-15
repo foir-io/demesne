@@ -379,7 +379,7 @@ impl<'a> Sql<'a> {
             return Ok("false".into());
         }
         let obj_leaf = leaf(obj);
-        let (_, inject) = self.rls_subject_branches(obj, virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), pm.maps());
+        let inject = self.rls_subject_branches(obj, virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), pm.maps()).inject;
         let mut conds = vec![format!("{}.{} = {}", obj.table, obj.pk(), self.hop_arg("record"))];
         let block = self.rls_containment_block(obj, obj_leaf, &inject, pm.maps())?;
         if !block.is_empty() {

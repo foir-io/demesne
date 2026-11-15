@@ -999,7 +999,8 @@ The language adds five more constructs on top of that:
   `reach via grant <name>`. A permission can also be conferred by it directly:
   `permission create = via grant <name>` grants only the grant's holders and
   suppresses the containment branch. That gives, for example, an operator-only
-  write that excludes a tenant's own admins.
+  write that excludes a tenant's own admins. A grant gives reach, not the
+  verb: see "A grant widens where the caller stands" under "Shaping reach".
 - **Unbounded-depth hierarchies.** `relation … via closure <C>(anc,desc) base
   <B>(id,parent) on <col>`. The compiler generates a trigger-maintained
   transitive-closure table plus an indexed reachability lookup. The cost is write
@@ -1826,6 +1827,63 @@ and the object need not be scoped at it: an estate-scoped table whose rows carry
 a `space_id` can let a space-pinned helper read its own space's rows and no
 other space's, while the estate's own containment stays as declared.
 `ValidateAgainst` requires that column on the object's table.
+
+### A grant widens where the caller stands
+
+A grant at a scope level lets its holder stand at rows the holder's own claims
+do not name. It does not answer the rest of the permission. With
+
+```demesne
+grant support at estate via edge approvals(holder_id, estate_id)
+subject helper { anchor control; reach via grant support; identifies sub; roles none }
+
+object ledger {
+  table ledgers
+  scoped estate
+  permission view = @scoped and @row(state, "open") @rls maps select
+}
+```
+
+the policy is `(<the grant reaches estate_id> OR estate_id = <claim>) AND state
+= 'open'`. A helper reads the open ledgers of the estates it is approved for,
+and no shut one. The same holds on a level's own table (`level space; scoped
+estate > space`), and on an object with a level below the grant's, where the
+grant widens that one level's column and the lower columns and the terms still
+apply. A permission with no term under the scope at all, such as
+`view = @self(holder_id)`, gives a grant's holder nothing: there is no scope
+for the grant to widen.
+
+To let the grant's holders pass without the other terms, say so. There are two
+ways, and both emit a branch of their own beside the rest:
+
+```demesne
+permission view = (@scoped and @row(state, "open")) + via grant support @rls maps select
+```
+
+names the grant in the permission, and
+
+```demesne
+reach audit unscoped for select
+```
+
+declares it on the object for the operations it lists (see above; it needs a
+grant with scope levels). An operation no such line names is bound by the
+terms.
+
+A grant named in a permission is refused where it would add nothing: on an
+object with a level below the grant's, or where the reaching subject is
+anchored at the grant's own level. There the grant already widens that level
+for its holders and the permission's other terms bind them, so the term would
+change no row. The whole-row pass cannot be stated on such an object.
+
+A `pinned` borrow is refused on an object whose terms bind a grant's callers
+this way, since such a caller's row need not hold the caller's own claim.
+
+Before v5.0.0 a grant at an object's own lowest level, or reaching a level's
+own table, passed without the permission's terms even when nothing said so.
+Upgrading narrows those rules. Read every such object, and add
+`+ via grant <name>` where the pass was meant: that permission then emits what
+it did.
 
 ### Two directions over one edge
 

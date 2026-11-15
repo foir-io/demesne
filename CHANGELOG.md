@@ -6,8 +6,9 @@ The crates are 5.0.0 because public types of `demesne-syntax`,
 `demesne-model` and `demesne-emit-sql` gain fields and variants, named under
 each change, and `demesne_emit_sql::Sql` gains private fields, so it is built
 with `Sql::new`. A spec that uses none of the constructs below emits the
-policies v4.0.0 did, with the two exceptions under "Fixed". Its generated
-functions change: see "Breaking" first. The Go module's API doesn't change, so
+policies v4.0.0 did, with three exceptions: the two under "Fixed", and a
+permission whose terms a grant's holder used to pass (the second "Breaking"
+entry). Its generated functions change: see "Breaking" first. The Go module's API doesn't change, so
 it is `go/v1.6.0`.
 
 ### Breaking: a generated function answers only about the caller, or PUBLIC cannot run it
@@ -59,6 +60,46 @@ What breaks for an adopter:
   function the SQL revokes.
 
 Re-emit and apply the definers; nothing else moves.
+
+### Breaking: a grant gives reach, and the permission's terms still bind its holders
+
+A grant at a scope level lets its holder stand at rows the holder's claims do
+not name. On two shapes it also let the holder pass without the rest of the
+permission, though nothing in the spec said so: an object whose lowest scope
+level is the grant's, and a level's own table. `permission view = @scoped and
+<terms>` emitted `<reach> OR (<scope> AND <terms>)`. On an object with a level
+below the grant's the same grant only widened that level's column and the
+terms applied.
+
+Now the terms apply on every shape. The same permission emits
+`(<reach> OR <scope>) AND <terms>`. A permission with no term under the scope
+at all (`view = @self(<column>)`) no longer admits the grant's holders. A
+permission that is `@scoped` alone emits what it did.
+
+What breaks for an adopter, and how to keep a pass that was meant:
+
+- **A holder of such a grant is refused where it does not satisfy the
+  permission's terms.** Read every object scoped at a grant's own level and
+  every level table a grant reaches. A holder who has no role, ownership or
+  claim the terms ask for is now refused there.
+- **To keep the pass, name the grant:** `permission view = (@scoped and
+  <terms>) + via grant <name>`. That permission emits exactly what it emitted
+  before. A `reach <grant> unscoped|bound|via … for <operations>` line on the
+  object keeps it too, for the operations it names, and also emits what it
+  did.
+- **A grant named in a permission where it adds nothing is refused at
+  validation.** On an object with a level below the grant's, or where the
+  reaching subject is anchored at the grant's level, `+ via grant <name>` was
+  silently dropped: the SQL was the same with it and without. The message
+  names the level and says to remove the term. Removing it changes no SQL. No
+  spec admits more after this release than before it.
+- **A `pinned` borrow on an object whose terms now bind a grant's callers is
+  refused.** Drop `pinned` there, or name the grant.
+- The reverse listings (`<table>_accessors`) list a grant's holders as they
+  did; they are an upper bound there, as they already were on deeper objects.
+
+`demesne_emit_sql`'s write check reports such a reach as part of the write
+term it now belongs to, not as "a subject's own reach".
 
 ### `some`: one element of an array column, and what must hold for it
 
