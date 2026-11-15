@@ -1,5 +1,5 @@
 use crate::Sql;
-use crate::genfn::{GenFn, Language};
+use crate::genfn::{Bound, GenFn, Language};
 use crate::rls::conditions_fn;
 use demesne_syntax::{Object, Relation, Repr, ViaConditions};
 use std::fmt::Write as _;
@@ -111,19 +111,41 @@ impl Sql<'_> {
             read("x_lng", "CASE WHEN jsonb_typeof(x_v -> 'lng') = 'number' THEN (x_v ->> 'lng')::double precision END"),
         ]
         .concat();
-        GenFn {
-            name: conditions_fn(obj, r),
-            sig: format!("p_object {}{key_arg}, p_values jsonb", self.s.id_type()),
-            raw_body: true,
-            language: Language::Plpgsql,
-            body: format!(
-                "DECLARE\n  c record;\n  x_v jsonb;\n  x_num double precision;\n  x_txt text;\n  x_at timestamptz;\n  x_scalar text;\n  x_lat double precision;\n  x_lng double precision;\n  holds boolean;\n  undecided boolean := false;\nBEGIN\n  IF p_object IS NULL OR NOT (p_values IS NOT DISTINCT FROM {own}) THEN\n    RETURN NULL;\n  END IF;\n  FOR c IN SELECT s.* FROM {table} s WHERE s.{object} = p_object{keyed} LOOP\n{caller}    CASE c.{op}{cases}\n      ELSE holds := NULL;\n    END CASE;\n    IF holds IS FALSE THEN\n      RETURN false;\n    END IF;\n    undecided := undecided OR holds IS NULL;\n  END LOOP;\n  RETURN CASE WHEN undecided THEN NULL ELSE true END;\nEND",
-                own = self.session_claim_object(&c.claim),
+        let name = conditions_fn(obj, r);
+        let own = self.session_claim_object(&c.claim);
+        let unasked = "  IF p_object IS NULL THEN\n    RETURN NULL;\n  END IF;\n";
+        let asked = match self.remembered(&name) {
+            Some(kept) => {
+                let values = "coalesce(p_values::text, '')";
+                format!(
+                    "{unasked}  IF ({}) IS NOT TRUE THEN\n    IF NOT (p_values IS NOT DISTINCT FROM {own}) THEN\n      RETURN NULL;\n    END IF;\n    {}\n  END IF;\n",
+                    kept.holds_for(values),
+                    kept.keep(values)
+                )
+            }
+            None => format!("  IF p_object IS NULL OR NOT (p_values IS NOT DISTINCT FROM {own}) THEN\n    RETURN NULL;\n  END IF;\n"),
+        };
+        let body = |guard: &str| {
+            format!(
+                "DECLARE\n  c record;\n  x_v jsonb;\n  x_num double precision;\n  x_txt text;\n  x_at timestamptz;\n  x_scalar text;\n  x_lat double precision;\n  x_lng double precision;\n  holds boolean;\n  undecided boolean := false;\nBEGIN\n{guard}  FOR c IN SELECT s.* FROM {table} s WHERE s.{object} = p_object{keyed} LOOP\n{caller}    CASE c.{op}{cases}\n      ELSE holds := NULL;\n    END CASE;\n    IF holds IS FALSE THEN\n      RETURN false;\n    END IF;\n    undecided := undecided OR holds IS NULL;\n  END LOOP;\n  RETURN CASE WHEN undecided THEN NULL ELSE true END;\nEND",
                 table = c.table,
                 object = c.object_col,
                 op = c.op_col,
                 keyed = keyed.replace(" AND c.", " AND s."),
-            ),
+            )
+        };
+        GenFn {
+            name,
+            sig: format!("p_object {}{key_arg}, p_values jsonb", self.s.id_type()),
+            raw_body: true,
+            language: Language::Plpgsql,
+            body: body(&asked),
+            bound: Some(Bound {
+                argument: if c.key.is_some() { 2 } else { 1 },
+                claims: vec![self.claim_object(&c.claim), own],
+                inside: body(unasked),
+                remembered: None,
+            }),
             ..Default::default()
         }
     }

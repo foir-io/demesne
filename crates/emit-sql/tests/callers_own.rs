@@ -66,6 +66,7 @@ fn bound(f: &GenFn, parameter: &str) -> bool {
     .iter()
     .any(|guard| text.contains(guard.as_str()))
         || text.contains(" AND false;")
+        || text.contains(" AND (false OR false));")
 }
 
 #[test]
@@ -128,4 +129,110 @@ fn a_rule_that_passes_the_callers_own_principal_opens_no_scope_side() {
     let member = defs.iter().find(|d| d.name == "admin_memberin_tenant").expect("the membership check");
     let own = format!("p_principal = {} AND (EXISTS (", sql.session_claim("sub"));
     assert!(member.body.starts_with(&own), "only a rule that asks about a row's principal needs the scope side:\n{}", member.body);
+}
+
+fn the_chains_example_with(change: impl Fn(&str) -> String) -> (String, Vec<GenFn>) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/chains.demesne");
+    let example = std::fs::read_to_string(&path).expect("the example reads");
+    let changed = change(&example);
+    let s = demesne_syntax::parse(&changed).unwrap_or_else(|e| panic!("the example parses: {e}"));
+    demesne_emit_sql::validate(&s).unwrap_or_else(|e| panic!("the example validates: {e}"));
+    let sql = Sql::new(&s);
+    let policies = sql.emit_rls().expect("the policies compile").policy_sql("authenticated");
+    (policies, sql.emit_definers().expect("the definers compile"))
+}
+
+fn the_chains_example() -> (String, Vec<GenFn>) {
+    the_chains_example_with(str::to_string)
+}
+
+fn all_sql(defs: &[GenFn]) -> String {
+    defs.iter().map(GenFn::create_sql).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn a_function_with_a_second_side_remembers_nothing_and_has_no_copy() {
+    let (_, defs) = the_chains_example();
+    let member = defs.iter().find(|d| d.name == "keeper_memberin_space").expect("the membership check");
+    assert_eq!(member.bound, None, "one remembered argument cannot stand for a check that reads two");
+    assert!(defs.iter().find(|d| d.name == "doc_shared_keyed").expect("the keyed edge").bound.is_some());
+}
+
+#[test]
+fn a_name_no_setting_can_hold_is_verified_on_every_call() {
+    let (_, defs) = the_chains_example_with(|example| format!("definers schema \"Auth\"\n{example}"));
+    let sql = all_sql(&defs);
+    assert!(!sql.contains("'demesne."), "a setting's name is folded to lower case, so two schemas could share one");
+    assert!(sql.contains("  RETURN p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS ("), "{sql}");
+    assert!(sql.contains("  IF p_object IS NULL OR NOT (p_values IS NOT DISTINCT FROM (SELECT (NULLIF(current_setting('request.jwt.claims', true), '')::json -> 'facts')::jsonb)) THEN"));
+}
+
+#[test]
+fn a_copy_is_emitted_only_under_a_name_postgres_keeps_whole_and_nothing_else_has() {
+    let long = "r".repeat(52);
+    let (_, defs) = the_chains_example_with(|example| example.replace("shared", &long));
+    let keyed = format!("doc_{long}_keyed");
+    assert!(defs.iter().any(|d| d.name == keyed) && !defs.iter().any(|d| d.name == format!("{keyed}_inside")), "a name past 63 bytes is cut short by Postgres");
+    assert!(all_sql(&defs).contains(&format!("auth.{keyed}((SELECT current_setting(")), "so a chain function asks the bound function");
+
+    let taken = |example: &str| example.replace("live_skin", "doc_shared_keyed_inside");
+    let (_, defs) = the_chains_example_with(taken);
+    let named: Vec<&GenFn> = defs.iter().filter(|d| d.name == "doc_shared_keyed_inside").collect();
+    assert_eq!(named.len(), 1, "the name is the lookup's");
+    assert_eq!(named[0].sig, "p_node text");
+    assert!(all_sql(&defs).contains("auth.doc_shared_keyed((SELECT current_setting("), "so a chain function asks the bound function");
+}
+
+#[test]
+fn inside_a_chain_a_bound_function_remembers_the_claim_only_while_the_claims_keep_their_text() {
+    let (_, defs) = the_chains_example();
+    let claims = "current_setting('request.jwt.claims', true)";
+    let own = "p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub')";
+    let keyed = defs.iter().find(|d| d.name == "doc_shared_keyed").expect("the keyed edge").create_sql();
+    let remembered = format!(
+        "  IF current_setting('demesne.auth.doc_shared_keyed.seen', true) = {claims} AND current_setting('demesne.auth.doc_shared_keyed.own', true) = p_principal::text THEN\n    RETURN p_principal = p_principal AND (EXISTS ("
+    );
+    assert!(keyed.contains(&remembered), "the remembered value counts only for the same claims text and the same argument:\n{keyed}");
+    let kept = format!(
+        "  IF {own} THEN\n    PERFORM set_config('demesne.auth.doc_shared_keyed.own', p_principal::text, true), set_config('demesne.auth.doc_shared_keyed.seen', coalesce({claims}, ''), true);\n  END IF;\n  RETURN {own} AND (EXISTS ("
+    );
+    assert!(keyed.contains(&kept), "it is kept only once verified against the claims, and any other call is judged against them:\n{keyed}");
+
+    let terms = defs.iter().find(|d| d.name == "doc_terms_hold").expect("the conditions check").create_sql();
+    let verified = format!(
+        "  IF (current_setting('demesne.auth.doc_terms_hold.seen', true) = {claims} AND current_setting('demesne.auth.doc_terms_hold.own', true) = coalesce(p_values::text, '')) IS NOT TRUE THEN\n    IF NOT (p_values IS NOT DISTINCT FROM (SELECT (NULLIF({claims}, '')::json -> 'facts')::jsonb)) THEN\n      RETURN NULL;\n    END IF;\n    PERFORM set_config("
+    );
+    assert!(terms.contains(&verified), "{terms}");
+}
+
+#[test]
+fn a_copy_public_cannot_run_is_called_only_with_the_callers_own_claim_and_never_by_a_policy() {
+    let (policies, defs) = the_chains_example();
+    assert!(!policies.contains("_inside("), "a policy runs as the caller, so it calls the bound function");
+    assert!(policies.contains("auth.doc_shared_keyed(") && policies.contains("auth.doc_terms_hold("), "{policies}");
+    let mut calls = 0;
+    for (copy, position) in [("doc_shared_keyed_inside", 0), ("doc_terms_hold_inside", 2)] {
+        let f = defs.iter().find(|d| d.name == copy).unwrap_or_else(|| panic!("{copy} is emitted"));
+        assert_eq!(f.execute, Execute::Granted, "{copy}");
+        assert!(!f.create_sql().contains("demesne.auth."), "{copy} reads no remembered value:\n{}", f.create_sql());
+        let call = format!("auth.{copy}(");
+        let texts: Vec<String> = defs.iter().filter(|d| d.name != copy).map(GenFn::create_sql).collect();
+        for after in texts.iter().flat_map(|text| text.split(call.as_str()).skip(1)) {
+            let passed = after.split(", ").nth(position).unwrap_or_default();
+            assert!(passed.starts_with("(SELECT current_setting(") || passed.starts_with("(SELECT (current_setting("), "{copy} is asked about {passed:.80}");
+            calls += 1;
+        }
+    }
+    assert_eq!(calls, 10, "every call a chain function makes with the claim goes to the copy");
+    let direct = defs.iter().filter(|d| d.name != "doc_shared_keyed" && d.create_sql().contains("auth.doc_shared_keyed(")).count();
+    assert_eq!(direct, 0, "no generated function pays for the binding it already satisfies");
+}
+
+#[test]
+fn a_spec_with_no_chain_gets_no_copy() {
+    for (spec, defs) in emitted() {
+        let chained = defs.iter().any(|d| d.name.contains("_composition_"));
+        let copies: Vec<&str> = defs.iter().filter(|d| d.name.ends_with("_inside")).map(|d| d.name.as_str()).collect();
+        assert!(chained || copies.is_empty(), "{spec}: {copies:?}");
+    }
 }

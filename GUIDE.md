@@ -597,6 +597,13 @@ this; it stops a caller running the function directly to ask about someone
 else. A statement of your own that must ask about another principal reads the
 tables itself, under a role that may.
 
+All of this rests on the claims setting being the door's alone to set. A
+caller who can run arbitrary SQL as the caller role can call `set_config` and
+so write any claims it likes, and the settings a helper remembers its check
+in, and read whatever those claims reach. **Never let a caller run arbitrary
+SQL as the caller role.** Expose tables, and functions you wrote, through an
+API that sets the claims itself.
+
 One function has a second side. A rule on the admin table itself may pass a
 row's column as the principal and a claim as the scope
 (`via memberin tenant(id, @tenant_id)`), so `<admin>_memberin_<level>` then
@@ -1242,11 +1249,28 @@ because the caller cannot read the closure, and the ancestor's whole rule is
 set up and run again for each such row. On Postgres 17, on a loaded
 development machine, a row admitted directly cost about 17 µs, a row admitted
 through one hop about 100 µs, and each further hop judged live about 40 µs
-more. Nothing is kept between rows or statements, so a change at any hop
+more. No answer is kept between rows or statements, so a change at any hop
 counts in the same transaction. Each hop is judged inside the chain
 function's own statement, and the helper functions a chain calls are
 PL/pgSQL, so that their plans are kept. Measure on your own data before you
 put a chain on a list read.
+
+A helper the policy calls for every row must check that it is asked about the
+caller, and parsing the claims for each call would cost more than the lookup
+it guards. So on a spec with a chain, and in every `via conditions` check, the
+helper remembers what it verified: the first call in a transaction reads the
+claims, checks the argument against them, and stores the argument and the
+exact text of the claims setting in two transaction-local settings named
+`demesne.<definers schema>.<function>.own` and `.seen`. A later call compares
+its argument and the claims setting's current text with those, and parses
+nothing. If the claims text differs in any byte, the call verifies against
+the claims again, so a remembered value never answers for other claims. The
+check costs a directly admitted row a few percent, and more as the claims
+grow, since their text is still read on each call.
+
+A generated function that already passes the caller's own claim calls a copy
+of the helper with no check, `<function>_inside`, which PUBLIC cannot run.
+Hops therefore pay nothing for the binding.
 
 A write permission that repeats the read rule, `edit = <write terms> and <the
 read rule>`, follows the read rule's compositions for writing. The compiler

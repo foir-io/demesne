@@ -1,5 +1,5 @@
 use crate::definers::Definers;
-use crate::genfn::{DefinerArm, GenFn, Language};
+use crate::genfn::{Bound, DefinerArm, Execute, GenFn, Language};
 use crate::rls::{Virtual, leaf};
 use crate::{Binds, Sql};
 use demesne_gocompat::quote;
@@ -75,7 +75,10 @@ fn kept_plan(f: &mut GenFn) {
         return;
     }
     if !f.raw_body {
-        f.body = format!("#variable_conflict use_column\nBEGIN\n  RETURN {};\nEND", f.body);
+        f.body = match f.bound.as_ref().and_then(|bound| bound.remembered.clone()) {
+            Some(remembered) => remembered,
+            None => format!("#variable_conflict use_column\nBEGIN\n  RETURN {};\nEND", f.body),
+        };
     } else if f.returns.starts_with("TABLE") && f.body.trim_start().starts_with("SELECT ") {
         f.body = format!("#variable_conflict use_column\nBEGIN\n  RETURN QUERY {}\nEND", f.body.trim_start());
     } else {
@@ -102,6 +105,83 @@ pub(crate) fn plans_kept(mut fns: Vec<GenFn>, chains: &[String]) -> Vec<GenFn> {
             kept_plan(&mut fns[i]);
         }
     }
+    called_inside(fns, &inside)
+}
+
+const INSIDE: &str = "_inside";
+
+fn arguments(after: &str) -> Option<(Vec<&str>, usize)> {
+    let (mut depth, mut quoted, mut start, mut out) = (0usize, false, 0, Vec::new());
+    for (at, c) in after.char_indices() {
+        match c {
+            '\'' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted && depth == 0 => {
+                out.push(after[start..at].trim());
+                return Some((out, at));
+            }
+            ')' if !quoted => depth -= 1,
+            ',' if !quoted && depth == 0 => {
+                out.push(after[start..at].trim());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn asked_inside(text: &str, call: &str, inside: &str, bound: &Bound) -> Option<String> {
+    let (mut out, mut rest, mut changed) = (String::new(), text, false);
+    while let Some(at) = rest.find(call) {
+        let after = &rest[at + call.len()..];
+        let own = arguments(after).is_some_and(|(args, _)| args.get(bound.argument).is_some_and(|arg| bound.claims.iter().any(|claim| claim == arg)));
+        out.push_str(&rest[..at]);
+        out.push_str(if own { inside } else { call });
+        changed |= own;
+        rest = after;
+    }
+    out.push_str(rest);
+    changed.then_some(out)
+}
+
+fn asks_the_copy(f: &mut GenFn, call: &str, copy: &str, bound: &Bound) -> bool {
+    let mut asked = false;
+    for text in std::iter::once(&mut f.body).chain(f.arms.iter_mut().map(|arm| &mut arm.body)) {
+        if let Some(rewritten) = asked_inside(text, call, copy, bound) {
+            *text = rewritten;
+            asked = true;
+        }
+    }
+    asked
+}
+
+fn called_inside(mut fns: Vec<GenFn>, inside: &[bool]) -> Vec<GenFn> {
+    let mut copies = Vec::new();
+    for i in 0..inside.len() {
+        let Some(bound) = fns[i].bound.clone().filter(|_| inside[i] && fns[i].execute == Execute::Public) else { continue };
+        let name = format!("{}{INSIDE}", fns[i].name);
+        if name.len() > 63 || fns.iter().any(|f| f.name == name) {
+            continue;
+        }
+        let (call, copy) = (format!("{}.{}(", fns[i].schema(), fns[i].name), format!("{}.{name}(", fns[i].schema()));
+        let mut asked = false;
+        for j in (0..inside.len()).filter(|&j| j != i) {
+            asked |= asks_the_copy(&mut fns[j], &call, &copy, &bound);
+        }
+        if asked {
+            copies.push(GenFn {
+                name,
+                body: bound.inside,
+                bound: None,
+                execute: Execute::Granted,
+                language: Language::Plpgsql,
+                raw_body: true,
+                ..fns[i].clone()
+            });
+        }
+    }
+    fns.extend(copies);
     fns
 }
 
@@ -307,5 +387,34 @@ impl<'a> Sql<'a> {
         }
         conds.push(format!("({})", held.join(" OR ")));
         Ok(format!("EXISTS (SELECT 1 FROM {} WHERE {})", obj.table, conds.join(" AND ")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Bound, arguments, asked_inside};
+
+    fn bound() -> Bound {
+        Bound { argument: 0, claims: vec!["(SELECT claim('sub'))".to_string()], ..Bound::default() }
+    }
+
+    #[test]
+    fn arguments_split_at_the_top_level_only() {
+        let (args, end) = arguments("f(a, b), 'x,)' , (SELECT 1)) AND more").expect("a closed call");
+        assert_eq!(args, ["f(a, b)", "'x,)'", "(SELECT 1)"]);
+        assert_eq!(&"f(a, b), 'x,)' , (SELECT 1)) AND more"[end..], ") AND more");
+        assert_eq!(arguments("a, (b"), None, "a call that never closes has no arguments");
+    }
+
+    #[test]
+    fn only_a_call_that_passes_the_callers_own_claim_asks_the_copy() {
+        let text = "auth.f((SELECT claim('sub')), row.id) OR auth.f(p_principal, row.id) OR auth.f((SELECT claim('other')), row.id)";
+        let asked = asked_inside(text, "auth.f(", "auth.f_inside(", &bound()).expect("one call passes the claim");
+        assert_eq!(asked, "auth.f_inside((SELECT claim('sub')), row.id) OR auth.f(p_principal, row.id) OR auth.f((SELECT claim('other')), row.id)");
+        assert_eq!(
+            asked_inside("auth.f(p_principal, (SELECT claim('sub')))", "auth.f(", "auth.f_inside(", &bound()),
+            None,
+            "the claim in another position binds nothing"
+        );
     }
 }

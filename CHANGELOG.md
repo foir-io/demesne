@@ -45,6 +45,10 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
 Policies always passed the caller's claim, so no policy changes and no rule
 admits or refuses anyone it did not before.
 
+The binding assumes only your API sets the claims. A caller who can run
+arbitrary SQL as the caller role can set them with `set_config`, as it always
+could; the guide now says so in as many words.
+
 What breaks for an adopter:
 
 - **SQL of your own that calls a bound function with another principal's id,
@@ -243,9 +247,19 @@ decided, bars. Only the functions something calls are emitted.
 
 A hop is judged inside the chain function's own statement, and a helper
 function a chain calls is emitted as PL/pgSQL, so that its plan is kept
-between rows. Nothing is kept between rows or statements. A row reached
+between rows. No answer is kept between rows or statements. A row reached
 through a chain still costs several times a row its own rule admits; the guide
 gives the figures.
+
+On a spec with a chain, a helper bound to the caller (see "Breaking") does not
+parse the claims on every call. It remembers the argument it verified and the
+exact text of the claims setting, in two transaction-local settings named
+`demesne.<definers schema>.<function>.own` and `.seen`, and verifies again
+whenever the claims text differs. A `via conditions` check does the same on
+every spec. A generated function that already passes the caller's own claim
+calls `<function>_inside`, a copy with no check that PUBLIC cannot run, so a
+hop pays nothing for the binding. `demesne_emit_sql` gains `Bound`, and
+`GenFn` gains `bound`.
 
 `demesne_syntax` gains `CompPath`; `ViaComposition` gains `path`, `Object` gains
 `nested`, `Builtin` gains `HoldsAt`, and the lexer reads a whole number.

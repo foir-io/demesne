@@ -139,3 +139,46 @@ fn the_chains_example_admits_whom_its_rules_say() {
     }
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
 }
+
+fn asked(tx: &mut postgres::Transaction<'_>, claims: &str, call: &str) -> Option<bool> {
+    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
+    tx.query_one(&format!("SELECT {AUTH}.{call}"), &[]).unwrap_or_else(|e| panic!("{call}: {e}")).get(0)
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_remembered_claim_does_not_outlive_the_claims_it_was_verified_against() {
+    let mut db = connect();
+    install(&mut db);
+    let mut tx = db.transaction().expect("a transaction");
+    tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    let shared = |who: &str| format!("doc_shared_keyed('{who}', 'd_own', 'read.share')");
+    let terms = |team: &str| format!("doc_terms_hold('d_terms', 'read.share', '{{\"team\":\"{team}\"}}'::jsonb)");
+    for round in 0..2 {
+        assert_eq!(asked(&mut tx, ANN, &shared("ann")), Some(true), "round {round}: ann asks about herself");
+        assert_eq!(asked(&mut tx, ANN, &shared("ann")), Some(true), "round {round}: and again, from what was remembered");
+        assert_eq!(asked(&mut tx, BOB, &shared("ann")), Some(false), "round {round}: the claims are now bob's, so ann's remembered claim answers nothing");
+        assert_eq!(asked(&mut tx, BOB, &shared("bob")), Some(false), "round {round}: bob has no share");
+        assert_eq!(asked(&mut tx, ANN, &shared("bob")), Some(false), "round {round}: back as ann, bob's remembered claim answers nothing");
+        assert_eq!(asked(&mut tx, ANN, &terms("red")), Some(true), "round {round}: ann's own values meet the stored condition");
+        assert_eq!(asked(&mut tx, ANN_ON_BLUE, &terms("red")), None, "round {round}: values that are no longer the caller's are not judged");
+        assert_eq!(asked(&mut tx, ANN_ON_BLUE, &terms("blue")), Some(false), "round {round}: her own values now fail it");
+        assert_eq!(asked(&mut tx, ANN, &terms("blue")), None, "round {round}: and the values remembered for other claims are not hers");
+    }
+    let read = |tx: &mut postgres::Transaction<'_>, claims: &str| -> BTreeSet<String> {
+        tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
+        tx.query("SELECT id FROM docs", &[]).expect("the read").iter().map(|r| r.get(0)).collect()
+    };
+    let hers = BTreeSet::from(["d_own".to_string(), "d_lent".to_string(), "d_terms".to_string()]);
+    assert_eq!(read(&mut tx, ANN), hers, "ann reads her docs");
+    assert_eq!(read(&mut tx, BOB), BTreeSet::new(), "in the same transaction, under bob's claims, nothing ann's claims reached is read");
+    assert_eq!(read(&mut tx, ANN_ON_BLUE).len(), 2, "and a changed value is judged afresh");
+    assert_eq!(read(&mut tx, ANN), hers, "as is the first caller's return");
+    tx.rollback().expect("rollback");
+
+    for copy in ["doc_shared_keyed_inside(text, text, text)", "doc_terms_hold_inside(text, text, jsonb)"] {
+        let may: bool = db.query_one(&format!("SELECT has_function_privilege('{CALLER}', '{AUTH}.{copy}', 'EXECUTE')"), &[]).expect("the privilege").get(0);
+        assert!(!may, "{copy} answers for any principal, so the caller may not run it");
+    }
+    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
+}

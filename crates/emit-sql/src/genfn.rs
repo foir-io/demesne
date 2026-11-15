@@ -26,6 +26,19 @@ pub enum Execute {
     Granted,
 }
 
+/// How a function PUBLIC may run is bound to the caller's own claims.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Bound {
+    /// The position of the argument that must be the caller's own.
+    pub argument: usize,
+    /// The expressions that read the claims the argument may equal.
+    pub claims: Vec<String>,
+    /// The PL/pgSQL body of the copy PUBLIC cannot run, which another generated function calls with one of `claims`.
+    pub inside: String,
+    /// The PL/pgSQL body that remembers a verified argument for as long as the claims setting keeps its text.
+    pub remembered: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GenFn {
     pub name: String,
@@ -40,6 +53,7 @@ pub struct GenFn {
     pub arms: Vec<DefinerArm>,
     pub language: Language,
     pub execute: Execute,
+    pub bound: Option<Bound>,
 }
 
 impl GenFn {

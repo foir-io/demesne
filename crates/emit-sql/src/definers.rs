@@ -1,6 +1,6 @@
 use crate::Sql;
 use crate::error::Error;
-use crate::genfn::{Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
+use crate::genfn::{Bound, Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
 use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
@@ -495,9 +495,35 @@ impl Sql<'_> {
         for f in fns.iter_mut().filter(|f| f.execute == Execute::Public && f.returns.is_empty() && !f.raw_body && f.arms.is_empty()) {
             let Some((parameter, ty)) = caller_parameter(f) else { continue };
             let membership = f.name.strip_prefix(&format!("{}_memberin_", self.s.admin_name())).map(|level| self.membership_callers(level));
+            let asked_by_scope = membership.is_some();
             let own = membership.unwrap_or_else(|| is_the_callers(&parameter, if ty == id_t { &identities } else { &as_text }));
+            if !asked_by_scope {
+                f.bound = self.bound_on(f, &parameter, &own);
+            }
             f.body = format!("{own} AND ({})", f.body);
         }
+    }
+
+    fn bound_on(&self, f: &GenFn, parameter: &str, own: &str) -> Option<Bound> {
+        let argument = crate::genfn::sig_args(&f.sig).iter().position(|arg| *arg == parameter)?;
+        let mut claims = Vec::new();
+        for key in self.s.subjects.iter().map(Subject::identifies).filter(|key| !key.is_empty()) {
+            for read in [self.claim(key), self.id_claim(key), self.session_claim(key)] {
+                claims.extend([format!("{read}::text"), read]);
+            }
+        }
+        let given = format!("{parameter} = {parameter} AND ({})", f.body);
+        let remembered = self.remembered(&f.name).map(|kept| {
+            let as_text = format!("{parameter}::text");
+            format!(
+                "#variable_conflict use_column\nBEGIN\n  IF {} THEN\n    RETURN {given};\n  END IF;\n  IF {own} THEN\n    {}\n  END IF;\n  RETURN {own} AND ({});\nEND",
+                kept.holds_for(&as_text),
+                kept.keep(&as_text),
+                f.body
+            )
+        });
+        let inside = format!("#variable_conflict use_column\nBEGIN\n  RETURN {given};\nEND");
+        Some(Bound { argument, claims, inside, remembered })
     }
 
     fn membership_callers(&self, level: &str) -> String {

@@ -12,6 +12,7 @@ mod error;
 mod files;
 mod genfn;
 mod manifest;
+mod remembered;
 mod rls;
 mod supabase;
 mod write_reach;
@@ -21,7 +22,7 @@ pub use changelog::{CHANGELOG_CHANNEL, ChangelogTrigger, ObjectChangelogTrigger}
 pub use closure::{ClosureTrigger, DeclaredMaintenance, GroupTrigger, MaterializedFlat};
 pub use error::{Error, ManifestError};
 pub use files::{file_migration, file_sql, validate_files, validate_files_warnings};
-pub use genfn::{DefinerArm, Execute, GenFn, Language, definers_sql};
+pub use genfn::{Bound, DefinerArm, Execute, GenFn, Language, definers_sql};
 pub use manifest::{Manifest, Object, objects, revoked_from_public};
 pub use rls::{Policy, RlsResult, scan_definers};
 
