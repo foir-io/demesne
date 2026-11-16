@@ -28,8 +28,9 @@ create table public.note_acl (
   primary key (note_ref, grantee_kind, grantee_ref, perm)
 );
 
--- The request role reaches the tables + the definer schema (the definers' EXECUTE is
--- granted after they exist; see the round-trip harness). On a real project Supabase's
+-- The request role reaches the tables + the definer schema. Once the definers exist, the
+-- round-trip harness grants EXECUTE on only the functions the manifest lists as callable,
+-- never on every function in the schema. On a real project Supabase's
 -- default privileges already grant `authenticated` on public tables; these are explicit
 -- so the local Supabase-shaped cluster behaves identically.
 grant usage on schema demesne to authenticated;
