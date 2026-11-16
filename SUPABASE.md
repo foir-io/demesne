@@ -46,11 +46,19 @@ where the request roles already have access.
 
 ```sh
 demesne emit app.demesne all > authz.sql
+demesne emit app.demesne manifest > authz.manifest.json
 # apply authz.sql via a migration (definers in your `demesne` schema + ENABLE/FORCE RLS
-# + the policies). Grant the request role what it needs:
+# + the policies). Grant the request role the schema, and EXECUTE on only the functions
+# the manifest lists under "callable", one grant per entry:
 #   grant usage on schema demesne to authenticated;
-#   grant execute on all functions in schema demesne to authenticated;
+#   grant execute on function demesne.<name>(<argument types>) to authenticated;
 ```
+
+Never `grant execute on all functions in schema demesne`. That hands the request role the
+functions the SQL revokes from PUBLIC (the manifest's `revoked` list), which answer about
+principals other than the caller. The functions the policies run are executable by PUBLIC
+already and need no grant, so a spec whose `callable` list is empty needs only the schema
+grant.
 
 ### 2. Emit and register the access-token hook
 
