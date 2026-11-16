@@ -603,6 +603,8 @@ caller may run. So must a function a spec line makes yours to call:
   values you pass;
 - `probe <name>(…)`: a fact about rows inside the caller's containment;
 - `projection <name>`: the columns of the rows the caller's select admits;
+- `check <verb> as <name>(<key> …)`: whether the caller passes a
+  predicate-only permission on the row the key names;
 - `<principal>_can_access_<object>`, for a `@kernel` permission;
 - `<flat>_resources()`, which the generated app surface reads to list an
   object whose select is one materialized group.
@@ -1527,6 +1529,49 @@ A projection is not inlined into the query that calls it. It computes every
 admitted row first and the caller filters afterwards, so it suits small tables
 of declarations, not large tables of content. Callers a projection admits are
 not in the object's reader listing, which lists who reads whole rows.
+
+## Checks: one row against a permission lent with `predicate`
+
+A predicate-only permission (`@rls predicate`) emits no policy of its own.
+Another object borrows it with `via object <object>-><verb>`, and the policy
+that borrows it calls `<object>_can_<verb>(<id>)` for each row. That function
+is the policies' tool, so PUBLIC cannot run it. When code of your own needs the
+same answer about one row, declare a `check`:
+
+```demesne
+object ledger {
+  table ledgers
+  scoped estate
+  permission view = @scoped @rls maps select
+  permission open_only = @scoped and @row(state, "open") @rls predicate
+  check open_only for select as ledger_open(id text)
+}
+```
+
+`check <verb> [for <op>] as <name>(<key column> <type> [as <parameter>])`
+emits `<name>(<parameter>)`. It returns whether the caller passes `<verb>` on
+the row whose key is the argument: `SELECT auth.ledger_open($1)`.
+
+Its body is the borrow's body, `<object>_can_<verb>`, or
+`<object>_can_<verb>_for_<op>` with `for`, with the argument in place of the
+borrow's row id. So it answers exactly what a policy that borrows the
+permission enforces, including the object's containment and a grant's reach,
+and it says nothing about any other row. A key that names no row answers false,
+and a NULL key answers NULL. It takes no principal: it reads the caller's
+claims, as the policy does. The parameter is `p_<column>` unless `as` names it,
+and `for` chooses the operation as a borrow's `for` does.
+
+The compiler refuses a check:
+
+- of a permission the object does not declare, or one that is not
+  predicate-only (an `export` answers a permission that maps an operation);
+- for an operation that is not `select`, `insert`, `update` or `delete`;
+- whose one argument is not the object's key;
+- on an object with a composite key;
+- whose name another generated function already has.
+
+A check is a use of the permission it lends, so a predicate-only permission
+that only a check reads is not refused as never borrowed.
 
 ## A changelog the application writes
 

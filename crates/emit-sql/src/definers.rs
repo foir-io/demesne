@@ -396,6 +396,7 @@ impl Sql<'_> {
         self.def_emit_nearests(&mut out)?;
         self.def_emit_markers(&mut out)?;
         self.def_emit_projections(&mut out, &virt)?;
+        self.def_emit_point_checks(&mut out, &virt)?;
         self.bind_callers(&mut out);
         for f in &mut out {
             f.schema = self.s.definer_schema().to_string();
@@ -410,6 +411,7 @@ impl Sql<'_> {
             names.extend(obj.exports.iter().map(|e| e.name.clone()));
             names.extend(obj.probes.iter().map(|p| p.name.clone()));
             names.extend(obj.projections.iter().map(|p| p.name.clone()));
+            names.extend(obj.point_checks.iter().map(|c| c.name.clone()));
             if obj.perms.iter().any(|pm| pm.has_layer("kernel")) {
                 names.insert(format!("{}_can_access_{}", self.s.owner_principal_name(obj), obj.name));
             }
@@ -1984,6 +1986,28 @@ impl Sql<'_> {
                 returns: format!("TABLE({})", returned.join(", ")),
                 raw_body: true,
                 body: format!("  SELECT {} FROM {} WHERE {pred};", selected.join(", "), obj.table),
+                ..Default::default()
+            });
+        }
+        Ok(())
+    }
+
+    fn def_emit_point_checks(&self, out: &mut Vec<GenFn>, virt: &Virtual) -> R<()> {
+        let mut seen: HashSet<String> = out.iter().map(|f| f.name.clone()).collect();
+        for (obj, c) in self.s.objects.iter().flat_map(|o| o.point_checks.iter().map(move |c| (o, c))) {
+            if !seen.insert(c.name.clone()) {
+                return Err(format!("check {} collides with a generated function", quote(&c.name)));
+            }
+            let [key] = c.params.as_slice() else {
+                return Err(format!("check {} takes one argument, the key {}", quote(&c.name), quote(obj.pk())));
+            };
+            let pred = self.object_verb_predicate_for(obj, &c.verb, c.op.as_deref().unwrap_or(""), virt)?;
+            let conds = [format!("{}.{} = $1", obj.table, obj.pk()), format!("({pred})")];
+            out.push(GenFn {
+                name: c.name.clone(),
+                sig: format!("{} {}", key.name(), key.ty),
+                strict: true,
+                body: grant_edge_exists(&obj.table, &conds),
                 ..Default::default()
             });
         }

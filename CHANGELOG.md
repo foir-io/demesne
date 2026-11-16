@@ -42,7 +42,8 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   something must run it as the caller: a policy calls it, a generated
   application check calls it (a `@check` point check, the edit check, the
   async check), or a spec line makes it yours to call (an `export`, a `probe`,
-  a `projection`, `<principal>_can_access_<object>` for a `@kernel` permission,
+  a `projection`, a `check` (below), `<principal>_can_access_<object>` for a
+  `@kernel` permission,
   and the `<flat>_resources()` list the application surface reads). Every other
   one is called only by generated functions, which run as their owner, and is
   revoked: a grant's `_reach`, `_reach_unscoped`, `_reach_in_<level>` and any
@@ -100,6 +101,31 @@ uses it as before.
 `demesne_emit_sql::Manifest` gains `execute: Option<ExecuteLists>`.
 `Sql::manifest` always fills it, and `Manifest::from_sql` leaves it `None`,
 since SQL alone does not say which functions a spec line makes yours.
+
+### `check`: one row against a permission lent with `predicate`
+
+A predicate-only permission is answered for one row by the function its borrow
+emits, `<object>_can_<verb>`, and that function is now the policies' alone. A
+`check` is the form for code of your own:
+
+```demesne
+check open_only for select as ledger_open(id text)
+```
+
+It emits `ledger_open(p_id text)`, listed `callable`. Its body is the borrow's,
+`<object>_can_<verb>` or `<object>_can_<verb>_for_<op>`, with the argument as
+the row's key, so it answers exactly what a policy that borrows the permission
+enforces, the object's containment and a grant's reach included. It takes no
+principal and reads the caller's claims. A key that names no row answers
+false; a NULL key answers NULL. `as` names the parameter, which is `p_<key>`
+otherwise.
+
+A check is refused when its permission is not predicate-only (an `export`
+answers one that maps an operation), when `for` names no table operation, when
+its one argument is not the object's key, on an object with a composite key,
+and when another generated function has its name. It counts as a use of the
+permission it lends, so such a permission that only a check reads is no longer
+refused as never borrowed. `demesne_syntax::Object` gains `point_checks`.
 
 ### Breaking: a grant gives reach, and the permission's terms still bind its holders
 

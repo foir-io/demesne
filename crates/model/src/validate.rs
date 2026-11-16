@@ -11,8 +11,8 @@ use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_syntax::{
-    Finding, Grant, GrantUse, Level, Marker, Object, Perm, PermNode, PermissionExport, ProbeAnswer, Relation, Repr, Require, Spec, Subject, Term, ViaClosure,
-    ViaComposition, ViaGrant, ViaObject, Vocabulary,
+    Finding, Grant, GrantUse, Level, Marker, Object, Perm, PermNode, PermissionExport, PointCheck, ProbeAnswer, Relation, Repr, Require, Spec, Subject, Term,
+    ViaClosure, ViaComposition, ViaGrant, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -85,6 +85,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_probes(s));
     errs.extend(validate_nearests(s));
     errs.extend(validate_projections(s));
+    errs.extend(validate_point_checks(s));
     errs.extend(validate_markers(s));
     errs.extend(validate_chains(s));
     errs.extend(validate_role_forms(s));
@@ -347,6 +348,7 @@ fn validate_predicate_only_referenced(s: &Spec) -> Vec<Finding> {
                 referenced.insert(format!("{}.{}", vo.object, vo.verb));
             }
         }
+        referenced.extend(obj.point_checks.iter().map(|c| format!("{}.{}", obj.name, c.verb)));
     }
     let mut errs = Vec::new();
     for obj in &s.objects {
@@ -1948,6 +1950,52 @@ fn validate_projections(s: &Spec) -> Vec<Finding> {
         errs.extend(check_perm_terms(s, obj, &pm, &crate::analysis::rels_of(obj)));
     }
     errs
+}
+
+fn validate_point_checks(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    let taken = |o: &'_ Object| -> Vec<String> {
+        let named = o.exports.iter().map(|e| e.name.clone()).chain(o.probes.iter().map(|p| p.name.clone()));
+        named.chain(o.nearests.iter().map(|n| n.name.clone())).chain(o.projections.iter().map(|p| p.name.clone())).collect()
+    };
+    let mut names: HashSet<String> = s.objects.iter().flat_map(taken).collect();
+    for (obj, c) in s.objects.iter().flat_map(|o| o.point_checks.iter().map(move |c| (o, c))) {
+        let at = |msg: String| Finding::at(c.pos.line, format!("check {}{msg}", quote(&c.name)));
+        if !names.insert(c.name.clone()) {
+            errs.push(at(" shares its name with another generated function of the spec".into()));
+        }
+        match obj.perms.iter().find(|pm| pm.verb == c.verb) {
+            None => errs.push(at(format!(": object {} has no permission {}", quote(&obj.name), quote(&c.verb)))),
+            Some(pm) if pm.predicate_only => {}
+            Some(pm) if !pm.maps().is_empty() => errs.push(at(format!(
+                ": permission {} maps {}, and a check answers a predicate-only permission; an export answers a mapped one",
+                quote(&c.verb),
+                pm.maps()
+            ))),
+            Some(_) => errs.push(at(format!(": permission {} is not predicate-only, and a check answers a permission lent with `predicate`", quote(&c.verb)))),
+        }
+        if let Some(op) = c.op.as_deref().filter(|op| !table_op(op)) {
+            errs.push(at(format!(" is for unknown operation {}", quote(op))));
+        }
+        errs.extend(check_point_check_key(obj, c).map(at));
+    }
+    errs
+}
+
+fn check_point_check_key(obj: &Object, c: &PointCheck) -> Option<String> {
+    if !obj.point_checkable() {
+        return Some(format!(" is on object {}, which has a composite key", quote(&obj.name)));
+    }
+    let [key] = c.params.as_slice() else {
+        return Some(format!(" takes one argument, the key {}", quote(obj.pk())));
+    };
+    if key.column != obj.pk() {
+        return Some(format!(" takes the key {}, not {}", quote(obj.pk()), quote(&key.column)));
+    }
+    if !EXPORT_PARAMETER_TYPES.contains(&key.ty.as_str()) {
+        return Some(format!(" argument {} has unsupported type {}", quote(&key.name()), quote(&key.ty)));
+    }
+    None
 }
 
 fn validate_role_forms(s: &Spec) -> Vec<Finding> {

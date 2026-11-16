@@ -2,9 +2,9 @@ use crate::Error;
 use crate::ast::{
     Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, DeclaredScope, ExportParameter, Extension, External, ExternalArg,
     FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker, Membership, Nearest,
-    Object, Perm, PermNode, PermissionExport, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation, RelationKind, Repr,
-    Require, RoleForm, RoleStore, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition,
-    ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Object, Perm, PermNode, PermissionExport, PointCheck, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation,
+    RelationKind, Repr, Require, RoleForm, RoleStore, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure,
+    ViaColumn, ViaComposition, ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -675,6 +675,8 @@ impl Parser {
             o.nested = Some(n.lit.parse().map_err(|e| Error::at(n.line, format!("nested {}: {e}", n.lit)))?);
         } else if self.is_kw("projection") {
             self.parse_projection(o)?;
+        } else if self.is_kw("check") {
+            self.parse_point_check(o)?;
         } else if self.is_kw("nearest") {
             self.parse_nearest(o)?;
         } else if self.is_kw("probe") {
@@ -1824,6 +1826,20 @@ impl Parser {
         self.expect(Tok::Eq)?;
         let tree = self.parse_perm_union()?;
         o.projections.push(Projection { name, columns, tree, pos });
+        Ok(())
+    }
+
+    fn parse_point_check(&mut self, o: &mut Object) -> PResult<()> {
+        let pos = self.pos();
+        self.advance();
+        let verb = self.ident()?;
+        let op = if self.accept_kw("for") { Some(self.ident()?) } else { None };
+        self.expect_kw("as")?;
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let params = self.parse_bound_columns()?;
+        self.expect(Tok::RParen)?;
+        o.point_checks.push(PointCheck { verb, op, name, params, pos });
         Ok(())
     }
 

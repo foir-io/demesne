@@ -439,6 +439,7 @@ pub struct Object {
     pub probes: Vec<Probe>,
     pub nearests: Vec<Nearest>,
     pub projections: Vec<Projection>,
+    pub point_checks: Vec<PointCheck>,
     pub markers: Vec<Marker>,
     /// `nested <n>`: how many compositions deep an element is judged at another row of the object.
     pub nested: Option<usize>,
@@ -1478,6 +1479,19 @@ impl Projection {
     pub fn admit(&self) -> Admit {
         Admit { ops: vec!["select".to_string()], tree: self.tree.clone(), pos: self.pos }
     }
+}
+
+/// A `check`: whether the caller passes a predicate-only permission on one row, named by its key.
+#[derive(Debug, Clone)]
+pub struct PointCheck {
+    /// The predicate-only permission it answers.
+    pub verb: String,
+    /// `for <op>`: the operation the permission is answered for, as a borrow's `for` chooses it.
+    pub op: Option<String>,
+    pub name: String,
+    /// The arguments as written; a valid check takes exactly one, the object's key.
+    pub params: Vec<ExportParameter>,
+    pub pos: Pos,
 }
 
 /// A `nearest` lookup: the value a column holds on the nearest row at or above a node of a closure.
