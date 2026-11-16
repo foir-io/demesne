@@ -61,7 +61,7 @@ jobs:
           -c 'CREATE DATABASE demesne_supabase'
           -c 'CREATE ROLE anon NOLOGIN'
           -c 'CREATE ROLE authenticated NOLOGIN'
-          -c 'CREATE ROLE service_role NOLOGIN'
+          -c 'CREATE ROLE service_role NOLOGIN BYPASSRLS'
       - name: live Postgres suites
         run: cargo nextest run -p demesne-postgres -p demesne-cli -p demesne-release-check --run-ignored only --no-tests=fail
       - name: wasm32 build
@@ -80,6 +80,18 @@ jobs:
   ts:
     name: TypeScript
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: ts
@@ -113,10 +125,19 @@ jobs:
         run: pnpm -r typecheck
       - name: Postgres binaries
         run: ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n 1 >> "$GITHUB_PATH"
+      - name: live Postgres databases
+        run: >-
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1
+          -c 'CREATE DATABASE demesne_test'
+          -c 'CREATE DATABASE demesne_supabase'
+          -c 'CREATE ROLE anon NOLOGIN'
+          -c 'CREATE ROLE authenticated NOLOGIN'
+          -c 'CREATE ROLE service_role NOLOGIN BYPASSRLS'
       - name: test (Node)
         run: pnpm -r test
         env:
           DEMESNE_REQUIRE_PG: "1"
+          SUPABASE_DB_URL: postgres://postgres@localhost:5432/demesne_supabase?sslmode=disable
       - name: test in Deno
         run: pnpm --filter @foir/demesne test:deno
       - name: test in workerd
