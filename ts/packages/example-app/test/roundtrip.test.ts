@@ -31,6 +31,11 @@ suite("Postgres round-trip — equal-by-delegation under live RLS", () => {
 
     await client.query(sqlFile("../sql/schema.sql"));
     await client.query(sqlFile("../generated/policies.sql"));
+    await client.query(`
+      CREATE ROLE accessor_lister NOLOGIN;
+      GRANT USAGE ON SCHEMA auth TO accessor_lister;
+      GRANT EXECUTE ON FUNCTION auth.notes_accessors_conditional(text) TO accessor_lister
+    `);
 
     await client.query(`
       INSERT INTO notes (note_pk, org_ref, ws_ref, owner_ref, visibility) VALUES
@@ -86,13 +91,23 @@ suite("Postgres round-trip — equal-by-delegation under live RLS", () => {
     });
   });
 
-  it("accessorsSQL (Expand) enumerates a note's accessors via the trusted definer", async () => {
+  it("accessorsSQL (Expand) enumerates a note's accessors for the role granted the definer, and the request role cannot", async () => {
     await asMember("m1", "o1", "w1", async () => {
+      await client.query("SAVEPOINT refused");
+      await expect(client.query(resourceAccess.accessorsSQL(noteAcl), ["n2"])).rejects.toThrow(/permission denied/);
+      await client.query("ROLLBACK TO SAVEPOINT refused");
+    });
+
+    await client.query("BEGIN");
+    try {
+      await client.query("SET LOCAL ROLE accessor_lister");
       const r = await client.query(resourceAccess.accessorsSQL(noteAcl), ["n2"]);
 
       const owner = r.rows.find((x) => x.source === "owner");
       expect(owner?.principal_id).toBe("m2");
-    });
+    } finally {
+      await client.query("COMMIT");
+    }
   });
 
   it("sharing a note via grantInsert makes it visible to the grantee (end-to-end)", async () => {

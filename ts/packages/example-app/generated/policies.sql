@@ -8,7 +8,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM note_acl WHERE note_ref = p_note_id AND grantee_kind = 'member' AND grantee_ref = p_member_id AND perm = p_access);
+  SELECT p_member_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref') AND (EXISTS (SELECT 1 FROM note_acl WHERE note_ref = p_note_id AND grantee_kind = 'member' AND grantee_ref = p_member_id AND perm = p_access));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.notes_accessors_conditional(p_id text)

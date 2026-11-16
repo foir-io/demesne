@@ -23,7 +23,7 @@ pub use closure::{ClosureTrigger, DeclaredMaintenance, GroupTrigger, Materialize
 pub use error::{Error, ManifestError};
 pub use files::{file_migration, file_sql, validate_files, validate_files_warnings};
 pub use genfn::{Bound, DefinerArm, Execute, GenFn, Language, definers_sql};
-pub use manifest::{Manifest, Object, objects, revoked_from_public};
+pub use manifest::{ExecuteLists, Manifest, Object, objects, revoked_from_public};
 pub use rls::{Policy, RlsResult, scan_definers};
 
 use demesne_gocompat::quote;

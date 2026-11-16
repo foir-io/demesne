@@ -70,7 +70,7 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 
    ```
    demesne emit authz.demesne all      > 0001_authz.sql        # definers + policies + triggers
-   demesne emit authz.demesne manifest > authz.manifest.json   # every object that SQL creates
+   demesne emit authz.demesne manifest > authz.manifest.json   # every object that SQL creates, and who may run each function
    # review it, run it in your migration tool, and commit the manifest beside it
    ```
 
@@ -588,12 +588,53 @@ The enumerators are emitted the same way. `<table>_accessors`,
 are given, so PUBLIC cannot run them either: grant them to the role that lists
 accessors.
 
-**Every other generated function answers only about the caller.** Each is
-`SECURITY DEFINER`, and a policy runs as the caller, so PUBLIC must be able to
-run it. A function that takes a principal therefore answers only when that
-argument is one of the caller's own identity claims, and returns false for any
-other. A policy always passes the claim, so nothing a rule decides depends on
-this; it stops a caller running the function directly to ask about someone
+**A generated function is the policies' tool, not an API for your code.**
+Code of your own that needs to know who reaches what, or what lies beneath a
+node, reads the tables itself (the closure, the grant table, the role store)
+under a role that may. Only the functions listed below are yours to call.
+
+**A generated function is PUBLIC only where something must run it as the
+caller.** Each is `SECURITY DEFINER`. A policy runs as the caller, and so do
+the generated application checks (a `@check` permission's point check, the
+edit check and the async check), so a function either calls must be one the
+caller may run. So must a function a spec line makes yours to call:
+
+- `export <verb> as <name>(…)`: the permission, judged for the caller at the
+  values you pass;
+- `probe <name>(…)`: a fact about rows inside the caller's containment;
+- `projection <name>`: the columns of the rows the caller's select admits;
+- `<principal>_can_access_<object>`, for a `@kernel` permission;
+- `<flat>_resources()`, which the generated app surface reads to list an
+  object whose select is one materialized group.
+
+Every other generated function is called only by other generated functions,
+which run as their owner, so it is emitted with `EXECUTE` revoked from PUBLIC.
+That includes the closure functions (`_descendants`, `_ancestors`,
+`_reachable`, `_path`), a grant's `_reach_in_<level>` and any lookup no policy
+calls directly. A role helper such as `has_<role>_role` that only other
+functions call is one of them too, so SQL of your own that calls it as the
+caller role gets `permission denied`. Grant one to a role of your own only if
+your code needs it.
+
+**The manifest says who may run each function.** `demesne emit … manifest`
+puts every function the SQL creates in exactly one of three lists:
+
+- `callable`: a spec line makes it yours to call, as listed above;
+- `internal`: PUBLIC may run it, and no spec line makes it yours to call. Most
+  are functions a policy, a generated check or a trigger runs as the caller;
+- `revoked`: PUBLIC may not run it, only a role you grant it to.
+
+Code of your own calls only what `callable` lists. A manifest written before
+these lists existed has none of them; it still reads, as one that does not
+record who may run its functions, and `migrate` uses it as before.
+
+**A function PUBLIC may run answers only about the caller.** One that takes a
+principal answers only when that argument is one of the caller's own identity
+claims, and returns false for any other. Which argument is the principal is
+decided where the function is generated, not by its name, so a parameter of an
+export or a probe is never taken for one. A policy always passes the claim, so
+nothing a rule decides depends on this; it stops a caller running the function
+directly to ask about someone
 else. A statement of your own that must ask about another principal reads the
 tables itself, under a role that may.
 

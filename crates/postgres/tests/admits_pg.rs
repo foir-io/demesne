@@ -158,7 +158,11 @@ fn install(db: &mut Client) {
     db.batch_execute(
         "GRANT USAGE ON SCHEMA ad_rows, ad_auth TO ad_caller, ad_stranger;
          GRANT SELECT ON ALL TABLES IN SCHEMA ad_rows TO ad_caller;
-         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ad_auth TO ad_caller;",
+         DO $$ DECLARE f regprocedure; BEGIN
+           FOR f IN SELECT p.oid::regprocedure FROM pg_proc p WHERE p.pronamespace = 'ad_auth'::regnamespace AND (p.proname LIKE '%\\_admits' OR p.proname LIKE '%\\_accessors%') LOOP
+             EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO ad_caller', f);
+           END LOOP;
+         END $$;",
     )
     .expect("grants");
 }

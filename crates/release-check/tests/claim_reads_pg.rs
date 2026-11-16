@@ -518,7 +518,7 @@ fn judge(db: &mut Client, setup: &Setup<'_>, pools: &Pools, ddl: &str, claims: &
     tx.batch_execute(ddl).map_err(|e| why(&e))?;
     let schema = s.table_schema();
     tx.batch_execute(&format!(
-        "GRANT USAGE ON SCHEMA {schema}, {defs} TO {role}; GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {role}; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {defs} TO {role};",
+        "GRANT USAGE ON SCHEMA {schema}, {defs} TO {role}; GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {role};",
         schema = ident(schema),
         defs = ident(s.definer_schema()),
         role = ident(&setup.role)

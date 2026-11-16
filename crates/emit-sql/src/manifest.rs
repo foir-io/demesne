@@ -13,6 +13,8 @@ const FORMAT: i64 = 1;
 pub struct Manifest {
     /// Functions by identity signature, such as `auth.notes_accessors(text)`.
     pub functions: BTreeSet<String>,
+    /// Who may run each function, when the manifest records it: [`Sql::manifest`] always does, and a manifest read from SQL alone, or one written before this was recorded, does not.
+    pub execute: Option<ExecuteLists>,
     /// Policies as `(table, name)`.
     pub policies: BTreeSet<(String, String)>,
     /// Triggers as `(table, name)`.
@@ -23,6 +25,39 @@ pub struct Manifest {
     pub tables: BTreeSet<String>,
     /// Tables the SQL enables row level security on.
     pub rls: BTreeSet<String>,
+}
+
+/// Every function a manifest records, in exactly one of three lists by who may run it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ExecuteLists {
+    /// Functions a spec line makes yours to call: PUBLIC may run each, and each answers only about the caller.
+    pub callable: BTreeSet<String>,
+    /// Functions PUBLIC may run because generated SQL runs them as the caller, and no spec line makes yours to call.
+    pub internal: BTreeSet<String>,
+    /// Functions the SQL revokes `EXECUTE` on from PUBLIC: only a role you grant one to may run it.
+    pub revoked: BTreeSet<String>,
+}
+
+const EXECUTE_KEYS: [&str; 3] = ["callable", "internal", "revoked"];
+
+impl ExecuteLists {
+    fn covers(&self, functions: &BTreeSet<String>) -> Result<(), String> {
+        let listed = EXECUTE_KEYS.iter().zip([&self.callable, &self.internal, &self.revoked]);
+        let mut seen = BTreeSet::new();
+        for (key, f) in listed.flat_map(|(key, list)| list.iter().map(move |f| (key, f))) {
+            if !functions.contains(f) {
+                return Err(format!("manifest: {} lists {}, which functions does not", quote(key), quote(f)));
+            }
+            if !seen.insert(f) {
+                return Err(format!("manifest: {} is in more than one of callable, internal and revoked", quote(f)));
+            }
+        }
+        match functions.iter().find(|f| !seen.contains(f)) {
+            Some(f) => Err(format!("manifest: {} is in none of callable, internal and revoked", quote(f))),
+            None => Ok(()),
+        }
+    }
 }
 
 impl Manifest {
@@ -76,8 +111,25 @@ impl Manifest {
                 })
                 .collect()
         };
+        let functions = names("functions")?;
+        let execute = match EXECUTE_KEYS.map(|key| v.get(key).is_some()) {
+            [false, false, false] => None,
+            [true, true, true] => {
+                let lists = ExecuteLists { callable: names("callable")?, internal: names("internal")?, revoked: names("revoked")? };
+                lists.covers(&functions)?;
+                Some(lists)
+            }
+            present => {
+                let missing: Vec<String> = EXECUTE_KEYS.iter().zip(present).filter(|(_, here)| !here).map(|(key, _)| quote(key)).collect();
+                return Err(format!(
+                    "manifest: no {} list: a manifest records who may run each function in all of callable, internal and revoked, or in none",
+                    missing.join(" or ")
+                ));
+            }
+        };
         Ok(Self {
-            functions: names("functions")?,
+            functions,
+            execute,
             policies: pairs("policies")?,
             triggers: pairs("triggers")?,
             indexes: pairs("indexes")?,
@@ -95,15 +147,22 @@ impl Manifest {
                 xs.iter().map(|(t, n)| Value::Struct(vec![("table".into(), Value::str(t.as_str())), ("name".into(), Value::str(n.as_str()))])).collect(),
             )
         };
-        let v = Value::Struct(vec![
-            ("manifest".into(), Value::Int(FORMAT)),
-            ("functions".into(), names(&self.functions)),
+        let mut fields = vec![("manifest".into(), Value::Int(FORMAT)), ("functions".into(), names(&self.functions))];
+        if let Some(lists) = &self.execute {
+            fields.extend([
+                ("callable".into(), names(&lists.callable)),
+                ("internal".into(), names(&lists.internal)),
+                ("revoked".into(), names(&lists.revoked)),
+            ]);
+        }
+        fields.extend([
             ("policies".into(), pairs(&self.policies)),
             ("triggers".into(), pairs(&self.triggers)),
             ("indexes".into(), pairs(&self.indexes)),
             ("tables".into(), names(&self.tables)),
             ("rls".into(), names(&self.rls)),
         ]);
+        let v = Value::Struct(fields);
         let mut out = json::marshal_indent(&v, "", "  ");
         out.push('\n');
         out
@@ -294,6 +353,7 @@ pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
 
 impl Manifest {
     pub(crate) fn union(mut self, other: &Manifest) -> Manifest {
+        self.execute = None;
         self.functions.extend(other.functions.iter().cloned());
         self.policies.extend(other.policies.iter().cloned());
         self.triggers.extend(other.triggers.iter().cloned());
@@ -342,7 +402,12 @@ impl Sql<'_> {
     pub fn manifest(&self) -> Result<Manifest, Error> {
         let mut b = String::new();
         self.write_all_sql(&mut b)?;
-        Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))
+        let mut m = Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))?;
+        let revoked: BTreeSet<String> = revoked_from_public(&b).into_iter().collect();
+        let yours = self.adopter_callable();
+        let (callable, internal) = m.functions.iter().filter(|f| !revoked.contains(*f)).cloned().partition(|f| yours.contains(&function_name(f).1));
+        m.execute = Some(ExecuteLists { callable, internal, revoked });
+        Ok(m)
     }
 
     /// Returns a migration from the surface `previous` records to this spec's: the whole SQL, then [`Manifest::drops_since`].

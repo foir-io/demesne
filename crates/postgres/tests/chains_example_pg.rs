@@ -1,5 +1,6 @@
 use postgres::{Client, NoTls};
 use std::collections::BTreeSet;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 const ROWS: &str = "demesne_chains_example_rows";
 const AUTH: &str = "demesne_chains_example_auth";
@@ -72,7 +73,10 @@ fn connect() -> Client {
     Client::connect(&url, NoTls).expect("connect to $DEMESNE_PG_URL")
 }
 
-fn install(db: &mut Client) {
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+fn install(db: &mut Client) -> MutexGuard<'static, ()> {
+    let held = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let path = format!("{}/../../examples/chains.demesne", env!("CARGO_MANIFEST_DIR"));
     let example = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let s = demesne_syntax::parse(&format!("definers schema \"{AUTH}\"\ntables schema \"{ROWS}\"\n{example}")).expect("the example parses");
@@ -93,6 +97,7 @@ fn install(db: &mut Client) {
         "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER}; GRANT SELECT ON {ROWS}.docs, {ROWS}.spaces, {ROWS}.keeper_profiles, {ROWS}.skins, {ROWS}.banners TO {CALLER}; SET search_path = {ROWS}; {SEED}"
     ))
     .expect("grants and rows");
+    held
 }
 
 fn read(db: &mut Client, claims: &str, sql: &str) -> BTreeSet<String> {
@@ -112,7 +117,7 @@ fn is_member(db: &mut Client, claims: &str, principal: &str, space: &str) -> boo
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn the_chains_example_admits_whom_its_rules_say() {
     let mut db = connect();
-    install(&mut db);
+    let _installed = install(&mut db);
     let (mut admitted, mut refused) = (0, 0);
     for (table, claims, wanted, why) in CELLS {
         let total: i64 = db.query_one(&format!("SELECT count(*) FROM {table}"), &[]).expect("the rows").get(0);
@@ -149,7 +154,7 @@ fn asked(tx: &mut postgres::Transaction<'_>, claims: &str, call: &str) -> Option
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn a_remembered_claim_does_not_outlive_the_claims_it_was_verified_against() {
     let mut db = connect();
-    install(&mut db);
+    let _installed = install(&mut db);
     let mut tx = db.transaction().expect("a transaction");
     tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
     let shared = |who: &str| format!("doc_shared_keyed('{who}', 'd_own', 'read.share')");

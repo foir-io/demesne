@@ -7,6 +7,9 @@ exit: 0
 {
   "manifest": 1,
   "functions": [],
+  "callable": [],
+  "internal": [],
+  "revoked": [],
   "policies": [
     {
       "table": "public.resources",

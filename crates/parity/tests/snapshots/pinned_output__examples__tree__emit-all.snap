@@ -14,6 +14,7 @@ SET search_path = public
 AS $$
   SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')) AND (EXISTS (SELECT 1 FROM paths WHERE ancestor_id = user_id AND descendant_id = check_folder_id));
 $$;
+REVOKE EXECUTE ON FUNCTION auth.paths_reach(text, text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_reach_set(user_id text)
 RETURNS SETOF text
@@ -36,6 +37,7 @@ SET search_path = public
 AS $$
   SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')) AND (EXISTS (SELECT 1 FROM paths WHERE descendant_id = user_id AND ancestor_id = check_folder_id));
 $$;
+REVOKE EXECUTE ON FUNCTION auth.paths_up_reach(text, text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_up_reach_set(user_id text)
 RETURNS SETOF text
@@ -58,6 +60,7 @@ SET search_path = public
 AS $$
   SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant AND (p_ancestor = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')::text OR p_descendant = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')::text));
 $$;
+REVOKE EXECUTE ON FUNCTION auth.paths_reachable(text, text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_descendants(p_node text)
 RETURNS SETOF text

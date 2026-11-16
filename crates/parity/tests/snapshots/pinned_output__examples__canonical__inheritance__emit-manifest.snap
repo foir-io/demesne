@@ -10,6 +10,12 @@ exit: 0
     "auth.folder_closure_maintain()",
     "auth.folder_closure_reachable(text, text)"
   ],
+  "callable": [],
+  "internal": [
+    "auth.folder_closure_maintain()",
+    "auth.folder_closure_reachable(text, text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.documents",

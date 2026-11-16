@@ -53,7 +53,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM asset_acl WHERE asset_ref = p_asset_id AND grantee_kind = 'member' AND grantee_ref = p_member_id AND perm = p_access);
+  SELECT p_member_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (EXISTS (SELECT 1 FROM asset_acl WHERE asset_ref = p_asset_id AND grantee_kind = 'member' AND grantee_ref = p_member_id AND perm = p_access));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.assets_accessors_conditional(p_id text)

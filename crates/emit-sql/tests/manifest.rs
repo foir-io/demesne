@@ -1,4 +1,7 @@
-use demesne_emit_sql::{Manifest, Sql, validate};
+use demesne_emit_sql::{Execute, Manifest, Sql, validate};
+use demesne_gocompat::json::{self, Value};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 fn spec(name: &str) -> demesne_syntax::Spec {
     let path = format!("{}/../../testdata/gaps/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -199,4 +202,134 @@ fn a_quoted_name_with_a_dot_is_one_identifier() {
 fn a_positional_parameter_does_not_open_a_dollar_quote() {
     let m = Manifest::from_sql("CREATE POLICY a ON s.t USING ($1$ = 1); CREATE POLICY b ON s.t USING (true);").expect("a manifest");
     assert_eq!(m.policies.len(), 2, "{:?}", m.policies);
+}
+
+fn emitting_specs() -> Vec<(String, demesne_syntax::Spec)> {
+    let root = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+    let mut dirs: Vec<PathBuf> = ["examples", "testdata/corpus", "testdata/gaps"].iter().map(|d| PathBuf::from(format!("{root}/{d}"))).collect();
+    let mut paths = Vec::new();
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).expect("the corpus reads") {
+            let p = e.expect("an entry").path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "demesne") {
+                paths.push(p);
+            }
+        }
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .filter_map(|p| {
+            let s = demesne_syntax::parse(&std::fs::read_to_string(&p).ok()?).ok()?;
+            validate(&s).ok()?;
+            let mut b = String::new();
+            Sql::new(&s).write_all_sql(&mut b).ok()?;
+            Some((p.display().to_string(), s))
+        })
+        .collect()
+}
+
+fn listed(manifest: &Value, key: &str, path: &str) -> BTreeSet<String> {
+    let items = manifest.get(key).and_then(Value::as_array).unwrap_or_else(|| panic!("{path}: the manifest has no {key} list"));
+    items.iter().map(|v| v.as_str().unwrap_or_else(|| panic!("{path}: an entry of {key} is not a string")).to_string()).collect()
+}
+
+fn identity(f: &demesne_emit_sql::GenFn) -> String {
+    let types: Vec<String> = f.sig.split(',').map(|p| p.split_whitespace().skip(1).collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()).collect();
+    format!("{}.{}({})", f.schema(), f.name, types.join(", "))
+}
+
+fn name_of(signature: &str) -> &str {
+    signature.split('(').next().and_then(|q| q.rsplit('.').next()).unwrap_or_default()
+}
+
+#[test]
+fn every_function_the_sql_creates_is_in_exactly_one_of_callable_internal_and_revoked() {
+    let (mut wrong, mut totals, mut specs) = (Vec::new(), [0usize; 3], 0);
+    for (path, s) in emitting_specs() {
+        let m = Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{path}: {e}"));
+        let written = json::parse(&m.to_json()).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let functions = listed(&written, "functions", &path);
+        let lists = ["callable", "internal", "revoked"].map(|key| (key, listed(&written, key, &path)));
+        for (total, (key, list)) in totals.iter_mut().zip(&lists) {
+            *total += list.len();
+            wrong.extend(list.iter().filter(|f| !functions.contains(*f)).map(|f| format!("{path}: {key} lists {f}, which the SQL does not create")));
+        }
+        for f in &functions {
+            let held: Vec<&str> = lists.iter().filter(|(_, list)| list.contains(f)).map(|(key, _)| *key).collect();
+            if held.len() != 1 {
+                wrong.push(format!("{path}: {f} is in {held:?}"));
+            }
+        }
+        specs += 1;
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    let [callable, internal, revoked] = totals;
+    assert!(specs > 150 && callable > 15 && internal > 300 && revoked > 300, "{specs} specs, {callable} callable, {internal} internal, {revoked} revoked");
+}
+
+#[test]
+fn each_list_holds_the_functions_its_name_says() {
+    let mut wrong = Vec::new();
+    for (path, s) in emitting_specs() {
+        let sql = Sql::new(&s);
+        let lists = sql.manifest().unwrap_or_else(|e| panic!("{path}: {e}")).execute.unwrap_or_else(|| panic!("{path}: the manifest records no lists"));
+        let declared: BTreeSet<&str> = s
+            .objects
+            .iter()
+            .flat_map(|o| {
+                o.exports.iter().map(|e| e.name.as_str()).chain(o.probes.iter().map(|p| p.name.as_str())).chain(o.projections.iter().map(|p| p.name.as_str()))
+            })
+            .collect();
+        for f in sql.emit_definers().unwrap_or_else(|e| panic!("{path}: {e}")) {
+            let sig = identity(&f);
+            if (f.execute == Execute::Granted) != lists.revoked.contains(&sig) {
+                wrong.push(format!("{path}: {sig} is {:?} and the manifest's revoked list says otherwise", f.execute));
+            }
+            if declared.contains(f.name.as_str()) && !lists.callable.contains(&sig) {
+                wrong.push(format!("{path}: a spec line declares {sig}, and it is not callable"));
+            }
+        }
+        for c in &lists.callable {
+            let name = name_of(c);
+            if !(declared.contains(name) || name.contains("_can_access_") || name.ends_with("_resources")) {
+                wrong.push(format!("{path}: {c} is callable, and no spec line makes it so"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn a_manifest_written_before_it_recorded_who_may_run_each_function_reads_with_that_unrecorded() {
+    let earlier = r#"{"manifest": 1, "functions": ["auth.f(text)"], "policies": [], "triggers": [], "indexes": [], "tables": [], "rls": []}"#;
+    let m = Manifest::from_json(earlier).expect("a manifest from before");
+    assert_eq!(m.execute, None, "{m:?}");
+    assert!(!m.to_json().contains("\"callable\""), "{}", m.to_json());
+}
+
+#[test]
+fn a_manifest_whose_lists_do_not_hold_each_function_once_is_refused() {
+    let with = |lists: &str| {
+        format!(
+            r#"{{"manifest": 1, "functions": ["auth.f(text)", "auth.g(text)"], {lists} "policies": [], "triggers": [], "indexes": [], "tables": [], "rls": []}}"#
+        )
+    };
+    for (lists, want) in [
+        (r#""callable": ["auth.f(text)"], "internal": ["auth.g(text)"],"#, r#"no "revoked" list"#),
+        (r#""revoked": ["auth.f(text)", "auth.g(text)"],"#, r#"no "callable" or "internal" list"#),
+        (r#""callable": ["auth.f(text)"], "internal": ["auth.f(text)"], "revoked": ["auth.g(text)"],"#, r#""auth.f(text)" is in more than one"#),
+        (r#""callable": ["auth.f(text)"], "internal": [], "revoked": [],"#, r#""auth.g(text)" is in none"#),
+        (
+            r#""callable": ["auth.f(text)", "auth.h(text)"], "internal": ["auth.g(text)"], "revoked": [],"#,
+            r#""callable" lists "auth.h(text)", which functions does not"#,
+        ),
+    ] {
+        let err = Manifest::from_json(&with(lists)).map(|m| m.to_json()).expect_err(lists).to_string();
+        assert!(err.contains(want), "{lists}: {err}");
+    }
+    let whole = Manifest::from_json(&with(r#""callable": ["auth.f(text)"], "internal": [], "revoked": ["auth.g(text)"],"#)).expect("a whole manifest");
+    assert_eq!(whole.execute.map(|e| e.revoked.into_iter().collect::<Vec<_>>()), Some(vec!["auth.g(text)".to_string()]));
 }

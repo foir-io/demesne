@@ -1,5 +1,6 @@
 use postgres::{Client, NoTls, Transaction};
 use std::collections::BTreeSet;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 const ROWS: &str = "demesne_chain_rows";
 const AUTH: &str = "demesne_chain_auth";
@@ -368,7 +369,10 @@ impl Oracle {
     }
 }
 
-fn install(db: &mut Client) {
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+fn install(db: &mut Client) -> MutexGuard<'static, ()> {
+    let held = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let s = demesne_syntax::parse(&spec()).unwrap_or_else(|e| panic!("the spec parses: {e}\n{}", spec()));
     demesne_emit_sql::validate(&s).unwrap_or_else(|e| panic!("the spec validates: {e}"));
     let sql = demesne_emit_sql::Sql::new(&s);
@@ -394,10 +398,11 @@ fn install(db: &mut Client) {
         db.batch_execute(&stmt).unwrap_or_else(|e| panic!("apply: {e}\n{stmt}"));
     }
     db.batch_execute(&format!(
-        "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER}; GRANT SELECT, UPDATE, DELETE ON {ROWS}.docs TO {CALLER}; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {AUTH} TO {CALLER}; SET search_path = {ROWS};"
+        "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER}; GRANT SELECT, UPDATE, DELETE ON {ROWS}.docs TO {CALLER}; SET search_path = {ROWS};"
     ))
     .expect("grants");
     seed(db);
+    held
 }
 
 fn seed(db: &mut Client) {
@@ -484,7 +489,7 @@ fn connect() -> Client {
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn the_policy_and_the_evaluator_answer_as_the_rule_says_for_every_caller_row_and_operation() {
     let mut db = connect();
-    install(&mut db);
+    let _installed = install(&mut db);
     let within = |id: &&str| !DEEPER_THAN_THE_NESTING.contains(id);
     let mut cells = 0;
     for op in ["select", "update", "delete"] {
@@ -559,7 +564,7 @@ fn the_policy_and_the_evaluator_answer_as_the_rule_says_for_every_caller_row_and
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn a_change_at_a_middle_hop_ends_or_gives_access_in_the_same_transaction() {
     let mut db = connect();
-    install(&mut db);
+    let _installed = install(&mut db);
     let ann = CALLERS[0];
     for (change, why) in [
         ("DELETE FROM doc_shares WHERE member_id = 'ann' AND doc_id = 'c4_x1'", "the first hop loses its extra slot"),

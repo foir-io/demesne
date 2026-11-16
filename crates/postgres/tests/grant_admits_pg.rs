@@ -90,8 +90,7 @@ fn install(db: &mut Client) {
     }
     db.batch_execute(
         "GRANT USAGE ON SCHEMA ga_rows, ga_auth TO ga_caller;
-         GRANT SELECT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ga_rows TO ga_caller;
-         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ga_auth TO ga_caller;",
+         GRANT SELECT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ga_rows TO ga_caller;",
     )
     .expect("grants");
 }

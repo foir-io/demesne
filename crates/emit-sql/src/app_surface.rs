@@ -27,7 +27,7 @@ impl Sql<'_> {
         self.app_surface().map_err(Error::unplaced)
     }
 
-    fn app_surface(&self) -> Result<AppCheckSurface, String> {
+    pub(crate) fn app_surface(&self) -> Result<AppCheckSurface, String> {
         if self.s.objects.is_empty() {
             return Err("EmitAppSurface: the spec declares no objects".into());
         }
@@ -51,7 +51,7 @@ impl Sql<'_> {
         Ok(AppCheckSurface { objects: objects.into() })
     }
 
-    fn flat_list_fn(&self, o: &Object) -> String {
+    pub(crate) fn flat_list_fn(&self, o: &Object) -> String {
         let Some(sel) = o.perms.iter().find(|pm| pm.maps() == "select") else { return String::new() };
         let leaves = sel.tree.leaves();
         if leaves.len() != 1 || !accessor_tree_op(&sel.tree).is_empty() {

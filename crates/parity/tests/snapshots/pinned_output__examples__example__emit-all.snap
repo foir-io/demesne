@@ -44,6 +44,7 @@ SET search_path = public
 AS $$
   SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id')) AND (EXISTS (SELECT 1 FROM role_grants ra JOIN roles r ON r.id = ra.role_id WHERE ra.grantee_kind = 'staff' AND ra.grantee_id = user_id AND ra.tenant_id IS NULL AND ra.workspace_id IS NULL AND ra.revoked_at IS NULL AND r.key IN ('platform_admin')));
 $$;
+REVOKE EXECUTE ON FUNCTION auth.has_org_role(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.member_can_access_doc(p_member_id text, p_doc_id text, p_access text)
 RETURNS boolean
@@ -63,7 +64,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM doc_acl WHERE doc_id = p_doc_id AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access);
+  SELECT p_member_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id')) AND (EXISTS (SELECT 1 FROM doc_acl WHERE doc_id = p_doc_id AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.docs_accessors_conditional(p_id text)

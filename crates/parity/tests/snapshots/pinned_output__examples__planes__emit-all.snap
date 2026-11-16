@@ -13,6 +13,7 @@ SET search_path = public
 AS $$
   SELECT COALESCE((SELECT m.impliers FROM (VALUES ('tenant:manage', ARRAY['tenant:manage']::text[]), ('content:read', ARRAY['content:read', 'tenant:manage']::text[]), ('content:write', ARRAY['content:write', 'tenant:manage']::text[]), ('billing:read', ARRAY['billing:read', 'tenant:manage']::text[])) AS m(perm, impliers) WHERE m.perm = p_perm), ARRAY[p_perm]::text[]);
 $$;
+REVOKE EXECUTE ON FUNCTION auth.operator_perm_implied_by(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.operator_has_perm(user_id text, check_tenant_id text, check_project_id text, p_perm text)
 RETURNS boolean

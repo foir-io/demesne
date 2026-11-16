@@ -28,6 +28,31 @@ exit: 0
     "auth.spaces_admits(text, jsonb)",
     "auth.trail_hops_declared_by_trail(text)"
   ],
+  "callable": [],
+  "internal": [
+    "auth.doc_composition_lent(text, text, text)",
+    "auth.doc_shared_keyed(text, text, text)",
+    "auth.doc_terms_hold(text, text, jsonb)",
+    "auth.keeper_memberin_space(text, text)",
+    "auth.live_skin_own(text)",
+    "auth.paths_maintain()",
+    "auth.rule_slots_declared_by_rule(text)"
+  ],
+  "revoked": [
+    "auth.demesne_instant(text)",
+    "auth.doc_composition_lent_0(text, text, text)",
+    "auth.doc_select_holds_at(text, text)",
+    "auth.doc_shared_keyed_inside(text, text, text)",
+    "auth.doc_terms_hold_inside(text, text, jsonb)",
+    "auth.live_skin(text)",
+    "auth.paths_ancestors(text)",
+    "auth.paths_descendants(text)",
+    "auth.paths_path(text)",
+    "auth.paths_reachable(text, text)",
+    "auth.spaces_accessors(text)",
+    "auth.spaces_admits(text, jsonb)",
+    "auth.trail_hops_declared_by_trail(text)"
+  ],
   "policies": [
     {
       "table": "public.banners",

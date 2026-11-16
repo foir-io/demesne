@@ -424,6 +424,7 @@ $$;",
             table_schema: self.table_schema().into(),
             name: format!("{}_member", self.flat),
             sig: format!("p_resource {t}, p_principal {t}", t = self.id_type()),
+            principal: Some("p_principal".to_string()),
             body: format!("EXISTS (SELECT 1 FROM {} WHERE resource_id = p_resource AND principal_id = p_principal)", self.q_flat()),
             ..Default::default()
         }

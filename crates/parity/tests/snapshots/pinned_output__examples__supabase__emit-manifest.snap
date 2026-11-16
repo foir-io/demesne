@@ -11,6 +11,14 @@ exit: 0
     "demesne.notes_accessors_conditional(text)",
     "demesne.notes_admits(text, jsonb)"
   ],
+  "callable": [],
+  "internal": [
+    "demesne.note_acl_grants(text, text, text)"
+  ],
+  "revoked": [
+    "demesne.notes_accessors_conditional(text)",
+    "demesne.notes_admits(text, jsonb)"
+  ],
   "policies": [
     {
       "table": "public.notes",

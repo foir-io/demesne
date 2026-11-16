@@ -195,8 +195,7 @@ fn install(db: &mut Client) {
     }
     db.batch_execute(
         "GRANT USAGE ON SCHEMA d36_rows, d36_auth TO d36_caller;
-         GRANT SELECT ON ALL TABLES IN SCHEMA d36_rows TO d36_caller;
-         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA d36_auth TO d36_caller;",
+         GRANT SELECT ON ALL TABLES IN SCHEMA d36_rows TO d36_caller;",
     )
     .expect("grants");
 }

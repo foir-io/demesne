@@ -63,7 +63,7 @@ fn install(db: &mut Client) {
     db.batch_execute(&format!(
         "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER};
          GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.spaces, {ROWS}.pages, {ROWS}.sheets, {ROWS}.themes, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers, {ROWS}.skins, {ROWS}.banners TO {CALLER};
-         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {AUTH} TO {CALLER};
+         GRANT EXECUTE ON FUNCTION {AUTH}.paths_reachable(text, text) TO {CALLER};
          SET search_path = {ROWS};"
     ))
     .expect("grants");
@@ -247,9 +247,11 @@ fn only_the_callers_own_node_is_answered(db: &mut Client) {
         assert_eq!(reachable(db, Some("b"), pair), wanted, "a caller at b asks whether {} reaches {}", pair.0, pair.1);
         assert!(!reachable(db, None, pair), "a caller at no node asks whether {} reaches {}", pair.0, pair.1);
     }
-    let public: bool =
-        db.query_one(&format!("SELECT has_function_privilege('public', '{AUTH}.paths_path(text)', 'EXECUTE')"), &[]).expect("the privilege").get(0);
-    assert!(!public, "no rule calls the path, so PUBLIC may not run it");
+    for function in ["paths_path(text)", "paths_reachable(text, text)"] {
+        let public: bool =
+            db.query_one(&format!("SELECT has_function_privilege('public', '{AUTH}.{function}', 'EXECUTE')"), &[]).expect("the privilege").get(0);
+        assert!(!public, "no rule calls {function}, so PUBLIC may not run it");
+    }
 }
 
 const OPS: [Op; 4] = [Op::Select, Op::Insert, Op::Update, Op::Delete];

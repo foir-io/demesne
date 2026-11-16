@@ -203,7 +203,12 @@ fn install_reach_schema(d: &mut Db, spec: &demesne_syntax::Spec) {
     d.exec(&rls.policy_sql(REACH_CALLER), &[]);
     d.exec(&format!("GRANT USAGE ON SCHEMA {REACH_ROWS}, {REACH_AUTH} TO {REACH_CALLER}"), &[]);
     d.exec(&format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {REACH_ROWS} TO {REACH_CALLER}"), &[]);
-    d.exec(&format!("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {REACH_AUTH} TO {REACH_CALLER}"), &[]);
+    d.exec(
+        &format!(
+            "GRANT EXECUTE ON FUNCTION {REACH_AUTH}.approvals_reach(text, text), {REACH_AUTH}.approvals_reach_in_space(text, text, text), {REACH_AUTH}.approvals_reach_in_folder(text, text, text, text) TO {REACH_CALLER}"
+        ),
+        &[],
+    );
 }
 
 fn seed_reach_rows(d: &mut Db, tr: &ReachTree) {

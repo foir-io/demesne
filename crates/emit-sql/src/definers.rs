@@ -103,10 +103,9 @@ fn claimed(side: &ArgSrc) -> Option<&str> {
 }
 
 fn caller_parameter(f: &GenFn) -> Option<(String, String)> {
-    let mut parameters = f.sig.split(',').map(|p| p.split_whitespace().collect::<Vec<_>>());
-    let named = |p: &Vec<&str>| p.first().is_some_and(|name| matches!(*name, "user_id" | "p_principal" | "p_member"));
-    let found = if f.name.contains("_can_access_") { parameters.next() } else { parameters.find(named) }?;
-    Some((found.first()?.to_string(), found.get(1..)?.join(" ")))
+    let principal = f.principal.as_deref()?;
+    let found = f.sig.split(',').map(|p| p.split_whitespace().collect::<Vec<_>>()).find(|p| p.first() == Some(&principal))?;
+    Some((principal.to_string(), found.get(1..)?.join(" ")))
 }
 
 fn is_the_callers(arg: &str, callers: &[String]) -> String {
@@ -402,7 +401,43 @@ impl Sql<'_> {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
         }
-        Ok(order_by_calls(crate::chains::plans_kept(crate::chains::reached(out, &optional), &self.chain_fns())))
+        self.public_only_where_called(order_by_calls(crate::chains::plans_kept(crate::chains::reached(out, &optional), &self.chain_fns())))
+    }
+
+    pub(crate) fn adopter_callable(&self) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for obj in &self.s.objects {
+            names.extend(obj.exports.iter().map(|e| e.name.clone()));
+            names.extend(obj.probes.iter().map(|p| p.name.clone()));
+            names.extend(obj.projections.iter().map(|p| p.name.clone()));
+            if obj.perms.iter().any(|pm| pm.has_layer("kernel")) {
+                names.insert(format!("{}_can_access_{}", self.s.owner_principal_name(obj), obj.name));
+            }
+            let listed = self.flat_list_fn(obj);
+            if let Some((_, name)) = listed.rsplit_once('.') {
+                names.insert(name.to_string());
+            }
+        }
+        names
+    }
+
+    fn public_only_where_called(&self, mut fns: Vec<GenFn>) -> R<Vec<GenFn>> {
+        let caller = Sql { definer_body: false, ..*self };
+        let policies = caller.emit_rls().map_err(|e| e.to_string())?;
+        let surface = caller.app_surface().unwrap_or_default();
+        let mut asked: Vec<&str> = policies.policies.iter().flat_map(|p| [p.using.as_str(), p.check.as_str()]).collect();
+        for o in surface.objects.iter() {
+            asked.extend([o.edit_check_sql.as_ref(), o.async_check_sql.as_ref()]);
+            asked.extend(o.checks.iter().map(|c| c.check_sql.as_ref()));
+        }
+        let callable = self.adopter_callable();
+        for f in fns.iter_mut().filter(|f| f.execute == Execute::Public && !callable.contains(&f.name)) {
+            let call = format!("{}.{}(", f.schema(), f.name);
+            if !asked.iter().any(|text| text.contains(&call)) {
+                f.execute = Execute::Granted;
+            }
+        }
+        Ok(fns)
     }
 
     fn def_emit_membership(&self, out: &mut Vec<GenFn>) -> R<()> {
@@ -417,7 +452,14 @@ impl Sql<'_> {
             }
             let sig = format!("user_id {}", self.s.id_type());
             let strict = binds_every(&sig, &[&conj]);
-            out.push(GenFn { name: m.flag_col.clone(), body: grant_edge_exists(&m.table, &conj), sig, strict, ..Default::default() });
+            out.push(GenFn {
+                name: m.flag_col.clone(),
+                body: grant_edge_exists(&m.table, &conj),
+                sig,
+                strict,
+                principal: Some("user_id".into()),
+                ..Default::default()
+            });
         }
         Ok(())
     }
@@ -458,12 +500,14 @@ impl Sql<'_> {
                 strict: binds_every(&unscoped_sig, &[&unscoped]),
                 sig: unscoped_sig,
                 body: grant_edge_exists(g.table(), &unscoped),
+                principal: Some("user_id".into()),
                 ..Default::default()
             },
             GenFn {
                 name: format!("{base}_unscoped_set"),
                 strict: binds_every(&set_sig, &[&set_conj]),
                 sig: set_sig,
+                principal: Some("user_id".into()),
                 returns: format!("SETOF {id_t}"),
                 body: format!("{} FROM {} WHERE {}", g.level_col(), g.table(), set_conj.join(" AND ")),
                 ..Default::default()
@@ -481,6 +525,7 @@ impl Sql<'_> {
                 name: format!("{base}_in_{}", scope.level),
                 strict: binds_every(&sig, &[&explicit]),
                 sig,
+                principal: Some("user_id".into()),
                 body: grant_edge_exists(g.table(), &explicit),
                 ..Default::default()
             });
@@ -572,6 +617,7 @@ impl Sql<'_> {
                 strict: binds_every(&sig, &[&scoped]),
                 sig,
                 body: grant_edge_exists(g.table(), &scoped),
+                principal: Some("user_id".into()),
                 ..Default::default()
             });
             let mut set_conj = vec![format!("{} = user_id", g.grantee_col())];
@@ -582,6 +628,7 @@ impl Sql<'_> {
                 name: format!("{name}_set"),
                 strict: binds_every(&set_sig, &[&set_conj]),
                 sig: set_sig,
+                principal: Some("user_id".into()),
                 returns: format!("SETOF {id_t}"),
                 body: format!("{} FROM {} WHERE {}", g.level_col(), g.table(), set_conj.join(" AND ")),
                 ..Default::default()
@@ -632,7 +679,7 @@ impl Sql<'_> {
         conds.extend(revoked_cond(rs, ""));
         let body = format!("EXISTS (SELECT 1 FROM {} WHERE {})", or(rs.assignments.as_deref()), conds.join(" AND "));
         let id_t = self.s.id_type();
-        GenFn { name, sig: format!("p_principal {id_t}, p_{level} {id_t}"), body, ..Default::default() }
+        GenFn { name, sig: format!("p_principal {id_t}, p_{level} {id_t}"), body, principal: Some("p_principal".into()), ..Default::default() }
     }
 
     fn def_emit_holds_perm(&self, defs: &mut Definers) -> R<()> {
@@ -697,7 +744,7 @@ impl Sql<'_> {
             inside.join(" AND "),
             held.join(", ")
         );
-        defs.fns.push(GenFn { name, sig: sig.join(", "), body, ..Default::default() });
+        defs.fns.push(GenFn { name, sig: sig.join(", "), body, principal: Some("user_id".into()), ..Default::default() });
         Ok(())
     }
 
@@ -788,7 +835,7 @@ impl Sql<'_> {
             or(rs.role_col.as_deref()),
             conds.join(" AND ")
         );
-        GenFn { name: name.to_string(), sig: args.join(", "), body, ..Default::default() }
+        GenFn { name: name.to_string(), sig: args.join(", "), body, principal: Some("user_id".into()), ..Default::default() }
     }
 
     fn perm_implied_by_definer(&self, rs: &RoleStore, vocab: &Vocabulary) -> R<GenFn> {
@@ -1117,6 +1164,7 @@ impl Sql<'_> {
             defs.add_once(GenFn {
                 name: keyed_edge_fn(obj, r),
                 sig: format!("p_principal {id_t}, p_object {id_t}, p_key text{slot_arg}"),
+                principal: Some("p_principal".into()),
                 strict: true,
                 body: grant_edge_exists(&e.table, &conds),
                 ..Default::default()
@@ -1134,6 +1182,7 @@ impl Sql<'_> {
             defs.fns.push(GenFn {
                 name,
                 sig: "p_group text, p_member text".into(),
+                principal: Some("p_member".into()),
                 body: format!("EXISTS (SELECT 1 FROM {} WHERE {} = p_group AND {} = p_member)", g.closure, g.group_col, g.member_col),
                 ..Default::default()
             });
@@ -1289,7 +1338,7 @@ impl Sql<'_> {
             conds.join(" AND ")
         );
         let body = if recurse.is_empty() { exists } else { format!("{}.{} OR {}", self.s.definer_schema(), recurse, exists) };
-        GenFn { name: name.to_string(), sig: args.join(", "), body, ..Default::default() }
+        GenFn { name: name.to_string(), sig: args.join(", "), body, principal: Some("user_id".into()), ..Default::default() }
     }
 
     fn operator_reach(&self, level: &str) -> String {
@@ -1870,6 +1919,7 @@ impl Sql<'_> {
         Ok(GenFn {
             name: format!("{}_can_access_{}", principal, obj.name),
             sig: format!("p_{}_id text, p_{}_id text, p_access text", principal, obj.name),
+            principal: Some(format!("p_{principal}_id")),
             body,
             ..Default::default()
         })
@@ -2086,7 +2136,7 @@ fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, kind: &str,
     }
     let sig = format!("p_{}_id text, p_{}_id text, p_access text", param, obj.name);
     let refs: Vec<&[String]> = disjuncts.iter().map(Vec::as_slice).collect();
-    GenFn { name, strict: binds_every(&sig, &refs), sig, body, ..Default::default() }
+    GenFn { name, strict: binds_every(&sig, &refs), sig, body, principal: Some(format!("p_{param}_id")), ..Default::default() }
 }
 
 fn grant_access_match(vg: &ViaGrant, col: &str) -> String {
@@ -2136,4 +2186,15 @@ fn grant_group_matched(vg: &ViaGrant, obj: &Object, param: &str) -> Vec<String> 
     let mut conds = grant_group_keys(vg, obj, param);
     conds.push(grant_access_match(vg, &format!("g.{}", vg.access_col)));
     conds
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GenFn, caller_parameter};
+
+    #[test]
+    fn the_callers_parameter_is_the_principals_own_wherever_it_stands() {
+        let f = GenFn { sig: "p_group text, p_member uuid, p_key text".into(), principal: Some("p_member".into()), ..Default::default() };
+        assert_eq!(caller_parameter(&f), Some(("p_member".to_string(), "uuid".to_string())), "{f:?}");
+    }
 }

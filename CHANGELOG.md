@@ -8,8 +8,8 @@ each change, and `demesne_emit_sql::Sql` gains private fields, so it is built
 with `Sql::new`. A spec that uses none of the constructs below emits the
 policies v4.0.0 did, with three exceptions: the two under "Fixed", and a
 permission whose terms a grant's holder used to pass (the second "Breaking"
-entry). Its generated functions change: see "Breaking" first. The Go module's API doesn't change, so
-it is `go/v1.6.0`.
+entry). Its generated functions change: see "Breaking" first. The Go
+module's API doesn't change, so it is `go/v1.6.0`.
 
 ### Breaking: a generated function answers only about the caller, or PUBLIC cannot run it
 
@@ -33,12 +33,27 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   a rule passes a row's column as the principal and a claim as the scope
   (`via memberin tenant(id, @tenant_id)`), it also answers for the scope that
   claim names, and for no other scope: such a rule already shows the caller
-  which principals are members of the scope the caller stands in.
-- **Revoked from PUBLIC.** `<table>_accessors`, `<table>_accessors_conditional`,
+  which principals are members of the scope the caller stands in. A grant
+  relation's check (`<relation>_grants`, `<acl>_grants_<object>`) is bound on
+  the principal it is asked about. Which argument is the principal is decided
+  where the function is generated, not by its name, so a parameter of an
+  `export` or a `probe` is never taken for one.
+- **Revoked from PUBLIC.** A generated function stays PUBLIC only where
+  something must run it as the caller: a policy calls it, a generated
+  application check calls it (a `@check` point check, the edit check, the
+  async check), or a spec line makes it yours to call (an `export`, a `probe`,
+  a `projection`, `<principal>_can_access_<object>` for a `@kernel` permission,
+  and the `<flat>_resources()` list the application surface reads). Every other
+  one is called only by generated functions, which run as their owner, and is
+  revoked: a grant's `_reach`, `_reach_unscoped`, `_reach_in_<level>` and any
+  `_reach_set` no policy calls, a closure function no policy calls directly,
+  role helpers (`has_<role>_role`, `<roles>_perm_implied_by`), memberships, a
+  borrowed permission's `<object>_can_<perm>`, group lookups and chain
+  helpers. A revoked function keeps its binding. Among them,
+  `<table>_accessors`, `<table>_accessors_conditional`,
   `<table>_direct_accessors` and `<table>_<verb>_accessors` name the principals
-  that reach any row id, and `<closure>_path` returns any node's ancestors. No
-  policy calls them. `<table>_admits` and a `nearest` lookup were revoked
-  already.
+  that reach any row id, and `<closure>_path` returns any node's ancestors.
+  `<table>_admits` and a `nearest` lookup were revoked already.
 - **Left as it was.** `<table>_declared_by_<key>` returns the rows a rule table
   declares for a key. A policy calls it with a row's value, and what it returns
   is the rule vocabulary, not a tenant's rows.
@@ -55,11 +70,36 @@ What breaks for an adopter:
 - **SQL of your own that calls a bound function with another principal's id,
   or another node, now gets false or nothing.** So does a call made with no
   claims set. Read the tables in that statement instead, under a role that may.
+- **SQL of your own that runs as the caller role and calls a generated
+  function no policy calls now gets `permission denied`.** That includes a role
+  helper, a grant's reach function and a closure function you called directly.
+  A generated function is the policies' tool: read the tables that statement
+  needs instead, under a role that may. Granting `EXECUTE` gives back only
+  what the caller could ask about itself, since the binding still holds.
 - **A role that lists accessors or reads `<closure>_path` needs
-  `GRANT EXECUTE`** on those functions. `demesne emit … manifest` lists every
-  function the SQL revokes.
+  `GRANT EXECUTE`** on those functions. The manifest's `revoked` list names
+  every function the SQL revokes (below).
 
 Re-emit and apply the definers; nothing else moves.
+
+### The manifest says who may run each function
+
+`demesne emit <spec> manifest`, and its `--file` form, puts every function the
+SQL creates in exactly one of three lists beside `functions`. `callable` holds
+the functions a spec line makes yours to call, `internal` those PUBLIC may run
+that no spec line makes yours, and `revoked` those PUBLIC may not run. Code of
+your own calls only what `callable` lists. Every manifest gains the three
+lists, empty ones included.
+
+Reading a manifest refuses one whose lists hold a function twice, leave one out
+or name one `functions` does not, and one with some of the lists and not the
+others. A manifest written before this release has none of them. It still
+reads, as one that does not record who may run its functions, and `migrate`
+uses it as before.
+
+`demesne_emit_sql::Manifest` gains `execute: Option<ExecuteLists>`.
+`Sql::manifest` always fills it, and `Manifest::from_sql` leaves it `None`,
+since SQL alone does not say which functions a spec line makes yours.
 
 ### Breaking: a grant gives reach, and the permission's terms still bind its holders
 

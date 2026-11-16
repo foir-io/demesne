@@ -11,6 +11,14 @@ exit: 0
     "auth.operator_perm_implied_by(text)",
     "auth.platform_has_perm(text, text)"
   ],
+  "callable": [],
+  "internal": [
+    "auth.operator_has_perm(text, text, text, text)",
+    "auth.platform_has_perm(text, text)"
+  ],
+  "revoked": [
+    "auth.operator_perm_implied_by(text)"
+  ],
   "policies": [
     {
       "table": "public.documents",

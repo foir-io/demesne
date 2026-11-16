@@ -86,7 +86,7 @@ fn install(db: &mut Client) {
         db.batch_execute(&stmt).unwrap_or_else(|e| panic!("apply: {e}\n{stmt}"));
     }
     db.batch_execute(&format!(
-        "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER}; GRANT SELECT, UPDATE ON {ROWS}.docs, {ROWS}.notes TO {CALLER}; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {AUTH} TO {CALLER}; SET search_path = {ROWS};"
+        "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER}; GRANT SELECT, UPDATE ON {ROWS}.docs, {ROWS}.notes TO {CALLER}; SET search_path = {ROWS};"
     ))
     .expect("grants");
     for (name, estate, base, live) in ROLES {

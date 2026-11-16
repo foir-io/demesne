@@ -14,6 +14,7 @@ SET search_path = public
 AS $$
   SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id')) AND (EXISTS (SELECT 1 FROM support_grants WHERE holder_id = user_id AND tenant_id = check_tenant_id AND ended_at IS NULL));
 $$;
+REVOKE EXECUTE ON FUNCTION auth.support_grants_reach(text, text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.support_grants_reach_set(user_id text)
 RETURNS SETOF text
@@ -34,7 +35,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM acl WHERE resource_id = p_doc_id AND resource_type = 'doc' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access);
+  SELECT p_member_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id')) AND (EXISTS (SELECT 1 FROM acl WHERE resource_id = p_doc_id AND resource_type = 'doc' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.acl_grants_note(p_member_id text, p_note_id text, p_access text)
@@ -45,7 +46,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM acl WHERE resource_id = p_note_id AND resource_type = 'note' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access);
+  SELECT p_member_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id')) AND (EXISTS (SELECT 1 FROM acl WHERE resource_id = p_note_id AND resource_type = 'note' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
 $$;
 
 CREATE OR REPLACE FUNCTION auth.docs_accessors(p_id text)
@@ -146,6 +147,7 @@ SET search_path = public
 AS $$
   SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
 $$;
+REVOKE EXECUTE ON FUNCTION auth.doc_can_edit(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.note_can_edit(p_id text)
 RETURNS boolean
@@ -157,6 +159,7 @@ SET search_path = public
 AS $$
   SELECT EXISTS (SELECT 1 FROM notes WHERE notes.id = p_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_note((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), notes.id, 'write')))));
 $$;
+REVOKE EXECUTE ON FUNCTION auth.note_can_edit(text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.acl_manage(p_type text, p_id text)
 RETURNS boolean

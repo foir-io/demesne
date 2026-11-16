@@ -9,6 +9,11 @@ exit: 0
   "functions": [
     "auth.admin_has_perm(text, text, text, text)"
   ],
+  "callable": [],
+  "internal": [
+    "auth.admin_has_perm(text, text, text, text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.invitations",

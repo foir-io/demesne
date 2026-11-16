@@ -10,6 +10,12 @@ exit: 0
     "auth.group_closure_member(text, text)",
     "auth.group_closure_rebuild()"
   ],
+  "callable": [],
+  "internal": [
+    "auth.group_closure_member(text, text)",
+    "auth.group_closure_rebuild()"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.docs",

@@ -54,6 +54,8 @@ pub struct GenFn {
     pub language: Language,
     pub execute: Execute,
     pub bound: Option<Bound>,
+    /// The parameter the generator filled from a principal. A function PUBLIC may run answers only when it is one of the caller's own claims.
+    pub principal: Option<String>,
 }
 
 impl GenFn {

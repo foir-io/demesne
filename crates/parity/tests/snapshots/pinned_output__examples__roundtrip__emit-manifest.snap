@@ -11,6 +11,14 @@ exit: 0
     "auth.notes_accessors_conditional(text)",
     "auth.notes_admits(text, jsonb)"
   ],
+  "callable": [],
+  "internal": [
+    "auth.note_acl_grants(text, text, text)"
+  ],
+  "revoked": [
+    "auth.notes_accessors_conditional(text)",
+    "auth.notes_admits(text, jsonb)"
+  ],
   "policies": [
     {
       "table": "public.notes",

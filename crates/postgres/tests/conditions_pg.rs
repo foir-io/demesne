@@ -246,7 +246,7 @@ fn install(db: &mut Client, schema: &str, extension: &str) -> usize {
     for stmt in [demesne_emit_sql::definers_sql(&defs), rls.enablement_sql(), rls.policy_sql(CALLER)] {
         db.batch_execute(&stmt).unwrap_or_else(|e| panic!("apply: {e}\n{stmt}"));
     }
-    db.batch_execute(&format!("GRANT USAGE ON SCHEMA {rows}, {auth} TO {CALLER}; GRANT SELECT ON {rows}.docs TO {CALLER}; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {auth} TO {CALLER};")).expect("grants");
+    db.batch_execute(&format!("GRANT USAGE ON SCHEMA {rows}, {auth} TO {CALLER}; GRANT SELECT ON {rows}.docs TO {CALLER};")).expect("grants");
     stored.len()
 }
 
@@ -391,7 +391,7 @@ fn an_exception_whose_condition_cannot_be_decided_bars() {
     for stmt in [demesne_emit_sql::definers_sql(&defs), rls.enablement_sql(), rls.policy_sql(CALLER)] {
         db.batch_execute(&stmt).unwrap_or_else(|e| panic!("apply: {e}\n{stmt}"));
     }
-    db.batch_execute(&format!("GRANT USAGE ON SCHEMA {rows}, {auth} TO {CALLER}; GRANT SELECT ON {rows}.docs TO {CALLER}; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {auth} TO {CALLER};")).expect("grants");
+    db.batch_execute(&format!("GRANT USAGE ON SCHEMA {rows}, {auth} TO {CALLER}; GRANT SELECT ON {rows}.docs TO {CALLER};")).expect("grants");
     for (who, facts, reads, why) in [
         ("bob", ",\"facts\":{\"level\":3}", false, "the exception's edge and its condition both hold, so it bars"),
         ("bob", ",\"facts\":{\"level\":9}", true, "the exception's condition is decided false, so it does not bar"),

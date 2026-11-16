@@ -10,6 +10,13 @@ exit: 0
     "auth.member_has_perm(text, text, text, text)",
     "auth.member_perm_implied_by(text)"
   ],
+  "callable": [],
+  "internal": [
+    "auth.member_has_perm(text, text, text, text)"
+  ],
+  "revoked": [
+    "auth.member_perm_implied_by(text)"
+  ],
   "policies": [
     {
       "table": "public.records",

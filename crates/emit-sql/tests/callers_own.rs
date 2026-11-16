@@ -1,10 +1,12 @@
 use demesne_emit_sql::{Execute, GenFn, Sql};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-
-const ABOUT_A_ROW_OR_THE_VOCABULARY: [&str; 13] =
-    ["p_id", "p_key", "p_object", "p_element", "p_record", "p_access", "p_perm", "p_slot", "p_type", "p_text", "p_group", "p_resource", "p_container"];
-const THE_CALLERS_OWN: [&str; 8] = ["user_id", "p_principal", "p_member", "p_node", "p_ancestor", "p_descendant", "p_claim", "p_values"];
+struct Emitted {
+    path: String,
+    spec: demesne_syntax::Spec,
+    defs: Vec<GenFn>,
+    callers: Vec<String>,
+}
 
 fn specs_under(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<PathBuf> =
@@ -19,7 +21,7 @@ fn specs_under(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn emitted() -> Vec<(String, Vec<GenFn>)> {
+fn emitted() -> Vec<Emitted> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut paths = Vec::new();
     for dir in ["examples", "testdata/corpus/fixtures", "testdata/gaps"] {
@@ -28,32 +30,27 @@ fn emitted() -> Vec<(String, Vec<GenFn>)> {
     let mut out = Vec::new();
     for path in paths {
         let Ok(src) = std::fs::read_to_string(&path) else { continue };
-        let Ok(s) = demesne_syntax::parse(&src) else { continue };
-        if demesne_emit_sql::validate(&s).is_err() {
+        let Ok(spec) = demesne_syntax::parse(&src) else { continue };
+        if demesne_emit_sql::validate(&spec).is_err() {
             continue;
         }
-        if let Ok(defs) = Sql::new(&s).emit_definers() {
-            out.push((path.display().to_string(), defs));
+        let sql = Sql::new(&spec);
+        let (Ok(defs), Ok(rls)) = (sql.emit_definers(), sql.emit_rls()) else { continue };
+        let mut callers: Vec<String> = rls.policies.iter().flat_map(|p| [p.using.clone(), p.check.clone()]).collect();
+        if let Ok(surface) = sql.emit_app_surface() {
+            for o in surface.objects.iter() {
+                callers.extend([o.edit_check_sql.to_string(), o.async_check_sql.to_string()]);
+                callers.extend(o.checks.iter().map(|c| c.check_sql.to_string()));
+            }
         }
+        callers.retain(|t| !t.is_empty());
+        out.push(Emitted { path: path.display().to_string(), spec, defs, callers });
     }
     out
 }
 
 fn parameters(f: &GenFn) -> Vec<&str> {
     f.sig.split(',').filter_map(|p| p.split_whitespace().next()).collect()
-}
-
-fn the_first_of_a_point_check(f: &GenFn, at: usize) -> bool {
-    at == 0 && f.name.contains("_can_access_")
-}
-
-fn about_a_row(f: &GenFn, at: usize, parameter: &str) -> bool {
-    ABOUT_A_ROW_OR_THE_VOCABULARY.contains(&parameter)
-        || (at == 1 && f.name.contains("_memberin_"))
-        || parameter.starts_with("check_")
-        || parameter.starts_with("row_")
-        || (parameter.starts_with("p_") && parameter.ends_with("_id"))
-        || f.create_sql().contains("current_setting(")
 }
 
 fn bound(f: &GenFn, parameter: &str) -> bool {
@@ -69,27 +66,333 @@ fn bound(f: &GenFn, parameter: &str) -> bool {
         || text.contains(" AND (false OR false));")
 }
 
-#[test]
-fn a_function_public_may_run_answers_only_about_the_callers_own_claims() {
-    let all = emitted();
-    assert!(all.len() > 150, "{} specs emitted", all.len());
-    let (mut checked, mut unbound, mut unknown) = (0, BTreeSet::new(), BTreeSet::new());
-    let asked = all.iter().flat_map(|(spec, defs)| defs.iter().filter(|f| f.execute == Execute::Public).map(move |f| (spec, f)));
-    for (spec, f, at, parameter) in asked.flat_map(|(spec, f)| parameters(f).into_iter().enumerate().map(move |(at, parameter)| (spec, f, at, parameter))) {
-        let callers = THE_CALLERS_OWN.contains(&parameter) || the_first_of_a_point_check(f, at);
-        checked += usize::from(callers);
-        if callers && !bound(f, parameter) {
-            unbound.insert(format!("{}({}) takes {parameter} unbound [{spec}]", f.name, f.sig));
+fn binds_any(f: &GenFn) -> bool {
+    parameters(f).iter().any(|p| bound(f, p))
+}
+
+fn call_arguments(text: &str, call: &str) -> Vec<Vec<String>> {
+    let mut calls = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(call) {
+        let after = &rest[at + call.len()..];
+        let (mut depth, mut quoted, mut arg, mut args) = (0usize, false, String::new(), Vec::new());
+        let mut end = after.len();
+        for (i, c) in after.char_indices() {
+            match c {
+                '\'' => quoted = !quoted,
+                '(' if !quoted => depth += 1,
+                ')' if !quoted && depth == 0 => {
+                    end = i;
+                    break;
+                }
+                ')' if !quoted => depth -= 1,
+                ',' if !quoted && depth == 0 => {
+                    args.push(std::mem::take(&mut arg).trim().to_string());
+                    continue;
+                }
+                _ => {}
+            }
+            arg.push(c);
         }
-        if !callers && !about_a_row(f, at, parameter) {
-            unknown.insert(format!("{}({}): is {parameter} a row or the caller's? [{spec}]", f.name, f.sig));
+        args.push(arg.trim().to_string());
+        calls.push(args);
+        rest = &after[end..];
+    }
+    calls
+}
+
+fn a_claim_read(arg: &str) -> bool {
+    let arg = arg.trim_end_matches("::text");
+    (arg.starts_with("(SELECT current_setting(") || arg.starts_with("(SELECT NULLIF(current_setting(") || arg.starts_with("(SELECT (NULLIF(current_setting("))
+        && arg.ends_with(')')
+        && arg.matches("current_setting(").count() == 1
+}
+
+fn the_claim(arg: &str) -> Option<&str> {
+    let (_, key) = arg.rsplit_once(" '")?;
+    key.split('\'').next()
+}
+
+fn a_scope_claim_alone(e: &Emitted, key: &str) -> bool {
+    let a_level = e.spec.topology.iter().flat_map(|t| &t.levels).any(|l| l.claim_key() == key);
+    let an_identity = e.spec.subjects.iter().any(|s| if s.identifies().is_empty() { key == "sub" } else { s.identifies() == key });
+    let a_guard = format!("NULLIF(current_setting('request.jwt.claims', true), '')::json ->> '{key}'");
+    a_level && !an_identity && !e.defs.iter().any(|f| f.create_sql().contains(&a_guard))
+}
+
+fn adopter_callable(e: &Emitted) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for obj in &e.spec.objects {
+        names.extend(obj.exports.iter().map(|x| x.name.clone()));
+        names.extend(obj.probes.iter().map(|x| x.name.clone()));
+        names.extend(obj.projections.iter().map(|x| x.name.clone()));
+        if obj.perms.iter().any(|pm| pm.has_layer("kernel")) {
+            let kernel = format!("_can_access_{}", obj.name);
+            names.extend(e.defs.iter().filter(|f| f.name.ends_with(&kernel)).map(|f| f.name.clone()));
         }
     }
-    assert!(unknown.is_empty(), "parameters this test cannot place:\n{}", unknown.into_iter().collect::<Vec<_>>().join("\n"));
-    let shown: Vec<String> =
-        unbound.iter().map(|line| line.split(" [").next().unwrap_or_default().to_string()).collect::<BTreeSet<_>>().into_iter().take(60).collect();
-    assert!(unbound.is_empty(), "{} functions answer for a value that is not the caller's:\n{}", unbound.len(), shown.join("\n"));
-    assert!(checked > 250, "{checked} caller parameters checked");
+    if let Ok(surface) = Sql::new(&e.spec).emit_app_surface() {
+        for o in surface.objects.iter() {
+            if let Some((_, name)) = o.flat_list_fn.rsplit_once('.') {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    names
+}
+
+#[test]
+fn a_parameter_the_generator_filled_from_a_principal_is_the_callers_own_in_every_function_public_may_run() {
+    let all = emitted();
+    assert!(all.len() > 150, "{} specs emitted", all.len());
+    let (mut checked, mut unbound) = (0, BTreeSet::new());
+    for e in &all {
+        for f in e.defs.iter().filter(|f| f.execute == Execute::Public) {
+            let Some(principal) = f.principal.as_deref() else { continue };
+            assert!(parameters(f).contains(&principal), "{}({}) marks {principal}, which it does not take [{}]", f.name, f.sig, e.path);
+            checked += 1;
+            if !bound(f, principal) {
+                unbound.insert(format!("{}({}) takes {principal} unbound", f.name, f.sig));
+            }
+        }
+    }
+    assert!(
+        unbound.is_empty(),
+        "{} functions answer for a principal that is not the caller's:\n{}",
+        unbound.len(),
+        unbound.into_iter().collect::<Vec<_>>().join("\n")
+    );
+    assert!(checked > 200, "{checked} principals checked");
+}
+
+#[test]
+fn a_function_public_may_run_that_any_call_passes_a_claim_binds_an_argument_to_the_callers_claims() {
+    let all = emitted();
+    let (mut asked, mut unbound) = (0, BTreeSet::new());
+    for e in &all {
+        let mut texts: Vec<String> = e.callers.clone();
+        texts.extend(e.defs.iter().map(GenFn::create_sql));
+        for f in e.defs.iter().filter(|f| f.execute == Execute::Public) {
+            let call = format!("{}.{}(", f.schema(), f.name);
+            let given_a_claim = texts
+                .iter()
+                .flat_map(|t| call_arguments(t, &call))
+                .any(|args| args.iter().any(|a| a_claim_read(a) && !the_claim(a).is_some_and(|key| a_scope_claim_alone(e, key))));
+            if !given_a_claim {
+                continue;
+            }
+            asked += 1;
+            if !binds_any(f) {
+                unbound.insert(format!("{}({}) is passed the caller's claim and binds nothing [{}]", f.name, f.sig, e.path));
+            }
+        }
+    }
+    assert!(
+        unbound.is_empty(),
+        "{} functions are asked with a claim and answer for any value:\n{}",
+        unbound.len(),
+        unbound.into_iter().take(60).collect::<Vec<_>>().join("\n")
+    );
+    assert!(asked > 200, "{asked} functions asked with a claim");
+}
+
+#[test]
+fn a_function_is_public_only_where_a_policy_calls_it_or_a_spec_line_makes_it_the_adopters_to_call() {
+    let all = emitted();
+    let (mut public, mut revoked, mut stray) = (0, 0, BTreeSet::new());
+    for e in &all {
+        let callable = adopter_callable(e);
+        for f in &e.defs {
+            if f.execute != Execute::Public {
+                revoked += 1;
+                continue;
+            }
+            public += 1;
+            let call = format!("{}.{}(", f.schema(), f.name);
+            if !callable.contains(&f.name) && !e.callers.iter().any(|t| t.contains(&call)) {
+                stray.insert(format!("{}({}) [{}]", f.name, f.sig, e.path));
+            }
+        }
+    }
+    assert!(
+        stray.is_empty(),
+        "{} functions PUBLIC may run that nothing run as the caller calls:\n{}",
+        stray.len(),
+        stray.into_iter().take(60).collect::<Vec<_>>().join("\n")
+    );
+    assert!(public > 250 && revoked > 100, "{public} public, {revoked} revoked");
+}
+
+#[test]
+fn every_function_a_policy_or_the_application_surface_calls_is_one_the_caller_may_run() {
+    let (mut calls, mut refused) = (0, BTreeSet::new());
+    for e in emitted() {
+        for f in &e.defs {
+            let call = format!("{}.{}(", f.schema(), f.name);
+            if !e.callers.iter().any(|t| t.contains(&call)) {
+                continue;
+            }
+            calls += 1;
+            if f.execute != Execute::Public {
+                refused.insert(format!("{}({}) [{}]", f.name, f.sig, e.path));
+            }
+        }
+    }
+    assert!(
+        refused.is_empty(),
+        "{} functions run as the caller that PUBLIC may not run:\n{}",
+        refused.len(),
+        refused.into_iter().take(60).collect::<Vec<_>>().join("\n")
+    );
+    assert!(calls > 250, "{calls} functions called as the caller");
+}
+
+#[test]
+fn a_function_only_a_generated_check_calls_stays_one_the_caller_may_run() {
+    let src = r#"
+topology {
+  level tenant
+  level team parent tenant
+}
+vocabulary roles {
+  permission docs:read
+  preset viewer @ team = docs:read
+}
+rolestore roles {
+  assignments role_assignments
+  kind        principal_kind = "member"
+  subject     principal_id
+  scope       tenant_id team_id
+  rolejoin    role_id roles_tbl id key
+  revoked     revoked_at
+  permissions perms
+}
+subject member { anchor team; reach descendants; identifies sub; roles configurable roles; binds admin }
+object doc {
+  table  docs
+  scoped tenant > team
+  permission view  = @scoped @rls maps select
+  permission serve = @holds("docs:read") @check
+}
+"#;
+    let s = demesne_syntax::parse(src).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    let sql = Sql::new(&s);
+    let call = "auth.member_has_perm(";
+    let rls = sql.emit_rls().expect("the policies compile");
+    assert!(rls.policies.iter().all(|p| !p.using.contains(call) && !p.check.contains(call)), "no policy asks the role store");
+    let surface = sql.emit_app_surface().expect("the application surface compiles");
+    let checks: Vec<String> = surface.objects.iter().flat_map(|o| o.checks.iter().map(|c| c.check_sql.to_string())).collect();
+    assert!(checks.iter().any(|c| c.contains(call)), "the point check asks it: {checks:?}");
+    let defs = sql.emit_definers().expect("the definers compile");
+    let held = defs.iter().find(|d| d.name == "member_has_perm").expect("the role check");
+    assert_eq!(held.execute, Execute::Public, "the point check runs as the caller");
+}
+
+#[test]
+fn a_kernel_check_answers_only_for_the_callers_own_principal() {
+    let src = r"
+topology {
+  level org       col org_ref  claim org
+  level workspace parent org col ws_ref claim ws
+}
+vocabulary app { permission self:read }
+subject member {
+  anchor workspace
+  reach  self
+  identifies member_ref
+  roles  none
+  binds  owner
+}
+object note {
+  table  notes
+  pk     note_pk
+  scoped org > workspace
+  relation owner: member via owner_ref
+  permission view = owner @rls maps select
+  permission edit = owner @kernel maps update
+}
+";
+    let s = demesne_syntax::parse(src).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    let defs = Sql::new(&s).emit_definers().expect("the definers compile");
+    let kernel = defs.iter().find(|d| d.name == "member_can_access_note").expect("the kernel check");
+    assert_eq!(kernel.execute, Execute::Public, "the adopter calls it: {}", kernel.create_sql());
+    assert_eq!(kernel.principal.as_deref(), Some("p_member_id"), "{}", kernel.create_sql());
+    assert!(bound(kernel, "p_member_id"), "{}", kernel.create_sql());
+    let lists = Sql::new(&s).manifest().expect("a manifest").execute.expect("the manifest records who may run each function");
+    assert!(lists.callable.contains("auth.member_can_access_note(text, text, text)"), "{lists:?}");
+}
+
+#[test]
+fn the_resources_a_materialized_group_lists_are_the_adopters_to_call_only_where_the_application_surface_lists_through_them() {
+    let src = |view: &str| {
+        format!(
+            "topology {{ level tenant level project parent tenant }}
+vocabulary cust {{ permission self:read }}
+subject customer {{ anchor project reach self identifies customer_id roles configurable cust binds owner }}
+object doc {{
+  table  docs
+  scoped tenant > project
+  relation grantee: customer via grant dacl(resource_id, principal_kind, principal_id, access)
+  relation team:    customer via group tc(grp, mem) edge te(mem, grp) on team_id materialized
+  permission view = {view} @rls maps select
+}}
+"
+        )
+    };
+    for (view, listed) in [("team", true), ("grantee:read + team", false)] {
+        let s = demesne_syntax::parse(&src(view)).expect("the spec parses");
+        demesne_emit_sql::validate(&s).expect("the spec validates");
+        let defs = Sql::new(&s).emit_definers().expect("the definers compile");
+        let resources = defs.iter().find(|d| d.name == "docs_team_flat_resources").unwrap_or_else(|| panic!("{view}: no resources function"));
+        let surface = Sql::new(&s).emit_app_surface().expect("the application surface compiles");
+        let lists_through = surface.objects.iter().any(|o| o.flat_list_fn.contains(".docs_team_flat_resources"));
+        assert_eq!(lists_through, listed, "{view}: {surface:?}");
+        let execute = if listed { Execute::Public } else { Execute::Granted };
+        assert_eq!(resources.execute, execute, "{view}: {}", resources.create_sql());
+        let lists = Sql::new(&s).manifest().expect("a manifest").execute.expect("the manifest records who may run each function");
+        let callable = lists.callable.iter().any(|f| f.contains(".docs_team_flat_resources("));
+        assert_eq!(callable, listed, "{view}: {lists:?}");
+    }
+}
+
+#[test]
+fn a_grant_relation_answers_only_for_the_callers_own_principal() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/roundtrip.demesne");
+    let s = demesne_syntax::parse(&std::fs::read_to_string(&path).expect("the example reads")).expect("the example parses");
+    let sql = Sql::new(&s);
+    let defs = sql.emit_definers().expect("the definers compile");
+    let grants = defs.iter().find(|d| d.name == "note_acl_grants").expect("the grant relation");
+    assert_eq!(grants.principal.as_deref(), Some("p_member_id"));
+    assert_eq!(grants.execute, Execute::Public);
+    assert!(grants.body.starts_with(&format!("p_member_id = {} AND (", sql.session_claim("member_ref"))), "{}", grants.body);
+}
+
+#[test]
+fn a_parameter_named_like_a_principal_in_an_export_or_a_probe_is_not_taken_for_one() {
+    let src = r"
+topology { level estate }
+subject member { anchor estate; reach self; identifies sub; roles none; binds owner }
+object share {
+  table shares
+  scoped estate
+  relation owner: member via member
+  permission edit = owner @rls maps update
+  permission view = owner @rls maps select
+  export edit as share_write_allowed(member text as p_member, estate_id text as row_estate_id)
+  probe invited(member text as p_member)
+}
+";
+    let s = demesne_syntax::parse(src).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    let defs = Sql::new(&s).emit_definers().expect("the definers compile");
+    for name in ["share_write_allowed", "invited"] {
+        let f = defs.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("no {name}"));
+        assert_eq!(f.principal, None, "{name}");
+        assert!(!f.body.starts_with("p_member = "), "{name}: {}", f.body);
+        assert_eq!(f.execute, Execute::Public, "{name} is the adopter's to call");
+    }
 }
 
 #[test]
@@ -230,9 +533,9 @@ fn a_copy_public_cannot_run_is_called_only_with_the_callers_own_claim_and_never_
 
 #[test]
 fn a_spec_with_no_chain_gets_no_copy() {
-    for (spec, defs) in emitted() {
-        let chained = defs.iter().any(|d| d.name.contains("_composition_"));
-        let copies: Vec<&str> = defs.iter().filter(|d| d.name.ends_with("_inside")).map(|d| d.name.as_str()).collect();
-        assert!(chained || copies.is_empty(), "{spec}: {copies:?}");
+    for e in emitted() {
+        let chained = e.defs.iter().any(|d| d.name.contains("_composition_"));
+        let copies: Vec<&str> = e.defs.iter().filter(|d| d.name.ends_with("_inside")).map(|d| d.name.as_str()).collect();
+        assert!(chained || copies.is_empty(), "{}: {copies:?}", e.path);
     }
 }
