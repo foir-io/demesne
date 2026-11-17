@@ -470,16 +470,6 @@ fn reached(db: &mut Client, who: Caller, op: &str) -> BTreeSet<String> {
     got
 }
 
-fn judged(db: &mut Client, who: Caller, op: &str) -> BTreeSet<(String, String)> {
-    let mut tx = db.transaction().expect("a transaction");
-    claims(&mut tx, who);
-    let rules: Vec<String> = RULES.iter().map(|r| format!("('{r}')")).collect();
-    let sql = format!("SELECT d.id, r.rule FROM docs d CROSS JOIN (VALUES {}) AS r(rule) WHERE {AUTH}.doc_{op}_holds_at(d.id, r.rule)", rules.join(", "));
-    let got = tx.query(&sql, &[]).unwrap_or_else(|e| panic!("{sql}: {e}")).iter().map(|r| (r.get(0), r.get(1))).collect();
-    tx.rollback().expect("rollback");
-    got
-}
-
 fn connect() -> Client {
     let url = std::env::var("DEMESNE_PG_URL").ok().filter(|v| !v.is_empty()).expect("set $DEMESNE_PG_URL to run the chain checks against a live Postgres");
     Client::connect(&url, NoTls).expect("connect to $DEMESNE_PG_URL")
@@ -487,7 +477,7 @@ fn connect() -> Client {
 
 #[test]
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
-fn the_policy_and_the_evaluator_answer_as_the_rule_says_for_every_caller_row_and_operation() {
+fn the_policy_answers_as_the_rule_says_for_every_caller_row_and_operation() {
     let mut db = connect();
     let _installed = install(&mut db);
     let within = |id: &&str| !DEEPER_THAN_THE_NESTING.contains(id);
@@ -503,21 +493,6 @@ fn the_policy_and_the_evaluator_answer_as_the_rule_says_for_every_caller_row_and
             outcomes[1] += want.len();
             outcomes[0] += DOCS.len() - DEEPER_THAN_THE_NESTING.len() - want.len();
             cells += DOCS.len() - DEEPER_THAN_THE_NESTING.len();
-
-            let elements = judged(&mut db, who, op);
-            let held: BTreeSet<(String, String)> = DOCS
-                .iter()
-                .filter(|d| within(&d.0))
-                .flat_map(|d| RULES.iter().map(move |r| (d.0, *r)))
-                .filter(|(id, r)| oracle.element(op, id, r, Followed::Nothing) == Tri::Yes)
-                .map(|(id, r)| (id.to_string(), r.to_string()))
-                .collect();
-            let judged_within: BTreeSet<(String, String)> = elements.iter().filter(|(id, _)| within(&id.as_str())).cloned().collect();
-            assert_eq!(judged_within, held, "the evaluator for {op} by {}", who.name);
-            if op == "select" {
-                let by_element: BTreeSet<String> = elements.iter().map(|(id, _)| id.clone()).collect();
-                assert_eq!(by_element, policy, "a row is read exactly when the evaluator holds for one of its elements, by {}", who.name);
-            }
         }
         assert!(outcomes[0] > 0 && outcomes[1] > 0, "{op} is both admitted and refused: {outcomes:?}");
         eprintln!("chains grid, {op}: {} callers, {} admitted, {} refused", CALLERS.len(), outcomes[1], outcomes[0]);

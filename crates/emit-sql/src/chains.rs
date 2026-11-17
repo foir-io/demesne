@@ -10,7 +10,6 @@ use demesne_model::conditional::{ELEMENT, SLOT, row_term_sql};
 pub(crate) const HOP: &str = "demesne_hop";
 use demesne_runtime::quote_literal;
 use demesne_syntax::{CompPath, Object, Perm, PermNode, Quantifier, Relation, Repr, SomeScope, Subject, Term, ViaComposition};
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 type R<T> = Result<T, String>;
@@ -29,45 +28,8 @@ fn widening_somes(n: &PermNode) -> Vec<&SomeScope> {
     }
 }
 
-fn narrowing_refs<'a>(n: &'a PermNode, narrows: bool, out: &mut BTreeSet<&'a str>) {
-    match n {
-        PermNode::Leaf(t) => narrowing_leaf(t, narrows, out),
-        PermNode::Not(k) => narrowing_refs(k, !narrows, out),
-        PermNode::And(kids) | PermNode::Or(kids) => kids.iter().for_each(|k| narrowing_refs(k, narrows, out)),
-    }
-}
-
-fn narrowing_leaf<'a>(t: &'a Term, narrows: bool, out: &mut BTreeSet<&'a str>) {
-    if let Some(scope) = t.some_scope() {
-        narrowing_refs(&scope.body, narrows, out);
-    } else if let Some(scope) = t.declared_scope() {
-        narrowing_refs(&scope.body, narrows != (scope.quantifier == Quantifier::None), out);
-    } else if narrows && !t.ident().is_empty() {
-        out.insert(t.ident());
-    }
-}
-
 pub(crate) fn evaluator_fn(obj: &Object, op: &str) -> String {
     format!("{}_{op}_holds_at", obj.name)
-}
-
-pub(crate) fn reached(fns: Vec<GenFn>, optional: &[String]) -> Vec<GenFn> {
-    if optional.is_empty() {
-        return fns;
-    }
-    let texts: Vec<String> = fns.iter().map(GenFn::create_sql).collect();
-    let calls: Vec<String> = fns.iter().map(|f| format!("{}.{}(", f.schema(), f.name)).collect();
-    let mut kept: Vec<bool> = fns.iter().map(|f| !optional.contains(&f.name)).collect();
-    loop {
-        let found: Vec<usize> = (0..fns.len()).filter(|&i| !kept[i] && (0..fns.len()).any(|j| kept[j] && texts[j].contains(&calls[i]))).collect();
-        if found.is_empty() {
-            break;
-        }
-        for i in found {
-            kept[i] = true;
-        }
-    }
-    fns.into_iter().zip(kept).filter_map(|(f, keep)| keep.then_some(f)).collect()
 }
 
 fn kept_plan(f: &mut GenFn) {
@@ -186,13 +148,6 @@ fn called_inside(mut fns: Vec<GenFn>, inside: &[bool]) -> Vec<GenFn> {
 }
 
 impl<'a> Sql<'a> {
-    fn narrowed_by(obj: &Object, r: &Relation) -> bool {
-        let mut refs = BTreeSet::new();
-        let trees = obj.perms.iter().map(|pm| &pm.tree).chain(obj.admits.iter().map(|a| &a.tree));
-        trees.for_each(|tree| narrowing_refs(tree, false, &mut refs));
-        refs.contains(r.name.as_str())
-    }
-
     pub(crate) fn chain_fns(&self) -> Vec<String> {
         let mut names = Vec::new();
         for (obj, r) in self.s.relations() {
@@ -205,18 +160,16 @@ impl<'a> Sql<'a> {
         names
     }
 
-    pub(crate) fn def_emit_composition(&self, defs: &mut Definers, virt: &Virtual) -> R<Vec<String>> {
-        let mut optional = Vec::new();
+    pub(crate) fn def_emit_composition(&self, defs: &mut Definers, virt: &Virtual) -> R<()> {
         for (obj, r) in self.s.relations() {
             let Repr::Composition(vc) = &r.repr else { continue };
             let below = if vc.path.is_some() { obj.nested.unwrap_or(0) } else { 0 };
             for (level, upper) in (0..=below).rev().flat_map(|level| [(level, false), (level, true)]) {
                 let made = self.composition_definer(defs, virt, (obj, r, vc), (level, below), upper)?;
-                optional.extend(made.iter().filter(|_| level < below || (upper && !Self::narrowed_by(obj, r))).map(|f| f.name.clone()));
                 defs.fns.extend(made);
             }
         }
-        Ok(optional)
+        Ok(())
     }
 
     fn composition_definer(

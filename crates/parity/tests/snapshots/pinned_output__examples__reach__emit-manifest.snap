@@ -7,22 +7,20 @@ exit: 0
 {
   "manifest": 1,
   "functions": [
-    "auth.approvals_reach(text, text)",
     "auth.approvals_reach_in_folder(text, text, text, text)",
     "auth.approvals_reach_in_space(text, text, text)",
     "auth.approvals_reach_set(text)",
-    "auth.approvals_reach_unscoped(text, text)",
     "auth.approvals_reach_unscoped_set(text)",
     "auth.catalog_can_bound(text)",
     "auth.catalog_can_bound_for_select(text)",
     "auth.folder_write_allowed(text, text, text)",
-    "auth.paths_reach(text, text)",
     "auth.paths_reach_set(text)",
     "auth.paths_reachable(text, text)",
-    "auth.paths_up_reach(text, text)",
     "auth.paths_up_reach_set(text)"
   ],
   "callable": [
+    "auth.approvals_reach_in_folder(text, text, text, text)",
+    "auth.approvals_reach_in_space(text, text, text)",
     "auth.folder_write_allowed(text, text, text)"
   ],
   "grantable": [],
@@ -35,14 +33,7 @@ exit: 0
     "auth.paths_reachable(text, text)",
     "auth.paths_up_reach_set(text)"
   ],
-  "revoked": [
-    "auth.approvals_reach(text, text)",
-    "auth.approvals_reach_in_folder(text, text, text, text)",
-    "auth.approvals_reach_in_space(text, text, text)",
-    "auth.approvals_reach_unscoped(text, text)",
-    "auth.paths_reach(text, text)",
-    "auth.paths_up_reach(text, text)"
-  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.allowances",

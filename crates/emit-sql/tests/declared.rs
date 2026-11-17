@@ -75,7 +75,9 @@ fn a_slot_binds_into_a_keyed_edge_and_into_the_hops_a_composition_follows() {
         using.contains("auth.doc_by_part_keyed(SUB, docs.id, demesne_element.v, demesne_slot.slot)"),
         "the edge's column is matched against the declared column named after `from`:\n{using}"
     );
-    assert_eq!(get("doc_named_keyed").sig, "p_principal text, p_object text, p_key text", "an edge with no slot keeps three arguments");
+    let (_, plain) = emitted(&view("some r in rules_live (named)"));
+    let named = plain.iter().find(|d| d.name == "doc_named_keyed").expect("an edge a rule reads");
+    assert_eq!(named.sig, "p_principal text, p_object text, p_key text", "an edge with no slot keeps three arguments");
     let borrow = get("doc_composition_borrow");
     assert_eq!(borrow.sig, "p_doc_id text, p_access text, p_slot text");
     assert!(borrow.arms[0].body.starts_with("EXISTS (SELECT 1 FROM doc_reads e WHERE e.descendant_id = p_doc_id AND e.first_field::text = p_slot AND EXISTS (SELECT 1 FROM docs WHERE docs.id = e.ancestor_id AND "), "{}", borrow.arms[0].body);
@@ -90,10 +92,12 @@ fn the_cascade_judges_an_ancestor_without_the_branches_that_need_a_composition()
     let arm = &defs.iter().find(|d| d.name == "doc_composition_borrow").expect("the cascade").arms[0].body;
     assert!(arm.contains("doc_edge_slot_keyed(") && arm.contains(ROWS), "the ancestor still admits by its declared edges:\n{arm}");
     assert!(!arm.contains("doc_composition_borrow(") && !arm.contains("demesne_slot.kind = 'borrow'"), "{arm}");
-    let (_, barred) = emitted(&view(
-        "owner + some r in rules_live (named and none s in rule_slots(rule_id) where role = \"except\" ((@slot(kind, \"borrow\") and borrow) + (@slot(kind, \"edge\") and edge_slot)))",
-    ));
-    let arm = &barred.iter().find(|d| d.name == "doc_composition_borrow").expect("the cascade").arms[0].body;
+    let except = "owner + some r in rules_live (named and none s in rule_slots(rule_id) where role = \"except\" ((@slot(kind, \"borrow\") and borrow) + (@slot(kind, \"edge\") and edge_slot)))";
+    let (_, under_none) = emitted(&view(except));
+    assert!(under_none.iter().all(|d| d.name != "doc_composition_borrow"), "under `none` only the upper bound is called");
+    let widened = format!("{except} + some r in rules_live (every s in rule_slots(rule_id) (@slot(kind, \"borrow\") and borrow))");
+    let (_, barred) = emitted(&view(&widened));
+    let arm = &barred.iter().find(|d| d.name == "doc_composition_borrow").expect("the cascade a widening borrow calls").arms[0].body;
     assert!(
         arm.contains(&format!("NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'except' AND ((demesne_slot.kind = 'borrow') OR (demesne_slot.kind = 'edge') AND (auth.doc_edge_slot_keyed(")),
         "at the ancestor a declared exception that needs a composition bars by being declared, since one hop cannot tell whether it matches:\n{arm}"

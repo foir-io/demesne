@@ -127,7 +127,7 @@ fn a_hop_counts_only_when_every_row_declared_for_its_path_key_holds() {
 
 #[test]
 fn a_hop_is_judged_with_its_own_composition_taken_as_followed_and_the_others_one_level_down() {
-    let (_, defs) = emitted("  nested 1");
+    let (using, defs) = emitted("  nested 1");
     let (_, lent) = own_and_hop(&defs, "doc_composition_lent");
     holds(
         lent,
@@ -149,11 +149,9 @@ fn a_hop_is_judged_with_its_own_composition_taken_as_followed_and_the_others_one
         tree,
         &["(demesne_slot.kind = 'tree') AND (true)", "(demesne_slot.kind = 'lend') AND (auth.doc_composition_lent_0(docs.id, 'read', demesne_slot.param))"],
     );
-    let whole = named(&defs, "doc_select_holds_at");
-    assert_eq!((whole.sig.as_str(), whole.strict), ("p_record text, p_element text", true));
-    assert!(whole.body.starts_with("EXISTS (SELECT 1 FROM docs WHERE docs.id = p_record AND estate_id = ESTATE AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE demesne_element.v = p_element AND "), "{}", whole.body);
+    assert!(defs.iter().all(|d| d.name != "doc_select_holds_at"), "nothing calls the evaluator, so it is not emitted");
     holds(
-        &whole.body,
+        &using,
         &[
             "auth.doc_composition_lent(docs.id, 'read', demesne_slot.param)",
             "auth.doc_composition_under(docs.id, 'read')",
@@ -194,16 +192,16 @@ fn only_the_functions_something_calls_are_emitted_and_those_a_chain_calls_keep_t
     let names = |defs: &[GenFn]| {
         defs.iter().map(|d| d.name.clone()).filter(|n| n.contains("holds_at") || n.contains("composition")).collect::<std::collections::BTreeSet<_>>()
     };
-    let languages = |defs: &[GenFn]| ["doc_shared_keyed", "rule_slots_declared_by_rule", "doc_select_holds_at"].map(|n| named(defs, n).language);
+    let languages = |defs: &[GenFn]| ["doc_shared_keyed", "rule_slots_declared_by_rule"].map(|n| named(defs, n).language);
     let widening = "some r in rules_live held rules_held (every s in rule_slots(rule) ((@slot(kind, \"edge\") and shared) + (@slot(kind, \"lend\") and lent) + (@slot(kind, \"tree\") and under)))";
     let src = spec("  nested 1", &path(), widening);
     let (_, defs) = compiled(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
     assert_eq!(
         names(&defs).into_iter().collect::<Vec<_>>(),
-        ["doc_composition_lent", "doc_composition_lent_0", "doc_composition_under", "doc_composition_under_0", "doc_select_holds_at"],
-        "nothing narrows by a composition, so no upper bound is emitted, and a hop is judged where it is followed"
+        ["doc_composition_lent", "doc_composition_lent_0", "doc_composition_under", "doc_composition_under_0"],
+        "nothing narrows by a composition, so no upper bound is emitted, a hop is judged where it is followed, and nothing calls the evaluator"
     );
-    assert_eq!(languages(&defs), [Language::Plpgsql, Language::Plpgsql, Language::Sql]);
+    assert_eq!(languages(&defs), [Language::Plpgsql, Language::Plpgsql]);
     let edge = named(&defs, "doc_shared_keyed").create_sql();
     assert!(
         edge.ends_with(
@@ -313,6 +311,9 @@ fn a_composition_under_not_is_followed_by_its_upper_bound_and_a_declared_row_is_
     );
     assert_eq!(named(&defs, "rule_slots_declared_by_rule").returns, "TABLE(kind text)");
     lacks(&using, &["auth.doc_composition_under(docs.id"]);
+    assert!(defs.iter().all(|d| d.name != "doc_composition_under"), "only the upper bound is called, so the lower is not emitted");
+    let widened = spec("  nested 0", &path(), &format!("({view}) + under"));
+    let (_, defs) = compiled(&widened).unwrap_or_else(|e| panic!("{e}\n{widened}"));
     let never = &named(&defs, "doc_composition_under").arms[0].body;
     assert!(never.contains("WHERE docs.id = e.above_id AND (false))"), "an own rule that an exception always bars admits nobody:\n{never}");
 }

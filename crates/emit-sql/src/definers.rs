@@ -386,7 +386,7 @@ impl Sql<'_> {
         self.def_emit_declared(&mut defs);
         defs.add_each_once(self.conditions_definers());
         self.def_emit_cross_object(&mut defs, &virt)?;
-        let optional = self.def_emit_composition(&mut defs, &virt)?;
+        self.def_emit_composition(&mut defs, &virt)?;
         self.def_emit_evaluators(&mut defs, &virt)?;
         self.def_emit_store_manage(&mut defs, &virt)?;
         self.def_emit_materialized_flat_members(&mut defs);
@@ -402,7 +402,7 @@ impl Sql<'_> {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
         }
-        self.public_only_where_called(order_by_calls(crate::chains::plans_kept(crate::chains::reached(out, &optional), &self.chain_fns())))
+        self.who_runs(order_by_calls(crate::chains::plans_kept(out, &self.chain_fns())))
     }
 
     pub(crate) fn adopter_callable(&self) -> BTreeSet<String> {
@@ -420,10 +420,13 @@ impl Sql<'_> {
                 names.insert(name.to_string());
             }
         }
+        for g in &self.s.grants {
+            names.extend(g.scopes.iter().map(|scope| format!("{}_reach_in_{}", g.definer_base(), scope.level)));
+        }
         names
     }
 
-    fn public_only_where_called(&self, mut fns: Vec<GenFn>) -> R<Vec<GenFn>> {
+    fn who_runs(&self, fns: Vec<GenFn>) -> R<Vec<GenFn>> {
         let caller = Sql { definer_body: false, ..*self };
         let policies = caller.emit_rls().map_err(|e| e.to_string())?;
         let surface = caller.app_surface().unwrap_or_default();
@@ -437,7 +440,9 @@ impl Sql<'_> {
             asked.extend([(who.clone(), o.edit_check_sql.as_ref()), (who.clone(), o.async_check_sql.as_ref())]);
             asked.extend(o.checks.iter().map(|c| (who.clone(), c.check_sql.as_ref())));
         }
-        who_may_run(&mut fns, &asked, &self.adopter_callable())?;
+        let callable = self.adopter_callable();
+        let mut fns = only_what_is_used(fns, &asked, &callable);
+        who_may_run(&mut fns, &asked, &callable)?;
         Ok(fns)
     }
 
@@ -2212,6 +2217,26 @@ fn grant_group_matched(vg: &ViaGrant, obj: &Object, param: &str) -> Vec<String> 
     let mut conds = grant_group_keys(vg, obj, param);
     conds.push(grant_access_match(vg, &format!("g.{}", vg.access_col)));
     conds
+}
+
+fn only_what_is_used(fns: Vec<GenFn>, asked: &[(String, &str)], callable: &BTreeSet<String>) -> Vec<GenFn> {
+    let texts: Vec<String> = fns.iter().map(GenFn::create_sql).collect();
+    let calls: Vec<String> = fns.iter().map(|f| format!("{}.{}(", f.schema(), f.name)).collect();
+    let mut kept: Vec<bool> = fns
+        .iter()
+        .zip(&calls)
+        .map(|(f, call)| callable.contains(&f.name) || f.execute == Execute::Grantable || asked.iter().any(|(_, text)| text.contains(call.as_str())))
+        .collect();
+    loop {
+        let found: Vec<usize> = (0..fns.len()).filter(|&i| !kept[i] && (0..fns.len()).any(|j| kept[j] && j != i && texts[j].contains(&calls[i]))).collect();
+        if found.is_empty() {
+            break;
+        }
+        for i in found {
+            kept[i] = true;
+        }
+    }
+    fns.into_iter().zip(kept).filter_map(|(f, keep)| keep.then_some(f)).collect()
 }
 
 fn who_may_run(fns: &mut [GenFn], asked: &[(String, &str)], callable: &BTreeSet<String>) -> R<()> {

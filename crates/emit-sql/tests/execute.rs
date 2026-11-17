@@ -52,37 +52,47 @@ fn every_function_the_sql_creates_says_whether_public_may_run_it() {
     assert!(checked > 100, "only {checked} specs emitted");
 }
 
+const BORROWED: &str = "topology { level tenant level workspace parent tenant }
+grant support at tenant via edge support_grants(holder_id, tenant_id)
+subject staff { anchor tenant; reach via grant support; identifies sub; roles none }
+subject member { anchor workspace; reach self; identifies member_id; roles none; binds owner }
+object acl_entry {
+  table acl
+  scoped tenant > workspace
+  permission view = @store_manage @rls maps select
+  permission edit = @store_manage @rls maps update
+}
+object doc {
+  table docs
+  scoped tenant > workspace
+  relation owner: member via owner_id
+  relation grantee: member via grant acl(resource_id, principal_kind, principal_id, access) where resource_type = \"doc\"
+  permission view = owner + grantee:read + grantee:write @rls maps select
+  permission edit = owner + grantee:write @rls maps update
+}
+";
+
+fn note(replace: &str, view: &str) -> String {
+    format!(
+        "{replace}object note {{\n  table notes\n  scoped tenant > workspace\n  relation author: member via author_id\n  relation doc: member via object doc->edit on doc_id\n  permission view = {view} @rls maps select\n}}\n"
+    )
+}
+
 #[test]
 fn a_later_file_that_lets_public_run_a_function_grants_it_again() {
-    let head = "topology { level tenant level project parent tenant }
-vocabulary cust { permission self:read }
-subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
-";
-    let doc = |view: &str| {
-        format!(
-            "object doc {{
-  table docs
-  scoped tenant > project
-  relation grantee: customer via grant dacl(resource_id, principal_kind, principal_id, access)
-  relation team: customer via group tc(grp, mem) edge te(mem, grp) on team_id materialized
-  permission view = {view} @rls maps select
-}}
-"
-        )
-    };
-    let revoke = "REVOKE EXECUTE ON FUNCTION auth.docs_team_flat_resources() FROM PUBLIC;";
-    let grant = "GRANT EXECUTE ON FUNCTION auth.docs_team_flat_resources() TO PUBLIC;";
-    for (first, then, before, after) in [("grantee:read + team", "team", revoke, grant), ("team", "grantee:read + team", grant, revoke)] {
-        let (a, b) = (format!("{head}{}", doc(first)), format!("replace {}", doc(then)));
-        let files = parse_files([("a.demesne", a.as_bytes()), ("b.demesne", b.as_bytes())]).expect("the files parse");
-        validate_files(&files).expect("the files validate");
-        let earlier = file_sql(&files, 0).expect("the first file emits");
-        assert!(earlier.contains(before), "{first}: {earlier}");
-        let later = file_sql(&files, 1).expect("the second file emits");
-        let created = later
-            .find("CREATE OR REPLACE FUNCTION auth.docs_team_flat_resources()")
-            .unwrap_or_else(|| panic!("{then}: the function is not written again:\n{later}"));
-        let said = later[created..].find(after).unwrap_or_else(|| panic!("{then}: no `{after}` after the function:\n{later}"));
-        assert!(!later[created + 1..created + said].contains("CREATE "), "{then}: `{after}` does not follow its function:\n{later}");
+    let opening = format!("{BORROWED}{}", note("", "author"));
+    let (borrows, writes) = (note("replace ", "doc"), note("replace ", "author"));
+    let files = parse_files([("a.demesne", opening.as_bytes()), ("b.demesne", borrows.as_bytes()), ("c.demesne", writes.as_bytes())]).expect("the files parse");
+    validate_files(&files).expect("the files validate");
+    let revoke = "REVOKE EXECUTE ON FUNCTION auth.doc_can_edit(text) FROM PUBLIC;";
+    let grant = "GRANT EXECUTE ON FUNCTION auth.doc_can_edit(text) TO PUBLIC;";
+    let first = file_sql(&files, 0).expect("the first file emits");
+    assert!(first.contains(revoke), "only the store's dispatch calls it, as its owner:\n{first}");
+    for (k, said, why) in [(1, grant, "a policy borrows it"), (2, revoke, "no policy borrows it any more")] {
+        let sql = file_sql(&files, k).expect("the file emits");
+        let created =
+            sql.find("CREATE OR REPLACE FUNCTION auth.doc_can_edit(").unwrap_or_else(|| panic!("file {k}, {why}: the function is not written again:\n{sql}"));
+        let at = sql[created..].find(said).unwrap_or_else(|| panic!("file {k}, {why}: no `{said}` after the function:\n{sql}"));
+        assert!(!sql[created + 1..created + at].contains("CREATE "), "file {k}: `{said}` does not follow its function:\n{sql}");
     }
 }

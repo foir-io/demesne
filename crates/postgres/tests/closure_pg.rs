@@ -63,7 +63,6 @@ fn install(db: &mut Client) {
     db.batch_execute(&format!(
         "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER};
          GRANT SELECT, INSERT, UPDATE, DELETE ON {ROWS}.folders, {ROWS}.templates, {ROWS}.atlases, {ROWS}.spaces, {ROWS}.pages, {ROWS}.sheets, {ROWS}.themes, {ROWS}.notices, {ROWS}.drafts, {ROWS}.ledgers, {ROWS}.skins, {ROWS}.banners TO {CALLER};
-         GRANT EXECUTE ON FUNCTION {AUTH}.paths_reachable(text, text) TO {CALLER};
          SET search_path = {ROWS};"
     ))
     .expect("grants");
@@ -240,18 +239,11 @@ fn only_the_callers_own_node_is_answered(db: &mut Client) {
             assert_eq!(asked(db, None, &format!("{function}('{other}')")), set(&[]), "{function}: a caller at no node asks about {other}");
         }
     }
-    let reachable = |db: &mut Client, folder: Option<&str>, pair: (&str, &str)| {
-        asked(db, folder, &format!("paths_reachable('{}', '{}')", pair.0, pair.1)) == set(&["true"])
-    };
-    for (pair, wanted) in [(("b", "c"), true), (("a", "b"), true), (("b", "b"), true), (("a", "c"), false), (("x", "y"), false), (("b", "d"), false)] {
-        assert_eq!(reachable(db, Some("b"), pair), wanted, "a caller at b asks whether {} reaches {}", pair.0, pair.1);
-        assert!(!reachable(db, None, pair), "a caller at no node asks whether {} reaches {}", pair.0, pair.1);
-    }
-    for function in ["paths_path(text)", "paths_reachable(text, text)"] {
-        let public: bool =
-            db.query_one(&format!("SELECT has_function_privilege('public', '{AUTH}.{function}', 'EXECUTE')"), &[]).expect("the privilege").get(0);
-        assert!(!public, "no rule calls {function}, so PUBLIC may not run it");
-    }
+    let public: bool =
+        db.query_one(&format!("SELECT has_function_privilege('public', '{AUTH}.paths_path(text)', 'EXECUTE')"), &[]).expect("the privilege").get(0);
+    assert!(!public, "the path is for a role you grant, so PUBLIC may not run it");
+    let reachable: bool = db.query_one(&format!("SELECT to_regprocedure('{AUTH}.paths_reachable(text, text)') IS NOT NULL"), &[]).expect("the lookup").get(0);
+    assert!(!reachable, "the declared closure is read as sets, so nothing calls the per-row lookup and it is not emitted");
 }
 
 const OPS: [Op; 4] = [Op::Select, Op::Insert, Op::Update, Op::Delete];

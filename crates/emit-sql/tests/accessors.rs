@@ -177,9 +177,11 @@ object doc {
 }
 ";
     let names = |src: &str| definers(src).into_iter().map(|d| d.name).filter(|n| n.starts_with("docs_team_flat")).collect::<Vec<_>>();
-    assert_eq!(names(src), ["docs_team_flat_member", "docs_team_flat_resources"]);
+    assert_eq!(names(src), ["docs_team_flat_member"], "the select has another term, so its resources are not the adopter's to list");
+    let alone = swap(src, &[("grantee:read + team @rls", "team @rls")]);
+    assert_eq!(names(&alone), ["docs_team_flat_member", "docs_team_flat_resources"]);
     let unowned = swap(src, &[(" binds owner", ""), ("grantee:read + team @rls", "grantee:read @rls")]);
-    assert_eq!(names(&unowned), ["docs_team_flat_member"]);
+    assert_eq!(names(&unowned), Vec::<String>::new(), "no permission names the group, so nothing of it is emitted");
 }
 
 #[test]

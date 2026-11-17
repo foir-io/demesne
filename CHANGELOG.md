@@ -39,23 +39,28 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   the principal it is asked about. Which argument is the principal is decided
   where the function is generated, not by its name, so a parameter of an
   `export` or a `probe` is never taken for one.
-- **Revoked from PUBLIC.** A generated function stays PUBLIC only where
-  something must run it as the caller: a policy calls it, a generated
-  application check calls it (a `@check` point check, the edit check, the
-  async check), or a spec line makes it yours to call (an `export`, a `probe`,
-  a `projection`, a `check` (below), `<principal>_can_access_<object>` for a
-  `@kernel` permission,
-  and the `<flat>_resources()` list the application surface reads). Every other
-  one is called only by generated functions, which run as their owner, and is
-  revoked: a grant's `_reach`, `_reach_unscoped`, `_reach_in_<level>` and any
-  `_reach_set` no policy calls, a closure function no policy calls directly,
-  role helpers (`has_<role>_role`, `<roles>_perm_implied_by`), memberships, a
-  borrowed permission's `<object>_can_<perm>`, group lookups and chain
-  helpers. A revoked function keeps its binding. Among them,
-  `<table>_accessors`, `<table>_accessors_conditional`,
-  `<table>_direct_accessors` and `<table>_<verb>_accessors` name the principals
-  that reach any row id, and `<closure>_path` returns any node's ancestors.
-  `<table>_admits` and a `nearest` lookup were revoked already.
+- **Revoked from PUBLIC, or not emitted.** A generated function stays PUBLIC
+  only where something must run it as the caller: a policy calls it, a
+  generated application check calls it (a `@check` point check, the edit
+  check, the async check), or a spec line makes it yours to call (an `export`,
+  a `probe`, a `projection`, a `check` (below), `<principal>_can_access_<object>`
+  for a `@kernel` permission, and the `<flat>_resources()` list the application
+  surface reads). A grant's `_reach_in_<level>` is yours to call too: it answers
+  only about the caller, at the node you name. A function meant for a role you
+  grant is revoked and listed `grantable` (below): `<table>_accessors`,
+  `<table>_accessors_conditional`, `<table>_direct_accessors` and
+  `<table>_<verb>_accessors`, which name the principals that reach any row id,
+  `<closure>_path`, which returns any node's ancestors, `<table>_admits`, a
+  `nearest` lookup for any node, and the async tier's maintenance. Any other
+  function that only generated functions call is revoked, since they run as
+  its owner, and keeps its binding. A function nothing calls is no longer
+  emitted: a grant's `_reach`, `_reach_unscoped` and a `_reach_set` no policy
+  calls, a declared closure's functions no relation reads, and a role check, a
+  membership, a borrowed `<object>_can_<perm>`, an `<acl>_grants_<object>` or a
+  group lookup that no permission uses. Neither is a composition's lower bound
+  where only its upper bound is called, `<flat>_resources()` where the surface
+  doesn't list through it, or `<object>_<operation>_holds_at` (below). A
+  migration drops each one.
 - **Left as it was.** `<table>_declared_by_<key>` returns the rows a rule table
   declares for a key. A policy calls it with a row's value, and what it returns
   is the rule vocabulary, not a tenant's rows.
@@ -87,6 +92,9 @@ What breaks for an adopter:
   A generated function is the policies' tool: read the tables that statement
   needs instead, under a role that may. Granting `EXECUTE` gives back only
   what the caller could ask about itself, since the binding still holds.
+- **SQL of your own that called a generated function nothing else calls gets
+  `function does not exist`**, since that function is no longer emitted. Read
+  the tables in that statement instead, under a role that may.
 - **A role that lists accessors or reads `<closure>_path` needs
   `GRANT EXECUTE`** on those functions. So does the role your async worker
   runs as, on `<index>_apply()`, `_rebuild()` and `_watermark()`, and the role
@@ -131,8 +139,9 @@ since SQL alone does not say which functions a spec line makes yours.
 ### `check`: one row against a permission lent with `predicate`
 
 A predicate-only permission is answered for one row by the function its borrow
-emits, `<object>_can_<verb>`, and that function is now the policies' alone. A
-`check` is the form for code of your own:
+emits, `<object>_can_<verb>`. A policy calls that function as the caller, so
+PUBLIC may run it, but no spec line makes it yours: it is `internal`, and a
+release may change it. A `check` is the form for code of your own:
 
 ```demesne
 check open_only for select as ledger_open(id text)
@@ -364,8 +373,9 @@ object doc {
 - The evaluator is the permission's `some` brackets compiled for one element at
   one row: the row is inside the caller's containment, the element is in the
   row's column and passes `prefix` and `held`, and the brackets hold.
-  `<object>_<operation>_holds_at(record, element)` is emitted for each
-  operation whose permission has a `some`, for the application to call.
+  A hop inlines it where it is followed. Nothing calls it as a function of its
+  own, so none is emitted: to ask whether the caller passes a permission on one
+  row, declare a `check` (below), which reads the stored row.
 - `nested <n>` on the object says how many further compositions deep a hop is
   judged. A hop's own composition costs nothing. Another composition in the
   hop's rule is followed through one level less, and at the last level it is

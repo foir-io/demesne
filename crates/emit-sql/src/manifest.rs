@@ -36,7 +36,8 @@ pub struct ExecuteLists {
     /// Functions the SQL revokes `EXECUTE` on from PUBLIC that are yours to grant to a role of your own, such as a listing
     /// of accessors, `<table>_admits` or the async tier's maintenance: each is an interface, versioned like `callable`.
     pub grantable: BTreeSet<String>,
-    /// Functions PUBLIC may run because generated SQL runs them as the caller, and no spec line makes yours to call.
+    /// Functions PUBLIC may run that a policy or a generated check calls as the caller, or a trigger runs, and no spec line
+    /// makes yours to call.
     pub internal: BTreeSet<String>,
     /// Functions the SQL revokes `EXECUTE` on from PUBLIC that only the generated functions call.
     pub revoked: BTreeSet<String>,

@@ -18,7 +18,6 @@ exit: 0
     "auth.note_can_edit(text)",
     "auth.notes_accessors(text)",
     "auth.notes_admits(text, jsonb)",
-    "auth.support_grants_reach(text, text)",
     "auth.support_grants_reach_set(text)"
   ],
   "callable": [
@@ -39,8 +38,7 @@ exit: 0
   ],
   "revoked": [
     "auth.doc_can_edit(text)",
-    "auth.note_can_edit(text)",
-    "auth.support_grants_reach(text, text)"
+    "auth.note_can_edit(text)"
   ],
   "policies": [
     {

@@ -268,7 +268,7 @@ fn every_function_the_sql_creates_is_in_exactly_one_of_callable_grantable_intern
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     let [callable, grantable, internal, revoked] = totals;
     assert!(
-        specs > 150 && callable > 15 && grantable > 200 && internal > 300 && revoked > 120,
+        specs > 150 && callable > 30 && grantable > 200 && internal > 300 && revoked > 10,
         "{specs} specs, {callable} callable, {grantable} grantable, {internal} internal, {revoked} revoked"
     );
 }
@@ -300,7 +300,7 @@ fn each_list_holds_the_functions_its_name_says() {
         }
         for c in &lists.callable {
             let name = name_of(c);
-            if !(declared.contains(name) || name.contains("_can_access_") || name.ends_with("_resources")) {
+            if !(declared.contains(name) || name.contains("_can_access_") || name.ends_with("_resources") || name.contains("_reach_in_")) {
                 wrong.push(format!("{path}: {c} is callable, and no spec line makes it so"));
             }
         }

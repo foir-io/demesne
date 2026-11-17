@@ -54,8 +54,8 @@ fn a_later_file_writes_again_a_function_it_widens() {
 fn a_replaced_declaration_rewrites_the_functions_it_emits() {
     let files = multi();
     let sql = file_sql(&files, 1).expect("the second file emits");
-    assert!(function(&sql, "support_grants_reach").contains("AND ended_at IS NULL"), "{sql}");
-    assert!(!function(&all_sql(&files, 0), "support_grants_reach").contains("ended_at"));
+    assert!(function(&sql, "support_grants_reach_set").contains("AND ended_at IS NULL"), "{sql}");
+    assert!(!function(&all_sql(&files, 0), "support_grants_reach_set").contains("ended_at"));
 }
 
 #[test]

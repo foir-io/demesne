@@ -205,7 +205,7 @@ fn install_reach_schema(d: &mut Db, spec: &demesne_syntax::Spec) {
     d.exec(&format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {REACH_ROWS} TO {REACH_CALLER}"), &[]);
     d.exec(
         &format!(
-            "GRANT EXECUTE ON FUNCTION {REACH_AUTH}.approvals_reach(text, text), {REACH_AUTH}.approvals_reach_in_space(text, text, text), {REACH_AUTH}.approvals_reach_in_folder(text, text, text, text) TO {REACH_CALLER}"
+            "GRANT EXECUTE ON FUNCTION {REACH_AUTH}.approvals_reach_in_space(text, text, text), {REACH_AUTH}.approvals_reach_in_folder(text, text, text, text) TO {REACH_CALLER}"
         ),
         &[],
     );
@@ -260,29 +260,10 @@ fn check_ladder(d: &mut Db, tr: &ReachTree) {
     let v = d.visible(&claims(&[("sub", "h_ended"), ("space_id", "s1"), ("folder_id", tr.root)]), "assets");
     want_ids(t, "ended approval", &v, &[]);
 
-    let probe = format!("SELECT {REACH_AUTH}.approvals_reach($1, 'e1')");
-    for (name, c, holder, want) in [
-        ("space rung refuses a missing space claim", claims(&[("folder_id", tr.root)]), "h_space", false),
-        ("space rung admits its space", claims(&[("space_id", "s1")]), "h_space", true),
-        ("folder rung admits a missing folder claim", claims(&[("space_id", "s1")]), "h_folder", true),
-        ("folder rung refuses a sibling folder", claims(&[("space_id", "s1"), ("folder_id", tr.other)]), "h_folder", false),
-        ("unpinned approval needs no claims", claims(&[]), "h_estate", true),
-    ] {
-        let mut own = c.clone();
-        own.insert("sub".to_string(), holder.to_string());
-        let got = d.truth(&own, &probe, &[&holder]);
-        if got != want {
-            t.errorf(format!("{name}: approvals_reach({holder}) = {got}, want {want}"));
-        }
-        let mut another = c;
-        another.insert("sub".to_string(), "h_ended".to_string());
-        if d.truth(&another, &probe, &[&holder]) {
-            t.errorf(format!("{name}: approvals_reach({holder}) answered a caller who is not {holder}"));
-        }
-    }
+    let probe = format!("SELECT {REACH_AUTH}.approvals_reach_in_space($1, 'e1', '')");
     d.exec("SAVEPOINT empty_claims", &[]);
     d.exec("SELECT set_config('request.jwt.claims', '', true)", &[]);
-    match d.tx.query_one(&probe, &[&"h_estate"]).and_then(|r| r.try_get::<_, Option<bool>>(0)) {
+    match d.tx.query_one(&probe, &[&"h_space"]).and_then(|r| r.try_get::<_, Option<bool>>(0)) {
         Ok(None | Some(false)) => {}
         Ok(Some(true)) => t.errorf("a direct call with an empty claims setting is nobody's own, so it must not answer true"),
         Err(e) => t.errorf(format!("a direct call with an empty claims setting must answer rather than raise: {e}")),

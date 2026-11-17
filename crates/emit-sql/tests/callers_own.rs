@@ -138,6 +138,9 @@ fn adopter_callable(e: &Emitted) -> BTreeSet<String> {
             }
         }
     }
+    for g in &e.spec.grants {
+        names.extend(g.scopes.iter().map(|scope| format!("{}_reach_in_{}", g.definer_base(), scope.level)));
+    }
     names
 }
 
@@ -345,12 +348,11 @@ object doc {{
         let s = demesne_syntax::parse(&src(view)).expect("the spec parses");
         demesne_emit_sql::validate(&s).expect("the spec validates");
         let defs = Sql::new(&s).emit_definers().expect("the definers compile");
-        let resources = defs.iter().find(|d| d.name == "docs_team_flat_resources").unwrap_or_else(|| panic!("{view}: no resources function"));
+        let resources = defs.iter().find(|d| d.name == "docs_team_flat_resources");
         let surface = Sql::new(&s).emit_app_surface().expect("the application surface compiles");
         let lists_through = surface.objects.iter().any(|o| o.flat_list_fn.contains(".docs_team_flat_resources"));
         assert_eq!(lists_through, listed, "{view}: {surface:?}");
-        let execute = if listed { Execute::Public } else { Execute::Revoked };
-        assert_eq!(resources.execute, execute, "{view}: {}", resources.create_sql());
+        assert_eq!(resources.map(|f| f.execute), listed.then_some(Execute::Public), "{view}: emitted only where it is the adopter's to call");
         let lists = Sql::new(&s).manifest().expect("a manifest").execute.expect("the manifest records who may run each function");
         let callable = lists.callable.iter().any(|f| f.contains(".docs_team_flat_resources("));
         assert_eq!(callable, listed, "{view}: {lists:?}");
@@ -409,15 +411,11 @@ fn a_membership_answers_when_either_side_is_the_callers_own() {
 }
 
 #[test]
-fn a_membership_no_rule_asks_by_scope_answers_for_the_callers_principal_alone() {
+fn a_membership_no_rule_asks_is_not_emitted() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus/fixtures/38d02b53bac27607.demesne");
     let s = demesne_syntax::parse(&std::fs::read_to_string(&path).expect("the fixture reads")).expect("the fixture parses");
-    let sql = Sql::new(&s);
-    let defs = sql.emit_definers().expect("the definers compile");
-    let member = defs.iter().find(|d| d.name == "admin_memberin_space").expect("the membership check");
-    let own = format!("p_principal = {} AND (EXISTS (", sql.session_claim("sub"));
-    assert!(member.body.starts_with(&own), "every rule passes the caller's claim as the principal, so no scope alone is answered for:\n{}", member.body);
-    assert!(!member.body.contains("p_space = (SELECT"), "{}", member.body);
+    let names: Vec<String> = Sql::new(&s).emit_definers().expect("the definers compile").into_iter().map(|d| d.name).collect();
+    assert!(!names.iter().any(|n| n == "admin_memberin_space"), "no permission names the relation, so nothing calls its check: {names:?}");
 }
 
 #[test]
@@ -526,7 +524,7 @@ fn a_copy_public_cannot_run_is_called_only_with_the_callers_own_claim_and_never_
             calls += 1;
         }
     }
-    assert_eq!(calls, 10, "every call a chain function makes with the claim goes to the copy");
+    assert_eq!(calls, 8, "every call a chain function makes with the claim goes to the copy");
     let direct = defs.iter().filter(|d| d.name != "doc_shared_keyed" && d.create_sql().contains("auth.doc_shared_keyed(")).count();
     assert_eq!(direct, 0, "no generated function pays for the binding it already satisfies");
 }

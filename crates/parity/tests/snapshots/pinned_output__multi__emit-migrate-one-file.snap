@@ -4,18 +4,6 @@ expression: "record(&repo, \"\", &args)"
 ---
 exit: 0
 --- stdout ---
-CREATE OR REPLACE FUNCTION auth.support_grants_reach(user_id text, check_tenant_id text)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-STRICT
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id')) AND (EXISTS (SELECT 1 FROM support_grants WHERE holder_id = user_id AND tenant_id = check_tenant_id));
-$$;
-REVOKE EXECUTE ON FUNCTION auth.support_grants_reach(text, text) FROM PUBLIC;
-
 CREATE OR REPLACE FUNCTION auth.support_grants_reach_set(user_id text)
 RETURNS SETOF text
 LANGUAGE sql
@@ -152,6 +140,7 @@ DROP FUNCTION IF EXISTS auth.note_can_edit(text);
 DROP FUNCTION IF EXISTS auth.notes_accessors(text);
 DROP FUNCTION IF EXISTS auth.notes_admits(text, jsonb);
 DROP FUNCTION IF EXISTS auth.retired(text);
+DROP FUNCTION IF EXISTS auth.support_grants_reach(text, text);
 DO $demesne$
 DECLARE
   survivors text;
@@ -159,7 +148,7 @@ BEGIN
   SELECT string_agg(what, ', ' ORDER BY what) INTO survivors FROM (
     SELECT 'function ' || p.oid::regprocedure::text AS what
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE (n.nspname, p.proname) IN (('auth'::name, 'acl_grants_note'::name), ('auth'::name, 'doc_can_view'::name), ('auth'::name, 'note_can_edit'::name), ('auth'::name, 'notes_accessors'::name), ('auth'::name, 'notes_admits'::name), ('auth'::name, 'retired'::name))
+      WHERE (n.nspname, p.proname) IN (('auth'::name, 'acl_grants_note'::name), ('auth'::name, 'doc_can_view'::name), ('auth'::name, 'note_can_edit'::name), ('auth'::name, 'notes_accessors'::name), ('auth'::name, 'notes_admits'::name), ('auth'::name, 'retired'::name), ('auth'::name, 'support_grants_reach'::name))
         AND p.oid <> ALL (array_remove(ARRAY[]::oid[], NULL))
     UNION ALL
     SELECT 'policy ' || pol.polname || ' on ' || pol.polrelid::regclass::text

@@ -607,16 +607,23 @@ caller may run. So must a function a spec line makes yours to call:
   predicate-only permission on the row the key names;
 - `<principal>_can_access_<object>`, for a `@kernel` permission;
 - `<flat>_resources()`, which the generated app surface reads to list an
-  object whose select is one materialized group.
+  object whose select is one materialized group;
+- a grant's `<table>_reach_in_<level>`, which answers whether the caller holds
+  the grant at the selection you pass (see the reach ladder below).
 
+A function meant for a role you grant, such as a listing of accessors, is
+emitted with `EXECUTE` revoked from PUBLIC and listed `grantable` (below).
 Every other generated function is called only by other generated functions,
-which run as their owner, so it is emitted with `EXECUTE` revoked from PUBLIC.
-That includes the closure functions (`_descendants`, `_ancestors`,
-`_reachable`, `_path`), a grant's `_reach_in_<level>` and any lookup no policy
-calls directly. A role helper such as `has_<role>_role` that only other
-functions call is one of them too, so SQL of your own that calls it as the
-caller role gets `permission denied`. Grant one to a role of your own only if
-your code needs it.
+which run as their owner, so it is revoked too. That includes the closure
+functions a relation reads (`_descendants`, `_ancestors`, `_reachable`) and a
+role helper such as `has_<role>_role` that only other functions call, so SQL
+of your own that calls one as the caller role gets `permission denied`.
+
+A generated function nothing calls, that no spec line makes yours and that is
+not meant for a role you grant, is not emitted at all: a grant's `_reach` or
+`_reach_unscoped` no policy calls, the functions of a closure no relation
+reads, or a role check, membership, borrow or grant check that no permission
+uses.
 
 **The SQL states PUBLIC's right to every function it creates.** Each
 `CREATE OR REPLACE FUNCTION` is followed by `GRANT EXECUTE … TO PUBLIC` or
@@ -637,8 +644,10 @@ puts every function the SQL creates in exactly one of four lists:
   worker runs: the async tier's `<index>_apply()`, `_rebuild()` and
   `_watermark()`, and a materialized group's `<flat>_reconcile()`. Each is an
   interface, and a release changes one only as it changes a `callable` one;
-- `internal`: PUBLIC may run it, and no spec line makes it yours to call. Most
-  are functions a policy, a generated check or a trigger runs as the caller;
+- `internal`: PUBLIC may run it, and no spec line makes it yours to call. Each
+  is one a policy or a generated check calls as the caller, or a trigger's
+  function, whose `EXECUTE` Postgres checks when the trigger is created, not
+  when it fires;
 - `revoked`: PUBLIC may not run it, and only the generated functions call it.
 
 Code of your own calls what `callable` lists, and what `grantable` lists from a
@@ -1298,11 +1307,11 @@ something narrows by it:
 Inside the nesting the two agree and the answer is exact. Size `nested` to the
 rules you accept, and refuse a rule that needs more.
 
-**The evaluator, for the application.** `<object>_<operation>_holds_at(record,
-element)` is emitted for each operation whose permission has a `some`, on an
-object that declares `nested`. A row is admitted by a rule that is one `some`
-exactly when the function holds for one of the row's elements, so it answers
-"which rule let this caller in".
+**The evaluator.** The permission's `some` brackets, compiled for one element
+at one row, are what a hop judges, and the hop inlines them. No function of
+them is emitted, since nothing would call it. To ask whether the caller passes
+a permission on one row, declare a `check` (see "Checks" below): it reads the
+stored row and answers what the policy does.
 
 **What a chain costs.** A row its own rule admits is judged inside the
 policy's statement. A row reached through a chain is judged behind a function,
@@ -1552,8 +1561,9 @@ not in the object's reader listing, which lists who reads whole rows.
 A predicate-only permission (`@rls predicate`) emits no policy of its own.
 Another object borrows it with `via object <object>-><verb>`, and the policy
 that borrows it calls `<object>_can_<verb>(<id>)` for each row. That function
-is the policies' tool, so PUBLIC cannot run it. When code of your own needs the
-same answer about one row, declare a `check`:
+is the policies' tool: a policy calls it as the caller, so PUBLIC may run it,
+but no spec line makes it yours, and a release may change it. When code of
+your own needs the same answer about one row, declare a `check`:
 
 ```demesne
 object ledger {
@@ -1896,9 +1906,10 @@ folder term then bounds what it reads. The session claims are read through
 `NULLIF`, so the definers answer rather than raise when called outside a request.
 
 Three more functions come with a ladder. `<table>_reach_unscoped` and its `_set`
-admit only approvals with every scope column NULL. `<table>_reach_in_<level>`
+admit only approvals with every scope column NULL, and are emitted where a
+policy uses them. `<table>_reach_in_<level>`
 takes the selection as parameters, one per level down to that one, for callers
-that are not policies; an empty selection (the empty string for text
+that are not policies, and is yours to call (`callable`); an empty selection (the empty string for text
 identifiers, NULL otherwise) admits a pinned approval, because the question
 there is whether the approval covers anything at the selection.
 

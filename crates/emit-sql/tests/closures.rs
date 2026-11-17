@@ -80,7 +80,11 @@ fn a_declared_closure_reads_each_direction_as_a_set_computed_once() {
                 assert!(pred.contains(wanted.as_str()) && !pred.contains(other.as_str()), "{closures}: the write reaches one way:\n{pred}");
             }
             let defs = sql.emit_definers().expect("the definers compile");
-            assert_eq!(names(&defs), [format!("{base}_reachable"), format!("{base}_descendants"), format!("{base}_ancestors")]);
+            assert_eq!(
+                names(&defs),
+                [format!("{base}_descendants"), format!("{base}_ancestors")],
+                "{closures}: a declared closure is read as sets, so nothing calls the per-row lookup"
+            );
             let (below, above) = (definer(&defs, &format!("{base}_descendants")), definer(&defs, &format!("{base}_ancestors")));
             let own = sql.session_claim("folder_id");
             assert_eq!((below.sig.as_str(), below.returns.as_str()), ("p_node text", "SETOF text"));
@@ -88,12 +92,6 @@ fn a_declared_closure_reads_each_direction_as_a_set_computed_once() {
             assert_eq!(below.body, format!("des FROM paths WHERE anc = p_node AND p_node = {own}"), "the set is the caller's own node's, never another's");
             assert_eq!(above.body, format!("anc FROM paths WHERE des = p_node AND p_node = {own}"));
             assert!(below.strict && above.strict, "a caller with no node reaches the empty set");
-            assert_eq!(
-                definer(&defs, &format!("{base}_reachable")).body,
-                format!(
-                    "EXISTS (SELECT 1 FROM paths WHERE anc = p_ancestor AND des = p_descendant AND (p_ancestor = {own}::text OR p_descendant = {own}::text))"
-                )
-            );
         }
     }
 }
@@ -117,7 +115,7 @@ fn the_declaration_fixes_the_edge_whatever_order_the_relations_come_in() {
 fn a_declared_depth_adds_the_ordered_path_and_an_identifier_type_carries_through() {
     let s = compile(&format!("identifiers uuid\n{HEAD}closure paths(anc, des) depth hops\n"));
     let defs = Sql::new(&s).emit_definers().expect("the definers compile");
-    assert_eq!(names(&defs), ["paths_reachable", "paths_descendants", "paths_ancestors", "paths_path"]);
+    assert_eq!(names(&defs), ["paths_path"], "no relation reads the closure, so only the path a role you grant reads is emitted");
     let path = definer(&defs, "paths_path");
     assert_eq!((path.sig.as_str(), path.returns.as_str()), ("p_node uuid", "TABLE(node uuid, depth integer)"));
     assert_eq!(path.body, "  SELECT anc, hops::integer FROM paths WHERE des = p_node ORDER BY hops DESC, anc;");
@@ -126,9 +124,6 @@ fn a_declared_depth_adds_the_ordered_path_and_an_identifier_type_carries_through
         path.create_sql().ends_with("REVOKE EXECUTE ON FUNCTION auth.paths_path(uuid) FROM PUBLIC;"),
         "no rule calls the path, so only a granted role reads it"
     );
-    let below = definer(&defs, "paths_descendants");
-    assert_eq!(below.returns, "SETOF uuid");
-    assert_eq!(below.body, "des FROM paths WHERE anc = p_node AND false", "a closure no relation reads by a claim answers for no node");
     let no_depth = compile(&format!("{HEAD}closure paths(anc, des)\n"));
     assert!(!names(&Sql::new(&no_depth).emit_definers().expect("the definers compile")).contains(&"paths_path"), "no depth column, no path");
 }
