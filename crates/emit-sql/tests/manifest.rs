@@ -305,26 +305,25 @@ fn each_list_holds_the_functions_its_name_says() {
             }
         }
         let nearest: BTreeSet<&str> = s.objects.iter().flat_map(|o| o.nearests.iter().map(|n| n.name.as_str())).collect();
+        let family = [
+            "_accessors",
+            "_accessors_conditional",
+            "_direct_accessors",
+            "_admits",
+            "_path",
+            "_async_apply",
+            "_async_rebuild",
+            "_async_watermark",
+            "_reconcile",
+        ];
+        let for_a_role = |name: &str| !declared.contains(name) && (family.iter().any(|f| name.ends_with(f)) || nearest.contains(name));
         for g in &lists.grantable {
-            let name = name_of(g);
-            let family = [
-                "_accessors",
-                "_accessors_conditional",
-                "_direct_accessors",
-                "_admits",
-                "_path",
-                "_async_apply",
-                "_async_rebuild",
-                "_async_watermark",
-                "_reconcile",
-            ];
-            if !(family.iter().any(|f| name.ends_with(f)) || nearest.contains(name)) {
+            if !for_a_role(name_of(g)) {
                 wrong.push(format!("{path}: {g} is grantable, and it is not an interface for a role"));
             }
         }
         for f in lists.callable.iter().chain(&lists.internal).chain(&lists.revoked) {
-            let name = name_of(f);
-            if ["_admits", "_async_apply", "_async_rebuild", "_async_watermark", "_reconcile"].iter().any(|t| name.ends_with(t)) {
+            if for_a_role(name_of(f)) {
                 wrong.push(format!("{path}: {f} is meant for a role you grant, and it is not grantable"));
             }
         }

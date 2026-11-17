@@ -113,7 +113,10 @@ a materialized group's `<flat>_reconcile()`. `internal` holds those PUBLIC may
 run that no spec line makes yours, and `revoked` those PUBLIC may not run that
 only the generated functions call. Code of your own calls what `callable`
 lists, and what `grantable` lists from a role you granted it to. Every
-manifest gains the four lists, empty ones included.
+manifest gains the four lists, empty ones included. A policy or a generated
+check that would call a `grantable` function is refused when the SQL is
+emitted, naming both, since the caller's role may not run it; a function is
+never made PUBLIC because something calls it.
 
 Reading a manifest refuses one whose lists hold a function twice, leave one out
 or name one `functions` does not, and one with some of the lists and not the

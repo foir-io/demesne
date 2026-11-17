@@ -642,7 +642,8 @@ puts every function the SQL creates in exactly one of four lists:
 - `revoked`: PUBLIC may not run it, and only the generated functions call it.
 
 Code of your own calls what `callable` lists, and what `grantable` lists from a
-role you granted it to. A manifest written before
+role you granted it to. The compiler refuses a spec whose policy or generated
+check would call a `grantable` function, and names both. A manifest written before
 these lists existed has none of them; it still reads, as one that does not
 record who may run its functions, and `migrate` uses it as before.
 

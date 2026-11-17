@@ -427,20 +427,17 @@ impl Sql<'_> {
         let caller = Sql { definer_body: false, ..*self };
         let policies = caller.emit_rls().map_err(|e| e.to_string())?;
         let surface = caller.app_surface().unwrap_or_default();
-        let mut asked: Vec<&str> = policies.policies.iter().flat_map(|p| [p.using.as_str(), p.check.as_str()]).collect();
+        let mut asked: Vec<(String, &str)> = Vec::new();
+        for p in policies.policies.iter() {
+            let who = format!("policy {} on {}", quote(&p.name), quote(&p.table));
+            asked.extend([(who.clone(), p.using.as_str()), (who, p.check.as_str())]);
+        }
         for o in surface.objects.iter() {
-            asked.extend([o.edit_check_sql.as_ref(), o.async_check_sql.as_ref()]);
-            asked.extend(o.checks.iter().map(|c| c.check_sql.as_ref()));
+            let who = format!("the generated check of object {}", quote(&o.object));
+            asked.extend([(who.clone(), o.edit_check_sql.as_ref()), (who.clone(), o.async_check_sql.as_ref())]);
+            asked.extend(o.checks.iter().map(|c| (who.clone(), c.check_sql.as_ref())));
         }
-        let callable = self.adopter_callable();
-        for f in fns.iter_mut().filter(|f| f.execute != Execute::Revoked && !callable.contains(&f.name)) {
-            let call = format!("{}.{}(", f.schema(), f.name);
-            f.execute = match (asked.iter().any(|text| text.contains(&call)), f.execute) {
-                (true, _) => Execute::Public,
-                (false, Execute::Public) => Execute::Revoked,
-                (false, kept) => kept,
-            };
-        }
+        who_may_run(&mut fns, &asked, &self.adopter_callable())?;
         Ok(fns)
     }
 
@@ -2217,9 +2214,43 @@ fn grant_group_matched(vg: &ViaGrant, obj: &Object, param: &str) -> Vec<String> 
     conds
 }
 
+fn who_may_run(fns: &mut [GenFn], asked: &[(String, &str)], callable: &BTreeSet<String>) -> R<()> {
+    for f in fns.iter_mut().filter(|f| f.execute != Execute::Revoked && !callable.contains(&f.name)) {
+        let call = format!("{}.{}(", f.schema(), f.name);
+        f.execute = match (asked.iter().find(|(_, text)| text.contains(&call)), f.execute) {
+            (Some((who, _)), Execute::Grantable) => {
+                return Err(format!(
+                    "{who} calls {}.{}, which is for a role you grant: PUBLIC may not run it, so no policy or generated check may call it unless a spec line makes it callable",
+                    f.schema(),
+                    f.name
+                ));
+            }
+            (Some(_), _) => Execute::Public,
+            (None, Execute::Public) => Execute::Revoked,
+            (None, kept) => kept,
+        };
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{GenFn, caller_parameter};
+    use super::{Execute, GenFn, caller_parameter, who_may_run};
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn a_function_for_a_role_you_grant_that_a_policy_calls_is_refused_naming_both() {
+        let made = |name: &str, execute: Execute| GenFn { name: name.into(), execute, ..Default::default() };
+        let policy = "auth.listed(p_id) OR auth.used(p_id)";
+        let asked = [("policy \"docs_select\" on \"public.docs\"".to_string(), policy)];
+        let mut fns = [made("listed", Execute::Grantable)];
+        let err = who_may_run(&mut fns, &asked, &BTreeSet::new()).expect_err("a policy may not call a grantable function");
+        assert!(err.starts_with("policy \"docs_select\" on \"public.docs\" calls auth.listed,"), "{err}");
+        let mut fns = [made("listed", Execute::Grantable), made("used", Execute::Public), made("unused", Execute::Public), made("spare", Execute::Grantable)];
+        who_may_run(&mut fns, &asked, &BTreeSet::from(["listed".to_string()])).expect("a callable one may be called");
+        let classes: Vec<Execute> = fns[1..].iter().map(|f| f.execute).collect();
+        assert_eq!(classes, [Execute::Public, Execute::Revoked, Execute::Grantable]);
+    }
 
     #[test]
     fn the_callers_parameter_is_the_principals_own_wherever_it_stands() {
