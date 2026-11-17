@@ -379,7 +379,7 @@ type Outcome = Result<Vec<i32>, String>;
 struct Judged {
     rules: BTreeMap<String, Vec<Outcome>>,
     visible: BTreeMap<String, Vec<Outcome>>,
-    checks: BTreeMap<String, Vec<Result<Vec<String>, String>>>,
+    checks: BTreeMap<String, Vec<Answers>>,
 }
 
 fn why(e: &postgres::Error) -> String {
@@ -586,6 +586,26 @@ fn admits_no_row_more(before: &[Outcome], now: &[Outcome]) -> bool {
             (Ok(b), Ok(n)) => n.iter().all(|row| b.contains(row)),
             (b, n) => b == n,
         })
+}
+
+type Answers = Result<Vec<String>, String>;
+
+fn answers_true_nowhere_more(before: &[Answers], now: &[Answers]) -> bool {
+    before.len() == now.len()
+        && before.iter().zip(now).all(|(b, n)| match (b, n) {
+            (Ok(b), Ok(n)) => b.len() == n.len() && b.iter().zip(n).all(|(b, n)| n != "true" || b == "true"),
+            (b, n) => b == n,
+        })
+}
+
+#[test]
+fn a_point_check_counts_as_narrowed_only_where_it_answers_true_nowhere_it_did_not() {
+    let answers = |all: &[&[&str]]| -> Vec<Answers> { all.iter().map(|one| Ok(one.iter().map(|a| (*a).to_string()).collect())).collect() };
+    let before = answers(&[&["true", "false"], &["true", "true"]]);
+    assert!(answers_true_nowhere_more(&before, &answers(&[&["false", "false"], &["true", "false"]])), "answering false where it answered true narrows");
+    assert!(!answers_true_nowhere_more(&before, &answers(&[&["true", "true"], &["true", "true"]])), "answering true where it answered false widens");
+    assert!(!answers_true_nowhere_more(&before, &answers(&[&["true", "false"]])), "a claim set gone is not narrower");
+    assert!(!answers_true_nowhere_more(&before, &[Ok(vec!["true".into(), "false".into()]), Err("42883".into())]), "an error is no narrowing");
 }
 
 fn specs() -> Vec<(String, String)> {
@@ -865,6 +885,10 @@ fn compare_spec(config: &Config, name: &str, src: &str, tally: &mut Tally) {
         tally.one_way.entry(how.to_string()).or_default().push(format!("{name} {rule}"));
     }
     tally.checks += new.checks.len();
+    weigh_differences(name, &claims, old, new, tally);
+}
+
+fn weigh_differences(name: &str, claims: &[Option<String>], old: &Judged, new: &Judged, tally: &mut Tally) {
     assert_eq!(old.rules.keys().collect::<Vec<_>>(), new.rules.keys().collect::<Vec<_>>(), "{name}: the same rules on both sides");
     let bound = terms_now_bind_a_reach(name);
     for (rule, outcomes) in &old.rules {
@@ -888,7 +912,9 @@ fn compare_spec(config: &Config, name: &str, src: &str, tally: &mut Tally) {
         }
     }
     if old.checks != new.checks {
-        if bound {
+        let narrower = old.checks.len() == new.checks.len()
+            && old.checks.iter().all(|(check, before)| new.checks.get(check).is_some_and(|now| answers_true_nowhere_more(before, now)));
+        if bound && narrower {
             tally.narrowed.push(format!("{name}: a point check answers differently"));
         } else {
             tally.differing.push(format!("{name}: a point check answers differently"));
@@ -896,14 +922,12 @@ fn compare_spec(config: &Config, name: &str, src: &str, tally: &mut Tally) {
     }
 }
 
-fn without_functions_since_pruned(before: &str, now: &str) -> String {
+fn without_functions_the_prune_rule_drops(before: &str, dropped: &BTreeSet<String>) -> String {
     let name = |sig: &str| sig.split('(').next().unwrap_or_default().to_string();
-    let kept: BTreeSet<String> =
-        demesne_emit_sql::Manifest::from_sql(now).expect("this release's SQL has a manifest").functions.iter().map(|sig| name(sig)).collect();
     let mut out = before.to_string();
     for (object, stmt) in demesne_emit_sql::objects(before).expect("v1.1.0's SQL splits into its objects") {
         if let demesne_emit_sql::Object::Function(sig) = &object
-            && !kept.contains(&name(sig))
+            && dropped.contains(&name(sig))
         {
             let whole = [format!("{stmt};\n\n"), format!("{stmt};\n")]
                 .into_iter()
@@ -935,11 +959,22 @@ fn parameters(stmt: &str) -> Option<(&str, Vec<(&str, &str)>)> {
     Some((&rest[..open], list.split(", ").filter(|p| !p.is_empty()).filter_map(|p| p.split_once(' ')).collect()))
 }
 
-fn without_drop_guards(sql: &str) -> String {
+fn guarded(now: &str, function: &str) -> bool {
+    now.split("DO $demesne$ BEGIN")
+        .skip(1)
+        .any(|block| block.split("END $demesne$;").next().is_some_and(|guard| guard.contains(&format!("to_regprocedure('{function}("))))
+}
+
+fn without_store_copy_guards(sql: &str) -> String {
     let mut out = sql.to_string();
-    while let Some(at) = out.find("DO $demesne$ BEGIN") {
+    let mut from = 0;
+    while let Some(at) = out[from..].find("DO $demesne$ BEGIN").map(|at| from + at) {
         let end = out[at..].find("END $demesne$;\n").map(|e| at + e + "END $demesne$;\n".len()).expect("a guard ends");
-        out.replace_range(at..end, "");
+        if out[at..end].contains("_can_") {
+            out.replace_range(at..end, "");
+        } else {
+            from = end;
+        }
     }
     out
 }
@@ -947,13 +982,14 @@ fn without_drop_guards(sql: &str) -> String {
 fn declared_as_v1_1_0(now: &str, before: &str, id_type: &str) -> String {
     let declared = demesne_emit_sql::objects(before).expect("v1.1.0's SQL splits into its objects");
     let theirs: BTreeMap<&str, Vec<(&str, &str)>> = declared.iter().filter_map(|(_, stmt)| parameters(stmt)).collect();
-    let now = without_drop_guards(now);
-    let mut out = now.clone();
-    for (_, stmt) in demesne_emit_sql::objects(&now).expect("this release's SQL splits into its objects") {
+    let mut out = without_store_copy_guards(now);
+    for (_, stmt) in demesne_emit_sql::objects(now).expect("this release's SQL splits into its objects") {
         let Some((function, mine)) = parameters(&stmt) else { continue };
         let Some(was) = theirs.get(function) else { continue };
         let retyped = |t: &str, u: &str| t == u || (t == id_type && u == "text") || (t == format!("{id_type}[]") && u == "text[]");
-        if mine.len() != was.len() || !mine.iter().zip(was).all(|((_, t), (_, u))| retyped(t, u)) {
+        let store_copy = function.contains("_can_") && guarded(now, function);
+        let renamed = |m: &str, w: &str| m == w || (store_copy && w == "p_id" && m.starts_with("p_") && m.ends_with("_id"));
+        if mine.len() != was.len() || !mine.iter().zip(was).all(|((m, t), (w, u))| retyped(t, u) && renamed(m, w)) {
             continue;
         }
         let listed = |ps: &[(&str, &str)]| ps.iter().map(|(n, t)| format!("{n} {t}")).collect::<Vec<_>>().join(", ");
@@ -1081,13 +1117,15 @@ fn the_sql_differs_from_v1_1_0_only_in_the_ways_this_release_states() {
         match (ddl_now(&src), ddl_before(&src)) {
             (Some((s, now)), Some(before)) => {
                 let before = with_triggers_searching_the_tables_schema(&before, s.table_schema());
+                let dropped: BTreeSet<String> =
+                    demesne_emit_sql::Sql::new(&s).unused_definers().unwrap_or_else(|e| panic!("{name}: {e}")).into_iter().collect();
                 if terms_now_bind_a_reach(&name) {
                     assert_ne!(
                         calls_per_row(&answering_any_caller(
                             &read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, s.id_type())),
                             &before
                         )),
-                        calls_per_row(&without_functions_since_pruned(&before, &now)),
+                        calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
                         "{name}: no term binds a grant's reach here any more"
                     );
                     bound += 1;
@@ -1097,7 +1135,7 @@ fn the_sql_differs_from_v1_1_0_only_in_the_ways_this_release_states() {
                             &read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, s.id_type())),
                             &before
                         )),
-                        calls_per_row(&without_functions_since_pruned(&before, &now)),
+                        calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
                         "{name}: the SQL changed beyond its claim reads, the callers its sets answer, pg_temp last, the triggers' tables schema, the functions since pruned, and the parameters retyped to the spec's ids or renamed"
                     );
                 }

@@ -365,7 +365,31 @@ impl Sql<'_> {
         d.emit_definers_inner()
     }
 
+    /// Returns the qualified names of the functions the spec's generators make that no policy, generated check,
+    /// other kept function or spec line uses. Emission leaves them out, and a migration drops them.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error emitting the definers would.
+    pub fn unused_definers(&self) -> Result<Vec<String>, Error> {
+        let d = Sql { definer_body: true, ..*self };
+        let all = d.generated().map_err(Error::unplaced)?;
+        let made: Vec<String> = all.iter().map(|f| format!("{}.{}", f.schema(), f.name)).collect();
+        let kept: BTreeSet<String> = d
+            .with_askers(|asked, callable| Ok(only_what_is_used(all, asked, callable)))
+            .map_err(Error::unplaced)?
+            .iter()
+            .map(|f| format!("{}.{}", f.schema(), f.name))
+            .collect();
+        Ok(made.into_iter().filter(|f| !kept.contains(f)).collect())
+    }
+
     fn emit_definers_inner(&self) -> R<Vec<GenFn>> {
+        let fns = self.generated()?;
+        self.who_runs(fns)
+    }
+
+    fn generated(&self) -> R<Vec<GenFn>> {
         let mut out: Vec<GenFn> = Vec::new();
         let virt: Virtual = topology::chain(self.s).map(|c| c.into_iter().filter(|l| l.is_virtual).map(|l| l.name.clone()).collect()).unwrap_or_default();
         self.def_emit_membership(&mut out)?;
@@ -404,7 +428,7 @@ impl Sql<'_> {
             f.table_schema = self.s.table_schema().to_string();
             f.id_type = self.s.id_type().to_string();
         }
-        self.who_runs(order_by_calls(crate::chains::plans_kept(out, &self.chain_fns())))
+        Ok(order_by_calls(crate::chains::plans_kept(out, &self.chain_fns())))
     }
 
     pub(crate) fn adopter_callable(&self) -> BTreeSet<String> {
@@ -429,6 +453,14 @@ impl Sql<'_> {
     }
 
     fn who_runs(&self, fns: Vec<GenFn>) -> R<Vec<GenFn>> {
+        self.with_askers(|asked, callable| {
+            let mut fns = only_what_is_used(fns, asked, callable);
+            who_may_run(&mut fns, asked, callable)?;
+            Ok(fns)
+        })
+    }
+
+    fn with_askers<T>(&self, then: impl FnOnce(&[(String, &str)], &BTreeSet<String>) -> R<T>) -> R<T> {
         let caller = Sql { definer_body: false, ..*self };
         let policies = caller.emit_rls().map_err(|e| e.to_string())?;
         let surface = caller.app_surface().unwrap_or_default();
@@ -443,9 +475,7 @@ impl Sql<'_> {
             asked.extend(o.checks.iter().map(|c| (who.clone(), c.check_sql.as_ref())));
         }
         let callable = self.adopter_callable();
-        let mut fns = only_what_is_used(fns, &asked, &callable);
-        who_may_run(&mut fns, &asked, &callable)?;
-        Ok(fns)
+        then(&asked, &callable)
     }
 
     fn def_emit_membership(&self, out: &mut Vec<GenFn>) -> R<()> {

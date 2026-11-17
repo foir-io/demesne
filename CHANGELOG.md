@@ -86,7 +86,8 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   group lookup that no permission uses. Neither is a composition's lower bound
   where only its upper bound is called, `<flat>_resources()` where the surface
   doesn't list through it, or `<object>_<operation>_holds_at` (below). A
-  migration drops each one.
+  migration drops each one. `Sql::unused_definers()` names the functions a
+  spec's generators make and this rule leaves out.
 - **Left as it was.** `<table>_declared_by_<key>` returns the rows a rule table
   declares for a key. A policy calls it with a row's value, and what it returns
   is the rule vocabulary, not a tenant's rows.
