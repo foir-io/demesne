@@ -1121,8 +1121,21 @@ fn without_leading_guards(sql: &str) -> String {
     out
 }
 
+fn without_affordance_guards(sql: &str) -> String {
+    const GUARD: &str = "SELECT COALESCE((p_kind = ";
+    let mut out = sql.to_string();
+    while let Some(at) = out.find(GUARD) {
+        let call = at + "SELECT ".len();
+        let args = call + "COALESCE".len();
+        let end = args + bound_ends(&out[args..]);
+        assert!(out[end..].starts_with(" AND EXISTS("), "an affordance's guard precedes its lookup:\n{}", &out[at..]);
+        out.replace_range(call..end + " AND ".len(), "");
+    }
+    out
+}
+
 fn answering_any_caller(sql: &str, before: &str) -> String {
-    let sql = &without_leading_guards(sql);
+    let sql = &without_affordance_guards(&without_leading_guards(sql));
     let stated_since = |line: &&str| {
         (line.starts_with("REVOKE EXECUTE ON FUNCTION ") || line.starts_with("GRANT EXECUTE ON FUNCTION ")) && !before.lines().any(|kept| kept == *line)
     };

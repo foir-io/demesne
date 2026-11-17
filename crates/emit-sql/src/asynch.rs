@@ -18,6 +18,9 @@ pub struct AsyncIndex {
     pub discrim_col: String,
     pub discrim_val: String,
     pub id_type: String,
+    /// Each principal kind the relation names, with the expression that reads the claim identifying a caller of that
+    /// kind. The affordance answers only for a principal that is the caller's own claim for the kind it is asked about.
+    pub callers: Vec<(String, String)>,
 }
 
 impl AsyncIndex {
@@ -135,6 +138,15 @@ $$;",
         format!("{create}\n{}", Execute::Grantable.statement(&f, ""))
     }
 
+    fn the_callers_own(&self) -> String {
+        let each: Vec<String> = self.callers.iter().map(|(kind, claim)| format!("(p_kind = {} AND p_principal = {claim})", quote_literal(kind))).collect();
+        match each.as_slice() {
+            [] => "false".to_string(),
+            [only] => only.clone(),
+            _ => format!("({})", each.join(" OR ")),
+        }
+    }
+
     #[must_use]
     pub fn affordance_fn_sql(&self) -> String {
         let f = self.fn_name("affordance");
@@ -145,9 +157,10 @@ $$;",
 RETURNS TABLE(allowed boolean, as_of xid8)
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 AS $$
-  SELECT EXISTS(SELECT 1 FROM {b} WHERE resource_id = p_resource AND principal_kind = p_kind AND principal_id = p_principal),
+  SELECT COALESCE({own}, false) AND EXISTS(SELECT 1 FROM {b} WHERE resource_id = p_resource AND principal_kind = p_kind AND principal_id = p_principal),
          COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8);
 $$;",
+            own = self.the_callers_own(),
             b = self.base,
             cur = self.cursor,
             key = quote_literal(self.index_key()),
@@ -201,6 +214,7 @@ impl Sql<'_> {
                 discrim_col: g.discrim_col.clone().unwrap_or_default(),
                 discrim_val: g.discrim_val.clone().unwrap_or_default(),
                 id_type: self.s.id_type().into(),
+                callers: r.types.iter().filter_map(|t| self.s.subject_by_name(t).map(|sub| (t.clone(), self.id_claim(sub.identifies())))).collect(),
             });
         }
         out.sort_by(|a, b| {

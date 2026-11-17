@@ -70,13 +70,22 @@ impl Sql<'_> {
 
     fn async_check_sql(&self, o: &Object) -> String {
         let Some(rel) = o.relations.iter().find(|r| relation_is_async(r)) else { return String::new() };
-        let Some(cust) = o.scoped.last().and_then(|l| self.s.owner_subject(l)) else { return String::new() };
-        let kind = rel.types.first().map_or("", String::as_str);
-        format!(
-            "SELECT allowed, as_of::text FROM {}_affordance($1, {}, {})",
-            self.s.async_index_base(&o.table, &rel.name),
-            quote_literal(kind),
-            self.id_claim(cust.identifies())
-        )
+        if o.scoped.last().and_then(|l| self.s.owner_subject(l)).is_none() {
+            return String::new();
+        }
+        let affordance = format!("{}_affordance", self.s.async_index_base(&o.table, &rel.name));
+        let asked: Vec<String> = rel
+            .types
+            .iter()
+            .filter_map(|t| self.s.subject_by_name(t).map(|sub| format!("{affordance}($1, {}, {})", quote_literal(t), self.id_claim(sub.identifies()))))
+            .collect();
+        match asked.as_slice() {
+            [] => String::new(),
+            [only] => format!("SELECT allowed, as_of::text FROM {only}"),
+            _ => format!(
+                "SELECT COALESCE(bool_or(allowed), false) AS allowed, (array_agg(as_of))[1]::text AS as_of FROM ({}) AS asked",
+                asked.iter().map(|call| format!("SELECT * FROM {call}")).collect::<Vec<_>>().join(" UNION ALL ")
+            ),
+        }
     }
 }

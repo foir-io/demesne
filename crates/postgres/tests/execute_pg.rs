@@ -540,3 +540,77 @@ fn an_operator_identified_as_the_staff_are_holds_every_role_where_it_presents_a_
     }
     db.batch_execute("DROP SCHEMA demesne_op_rows CASCADE; DROP SCHEMA demesne_op_auth CASCADE;").expect("drop the schemas");
 }
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn an_affordance_answers_only_for_the_callers_own_principal_of_the_kind_it_is_asked() {
+    let mut db = connect();
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS demesne_af_rows CASCADE; DROP SCHEMA IF EXISTS demesne_af_auth CASCADE;
+         CREATE SCHEMA demesne_af_rows; CREATE SCHEMA demesne_af_auth;
+         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         CREATE TABLE demesne_af_rows.docs (id text PRIMARY KEY, tenant_id text, project_id text);
+         CREATE TABLE demesne_af_rows.dacl (resource_id text, principal_kind text, principal_id text, access text);
+         INSERT INTO demesne_af_rows.dacl VALUES ('d1', 'customer', 'c1', 'read'), ('d1', 'staff', 's1', 'read'), ('d2', 'staff', 'c1', 'read');",
+    )
+    .expect("fresh schemas");
+    let src = r#"definers schema "demesne_af_auth"
+tables schema "demesne_af_rows"
+topology { level tenant level project parent tenant }
+vocabulary cust { permission self:read }
+subject customer { anchor project reach self identifies customer_id roles configurable cust binds owner }
+subject staff { anchor project reach self identifies sub roles none }
+object doc {
+  table docs
+  scoped tenant > project
+  relation grantee: customer | staff via grant dacl(resource_id, principal_kind, principal_id, access) tracked async
+  permission view = grantee:read @rls maps select
+}
+"#;
+    let s = demesne_syntax::parse(src).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    let sql = Sql::new(&s);
+    let mut b = String::new();
+    sql.write_all_sql(&mut b).expect("the SQL compiles");
+    db.batch_execute(&b).unwrap_or_else(|e| panic!("apply: {e}"));
+    db.batch_execute(
+        "SELECT demesne_af_auth.docs_grantee_async_rebuild();
+         GRANT USAGE ON SCHEMA demesne_af_rows, demesne_af_auth TO authenticated;
+         GRANT SELECT ON ALL TABLES IN SCHEMA demesne_af_rows TO authenticated;",
+    )
+    .expect("the index fills");
+    let surface = sql.emit_app_surface().expect("the app surface");
+    let check = surface.objects.iter().find(|o| o.object.as_ref() == "doc").expect("the doc's surface").async_check_sql.to_string();
+    assert!(!check.is_empty(), "the doc has an async check");
+    let mut ask = |claims: &str, query: &str, args: &[&(dyn postgres::types::ToSql + Sync)]| -> bool {
+        let mut tx = db.transaction().expect("a transaction");
+        tx.batch_execute("SET LOCAL ROLE authenticated").expect("the role");
+        tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
+        let allowed: Option<bool> = tx.query_one(query, args).unwrap_or_else(|e| panic!("{query}: {e:?}")).get(0);
+        allowed == Some(true)
+    };
+    let affordance = "SELECT allowed FROM demesne_af_auth.docs_grantee_async_affordance($1, $2, $3)";
+    let cases: [(&str, &str, &str, &str, &str, bool); 7] = [
+        ("a customer asks about its own grant", r#"{"customer_id":"c1"}"#, "d1", "customer", "c1", true),
+        ("a customer asks about a staff member's grant", r#"{"customer_id":"c1"}"#, "d1", "staff", "s1", false),
+        ("a customer asks as staff with its own id", r#"{"customer_id":"c1"}"#, "d2", "staff", "c1", false),
+        ("a staff member asks about its own grant", r#"{"sub":"s1"}"#, "d1", "staff", "s1", true),
+        ("a staff member asks about a customer's grant", r#"{"sub":"s1"}"#, "d1", "customer", "c1", false),
+        ("a staff member whose id is a customer's asks as that customer", r#"{"sub":"c1"}"#, "d1", "customer", "c1", false),
+        ("a caller with no claims asks about a grant", "{}", "d1", "customer", "c1", false),
+    ];
+    for (why, claims, doc, kind, principal, want) in cases {
+        assert_eq!(ask(claims, affordance, &[&doc, &kind, &principal]), want, "the affordance: {why}");
+    }
+    let checks: [(&str, &str, &str, bool); 5] = [
+        ("a customer holding a grant", r#"{"customer_id":"c1"}"#, "d1", true),
+        ("a staff member holding a grant", r#"{"sub":"s1"}"#, "d1", true),
+        ("a customer whose id a staff grant holds", r#"{"customer_id":"c1"}"#, "d2", false),
+        ("a staff member holding a grant under that id", r#"{"sub":"c1"}"#, "d2", true),
+        ("a customer holding no grant", r#"{"customer_id":"c2"}"#, "d1", false),
+    ];
+    for (why, claims, doc, want) in checks {
+        assert_eq!(ask(claims, &check, &[&doc]), want, "the generated check: {why}");
+    }
+    db.batch_execute("DROP SCHEMA demesne_af_rows CASCADE; DROP SCHEMA demesne_af_auth CASCADE;").expect("drop the schemas");
+}

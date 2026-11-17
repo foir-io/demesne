@@ -62,10 +62,19 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   claim names, and for no other scope: such a rule already shows the caller
   which principals are members of the scope the caller stands in. A grant
   relation's check (`<relation>_grants`, `<acl>_grants_<object>`) is bound on
-  the principal it is asked about. Which argument is the principal is decided
-  where the function is generated, not by its name, so a parameter of an
-  `export` or a `probe` is never taken for one. A function is bound to the
-  identity claims of the subjects whose principal it takes, never another
+  the principal it is asked about. The async tier's
+  `<index>_affordance(p_resource, p_kind, p_principal)` answers only where
+  `p_principal` is the caller's own claim for the subject `p_kind` names. The
+  async check now asks it once for each subject the relation names, each with
+  that subject's claim. It passed the owner's claim under the first subject's
+  kind, so a caller of another subject was never asked about, and where the
+  first subject was not the owner, a grant to a principal of that subject
+  whose id equalled the caller's claim answered for the caller.
+  `demesne_emit_sql::AsyncIndex` gains `callers`, each principal kind with the
+  claim that identifies a caller of that kind. Which argument is the principal
+  is decided where the function is generated, not by its name, so a parameter
+  of an `export` or a `probe` is never taken for one. A function is bound to
+  the identity claims of the subjects whose principal it takes, never another
   subject's, so where ids collide across subjects (two integer sequences, say)
   a caller of one subject is never taken for a principal of another.
 - **Revoked from PUBLIC, or not emitted.** A generated function stays PUBLIC
