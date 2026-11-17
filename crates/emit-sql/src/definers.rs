@@ -946,7 +946,7 @@ impl Sql<'_> {
             let Some((r, vg)) = grant_relation(obj) else { continue };
             for i in 0..r.types.len() {
                 let (name, kind, param, _) = self.s.grant_rel_binding(obj, vg, r, i);
-                defs.add_once(grant_relation_definer(name, obj, vg, (&kind, &param), self.identities_of(&r.types[i..=i])));
+                defs.add_once(grant_relation_definer(name, obj, vg, (&kind, &param, self.s.id_type()), self.identities_of(&r.types[i..=i])));
             }
         }
     }
@@ -1988,7 +1988,7 @@ impl Sql<'_> {
         let body = format!("EXISTS (SELECT 1 FROM {} r WHERE r.{} = p_{}_id AND {})", obj.table, obj.pk(), obj.name, owner_match);
         Ok(GenFn {
             name: format!("{}_can_access_{}", principal, obj.name),
-            sig: format!("p_{}_id text, p_{}_id text, p_access text", principal, obj.name),
+            sig: format!("p_{}_id {id_t}, p_{}_id {id_t}, p_access text", principal, obj.name, id_t = self.s.id_type()),
             principal: Some(format!("p_{principal}_id")),
             principal_claims: self.identities_of(std::slice::from_ref(&principal)),
             body,
@@ -2211,7 +2211,7 @@ fn declared_columns(scope: &DeclaredScope, rels: &Rels) -> Vec<String> {
     scope.filter.iter().map(|(col, _)| col.clone()).chain(tested).chain(hops).chain(followed).chain(matched).collect()
 }
 
-fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, (kind, param): (&str, &str), principal_claims: Vec<String>) -> GenFn {
+fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, (kind, param, id_t): (&str, &str, &str), principal_claims: Vec<String>) -> GenFn {
     let mut conjuncts = vec![format!("{} = p_{}_id", vg.record_col, obj.name)];
     if let Some(d) = &vg.discrim_col {
         conjuncts.push(format!("{d} = {}", quote_literal(or(vg.discrim_val.as_deref()))));
@@ -2227,7 +2227,7 @@ fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, (kind, para
         write!(body, " OR {}", grant_group_exists(vg, obj, param)).expect("fmt::Write for String never fails");
         disjuncts.push(grant_group_conds(vg, obj, param));
     }
-    let sig = format!("p_{}_id text, p_{}_id text, p_access text", param, obj.name);
+    let sig = format!("p_{}_id {id_t}, p_{}_id {id_t}, p_access text", param, obj.name);
     let refs: Vec<&[String]> = disjuncts.iter().map(Vec::as_slice).collect();
     GenFn { name, strict: binds_every(&sig, &refs), sig, body, principal: Some(format!("p_{param}_id")), principal_claims, ..Default::default() }
 }

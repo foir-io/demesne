@@ -1,0 +1,26 @@
+identifiers uuid
+topology { level tenant level project parent tenant }
+grant support at tenant via edge support_grants(holder_id, tenant_id)
+subject staff { anchor tenant; reach via grant support; identifies sub; roles none }
+subject member { anchor project; reach self; identifies member_id; roles none; binds owner }
+object acl_entry {
+  table acl
+  scoped tenant > project
+  permission view = @store_manage @rls maps select
+  permission edit = @store_manage @rls maps update
+}
+object doc {
+  table docs
+  scoped tenant > project
+  relation owner: member via owner_id
+  relation grantee: member via grant acl(resource_id, principal_kind, principal_id, access) where resource_type = "doc"
+  relation parent: member via composition docs(id, parent_id)
+  permission view = owner + grantee:read + grantee:write + parent @rls maps select
+  permission edit = owner + grantee:write @rls maps update
+}
+object note {
+  table notes
+  scoped tenant > project
+  relation doc: member via object doc->view on doc_id
+  permission view = doc @rls maps select
+}

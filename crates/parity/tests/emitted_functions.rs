@@ -127,3 +127,62 @@ fn a_function_the_corpus_names_twice_has_parameters_of_one_shape_and_one_return_
     assert!(seen.len() > 150, "only {} functions", seen.len());
     assert!(clashes.is_empty(), "two generators make one function with parameters of different shapes:\n{}", clashes.join("\n"));
 }
+
+fn names_an_id(param: &str) -> bool {
+    ["user_id", "p_principal", "p_object", "p_node", "p_resource"].contains(&param)
+        || (param.ends_with("_id") && (param.starts_with("p_") || param.starts_with("check_")))
+}
+
+#[test]
+fn every_generated_parameter_that_names_an_id_takes_the_specs_id_type() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut paths = Vec::new();
+    specs(&root.join("examples"), &mut paths);
+    specs(&root.join("testdata"), &mut paths);
+    paths.sort();
+    let (mut wrong, mut typed) = (BTreeMap::<String, String>::new(), 0);
+    for path in &paths {
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        let Ok(s) = demesne_syntax::parse(&src) else { continue };
+        if demesne_emit_sql::validate(&s).is_err() {
+            continue;
+        }
+        let mut b = String::new();
+        if Sql::new(&s).write_all_sql(&mut b).is_err() {
+            continue;
+        }
+        let id_type = s.id_type().to_string();
+        let declared: std::collections::BTreeSet<&str> = s
+            .objects
+            .iter()
+            .flat_map(|o| {
+                o.exports
+                    .iter()
+                    .map(|e| e.name.as_str())
+                    .chain(o.probes.iter().map(|p| p.name.as_str()))
+                    .chain(o.projections.iter().map(|p| p.name.as_str()))
+                    .chain(o.point_checks.iter().map(|c| c.name.as_str()))
+            })
+            .collect();
+        for (o, stmt) in objects(&b).unwrap_or_else(|e| panic!("{}: {e}", path.display())) {
+            let (Object::Function(sig), Some(open)) = (&o, stmt.find('(')) else { continue };
+            if declared.contains(sig.split('(').next().unwrap_or_default().rsplit('.').next().unwrap_or_default()) {
+                continue;
+            }
+            let Some(close) = stmt.find(")\nRETURNS ") else { continue };
+            let ids: Vec<(&str, &str)> = stmt[open + 1..close].split(", ").filter_map(|p| p.split_once(' ')).filter(|(name, _)| names_an_id(name)).collect();
+            typed += ids.len() * usize::from(id_type != "text");
+            let function = sig.split('(').next().unwrap_or_default().rsplit('.').next().unwrap_or_default();
+            for (param, ty) in ids.into_iter().filter(|(_, ty)| *ty != id_type) {
+                wrong.entry(format!("{function}({param})")).or_insert_with(|| format!("{ty} {id_type} [{}]", path.display()));
+            }
+        }
+    }
+    assert!(typed > 20, "the corpus must type ids other than text: {typed}");
+    assert!(
+        wrong.is_empty(),
+        "{} parameters naming an id take another type:\n{}",
+        wrong.len(),
+        wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n")
+    );
+}

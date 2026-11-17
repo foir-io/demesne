@@ -191,7 +191,7 @@ impl<'a> Sql<'a> {
         let slot_arg = if vc.slot.is_some() { ", p_slot text" } else { "" };
         Ok(Some(GenFn {
             name,
-            sig: format!("p_{}_id text, p_access text{slot_arg}", obj.name),
+            sig: format!("p_{}_id {}, p_access text{slot_arg}", obj.name, self.s.id_type()),
             arm_param: "p_access".into(),
             arms,
             strict: true,

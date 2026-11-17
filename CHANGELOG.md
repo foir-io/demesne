@@ -492,7 +492,14 @@ policy calls.
 
 What breaks: on a spec whose identifiers are not `text`, a borrow's function
 now takes that type, so it is a new function and a migration drops the `text`
-one. SQL of your own that names the dispatch copy's argument (`p_id => …`)
+one. So do a grant relation's check (`<acl>_grants…`), a `@kernel` check and a
+composition's function, whose id parameters were `text` too: a spec with
+`identifiers integer` or `uuid` and a grant relation could not be applied
+before, since Postgres compares an integer or uuid column with a `text`
+parameter only through a cast the SQL did not write. A corpus test now holds
+every generated parameter that names an id to the spec's identifier type, and
+`testdata/ids` holds an integer and a uuid spec that a live test applies and
+judges. SQL of your own that names the dispatch copy's argument (`p_id => …`)
 names `p_<object>_id` instead.
 
 ### A generated function called with the same arguments for every row runs once per statement

@@ -730,6 +730,38 @@ fn upgrading_from_v4_0_0_by_migrating_leaves_no_function_v5_0_0_does_not_emit() 
     assert!(pruned_example, "examples/example.demesne loses has_org_role, among others");
 }
 
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn specs_with_integer_and_uuid_ids_apply_and_answer_through_every_generator_taking_an_id() {
+    let url = require_env("DEMESNE_PG_URL");
+    for name in ["testdata/ids/integer.demesne", "testdata/ids/uuid.demesne"] {
+        let src = std::fs::read_to_string(root().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let (s, now) = ddl_now(&src).unwrap_or_else(|| panic!("{name}: the spec emits"));
+        let keys = claim_keys(&[&now]);
+        let pools = Pools::new(s.id_type(), &[&now], &keys.all);
+        let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
+        let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
+        let (config, scratch) = scratch_database(&url, "ids");
+        let mut db = config.connect(NoTls).expect("connect to the scratch database");
+        db.batch_execute(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$",
+        )
+        .expect("the role");
+        install(&mut db, &mut setup, &pools, &now).unwrap_or_else(|e| panic!("{name}: the SQL applies on tables of its id type: {e}"));
+        let governed: Vec<String> = s.objects.iter().map(|o| o.table.clone()).collect();
+        let claims = claim_sets(&keys, &pools, &setup.tables, &governed);
+        let judged = judge(&mut db, &setup, &pools, &now, &claims).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let outcomes: Vec<&Outcome> = judged.rules.values().chain(judged.visible.values()).flatten().collect();
+        let errors: Vec<&String> = outcomes.iter().filter_map(|o| o.as_ref().err()).collect();
+        assert!(errors.is_empty(), "{name}: every policy answers: {errors:?}");
+        let admitted = outcomes.iter().filter(|o| o.as_ref().is_ok_and(|rows| !rows.is_empty())).count();
+        assert!(admitted > 0 && admitted < outcomes.len(), "{name}: the policies both admit and refuse: {admitted} of {}", outcomes.len());
+        drop(db);
+        let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
+        admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");
+    }
+}
+
 fn require_env(var: &str) -> String {
     std::env::var(var).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| panic!("set ${var} to run the claim-read checks against a live Postgres"))
 }
