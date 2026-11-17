@@ -325,6 +325,7 @@ dependencies = [
  "demesne-emit-sql 4.0.0",
  "demesne-emit-sql 5.0.0",
  "demesne-model 5.0.0",
+ "demesne-postgres",
  "demesne-syntax 1.1.0",
  "demesne-syntax 4.0.0",
  "demesne-syntax 5.0.0",

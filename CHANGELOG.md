@@ -116,7 +116,10 @@ v4's CLI (`npx @foir/demesne-cli@4.0.0 emit <spec> manifest > v4.json`), and
 apply `demesne emit <spec> migrate v4.json`: v5's SQL, then exact drops of
 what v4 created and v5 does not, then a check that nothing dropped is still
 there. If v4's manifest is lost, apply v5's SQL and run `demesne diff`: it
-reports each function v4 left behind as an orphan, and you drop each one.
+reports each function v4 left behind as an orphan, and you drop each one. A
+spec that declares `changelog checked` has no v4 manifest to give, since
+v4.0.0 refuses to write one for it (see "Fixed" below), so it upgrades by
+`diff`.
 
 ### The manifest says who may run each function
 

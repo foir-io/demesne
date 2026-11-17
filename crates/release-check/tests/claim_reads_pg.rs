@@ -621,18 +621,50 @@ fn ddl_before(src: &str) -> Option<String> {
     Some(ddl)
 }
 
-fn ddl_v4(src: &str) -> Option<(String, demesne_emit_sql::Manifest)> {
+fn ddl_v4(src: &str) -> Option<(String, Option<demesne_emit_sql::Manifest>)> {
     let s = demesne_syntax_v4::parse(src).ok()?;
     demesne_emit_sql_v4::validate(&s).ok()?;
     let sql = demesne_emit_sql_v4::Sql::new(&s);
     let mut ddl = String::new();
     sql.write_all_sql(&mut ddl).ok()?;
-    let manifest = demesne_emit_sql::Manifest::from_json(&sql.manifest().ok()?.to_json()).ok()?;
+    let manifest = sql.manifest().ok().map(|m| demesne_emit_sql::Manifest::from_json(&m.to_json()).expect("v5.0.0 reads v4.0.0's manifest"));
     Some((ddl, manifest))
 }
 
+fn upgrade_by_diff(url: &str, name: &str, src: &str) -> usize {
+    let ((s, now), (v4, _)) = (ddl_now(src).expect("v5.0.0 emits it"), ddl_v4(src).expect("v4.0.0 emits it"));
+    let keys = claim_keys(&[&v4, &now]);
+    let pools = Pools::new(s.id_type(), &[&v4, &now], &keys.all);
+    let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
+    let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
+    let (config, scratch) = scratch_database(url);
+    let mut db = config.connect(NoTls).expect("connect to the scratch database");
+    install(&mut db, &mut setup, &pools, &format!("{v4}\n{now}")).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let mut tx = db.transaction().expect("a transaction");
+    create(&mut tx, &setup, &pools).unwrap_or_else(|e| panic!("{name}: the tables: {}", why(&e)));
+    tx.commit().expect("the tables");
+    db.batch_execute(&v4).unwrap_or_else(|e| panic!("{name}: v4.0.0's SQL: {}", why(&e)));
+    db.batch_execute(&now).unwrap_or_else(|e| panic!("{name}: v5.0.0's SQL: {}", why(&e)));
+    let current = demesne_emit_sql::Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{name}: {e}"));
+    let v4_made = demesne_emit_sql::Manifest::from_sql(&v4).unwrap_or_else(|e| panic!("{name}: {e}")).functions;
+    let left: BTreeSet<String> = v4_made.difference(&current.functions).map(|f| f.replace(", ", ",")).collect();
+    let found = demesne_postgres::drift(&mut db, &now, &[]).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    let orphans: BTreeSet<String> = found.findings.iter().filter_map(|f| f.object.strip_prefix("function ").map(str::to_string)).collect();
+    assert_eq!(orphans, left, "{name}: diff names each function v4.0.0 made and v5.0.0 does not: {:#?}", found.findings);
+    assert_eq!(found.findings.len(), left.len(), "{name}: diff finds nothing else: {:#?}", found.findings);
+    for f in &orphans {
+        db.batch_execute(&format!("DROP FUNCTION {f}")).unwrap_or_else(|e| panic!("{name}: drop {f}: {}", why(&e)));
+    }
+    let after = demesne_postgres::drift(&mut db, &now, &[]).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    assert_eq!(after.findings, [], "{name}: diff is clean once the orphans are dropped");
+    drop(db);
+    let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
+    admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");
+    left.len()
+}
+
 fn upgrade_from_v4(config: &Config, name: &str, src: &str) -> Option<(usize, usize)> {
-    let ((s, now), (v4, previous)) = (ddl_now(src)?, ddl_v4(src)?);
+    let ((s, now), (v4, Some(previous))) = (ddl_now(src)?, ddl_v4(src)?) else { return None };
     let keys = claim_keys(&[&v4, &now]);
     let pools = Pools::new(s.id_type(), &[&v4, &now], &keys.all);
     let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
@@ -671,7 +703,12 @@ fn upgrading_from_v4_0_0_by_migrating_leaves_no_function_v5_0_0_does_not_emit() 
         .expect("the role");
     let (mut specs, mut dropped, mut kept) = (0, 0, 0);
     let mut pruned_example = false;
+    let mut by_diff = Vec::new();
     for (name, src) in every_spec().into_iter().filter(|(name, _)| !UUID_SPECS_WHOSE_DEFINERS_TAKE_TEXT.contains(&name.as_str())) {
+        if ddl_now(&src).is_some() && matches!(ddl_v4(&src), Some((_, None))) {
+            by_diff.push((name, src));
+            continue;
+        }
         let Some((gone, now)) = upgrade_from_v4(&config, &name, &src) else { continue };
         specs += 1;
         dropped += gone;
@@ -681,6 +718,14 @@ fn upgrading_from_v4_0_0_by_migrating_leaves_no_function_v5_0_0_does_not_emit() 
     eprintln!("v4.0.0 to v5.0.0 by migrating: {specs} specs, {dropped} functions dropped, {kept} kept");
     let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
     admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");
+    let names: Vec<&str> = by_diff.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["examples/changelog.demesne"], "v4.0.0 writes no manifest for a spec that declares `changelog checked`, and only for that");
+    for (name, src) in &by_diff {
+        let spare = format!("{src}\nclosure spare_paths(ancestor_id, descendant_id)\n");
+        let (orphans, with_spare) = (upgrade_by_diff(&url, name, src), upgrade_by_diff(&url, name, &spare));
+        eprintln!("{name}: v4.0.0 to v5.0.0 by diff, {orphans} orphans dropped, {with_spare} with a closure no relation reads");
+        assert!(with_spare > 0, "{name}: the functions of a closure no relation reads are orphans diff names");
+    }
     assert!(specs > 150 && dropped > 50 && kept > 400, "{specs} specs, {dropped} dropped, {kept} kept");
     assert!(pruned_example, "examples/example.demesne loses has_org_role, among others");
 }
