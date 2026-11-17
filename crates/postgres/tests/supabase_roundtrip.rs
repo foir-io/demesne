@@ -260,10 +260,11 @@ fn null_call(signature: &str) -> String {
 }
 
 fn check_revoked_stay_refused(t: &T, db: &mut Client, execute: &demesne_emit_sql::ExecuteLists) {
-    if execute.revoked.is_empty() {
+    let revoked: Vec<&String> = execute.revoked.iter().chain(&execute.grantable).collect();
+    if revoked.is_empty() {
         t.errorf("the example revokes no function, so nothing shows that a revoked one stays refused");
     }
-    for f in &execute.revoked {
+    for f in revoked {
         let mut tx = db.transaction().unwrap_or_else(|e| panic!("begin: {e}"));
         if let Err(e) = tx.batch_execute("SET LOCAL ROLE authenticated") {
             panic!("set role: {e}");

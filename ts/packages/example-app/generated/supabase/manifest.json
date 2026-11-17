@@ -6,13 +6,14 @@
     "demesne.notes_admits(text, jsonb)"
   ],
   "callable": [],
-  "internal": [
-    "demesne.note_acl_grants(text, text, text)"
-  ],
-  "revoked": [
+  "grantable": [
     "demesne.notes_accessors_conditional(text)",
     "demesne.notes_admits(text, jsonb)"
   ],
+  "internal": [
+    "demesne.note_acl_grants(text, text, text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.notes",
@@ -24,5 +25,52 @@
   "tables": [],
   "rls": [
     "public.notes"
+  ],
+  "heads": [
+    {
+      "function": "demesne.note_acl_grants(text, text, text)",
+      "parameters": "p_member_id text, p_note_id text, p_access text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.notes",
+          "name": "notes_select"
+        }
+      ]
+    },
+    {
+      "function": "demesne.notes_accessors_conditional(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])",
+      "policies": []
+    },
+    {
+      "function": "demesne.notes_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    }
+  ],
+  "digests": [
+    {
+      "object": "function demesne.note_acl_grants(text, text, text)",
+      "digest": "995c6d9e96d259e443ffc25f58037089cd94b7ac91eebe1bd545600b8bcff3cf"
+    },
+    {
+      "object": "function demesne.notes_accessors_conditional(text)",
+      "digest": "ae6aafccc60bbf04071d013d4c4feb19c95ca520b679c447193a7606cc90dd41"
+    },
+    {
+      "object": "function demesne.notes_admits(text, jsonb)",
+      "digest": "353797bf4256c76bde236e562d77c03d281767a01c84b223d97f1604a0861954"
+    },
+    {
+      "object": "policy notes_select on public.notes",
+      "digest": "125fa83d7dfe9f6044969ddb63795196d1e98c77729eb97d7093603a21b27108"
+    },
+    {
+      "object": "rls public.notes",
+      "digest": "d8dc01b58dded4571bda73f3e8f14aa31923cbe1c2a9c67feabd8b8edb197340"
+    }
   ]
 }

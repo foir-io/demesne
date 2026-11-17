@@ -12,7 +12,8 @@ const suite = canRun ? describe : describe.skip;
 
 const sqlFile = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
-const manifest = JSON.parse(sqlFile("../generated/supabase/manifest.json")) as { callable: string[]; revoked: string[] };
+const manifest = JSON.parse(sqlFile("../generated/supabase/manifest.json")) as { callable: string[]; grantable: string[]; revoked: string[] };
+const revokedFromPublic = [...manifest.revoked, ...manifest.grantable];
 
 // Each argument is a subquery: the planner folds a STRICT call on a constant NULL away before the privilege check runs.
 const nullCall = (signature: string) => {
@@ -111,8 +112,8 @@ suite(`Supabase profile round-trip ${realUrl ? "(real project)" : "(local Supaba
   });
 
   it("a function the SQL revokes from PUBLIC stays refused for authenticated", async () => {
-    expect(manifest.revoked.length).toBeGreaterThan(0);
-    for (const fn of manifest.revoked) {
+    expect(revokedFromPublic.length).toBeGreaterThan(0);
+    for (const fn of revokedFromPublic) {
       await client.query("BEGIN");
       try {
         await client.query("SET LOCAL ROLE authenticated");
