@@ -29,11 +29,12 @@ likewise write the caller's table and leave the real one stale.
 
 Every generated function now sets its search path with `pg_temp` last. Every
 release from v1.0.0 has this, and so does the Go engine's v0.93.x, which gets
-no fix: upgrade to v5. Upgrading fixes it: `emit migrate` from a v4.0.0 manifest writes the whole SQL, so every
-function is created again, and `diff` names any live function whose
-definition still lacks `pg_temp`. A live test shadows every table a spec reads
-with forged rows in a session that may create temporary tables, and every
-check, and both triggers, still use the real tables.
+no fix: upgrade to v5. Upgrading fixes it: `emit migrate` from a v4.0.0
+manifest writes the whole SQL, so every function is created again, and `diff`
+names any live function whose definition still lacks `pg_temp`. A live test
+shadows every table a spec reads with forged rows in a session that may create
+temporary tables, and every check, and both triggers, still use the real
+tables.
 
 ### Breaking: a generated function answers only about the caller, or PUBLIC cannot run it
 
@@ -52,7 +53,9 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   `_ancestors`, `_reachable`), a marker's claim value or a stored condition's
   claim values now answers only when that argument is the caller's own claim.
   For any other value it answers false, the empty set, or NULL where the
-  function can already say "undecided". The signatures are unchanged.
+  function can already say "undecided". The binding changes no signature;
+  ids retyped to the spec's identifiers and a store copy's renamed parameter
+  are the `<object>_can_<verb>` entry's (below).
   `<admin>_memberin_<level>(principal, scope)` is bound on its principal. Where
   a rule passes a row's column as the principal and a claim as the scope
   (`via memberin tenant(id, @tenant_id)`), it also answers for the scope that
@@ -92,8 +95,10 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   declares for a key. A policy calls it with a row's value, and what it returns
   is the rule vocabulary, not a tenant's rows.
 
-Policies always passed the caller's claim, so no policy changes and no rule
-admits or refuses anyone it did not before.
+Policies always passed the caller's claim, so the binding changes no policy,
+and no rule admits or refuses anyone it did not before because of it. Other
+entries do change what some specs admit or whether they compile: the grant
+and relation Breaking entries below, and the first two under "Fixed".
 
 The binding assumes only your API sets the claims. A caller who can run
 arbitrary SQL as the caller role can set them with `set_config`, as it always
@@ -117,8 +122,11 @@ What breaks for an adopter:
   function no policy calls now gets `permission denied`.** That includes a role
   helper, a grant's reach function and a closure function you called directly.
   A generated function is the policies' tool: read the tables that statement
-  needs instead, under a role that may. Granting `EXECUTE` gives back only
-  what the caller could ask about itself, since the binding still holds.
+  needs instead, under a role that may. Granting `EXECUTE` on a revoked
+  function that keeps its binding gives back only what the caller could ask
+  about itself. Grant no `<function>_inside` copy: it has no check. A function
+  the `grantable` list names answers for any id or claims it is given, so
+  grant it only to a role meant to read across callers.
 - **SQL of your own that called a generated function nothing else calls gets
   `function does not exist`**, since that function is no longer emitted. Read
   the tables in that statement instead, under a role that may.
@@ -628,9 +636,9 @@ In a generated function that answers for one row per call, only the form
 changes: `<table>_admits` reuses the policy's predicate, `<store>_manage`
 calls each kind's `<object>_can_edit(p_id)`, and a role check
 `is_<level>_<admin>` first asks whether its `user_id` is an operator, through
-a membership check or a grant's `_reach`. Each still runs its call once per
-call. Over the same 2000 rows, `<store>_manage` called `<object>_can_edit`
-2000 times either way.
+a membership check, where the operator is identified by the same claim (see
+the grant entry). Each still runs its call once per call. Over the same 2000
+rows, `<store>_manage` called `<object>_can_edit` 2000 times either way.
 
 The policies admit the rows they admitted. The comparison with v1.1.0 sets
 these wraps aside as it does the claim reads. A corpus test finds every call
