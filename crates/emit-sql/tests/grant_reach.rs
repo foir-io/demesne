@@ -177,6 +177,31 @@ fn a_pinned_borrow_is_refused_where_the_terms_bind_a_grants_callers() {
     assert!(why.contains("is `pinned` on") && why.contains("a grant reaches rows of this object outside its containment"), "{why}");
 }
 
+#[test]
+fn a_pinned_borrow_is_emitted_where_the_permission_names_the_grant() {
+    let named = SPEC
+        .replace(
+            "table ledgers\n  scoped estate\n",
+            "table ledgers\n  scoped estate\n  relation in_open_memo: member via object memo->view on estate_id pinned\n",
+        )
+        .replace(
+            "permission view = @scoped and @row(state, \"open\") @rls maps select\n  permission edit",
+            "permission view = (@scoped and in_open_memo) + via grant support @rls maps select\n  permission edit",
+        )
+        .replace(
+            "permission edit = @scoped and @row(state, \"open\") @rls maps update",
+            "permission edit = (@scoped and in_open_memo) + via grant support @rls maps update",
+        );
+    assert_ne!(named, SPEC);
+    let pred = using(&emitted(&named), "ledgers_select");
+    let pinned = "(SELECT auth.memo_can_view((SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')))";
+    assert_eq!(
+        pred,
+        format!("{REACH} OR ({STANDS} AND (({pinned})))"),
+        "the grant's holders pass by the named grant, and the pinned call binds only callers the scope holds"
+    );
+}
+
 const AUDITOR: &str = "((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'auditor') AND (state = 'shut')";
 
 #[test]

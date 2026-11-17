@@ -285,7 +285,9 @@ What breaks for an adopter, and how to keep a pass that was meant:
   names the level and says to remove the term. Removing it changes no SQL. No
   spec admits more after this release than before it.
 - **A `pinned` borrow on an object whose terms now bind a grant's callers is
-  refused.** Drop `pinned` there, or name the grant.
+  refused.** Drop `pinned` there, or name the grant in the permission
+  (`+ via grant <name>`): its holders then pass by the grant, and the pinned
+  borrow binds only callers the scope holds, so the permission compiles.
 - The reverse listings (`<table>_accessors`) list a grant's holders as they
   did; they are an upper bound there, as they already were on deeper objects.
 

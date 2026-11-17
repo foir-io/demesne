@@ -1274,7 +1274,7 @@ impl Sql<'_> {
                 Ok(vec![frag])
             }
             Repr::Object(vo) if vo.pinned => {
-                let claim = self.pinned_claim(obj, r, vo, pm.maps())?;
+                let claim = self.pinned_claim(obj, r, vo, pm)?;
                 Ok(vec![definer_call(&format!("{schema}.{}", vo.function_name()), &[Arg::Fixed(claim)])])
             }
             Repr::Object(vo) => {
@@ -1290,7 +1290,22 @@ impl Sql<'_> {
         }
     }
 
-    fn pinned_claim(&self, obj: &Object, r: &Relation, vo: &ViaObject, op: &str) -> R<String> {
+    fn named_reaches(&self, obj: &Object, pm: &Perm) -> R<Vec<String>> {
+        let mut named = Vec::new();
+        for t in pm.tree.leaves().into_iter().filter(|t| !t.grant_ref().is_empty()) {
+            if self.s.grant_by_name(t.grant_ref()).is_some_and(|g| !g.confers(pm.maps())) {
+                continue;
+            }
+            let reach = self.grant_ref_reach(obj, t.grant_ref(), pm.maps())?;
+            if !reach.is_empty() {
+                named.push(reach);
+            }
+        }
+        Ok(named)
+    }
+
+    fn pinned_claim(&self, obj: &Object, r: &Relation, vo: &ViaObject, pm: &Perm) -> R<String> {
+        let op = pm.maps();
         let refuse = |why: String| format!("relation {} is `pinned` on {}, but {why}", quote(&r.name), quote(&vo.col));
         let obj_leaf = leaf(obj);
         let virt = self.virtual_levels()?;
@@ -1306,7 +1321,8 @@ impl Sql<'_> {
             return Err(refuse(format!("level {} is not on every path to {}", quote(level), quote(obj_leaf))));
         }
         let branches = self.rls_subject_branches(obj, &virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op);
-        if !branches.beside.is_empty() {
+        let named = self.named_reaches(obj, pm)?;
+        if branches.beside.iter().any(|reach| !named.contains(reach)) {
             return Err(refuse(
                 "a grant reaches rows of this object outside its containment for this operation, and the permission's terms bind those callers too, so the column is not always the caller's claim".into(),
             ));
