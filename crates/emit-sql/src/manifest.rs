@@ -312,9 +312,9 @@ fn object_of(stmt: &str) -> Result<Option<Object>, String> {
     Ok(Some(match words.as_slice() {
         ["CREATE", "OR", "REPLACE", "FUNCTION", ..] | ["CREATE", "FUNCTION", ..] => Object::Function(function_signature(stmt)?),
         ["CREATE", "POLICY", name, "ON", table, ..] => Object::Policy { table: (*table).to_string(), name: (*name).to_string() },
-        ["CREATE", "OR", "REPLACE", "TRIGGER", name, rest @ ..] | ["CREATE", "TRIGGER", name, rest @ ..] => {
-            Object::Trigger { table: target(rest, stmt)?, name: (*name).to_string() }
-        }
+        ["CREATE", "OR", "REPLACE", "TRIGGER", name, rest @ ..]
+        | ["CREATE", "TRIGGER", name, rest @ ..]
+        | ["CREATE", "CONSTRAINT", "TRIGGER", name, rest @ ..] => Object::Trigger { table: target(rest, stmt)?, name: (*name).to_string() },
         ["CREATE", "UNIQUE", "INDEX", rest @ ..] | ["CREATE", "INDEX", rest @ ..] => {
             let (table, name) = index_entry(rest, stmt)?;
             Object::Index { table, name }

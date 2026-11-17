@@ -436,6 +436,15 @@ To check a spec, look for a `via composition` relation named beside `and` or
 after `not` in a permission. After upgrading, re-emit and apply the definers:
 the fix is in the generated `<object>_composition_<relation>` functions.
 
+### Fixed: the manifest refused every spec that declares `changelog checked`
+
+`changelog checked` creates each changelog trigger with `CREATE CONSTRAINT
+TRIGGER`, and the manifest didn't read that statement. So `demesne emit
+manifest`, `demesne emit migrate` and `demesne diff` each refused such a spec
+and named the trigger. v4.0.0 has this. The manifest now records a constraint
+trigger like any other trigger, a migration drops it with `DROP TRIGGER`, and
+`diff` compares it. The SQL these specs emit doesn't change.
+
 ## v4.0.0
 
 The crates are 4.0.0 because public types of `demesne-syntax` and

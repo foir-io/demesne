@@ -333,3 +333,39 @@ fn a_manifest_whose_lists_do_not_hold_each_function_once_is_refused() {
     let whole = Manifest::from_json(&with(r#""callable": ["auth.f(text)"], "internal": [], "revoked": ["auth.g(text)"],"#)).expect("a whole manifest");
     assert_eq!(whole.execute.map(|e| e.revoked.into_iter().collect::<Vec<_>>()), Some(vec!["auth.g(text)".to_string()]));
 }
+
+#[test]
+fn a_checked_changelogs_constraint_triggers_are_recorded_and_dropped_like_any_trigger() {
+    let src = "changelog checked
+topology { level estate level space parent estate }
+subject member { anchor space; reach self; identifies sub; roles none; binds owner }
+object doc {
+  table docs
+  scoped estate > space
+  relation owner: member via owner_id where owner_kind = \"member\"
+  relation grantee: member via grant doc_acl(doc_id, principal_kind, principal_id, access) tracked
+  permission view = owner + mode visibility = \"public\" + grantee:read @rls maps select
+  track owner
+  track visibility
+}
+";
+    let s = demesne_syntax::parse(src).unwrap_or_else(|e| panic!("{e}"));
+    validate(&s).unwrap_or_else(|e| panic!("{e}"));
+    let sql = all_sql(&s);
+    let created: BTreeSet<(String, String)> = sql
+        .lines()
+        .filter_map(|l| l.strip_prefix("CREATE CONSTRAINT TRIGGER "))
+        .map(|rest| {
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            let on = words.iter().position(|w| *w == "ON").expect("a trigger names its table");
+            (words[on + 1].to_string(), words[0].to_string())
+        })
+        .collect();
+    assert_eq!(created.len(), 2, "{sql}");
+    let m = Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(m.triggers, created, "{sql}");
+    let drops = Manifest::default().drops_since(&m);
+    for (table, name) in &created {
+        assert!(drops.contains(&format!("DROP TRIGGER IF EXISTS {name} ON {table};")), "{drops}");
+    }
+}

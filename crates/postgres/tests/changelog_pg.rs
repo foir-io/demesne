@@ -1,3 +1,4 @@
+use demesne_postgres::{DriftKind, drift};
 use postgres::error::SqlState;
 use postgres::{Client, NoTls};
 
@@ -82,9 +83,40 @@ fn a_commit_that_changes_a_tracked_source_without_its_changelog_row_is_refused()
     commit(&mut db, &[&granted]).expect("a changelog row commits by itself");
     commit(&mut db, &[grant]).expect_err("a row written by an earlier transaction does not cover a later change");
     let deferred: i64 = db
-        .query_one("SELECT count(*) FROM pg_trigger WHERE tgconstraint <> 0 AND tgname IN ('doc_acl_changelog', 'docs_obj_changelog')", &[])
+        .query_one(
+            &format!("SELECT count(*) FROM pg_trigger WHERE tgconstraint <> 0 AND tgrelid IN ('{ROWS}.doc_acl'::regclass, '{ROWS}.docs'::regclass)"),
+            &[],
+        )
         .expect("the triggers")
         .get(0);
     assert_eq!(deferred, 2, "both triggers are deferred constraint triggers");
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn diff_reads_a_checked_changelogs_constraint_triggers_and_reports_one_dropped() {
+    let url = std::env::var("DEMESNE_PG_URL").ok().filter(|v| !v.is_empty()).expect("set $DEMESNE_PG_URL to run diff against a live Postgres");
+    let mut db = Client::connect(&url, NoTls).expect("connect to $DEMESNE_PG_URL");
+    let (rows, auth) = ("demesne_clc_rows", "demesne_clc_auth");
+    let s = demesne_syntax::parse(&format!("definers schema \"{auth}\"\ntables schema \"{rows}\"\n{SPEC}")).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    let mut sql = String::new();
+    demesne_emit_sql::Sql::new(&s).write_all_sql(&mut sql).expect("the SQL compiles");
+    db.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS {rows} CASCADE; DROP SCHEMA IF EXISTS {auth} CASCADE; CREATE SCHEMA {rows}; CREATE SCHEMA {auth};
+         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         CREATE TABLE {rows}.docs (id text PRIMARY KEY, estate_id text, space_id text, owner_id text, owner_kind text, visibility text);
+         CREATE TABLE {rows}.doc_acl (doc_id text, principal_kind text, principal_id text, access text);"
+    ))
+    .expect("fresh schemas and tables");
+    db.batch_execute(&sql).unwrap_or_else(|e| panic!("apply: {e}"));
+    let clean = drift(&mut db, &sql, &[]).unwrap_or_else(|e| panic!("diff runs: {e}"));
+    assert_eq!(clean.findings, [], "the database the SQL just built is in sync");
+    assert_eq!(clean.triggers, 2, "both constraint triggers are compared");
+    db.batch_execute(&format!("DROP TRIGGER doc_acl_changelog ON {rows}.doc_acl")).expect("drop one");
+    let d = drift(&mut db, &sql, &[]).unwrap_or_else(|e| panic!("diff runs: {e}"));
+    let found: Vec<(DriftKind, &str)> = d.findings.iter().map(|f| (f.kind, f.object.as_str())).collect();
+    assert_eq!(found, [(DriftKind::Missing, "trigger doc_acl_changelog on demesne_clc_rows.doc_acl")], "{:#?}", d.findings);
+    db.batch_execute(&format!("DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");
 }
