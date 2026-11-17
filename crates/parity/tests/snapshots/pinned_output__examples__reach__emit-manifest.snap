@@ -119,6 +119,187 @@ exit: 0
     "public.folders",
     "public.ledgers",
     "public.spaces"
+  ],
+  "heads": [
+    {
+      "function": "auth.approvals_reach_in_folder(text, text, text, text)",
+      "parameters": "user_id text, check_estate_id text, check_space_id text, check_folder_id text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.approvals_reach_in_space(text, text, text)",
+      "parameters": "user_id text, check_estate_id text, check_space_id text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.approvals_reach_set(text)",
+      "parameters": "user_id text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.allowances",
+          "name": "allowances_select"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_insert"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_select"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_update"
+        },
+        {
+          "table": "public.blueprints",
+          "name": "blueprints_select"
+        },
+        {
+          "table": "public.blueprints",
+          "name": "blueprints_update"
+        },
+        {
+          "table": "public.entries",
+          "name": "entries_select"
+        },
+        {
+          "table": "public.entries",
+          "name": "entries_update"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_delete"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_insert"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_select"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_update"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.approvals_reach_unscoped_set(text)",
+      "parameters": "user_id text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.allowances",
+          "name": "allowances_delete"
+        },
+        {
+          "table": "public.allowances",
+          "name": "allowances_insert"
+        },
+        {
+          "table": "public.allowances",
+          "name": "allowances_select"
+        },
+        {
+          "table": "public.allowances",
+          "name": "allowances_update"
+        },
+        {
+          "table": "public.ledgers",
+          "name": "ledgers_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.catalog_can_bound(text)",
+      "parameters": "p_catalog_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.entries",
+          "name": "entries_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.catalog_can_bound_for_select(text)",
+      "parameters": "p_catalog_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.entries",
+          "name": "entries_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.folder_write_allowed(text, text, text)",
+      "parameters": "check_folder_id text, row_estate_id text, row_space_id text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.paths_reach_set(text)",
+      "parameters": "user_id text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.assets",
+          "name": "assets_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_reachable(text, text)",
+      "parameters": "p_ancestor text, p_descendant text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.folders",
+          "name": "folders_delete"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_insert"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_select"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_up_reach_set(text)",
+      "parameters": "user_id text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.blueprints",
+          "name": "blueprints_select"
+        }
+      ]
+    }
   ]
 }
 

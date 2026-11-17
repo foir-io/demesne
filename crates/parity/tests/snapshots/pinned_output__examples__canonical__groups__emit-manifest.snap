@@ -33,6 +33,25 @@ exit: 0
   "tables": [],
   "rls": [
     "public.docs"
+  ],
+  "heads": [
+    {
+      "function": "auth.group_closure_member(text, text)",
+      "parameters": "p_group text, p_member text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.group_closure_rebuild()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    }
   ]
 }
 

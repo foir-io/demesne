@@ -48,6 +48,48 @@ exit: 0
   "rls": [
     "public.documents",
     "public.tenants"
+  ],
+  "heads": [
+    {
+      "function": "auth.operator_has_perm(text, text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.documents",
+          "name": "documents_select"
+        },
+        {
+          "table": "public.documents",
+          "name": "documents_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.operator_perm_implied_by(text)",
+      "parameters": "p_perm text",
+      "returns": "text[]",
+      "policies": []
+    },
+    {
+      "function": "auth.platform_has_perm(text, text)",
+      "parameters": "user_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.tenants",
+          "name": "tenants_delete"
+        },
+        {
+          "table": "public.tenants",
+          "name": "tenants_select"
+        },
+        {
+          "table": "public.tenants",
+          "name": "tenants_update"
+        }
+      ]
+    }
   ]
 }
 

@@ -41,6 +41,25 @@ exit: 0
   "tables": [],
   "rls": [
     "public.documents"
+  ],
+  "heads": [
+    {
+      "function": "auth.folder_closure_maintain()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    },
+    {
+      "function": "auth.folder_closure_reachable(text, text)",
+      "parameters": "p_ancestor text, p_descendant text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.documents",
+          "name": "documents_select"
+        }
+      ]
+    }
   ]
 }
 

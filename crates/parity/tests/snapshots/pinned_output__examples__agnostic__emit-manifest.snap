@@ -65,6 +65,118 @@ exit: 0
   "rls": [
     "public.assets",
     "public.spaces"
+  ],
+  "heads": [
+    {
+      "function": "auth.asset_acl_grants(text, text, text)",
+      "parameters": "p_member_id text, p_asset_id text, p_access text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.assets",
+          "name": "assets_delete"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_select"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.assets_accessors_conditional(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])",
+      "policies": []
+    },
+    {
+      "function": "auth.assets_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.crew_has_space_role(text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_space_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.is_ops(text)",
+      "parameters": "user_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.assets",
+          "name": "assets_delete"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_insert"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_select"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_update"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.is_tenant_crew(text, text)",
+      "parameters": "user_id text, check_tenant_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.member_can_access_asset(text, text, text)",
+      "parameters": "p_member_id text, p_asset_id text, p_access text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.spaces_accessors(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text)",
+      "policies": []
+    },
+    {
+      "function": "auth.spaces_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    }
   ]
 }
 

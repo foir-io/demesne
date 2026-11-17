@@ -65,6 +65,118 @@ exit: 0
   "rls": [
     "public.docs",
     "public.workspaces"
+  ],
+  "heads": [
+    {
+      "function": "auth.doc_acl_grants(text, text, text)",
+      "parameters": "p_member_id text, p_doc_id text, p_access text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_delete"
+        },
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        },
+        {
+          "table": "public.docs",
+          "name": "docs_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.docs_accessors_conditional(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])",
+      "policies": []
+    },
+    {
+      "function": "auth.docs_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.is_root(text)",
+      "parameters": "user_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_delete"
+        },
+        {
+          "table": "public.docs",
+          "name": "docs_insert"
+        },
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        },
+        {
+          "table": "public.docs",
+          "name": "docs_update"
+        },
+        {
+          "table": "public.workspaces",
+          "name": "workspaces_select"
+        },
+        {
+          "table": "public.workspaces",
+          "name": "workspaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.is_tenant_staff(text, text)",
+      "parameters": "user_id text, check_tenant_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.workspaces",
+          "name": "workspaces_select"
+        },
+        {
+          "table": "public.workspaces",
+          "name": "workspaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.member_can_access_doc(text, text, text)",
+      "parameters": "p_member_id text, p_doc_id text, p_access text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.staff_has_workspace_role(text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_workspace_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.workspaces",
+          "name": "workspaces_select"
+        },
+        {
+          "table": "public.workspaces",
+          "name": "workspaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.workspaces_accessors(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text)",
+      "policies": []
+    },
+    {
+      "function": "auth.workspaces_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    }
   ]
 }
 

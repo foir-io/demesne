@@ -148,6 +148,20 @@ uses it as before.
 `Sql::manifest` always fills it, and `Manifest::from_sql` leaves it `None`,
 since SQL alone does not say which functions a spec line makes yours.
 
+### `emit migrate` drops first a function whose parameters changed
+
+Some generated parameters are named after a subject or a level, such as
+`<acl>_grants(p_<subject>_id, …)` or a role check's `check_<level>_id`, so
+renaming one renames the parameter, and `CREATE OR REPLACE` cannot rename a
+parameter. The manifest now records each function's parameters, its return
+type and the policies that call it, under `heads`. A migration from a manifest
+that has them first drops each function whose parameters or return type
+changed, and only the policies that call it; the SQL then creates both again.
+A manifest written before has no `heads`, so its migration cannot see such a
+change and says so in a comment line: drop those functions by hand.
+`Manifest` gains `heads` and `Manifest::renamed_since`, and the multi-file
+`--file` forms do the same.
+
 ### `check`: one row against a permission lent with `predicate`
 
 A predicate-only permission is answered for one row by the function its borrow

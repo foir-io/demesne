@@ -4,6 +4,7 @@ expression: "record(&repo, \"\", &args)"
 ---
 exit: 0
 --- stdout ---
+-- the previous manifest records no parameters, so a function whose parameters changed is not dropped first
 CREATE OR REPLACE FUNCTION auth.support_grants_reach_set(user_id text)
 RETURNS SETOF text
 LANGUAGE sql

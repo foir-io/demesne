@@ -3,7 +3,7 @@ use crate::error::{Error, ManifestError};
 use crate::genfn::{Execute, definers_sql};
 use demesne_gocompat::json::{self, Value};
 use demesne_gocompat::quote;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 const FORMAT: i64 = 1;
@@ -25,6 +25,21 @@ pub struct Manifest {
     pub tables: BTreeSet<String>,
     /// Tables the SQL enables row level security on.
     pub rls: BTreeSet<String>,
+    /// Each function's parameters and return type, and the policies that call it, by identity signature. `None` for a
+    /// manifest written before these were recorded, whose next migration cannot see a renamed parameter.
+    pub heads: Option<BTreeMap<String, Head>>,
+}
+
+/// What a function declares beyond its identity, and the policies that call it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Head {
+    /// The parameter list as the script declares it, such as `p_doc_id text`.
+    pub parameters: String,
+    /// The return type, such as `boolean`.
+    pub returns: String,
+    /// The policies that call the function, as `(table, name)`.
+    pub policies: BTreeSet<(String, String)>,
 }
 
 /// Every function a manifest records, in exactly one of four lists by who may run it.
@@ -72,7 +87,24 @@ impl Manifest {
     /// A `CREATE` statement of a kind the manifest does not record, or one it cannot read the identity of.
     pub fn from_sql(sql: &str) -> Result<Self, ManifestError> {
         let mut m = Self::default();
-        for (object, _) in objects(sql)? {
+        let made = objects(sql)?;
+        let mut heads: BTreeMap<String, Head> = BTreeMap::new();
+        for (object, stmt) in &made {
+            if let Object::Function(sig) = object
+                && let Some((parameters, returns)) = function_head(stmt)
+            {
+                heads.insert(sig.clone(), Head { parameters, returns, policies: BTreeSet::new() });
+            }
+        }
+        for (object, stmt) in &made {
+            let Object::Policy { table, name } = object else { continue };
+            let calls = |sig: &str| stmt.contains(&format!("{}(", sig.split('(').next().unwrap_or_default()));
+            for (_, head) in heads.iter_mut().filter(|(sig, _)| calls(sig)) {
+                head.policies.insert((table.clone(), name.clone()));
+            }
+        }
+        m.heads = Some(heads);
+        for (object, _) in made {
             match object {
                 Object::Function(sig) => m.functions.insert(sig),
                 Object::Policy { table, name } => m.policies.insert((table, name)),
@@ -140,6 +172,7 @@ impl Manifest {
             indexes: pairs("indexes")?,
             tables: names("tables")?,
             rls: names("rls")?,
+            heads: v.get("heads").map(read_heads).transpose()?,
         })
     }
 
@@ -168,10 +201,43 @@ impl Manifest {
             ("tables".into(), names(&self.tables)),
             ("rls".into(), names(&self.rls)),
         ]);
+        if let Some(heads) = &self.heads {
+            let head = |(f, h): (&String, &Head)| {
+                Value::Struct(vec![
+                    ("function".into(), Value::str(f.as_str())),
+                    ("parameters".into(), Value::str(h.parameters.as_str())),
+                    ("returns".into(), Value::str(h.returns.as_str())),
+                    ("policies".into(), pairs(&h.policies)),
+                ])
+            };
+            fields.push(("heads".into(), Value::Array(heads.iter().map(head).collect())));
+        }
         let v = Value::Struct(fields);
         let mut out = json::marshal_indent(&v, "", "  ");
         out.push('\n');
         out
+    }
+
+    /// Returns the SQL that must run before this manifest's SQL over what `previous` created: for each function both
+    /// create whose parameters or return type changed, which `CREATE OR REPLACE` cannot change, the policies `previous`
+    /// records as calling it are dropped and then the function is; the SQL creates both again. When `previous` records no
+    /// parameters, a line says that a changed parameter cannot be seen.
+    #[must_use]
+    pub fn renamed_since(&self, previous: &Self) -> String {
+        let (Some(now), Some(before)) = (&self.heads, &previous.heads) else {
+            return "-- the previous manifest records no parameters, so a function whose parameters changed is not dropped first\n".to_string();
+        };
+        let changed: Vec<(&String, &Head)> =
+            before.iter().filter(|(f, was)| now.get(*f).is_some_and(|is| (&is.parameters, &is.returns) != (&was.parameters, &was.returns))).collect();
+        let policies: BTreeSet<&(String, String)> = changed.iter().flat_map(|(_, was)| &was.policies).collect();
+        let mut b = String::new();
+        for (table, name) in policies {
+            writeln!(b, "DROP POLICY IF EXISTS {} ON {table};", ident(name)).expect("fmt::Write for String never fails");
+        }
+        for (f, _) in changed {
+            writeln!(b, "DROP FUNCTION IF EXISTS {f};").expect("fmt::Write for String never fails");
+        }
+        b
     }
 
     /// Returns the SQL that removes what `previous` created and this manifest does not: exact drops, then a check that fails the migration if any of them survived.
@@ -309,6 +375,32 @@ pub fn granted_to_public(sql: &str) -> Vec<String> {
     statements(sql).iter().filter_map(|stmt| stmt.strip_prefix("GRANT EXECUTE ON FUNCTION ")?.strip_suffix(" TO PUBLIC").map(str::to_string)).collect()
 }
 
+fn read_heads(v: &Value) -> Result<BTreeMap<String, Head>, String> {
+    let items = v.as_array().ok_or("manifest: \"heads\" is not a list")?;
+    let text = |i: &Value, key: &str| i.get(key).and_then(Value::as_str).map(String::from).ok_or_else(|| format!("manifest: a head needs {}", quote(key)));
+    items
+        .iter()
+        .map(|i| {
+            let policies = i.get("policies").and_then(Value::as_array).ok_or("manifest: a head needs \"policies\"")?;
+            let policies = policies
+                .iter()
+                .map(|p| match (p.get("table").and_then(Value::as_str), p.get("name").and_then(Value::as_str)) {
+                    (Some(t), Some(n)) => Ok((t.to_string(), n.to_string())),
+                    _ => Err("manifest: a head's policy needs a table and a name".to_string()),
+                })
+                .collect::<Result<_, _>>()?;
+            Ok((text(i, "function")?, Head { parameters: text(i, "parameters")?, returns: text(i, "returns")?, policies }))
+        })
+        .collect()
+}
+
+fn function_head(stmt: &str) -> Option<(String, String)> {
+    let open = stmt.find('(')?;
+    let close = open + stmt[open..].find(")\nRETURNS ")?;
+    let returns = stmt[close + ")\nRETURNS ".len()..].lines().next()?.trim().to_string();
+    Some((stmt[open + 1..close].to_string(), returns))
+}
+
 fn read_objects(sql: &str) -> Result<Vec<(Object, String)>, String> {
     let mut out = Vec::new();
     for stmt in statements(sql) {
@@ -371,6 +463,15 @@ pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
 impl Manifest {
     pub(crate) fn union(mut self, other: &Manifest) -> Manifest {
         self.execute = None;
+        self.heads = match (self.heads.take(), &other.heads) {
+            (Some(mut mine), Some(theirs)) => {
+                for (f, h) in theirs {
+                    mine.entry(f.clone()).or_insert_with(|| h.clone());
+                }
+                Some(mine)
+            }
+            _ => None,
+        };
         self.functions.extend(other.functions.iter().cloned());
         self.policies.extend(other.policies.iter().cloned());
         self.triggers.extend(other.triggers.iter().cloned());
@@ -448,9 +549,11 @@ impl Sql<'_> {
     pub fn migration(&self, previous: &Manifest) -> Result<String, Error> {
         let mut b = String::new();
         self.write_all_sql(&mut b)?;
-        let drops = Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))?.drops_since(previous);
-        b.push_str(&drops);
-        Ok(b)
+        let current = Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))?;
+        let mut out = current.renamed_since(previous);
+        out.push_str(&b);
+        out.push_str(&current.drops_since(previous));
+        Ok(out)
     }
 }
 

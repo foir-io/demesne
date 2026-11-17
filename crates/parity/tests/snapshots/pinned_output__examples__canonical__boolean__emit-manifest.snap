@@ -22,7 +22,8 @@ exit: 0
   "tables": [],
   "rls": [
     "public.resources"
-  ]
+  ],
+  "heads": []
 }
 
 --- stderr ---

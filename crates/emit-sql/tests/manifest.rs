@@ -408,3 +408,42 @@ object doc {
         assert!(drops.contains(&format!("DROP TRIGGER IF EXISTS {name} ON {table};")), "{drops}");
     }
 }
+
+fn renaming(subject: &str) -> demesne_syntax::Spec {
+    let src = format!(
+        "topology {{ level tenant }}
+subject {subject} {{ anchor tenant; reach self; identifies member_id; roles none; binds owner }}
+object doc {{
+  table docs
+  scoped tenant
+  relation owner: {subject} via owner_id
+  relation grantee: {subject} via grant acl(doc_id, principal_kind, principal_id, access)
+  permission view = owner + grantee:read @rls maps select
+}}
+object note {{
+  table notes
+  scoped tenant
+  relation owner: {subject} via owner_id
+  permission view = owner @rls maps select
+}}
+"
+    );
+    let s = demesne_syntax::parse(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    validate(&s).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    s
+}
+
+#[test]
+fn a_migration_drops_first_a_function_whose_parameters_changed_and_only_the_policies_that_call_it() {
+    let (before, after) = (Sql::new(&renaming("member")).manifest().expect("a manifest"), Sql::new(&renaming("customer")).manifest().expect("a manifest"));
+    let read = Manifest::from_json(&after.to_json()).expect("the manifest reads back");
+    assert_eq!(read.heads, after.heads, "the heads round-trip");
+    let prologue = after.renamed_since(&before);
+    assert_eq!(
+        prologue, "DROP POLICY IF EXISTS docs_select ON public.docs;\nDROP FUNCTION IF EXISTS auth.acl_grants(text, text, text);\n",
+        "only the check whose parameter is named after the subject, and the one policy that calls it"
+    );
+    assert_eq!(after.renamed_since(&after), "", "nothing changed, nothing dropped");
+    let older = Manifest { heads: None, ..before };
+    assert!(after.renamed_since(&older).starts_with("-- the previous manifest records no parameters"), "{}", after.renamed_since(&older));
+}

@@ -184,6 +184,164 @@ exit: 0
     "public.spaces",
     "public.templates",
     "public.themes"
+  ],
+  "heads": [
+    {
+      "function": "auth.folder_path()",
+      "parameters": "",
+      "returns": "TABLE(id text, title text)",
+      "policies": []
+    },
+    {
+      "function": "auth.live_skin(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": []
+    },
+    {
+      "function": "auth.live_skin_own(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": [
+        {
+          "table": "public.banners",
+          "name": "banners_select_require"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_ancestors(text)",
+      "parameters": "p_node text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.folders",
+          "name": "folders_select"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_select_require"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_descendants(text)",
+      "parameters": "p_node text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.folders",
+          "name": "folders_delete"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_insert"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_select"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_update"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_delete"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_insert"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_select_require"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_maintain()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    },
+    {
+      "function": "auth.paths_path(text)",
+      "parameters": "p_node text",
+      "returns": "TABLE(node text, depth integer)",
+      "policies": []
+    },
+    {
+      "function": "auth.paths_reach_set(text)",
+      "parameters": "user_id text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.atlases",
+          "name": "atlases_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_up_reach_set(text)",
+      "parameters": "user_id text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.atlases",
+          "name": "atlases_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.space_by_name(text)",
+      "parameters": "wanted text",
+      "returns": "text",
+      "policies": []
+    },
+    {
+      "function": "auth.space_can_view(text)",
+      "parameters": "p_space_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.pages",
+          "name": "pages_select"
+        },
+        {
+          "table": "public.sheets",
+          "name": "sheets_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.space_cards()",
+      "parameters": "",
+      "returns": "TABLE(id text, title text)",
+      "policies": []
+    },
+    {
+      "function": "auth.space_named(text)",
+      "parameters": "p_name text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.spaces_in_estate()",
+      "parameters": "",
+      "returns": "bigint",
+      "policies": []
+    },
+    {
+      "function": "auth.theme_color(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": []
+    }
   ]
 }
 

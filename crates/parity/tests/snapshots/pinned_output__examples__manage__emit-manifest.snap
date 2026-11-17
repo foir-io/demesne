@@ -33,6 +33,29 @@ exit: 0
   "tables": [],
   "rls": [
     "public.records"
+  ],
+  "heads": [
+    {
+      "function": "auth.member_has_perm(text, text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.records",
+          "name": "records_select"
+        },
+        {
+          "table": "public.records",
+          "name": "records_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.member_perm_implied_by(text)",
+      "parameters": "p_perm text",
+      "returns": "text[]",
+      "policies": []
+    }
   ]
 }
 

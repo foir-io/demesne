@@ -42,6 +42,27 @@ exit: 0
   "tables": [],
   "rls": [
     "public.invitations"
+  ],
+  "heads": [
+    {
+      "function": "auth.admin_has_perm(text, text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.invitations",
+          "name": "invitations_insert"
+        },
+        {
+          "table": "public.invitations",
+          "name": "invitations_select"
+        },
+        {
+          "table": "public.invitations",
+          "name": "invitations_update"
+        }
+      ]
+    }
   ]
 }
 

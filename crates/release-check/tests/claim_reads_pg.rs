@@ -637,7 +637,7 @@ fn upgrade_by_diff(url: &str, name: &str, src: &str) -> usize {
     let pools = Pools::new(s.id_type(), &[&v4, &now], &keys.all);
     let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
     let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
-    let (config, scratch) = scratch_database(url);
+    let (config, scratch) = scratch_database(url, "upgrade_by_diff");
     let mut db = config.connect(NoTls).expect("connect to the scratch database");
     install(&mut db, &mut setup, &pools, &format!("{v4}\n{now}")).unwrap_or_else(|e| panic!("{name}: {e}"));
     let mut tx = db.transaction().expect("a transaction");
@@ -693,7 +693,7 @@ fn upgrade_from_v4(config: &Config, name: &str, src: &str) -> Option<(usize, usi
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn upgrading_from_v4_0_0_by_migrating_leaves_no_function_v5_0_0_does_not_emit() {
     let url = require_env("DEMESNE_PG_URL");
-    let (config, scratch) = scratch_database(&url);
+    let (config, scratch) = scratch_database(&url, "upgrade_by_migrating");
     config
         .connect(NoTls)
         .expect("connect to the scratch database")
@@ -734,9 +734,9 @@ fn require_env(var: &str) -> String {
     std::env::var(var).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| panic!("set ${var} to run the claim-read checks against a live Postgres"))
 }
 
-fn scratch_database(url: &str) -> (Config, String) {
+fn scratch_database(url: &str, what: &str) -> (Config, String) {
     let mut config: Config = url.parse().expect("$DEMESNE_PG_URL parses");
-    let name = format!("{}_claim_reads_{}", config.get_dbname().unwrap_or("demesne"), std::process::id());
+    let name = format!("{}_{what}_{}", config.get_dbname().unwrap_or("demesne"), std::process::id());
     let mut admin = config.connect(NoTls).expect("connect to $DEMESNE_PG_URL");
     let powers: bool = admin.query_one("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user", &[]).expect("the role reads").get(0);
     assert!(powers, "the claim-read checks judge each rule past row security, so $DEMESNE_PG_URL must name a superuser or a BYPASSRLS role");
@@ -1005,7 +1005,7 @@ fn a_spec_left_out_of_the_comparison_is_one_only_this_release_reads() {
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn every_rule_admits_the_rows_v1_1_0_admitted() {
     let url = require_env("DEMESNE_PG_URL");
-    let (config, name) = scratch_database(&url);
+    let (config, name) = scratch_database(&url, "claim_reads");
     let mut tally = Tally::default();
     for (spec, src) in specs() {
         compare_spec(&config, &spec, &src, &mut tally);

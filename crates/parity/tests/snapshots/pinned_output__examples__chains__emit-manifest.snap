@@ -95,6 +95,138 @@ exit: 0
     "public.keeper_profiles",
     "public.skins",
     "public.spaces"
+  ],
+  "heads": [
+    {
+      "function": "auth.demesne_instant(text)",
+      "parameters": "p_text text",
+      "returns": "timestamptz",
+      "policies": []
+    },
+    {
+      "function": "auth.doc_composition_lent(text, text, text)",
+      "parameters": "p_doc_id text, p_access text, p_slot text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.doc_composition_lent_0(text, text, text)",
+      "parameters": "p_doc_id text, p_access text, p_slot text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.doc_shared_keyed(text, text, text)",
+      "parameters": "p_principal text, p_object text, p_key text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.doc_shared_keyed_inside(text, text, text)",
+      "parameters": "p_principal text, p_object text, p_key text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.doc_terms_hold(text, text, jsonb)",
+      "parameters": "p_object text, p_key text, p_values jsonb",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.doc_terms_hold_inside(text, text, jsonb)",
+      "parameters": "p_object text, p_key text, p_values jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.keeper_memberin_space(text, text)",
+      "parameters": "p_principal text, p_space text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.keeper_profiles",
+          "name": "keeper_profiles_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.live_skin(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": []
+    },
+    {
+      "function": "auth.live_skin_own(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": [
+        {
+          "table": "public.banners",
+          "name": "banners_select_require"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_maintain()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    },
+    {
+      "function": "auth.paths_path(text)",
+      "parameters": "p_node text",
+      "returns": "TABLE(node text, depth integer)",
+      "policies": []
+    },
+    {
+      "function": "auth.rule_slots_declared_by_rule(text)",
+      "parameters": "p_key text",
+      "returns": "TABLE(kind text, param text, role text)",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.spaces_accessors(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text)",
+      "policies": []
+    },
+    {
+      "function": "auth.spaces_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.trail_hops_declared_by_trail(text)",
+      "parameters": "p_key text",
+      "returns": "TABLE(doc_id text, field text, kind text, rule text)",
+      "policies": []
+    }
   ]
 }
 

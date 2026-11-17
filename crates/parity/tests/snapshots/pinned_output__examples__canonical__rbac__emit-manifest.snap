@@ -34,6 +34,49 @@ exit: 0
   "tables": [],
   "rls": [
     "public.resources"
+  ],
+  "heads": [
+    {
+      "function": "auth.is_tenant_staff(text, text)",
+      "parameters": "user_id text, check_tenant_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.resources",
+          "name": "resources_select"
+        },
+        {
+          "table": "public.resources",
+          "name": "resources_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.staff_has_perm(text, text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.resources",
+          "name": "resources_select"
+        },
+        {
+          "table": "public.resources",
+          "name": "resources_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.staff_has_resource_role(text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.resources",
+          "name": "resources_select"
+        }
+      ]
+    }
   ]
 }
 

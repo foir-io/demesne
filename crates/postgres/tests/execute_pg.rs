@@ -188,3 +188,65 @@ fn a_spec_moves_between_the_stores_check_and_a_borrows_and_back_by_migrating() {
         assert_eq!(d.findings, [], "{what}: the database is what the spec emits");
     }
 }
+
+fn renamed(subject: &str) -> demesne_syntax::Spec {
+    let src = format!(
+        "definers schema \"demesne_rn_auth\"
+tables schema \"demesne_rn_rows\"
+topology {{ level tenant }}
+subject {subject} {{ anchor tenant; reach self; identifies member_id; roles none; binds owner }}
+object doc {{
+  table docs
+  scoped tenant
+  relation owner: {subject} via owner_id
+  relation grantee: {subject} via grant acl(doc_id, principal_kind, principal_id, access)
+  permission view = owner + grantee:read @rls maps select
+}}
+object note {{
+  table notes
+  scoped tenant
+  relation owner: {subject} via owner_id
+  permission view = owner @rls maps select
+}}
+"
+    );
+    let s = demesne_syntax::parse(&src).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    s
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn renaming_a_subject_migrates_although_a_parameter_is_named_after_it() {
+    let mut db = connect();
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS demesne_rn_rows CASCADE; DROP SCHEMA IF EXISTS demesne_rn_auth CASCADE;
+         CREATE SCHEMA demesne_rn_rows; CREATE SCHEMA demesne_rn_auth;
+         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         CREATE TABLE demesne_rn_rows.docs (id text PRIMARY KEY, tenant_id text, owner_id text);
+         CREATE TABLE demesne_rn_rows.notes (id text PRIMARY KEY, tenant_id text, owner_id text);
+         CREATE TABLE demesne_rn_rows.acl (doc_id text, principal_kind text, principal_id text, access text);",
+    )
+    .expect("fresh schemas");
+    let (before, after) = (renamed("member"), renamed("customer"));
+    let mut b = String::new();
+    Sql::new(&before).write_all_sql(&mut b).expect("the SQL compiles");
+    db.batch_execute(&b).unwrap_or_else(|e| panic!("apply: {e:?}"));
+    let previous = Sql::new(&before).manifest().expect("a manifest");
+    let migration = Sql::new(&after).migration(&previous).expect("the migration compiles");
+    assert!(
+        migration
+            .starts_with("DROP POLICY IF EXISTS docs_select ON demesne_rn_rows.docs;\nDROP FUNCTION IF EXISTS demesne_rn_auth.acl_grants(text, text, text);\n"),
+        "{migration:.300}"
+    );
+    db.batch_execute(&migration).unwrap_or_else(|e| panic!("the migration applies: {e:?}"));
+    let mut sql = String::new();
+    Sql::new(&after).write_all_sql(&mut sql).expect("the SQL compiles");
+    let d = demesne_postgres::drift(&mut db, &sql, &[]).unwrap_or_else(|e| panic!("diff: {e}"));
+    assert_eq!(d.findings, [], "the database is what the renamed spec emits");
+    let named: Vec<String> = db
+        .query_one("SELECT proargnames::text[] FROM pg_proc WHERE oid = 'demesne_rn_auth.acl_grants(text, text, text)'::regprocedure", &[])
+        .expect("the check")
+        .get(0);
+    assert_eq!(named[0], "p_customer_id", "{named:?}");
+}
