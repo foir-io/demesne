@@ -138,7 +138,7 @@ fn lacks<'a>(sql: &str, frags: &[&'a str]) -> Vec<&'a str> {
 
 #[test]
 fn a_relations_base_maintains_as_it_always_has_and_a_reversed_relation_cannot_turn_it_over() {
-    let owner_keyed = |cols: &str| format!("member via closure paths({cols}) base folders(id, parent_id) on folder_id");
+    let owner_keyed = |cols: &str| format!("holder via closure paths({cols}) base folders(id, parent_id) on folder_id");
     let src = |first: &str, second: &str| {
         format!(
             "{HEAD}subject holder {{ anchor space; reach self; identifies holder_id; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate > space\n  relation first: {first}\n  relation second: {second}\n  permission view = first + second @rls maps select\n}}\n"

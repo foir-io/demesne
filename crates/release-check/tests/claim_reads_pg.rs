@@ -896,6 +896,87 @@ fn compare_spec(config: &Config, name: &str, src: &str, tally: &mut Tally) {
     }
 }
 
+fn without_functions_since_pruned(before: &str, now: &str) -> String {
+    let name = |sig: &str| sig.split('(').next().unwrap_or_default().to_string();
+    let kept: BTreeSet<String> =
+        demesne_emit_sql::Manifest::from_sql(now).expect("this release's SQL has a manifest").functions.iter().map(|sig| name(sig)).collect();
+    let mut out = before.to_string();
+    for (object, stmt) in demesne_emit_sql::objects(before).expect("v1.1.0's SQL splits into its objects") {
+        if let demesne_emit_sql::Object::Function(sig) = &object
+            && !kept.contains(&name(sig))
+        {
+            let whole = [format!("{stmt};\n\n"), format!("{stmt};\n")]
+                .into_iter()
+                .find(|whole| out.contains(whole.as_str()))
+                .expect("a function's statement is in the SQL it came from");
+            out = out.replacen(&whole, "", 1);
+        }
+    }
+    out
+}
+
+fn with_triggers_searching_the_tables_schema(before: &str, tables: &str) -> String {
+    let mut out = before.to_string();
+    for (object, stmt) in demesne_emit_sql::objects(before).expect("v1.1.0's SQL splits into its objects") {
+        let demesne_emit_sql::Object::Function(sig) = &object else { continue };
+        let fixed = (sig.ends_with("_rebuild()") && !sig.ends_with("_flat_rebuild()")) || sig.ends_with("_maintain()");
+        if fixed && tables != "public" {
+            out = out.replacen(&stmt, &stmt.replace("SET search_path = pg_catalog, public\n", &format!("SET search_path = pg_catalog, {tables}\n")), 1);
+        }
+    }
+    out
+}
+
+fn parameters(stmt: &str) -> Option<(&str, Vec<(&str, &str)>)> {
+    let rest = stmt.strip_prefix("CREATE OR REPLACE FUNCTION ")?;
+    let open = rest.find('(')?;
+    let close = rest.find(")\nRETURNS ")?;
+    let list = &rest[open + 1..close];
+    Some((&rest[..open], list.split(", ").filter(|p| !p.is_empty()).filter_map(|p| p.split_once(' ')).collect()))
+}
+
+fn without_drop_guards(sql: &str) -> String {
+    let mut out = sql.to_string();
+    while let Some(at) = out.find("DO $demesne$ BEGIN") {
+        let end = out[at..].find("END $demesne$;\n").map(|e| at + e + "END $demesne$;\n".len()).expect("a guard ends");
+        out.replace_range(at..end, "");
+    }
+    out
+}
+
+fn declared_as_v1_1_0(now: &str, before: &str, id_type: &str) -> String {
+    let declared = demesne_emit_sql::objects(before).expect("v1.1.0's SQL splits into its objects");
+    let theirs: BTreeMap<&str, Vec<(&str, &str)>> = declared.iter().filter_map(|(_, stmt)| parameters(stmt)).collect();
+    let now = without_drop_guards(now);
+    let mut out = now.clone();
+    for (_, stmt) in demesne_emit_sql::objects(&now).expect("this release's SQL splits into its objects") {
+        let Some((function, mine)) = parameters(&stmt) else { continue };
+        let Some(was) = theirs.get(function) else { continue };
+        let retyped = |t: &str, u: &str| t == u || (t == id_type && u == "text") || (t == format!("{id_type}[]") && u == "text[]");
+        if mine.len() != was.len() || !mine.iter().zip(was).all(|((_, t), (_, u))| retyped(t, u)) {
+            continue;
+        }
+        let listed = |ps: &[(&str, &str)]| ps.iter().map(|(n, t)| format!("{n} {t}")).collect::<Vec<_>>().join(", ");
+        let mut fixed = stmt.replacen(&format!("({})", listed(&mine)), &format!("({})", listed(was)), 1);
+        for ((m, _), (w, _)) in mine.iter().zip(was) {
+            if m != w {
+                fixed = fixed.replace(m, w);
+            }
+        }
+        out = out.replacen(&stmt, &fixed, 1);
+    }
+    out
+}
+
+fn searching_its_own_schemas(sql: &str) -> String {
+    sql.split_inclusive('\n')
+        .map(|line| match line.strip_suffix(", pg_temp\n") {
+            Some(path) if path.contains("SET search_path = ") => format!("{path}\n"),
+            _ => line.to_string(),
+        })
+        .collect()
+}
+
 fn read_per_row(sql: &str) -> String {
     sql.replace("(SELECT current_setting(", "(current_setting(").replace("(SELECT NULLIF(current_setting(", "(NULLIF(current_setting(")
 }
@@ -994,23 +1075,30 @@ fn answering_any_caller(sql: &str, before: &str) -> String {
 }
 
 #[test]
-fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads_and_in_whose_node_a_set_answers_for() {
+fn the_sql_differs_from_v1_1_0_only_in_the_ways_this_release_states() {
     let (mut compared, mut refused, mut reads, mut bound) = (0, 0, 0, 0);
     for (name, src) in specs() {
         match (ddl_now(&src), ddl_before(&src)) {
-            (Some((_, now)), Some(before)) => {
+            (Some((s, now)), Some(before)) => {
+                let before = with_triggers_searching_the_tables_schema(&before, s.table_schema());
                 if terms_now_bind_a_reach(&name) {
                     assert_ne!(
-                        calls_per_row(&answering_any_caller(&read_per_row(&now), &before)),
-                        calls_per_row(&before),
+                        calls_per_row(&answering_any_caller(
+                            &read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, s.id_type())),
+                            &before
+                        )),
+                        calls_per_row(&without_functions_since_pruned(&before, &now)),
                         "{name}: no term binds a grant's reach here any more"
                     );
                     bound += 1;
                 } else {
                     assert_eq!(
-                        calls_per_row(&answering_any_caller(&read_per_row(&now), &before)),
-                        calls_per_row(&before),
-                        "{name}: the SQL changed beyond its claim reads and the callers its sets answer"
+                        calls_per_row(&answering_any_caller(
+                            &read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, s.id_type())),
+                            &before
+                        )),
+                        calls_per_row(&without_functions_since_pruned(&before, &now)),
+                        "{name}: the SQL changed beyond its claim reads, the callers its sets answer, pg_temp last, the triggers' tables schema, the functions since pruned, and the parameters retyped to the spec's ids or renamed"
                     );
                 }
                 compared += 1;
