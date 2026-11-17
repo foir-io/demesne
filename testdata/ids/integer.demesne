@@ -67,3 +67,9 @@ object page {
   relation in_folder: member via closure folder_paths(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id
   permission view = in_folder @rls maps select
 }
+object board {
+  table boards
+  scoped tenant > project
+  relation crew: member via group tc(grp, mem) edge te(mem, grp) on crew_id materialized
+  permission view = crew @rls maps select
+}

@@ -419,3 +419,73 @@ fn a_function_answers_only_for_its_own_subjects_identity_though_another_subject_
     assert!(asks(&mut db, r#"{"member_id":"1","tenant_id":"7"}"#), "member 1 asks about its own grant");
     assert!(!asks(&mut db, r#"{"operator_id":"1","tenant_id":"7"}"#), "operator 1 shares the id, and is not member 1");
 }
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_relation_of_another_subject_than_the_owner_admits_that_subject_by_its_own_claim() {
+    let mut db = connect();
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS demesne_gp_rows CASCADE; DROP SCHEMA IF EXISTS demesne_gp_auth CASCADE;
+         CREATE SCHEMA demesne_gp_rows; CREATE SCHEMA demesne_gp_auth;
+         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         CREATE TABLE demesne_gp_rows.docs (id text PRIMARY KEY, tenant_id text, project_id text, owner_id text, team_id text);
+         CREATE TABLE demesne_gp_rows.notes (id text PRIMARY KEY, tenant_id text, project_id text, circle_id text);
+         CREATE TABLE demesne_gp_rows.boards (id text PRIMARY KEY, tenant_id text, project_id text, crew_id text);
+         CREATE TABLE demesne_gp_rows.pages (id text PRIMARY KEY, tenant_id text, project_id text, folder_id text);
+         CREATE TABLE demesne_gp_rows.tc (grp text, mem text);
+         CREATE TABLE demesne_gp_rows.te (mem text, grp text);
+         CREATE TABLE demesne_gp_rows.folders (id text PRIMARY KEY, parent_id text);
+         CREATE TABLE demesne_gp_rows.folder_paths (ancestor_id text, descendant_id text, PRIMARY KEY (ancestor_id, descendant_id));",
+    )
+    .expect("fresh schemas");
+    let path = format!("{}/../../testdata/bindings/group-of-another-subject.demesne", env!("CARGO_MANIFEST_DIR"));
+    let body = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let s = demesne_syntax::parse(&format!("definers schema \"demesne_gp_auth\"\ntables schema \"demesne_gp_rows\"\n{body}")).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    let mut sql = String::new();
+    Sql::new(&s).write_all_sql(&mut sql).expect("the SQL compiles");
+    db.batch_execute(&sql).unwrap_or_else(|e| panic!("apply: {e:?}"));
+    db.batch_execute(
+        "SET search_path = demesne_gp_rows;
+         INSERT INTO te VALUES ('s1', 'g1'), ('c5', 'g2'), ('s2', 'g3');
+         INSERT INTO docs VALUES ('d1', 't1', 'p1', 'c9', 'g1');
+         INSERT INTO notes VALUES ('n1', 't1', 'p1', 'g2');
+         INSERT INTO boards VALUES ('b1', 't1', 'p1', 'g3');
+         INSERT INTO folders VALUES ('s1', NULL), ('f2', 's1');
+         INSERT INTO pages VALUES ('q1', 't1', 'p1', 'f2');
+         RESET search_path;
+         GRANT USAGE ON SCHEMA demesne_gp_rows, demesne_gp_auth TO authenticated;
+         GRANT SELECT ON ALL TABLES IN SCHEMA demesne_gp_rows TO authenticated;",
+    )
+    .expect("staff s1 in team g1 and over folder f2, customer c5 in circle g2, staff s2 in crew g3");
+    let read = |db: &mut Client, claims: &str, sql: &str| -> i64 {
+        let mut tx = db.transaction().expect("a transaction");
+        tx.batch_execute("SET LOCAL ROLE authenticated").expect("the role");
+        tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
+        let n: i64 = tx.query_one(sql, &[]).unwrap_or_else(|e| panic!("{sql} under {claims}: {e:?}")).get(0);
+        tx.rollback().expect("rollback");
+        n
+    };
+    let scoped = |identity: &str| format!(r#"{{{identity},"tenant_id":"t1","project_id":"p1"}}"#);
+    let count = |table: &str| format!("SELECT count(*) FROM demesne_gp_rows.{table}");
+    let cases: [(&str, &str, &str, i64); 13] = [
+        ("staff s1 is in team g1", r#""sub":"s1""#, "docs", 1),
+        ("staff s2 is not", r#""sub":"s2""#, "docs", 0),
+        ("customer c9 owns d1", r#""customer_id":"c9""#, "docs", 1),
+        ("a credential carrying a customer is judged as that customer, not as staff s1", r#""customer_id":"c7","sub":"s1""#, "docs", 0),
+        ("customer c5 is in circle g2, over a closure staff relations share", r#""customer_id":"c5""#, "notes", 1),
+        ("staff s1 is not in circle g2", r#""sub":"s1""#, "notes", 0),
+        ("staff s2 is in crew g3, through the flat", r#""sub":"s2""#, "boards", 1),
+        ("staff s1 is not", r#""sub":"s1""#, "boards", 0),
+        ("a credential carrying a customer is not staff s2 on the flat", r#""customer_id":"c7","sub":"s2""#, "boards", 0),
+        ("staff s1 reaches folder f2", r#""sub":"s1""#, "pages", 1),
+        ("staff s2 does not", r#""sub":"s2""#, "pages", 0),
+        ("the crew's boards for staff s2", r#""sub":"s2""#, "resources", 1),
+        ("none for staff s1", r#""sub":"s1""#, "resources", 0),
+    ];
+    for (why, identity, table, want) in cases {
+        let sql = if table == "resources" { "SELECT count(*) FROM demesne_gp_auth.boards_crew_flat_resources()".to_string() } else { count(table) };
+        assert_eq!(read(&mut db, &scoped(identity), &sql), want, "{why}");
+    }
+    db.batch_execute("DROP SCHEMA demesne_gp_rows CASCADE; DROP SCHEMA demesne_gp_auth CASCADE;").expect("drop the schemas");
+}

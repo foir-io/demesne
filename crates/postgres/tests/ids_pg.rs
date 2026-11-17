@@ -32,8 +32,10 @@ const LOOSE_PAGE: u32 = 121;
 const OPERATOR: u32 = 32;
 const LAPSED: u32 = 33;
 const NEW_FOLDER: u32 = 112;
+const BOARD: u32 = 130;
+const LOOSE_BOARD: u32 = 131;
 
-const NAMED: [(&str, u32); 31] = [
+const NAMED: [(&str, u32); 33] = [
     ("TENANT", TENANT),
     ("PROJECT", PROJECT),
     ("MEMBER", MEMBER),
@@ -65,6 +67,8 @@ const NAMED: [(&str, u32); 31] = [
     ("OPERATOR", OPERATOR),
     ("LAPSED", LAPSED),
     ("NEW_FOLDER", NEW_FOLDER),
+    ("BOARD", BOARD),
+    ("LOOSE_BOARD", LOOSE_BOARD),
 ];
 
 const TABLES: &str = "
@@ -84,6 +88,7 @@ CREATE TABLE folders (id <T> PRIMARY KEY, parent_id <T>);
 CREATE TABLE folder_paths (ancestor_id <T>, descendant_id <T>, PRIMARY KEY (ancestor_id, descendant_id));
 CREATE TABLE pages (id <T> PRIMARY KEY, tenant_id <T>, project_id <T>, folder_id <T>);
 CREATE TABLE ops_users (user_ref <T> PRIMARY KEY, is_ops boolean, state text);
+CREATE TABLE boards (id <T> PRIMARY KEY, tenant_id <T>, project_id <T>, crew_id <T>);
 ";
 
 const ROWS: &str = "
@@ -106,6 +111,7 @@ INSERT INTO folio_shares VALUES (<MEMBER>, <SHARED>, 'read.a');
 INSERT INTO folders VALUES (<MEMBER>, NULL), (<SUBFOLDER>, <MEMBER>), (<LOOSE_FOLDER>, NULL);
 INSERT INTO pages VALUES (<PAGE>, <TENANT>, <PROJECT>, <SUBFOLDER>), (<LOOSE_PAGE>, <TENANT>, <PROJECT>, <LOOSE_FOLDER>);
 INSERT INTO ops_users VALUES (<OPERATOR>, true, 'ON'), (<LAPSED>, true, 'OFF');
+INSERT INTO boards VALUES (<BOARD>, <TENANT>, <PROJECT>, <TEAM>), (<LOOSE_BOARD>, <TENANT>, <PROJECT>, NULL);
 ";
 
 const FORGED: &str = "
@@ -120,6 +126,7 @@ INSERT INTO pg_temp.folio_shares VALUES (<MEMBER>, <UNSHARED>, 'read.a');
 INSERT INTO pg_temp.folder_paths VALUES (<MEMBER>, <LOOSE_FOLDER>);
 INSERT INTO pg_temp.docs VALUES (<NOBODYS>, <TENANT>, <PROJECT>, <MEMBER>, NULL, NULL);
 INSERT INTO pg_temp.ledgers VALUES (<OTHER_LEDGER>, <TENANT>, <PROJECT>, <MEMBER>);
+INSERT INTO pg_temp.boards VALUES (<LOOSE_BOARD>, <TENANT>, <PROJECT>, <TEAM>);
 ";
 
 fn connect() -> Client {
@@ -223,7 +230,9 @@ impl World {
     }
 
     fn answer(&self, db: &mut Client, claims: &str, caller: bool, call: &str) -> bool {
+        let (setup, call) = call.rsplit_once("; ").unwrap_or(("", call));
         let mut tx = db.transaction().expect("a transaction");
+        tx.batch_execute(setup).unwrap_or_else(|e| panic!("{}: {setup}: {e:?}", self.ty));
         if caller {
             tx.batch_execute("SET LOCAL ROLE authenticated").expect("the role");
         }
@@ -264,7 +273,7 @@ impl Callers {
 
 fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
     let Callers { member, unheld, stranger, helped, unhelped, viewer, owner, operator, lapsed } = c;
-    let rows: [(&str, &str, &[u32]); 22] = [
+    let rows: [(&str, &str, &[u32]); 24] = [
         (member, "docs", &[OWNED, GRANTED, CHILD, TEAMED]),
         (stranger, "docs", &[GRANTED]),
         (helped, "docs", &[OWNED, GRANTED, CHILD, TEAMED]),
@@ -287,6 +296,8 @@ fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
         (stranger, "pages", &[]),
         (operator, "docs", &[OWNED, GRANTED, CHILD, TEAMED, NOBODYS]),
         (lapsed, "docs", &[]),
+        (member, "boards", &[BOARD]),
+        (stranger, "boards", &[]),
     ];
     for (claims, table, want) in rows {
         assert_eq!(w.visible(db, claims, table), w.ids(want), "{}: {table} under {claims}", w.ty);
@@ -299,6 +310,12 @@ fn each_function_admits_and_refuses(w: &World, db: &mut Client, c: &Callers) {
     let calls: Vec<(&str, bool, String, bool)> = vec![
         (operator, true, format!("{a}.is_ops({})", i(OPERATOR)), true),
         (lapsed, true, format!("{a}.is_ops({})", i(LAPSED)), false),
+        (member, true, format!("{a}.boards_crew_flat_member({}, {})", i(BOARD), i(MEMBER)), true),
+        (member, true, format!("{a}.boards_crew_flat_member({}, {})", i(LOOSE_BOARD), i(MEMBER)), false),
+        (member, true, format!("{} IN (SELECT {a}.boards_crew_flat_resources())", i(BOARD)), true),
+        (stranger, true, format!("{} IN (SELECT {a}.boards_crew_flat_resources())", i(BOARD)), false),
+        ("{}", false, format!("{a}.boards_crew_flat_reconcile() = 0"), true),
+        ("{}", false, format!("DELETE FROM {a}.boards_crew_flat; {a}.boards_crew_flat_reconcile() = 0"), false),
         (member, true, format!("{a}.member_can_access_ledger({}, {}, 'edit')", i(MEMBER), i(LEDGER)), true),
         (member, true, format!("{a}.member_can_access_ledger({}, {}, 'edit')", i(MEMBER), i(OTHER_LEDGER)), false),
         (stranger, true, format!("{a}.member_can_access_ledger({}, {}, 'edit')", i(MEMBER), i(LEDGER)), false),
@@ -386,6 +403,8 @@ fn no_temporary_table_shadows_a_table_a_generated_function_reads(ty: &'static st
     let (a, i) = (&w.auth, |n| w.lit(n));
     let left = format!("{a}.tc_member({}, {})", i(TEAM), i(MEMBER));
     assert!(!w.answer(&mut db, &callers.member, true, &left), "{ty}: the group's rebuild cleared the real closure, not the forger's");
+    let flat = format!("{a}.boards_crew_flat_member({}, {})", i(BOARD), i(MEMBER));
+    assert!(!w.answer(&mut db, &callers.member, true, &flat), "{ty}: the flat followed the real closure, not the forger's");
     let added = format!("{a}.folder_paths_reachable({}, {})", i(MEMBER), i(NEW_FOLDER));
     assert!(w.answer(&mut db, &callers.member, true, &added), "{ty}: the closure's trigger wrote the real closure, not the forger's");
     db.batch_execute(&format!("DROP SCHEMA {} CASCADE; DROP SCHEMA {} CASCADE;", w.rows, w.auth)).expect("drop the schemas");

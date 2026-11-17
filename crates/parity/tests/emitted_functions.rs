@@ -116,7 +116,7 @@ fn a_function_the_corpus_names_twice_has_parameters_of_one_shape_and_one_return_
         }
         for (o, stmt) in objects(&b).unwrap_or_else(|e| panic!("{}: {e}", path.display())) {
             let (Object::Function(_), Some((identity, params, returns))) = (&o, head(&stmt)) else { continue };
-            seen.entry(identity).or_default().entry((params, returns)).or_insert_with(|| path.display().to_string());
+            seen.entry(format!("{identity} on {} ids", s.id_type())).or_default().entry((params, returns)).or_insert_with(|| path.display().to_string());
         }
     }
     let clashes: Vec<String> = seen
@@ -231,5 +231,69 @@ fn every_emitted_function_searches_pg_temp_last() {
         }
     }
     assert!(checked > 600, "{checked} functions checked");
+    assert!(wrong.is_empty(), "{} functions:\n{}", wrong.len(), wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"));
+}
+
+fn claim_key(arg: &str) -> Option<&str> {
+    arg.split_once("->> '").and_then(|(_, rest)| rest.split_once('\'')).map(|(key, _)| key)
+}
+
+fn calls<'a>(sql: &'a str, function: &str) -> Vec<Vec<&'a str>> {
+    let mut out = Vec::new();
+    for (at, _) in sql.match_indices(&format!("{function}(")) {
+        let rest = &sql[at + function.len() + 1..];
+        let (mut depth, mut start, mut args) = (0usize, 0usize, Vec::new());
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' if depth == 0 => {
+                    args.push(rest[start..i].trim());
+                    break;
+                }
+                ')' => depth -= 1,
+                ',' if depth == 0 => {
+                    args.push(rest[start..i].trim());
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        out.push(args);
+    }
+    out
+}
+
+#[test]
+fn every_call_passes_a_caller_bound_function_a_claim_it_binds() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut paths = Vec::new();
+    specs(&root.join("examples"), &mut paths);
+    specs(&root.join("testdata"), &mut paths);
+    paths.sort();
+    let (mut checked, mut wrong) = (0, BTreeMap::<String, String>::new());
+    for path in &paths {
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        let Ok(s) = demesne_syntax::parse(&src) else { continue };
+        if demesne_emit_sql::validate(&s).is_err() {
+            continue;
+        }
+        let sql = Sql::new(&s);
+        let mut b = String::new();
+        let (Ok(()), Ok(defs)) = (sql.write_all_sql(&mut b), sql.emit_definers()) else { continue };
+        let at = path.display();
+        for f in defs.iter().filter(|f| !f.principal_claims.is_empty()) {
+            let Some(bound) = f.params.iter().position(|p| f.principal.as_deref() == Some(p.name.as_str())) else { continue };
+            let function = format!("{}.{}", f.schema(), f.name);
+            let passed: Vec<&str> = calls(&b, &function).iter().filter_map(|args| args.get(bound).and_then(|arg| claim_key(arg))).collect();
+            checked += passed.len();
+            let strays = passed.into_iter().filter(|key| !f.principal_claims.iter().any(|claim| claim == key));
+            for key in strays {
+                wrong
+                    .entry(format!("{function}({})", f.params[bound].name))
+                    .or_insert_with(|| format!("passed claim {key}, binds {:?} [{at}]", f.principal_claims));
+            }
+        }
+    }
+    assert!(checked > 300, "{checked} calls checked");
     assert!(wrong.is_empty(), "{} functions:\n{}", wrong.len(), wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"));
 }

@@ -1013,8 +1013,11 @@ impl Sql<'_> {
         if t.session_rel().is_empty() {
             return Ok(vec![me]);
         }
-        let role_frag = self.emit_term(obj, pm, &term_ref(t.session_rel()), rels, cust_claim)?;
-        Ok(vec![format!("{} AND {}", me, role_frag[0])])
+        let role_frags = self.emit_term(obj, pm, &term_ref(t.session_rel()), rels, cust_claim)?;
+        Ok(vec![match role_frags.as_slice() {
+            [one] => format!("{me} AND {one}"),
+            many => format!("{me} AND ({})", many.join(" OR ")),
+        }])
     }
 
     fn closure_lookup(&self, c: &ViaClosure, caller: &str) -> R<String> {
@@ -1035,10 +1038,29 @@ impl Sql<'_> {
         })
     }
 
-    fn rls_closure_frag(&self, obj: &Object, c: &ViaClosure, ident: &str, cust_claim: &str) -> R<Vec<String>> {
+    fn by_each_subject(&self, obj: &Object, r: &Relation, cust_claim: &str, what: &str, call: impl Fn(&str) -> R<String>) -> R<Vec<String>> {
+        let mut claims: Vec<&str> = Vec::new();
+        for key in r.types.iter().filter_map(|name| self.s.subject_by_name(name)).map(Subject::identifies).filter(|key| !key.is_empty()) {
+            if !claims.contains(&key) {
+                claims.push(key);
+            }
+        }
+        if claims.is_empty() {
+            req_claim(cust_claim, obj, &format!("{what} {}", r.name))?;
+            claims.push(cust_claim);
+        }
+        claims
+            .into_iter()
+            .map(|claim| {
+                let frag = call(claim)?;
+                Ok(if cust_claim.is_empty() || claim == cust_claim { frag } else { format!("({frag} AND {} IS NULL)", self.claim(cust_claim)) })
+            })
+            .collect()
+    }
+
+    fn rls_closure_frag(&self, obj: &Object, r: &Relation, c: &ViaClosure, cust_claim: &str) -> R<Vec<String>> {
         let Some(claim) = &c.claim else {
-            req_claim(cust_claim, obj, &format!("closure relation {ident}"))?;
-            return Ok(vec![self.closure_lookup(c, &self.id_claim(cust_claim))?]);
+            return self.by_each_subject(obj, r, cust_claim, "closure relation", |claim| self.closure_lookup(c, &self.id_claim(claim)));
         };
         let call = self.closure_lookup(c, &self.id_claim(claim))?;
         if c.missing.as_deref() == Some("allow") {
@@ -1090,14 +1112,14 @@ impl Sql<'_> {
                     (_, true) => "true".into(),
                 }])
             }
-            Repr::Closure(c) => self.rls_closure_frag(obj, c, t.ident(), cust_claim),
-            Repr::Group(g) => {
-                req_claim(cust_claim, obj, &format!("group relation {}", t.ident()))?;
-                if g.materialized {
-                    return Ok(vec![format!("{}_member({}, {})", self.group_flat_name(obj, r, g), pk, self.id_claim(cust_claim))]);
-                }
-                Ok(vec![format!("{}.{}_member({}, {})", schema, g.closure, g.col, self.id_claim(cust_claim))])
-            }
+            Repr::Closure(c) => self.rls_closure_frag(obj, r, c, cust_claim),
+            Repr::Group(g) => self.by_each_subject(obj, r, cust_claim, "group relation", |claim| {
+                Ok(if g.materialized {
+                    format!("{}_member({}, {})", self.group_flat_name(obj, r, g), pk, self.id_claim(claim))
+                } else {
+                    format!("{}.{}_member({}, {})", schema, g.closure, g.col, self.id_claim(claim))
+                })
+            }),
             Repr::MemberIn(mi) => {
                 let name = format!("{}_memberin_{}", self.s.admin_name(), mi.level);
                 let mut frag = definer_call(&format!("{schema}.{name}"), &[self.arg_src(&mi.principal), self.arg_src(&mi.scope)]);

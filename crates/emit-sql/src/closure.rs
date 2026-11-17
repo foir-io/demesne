@@ -4,7 +4,7 @@ use crate::{Execute, Sql};
 use demesne_model::SpecExt;
 use demesne_model::closure;
 use demesne_runtime::quote_literal;
-use demesne_syntax::Repr;
+use demesne_syntax::{Relation, Repr, Subject};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -306,7 +306,8 @@ pub struct MaterializedFlat {
     pub group_col: String,
     pub member_col: String,
     pub kind: String,
-    pub claim_expr: String,
+    /// The condition a closure row `c` meets when its member is the caller, one claim for each subject the relation names; empty when there is no reverse lookup.
+    pub caller_match: String,
     pub id_type: String,
 }
 
@@ -443,7 +444,7 @@ $$;",
 
     #[must_use]
     pub fn has_reverse(&self) -> bool {
-        !self.claim_expr.is_empty()
+        !self.caller_match.is_empty()
     }
 
     #[must_use]
@@ -452,18 +453,17 @@ $$;",
             schema: self.schema().into(),
             table_schema: self.table_schema().into(),
             name: format!("{}_resources", self.flat),
-            returns: "SETOF text".into(),
+            returns: format!("SETOF {}", self.id_type()),
             raw_body: true,
             body: format!(
-                "  SELECT o.{pk}\n  FROM {ts}.{ot} o JOIN {ts}.{clo} c ON c.{gc} = o.{col}\n  WHERE c.{mc} = {claim};",
+                "  SELECT o.{pk}\n  FROM {ts}.{ot} o JOIN {ts}.{clo} c ON c.{gc} = o.{col}\n  WHERE {callers};",
                 pk = self.obj_pk,
                 ts = self.table_schema(),
                 ot = self.obj_table,
                 clo = self.closure,
                 gc = self.group_col,
                 col = self.col,
-                mc = self.member_col,
-                claim = self.claim_expr
+                callers = self.caller_match
             ),
             ..Default::default()
         }
@@ -594,16 +594,32 @@ impl Sql<'_> {
         b
     }
 
+    fn caller_match(&self, r: &Relation, owner: &str, member: &str) -> String {
+        let mut keys = self.identities_of(&r.types);
+        if keys.is_empty() {
+            keys.push(owner.to_string());
+        }
+        let each: Vec<String> = keys
+            .iter()
+            .map(|key| {
+                let own = format!("{member} = {}", self.id_claim(key));
+                if key == owner { own } else { format!("({own} AND {} IS NULL)", self.claim(owner)) }
+            })
+            .collect();
+        each.join(" OR ")
+    }
+
     #[must_use]
     pub fn emit_materialized_flats(&self) -> Vec<MaterializedFlat> {
         let mut out = Vec::new();
         for obj in &self.s.objects {
-            let claim_expr = obj.scoped.last().and_then(|l| self.s.owner_subject(l)).map(|cust| self.id_claim(cust.identifies())).unwrap_or_default();
+            let owner = obj.scoped.last().and_then(|l| self.s.owner_subject(l)).map(Subject::identifies);
             let materialized = obj.relations.iter().filter_map(|r| match &r.repr {
                 Repr::Group(g) if g.materialized => Some((r, g)),
                 _ => None,
             });
             for (r, g) in materialized {
+                let caller_match = owner.map(|owner| self.caller_match(r, owner, &format!("c.{}", g.member_col))).unwrap_or_default();
                 out.push(MaterializedFlat {
                     principal_claims: self.identities_of(&r.types),
                     schema: self.s.definer_schema().into(),
@@ -616,7 +632,7 @@ impl Sql<'_> {
                     group_col: g.group_col.clone(),
                     member_col: g.member_col.clone(),
                     kind: r.types.first().cloned().unwrap_or_default(),
-                    claim_expr: claim_expr.clone(),
+                    caller_match,
                     id_type: self.s.id_type().into(),
                 });
             }

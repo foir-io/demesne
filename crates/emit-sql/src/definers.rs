@@ -1242,11 +1242,20 @@ impl Sql<'_> {
             if !defs.claim(&name) {
                 continue;
             }
+            let members: Vec<String> = self
+                .s
+                .relations()
+                .filter_map(|(_, other)| match &other.repr {
+                    Repr::Group(o) if o.closure == g.closure => Some(other.types.iter().cloned()),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
             defs.fns.push(GenFn {
                 name,
                 params: vec![Param::id("p_group"), Param::id("p_member")],
                 principal: Some("p_member".into()),
-                principal_claims: self.identities_of(&r.types),
+                principal_claims: self.identities_of(&members),
                 body: format!("EXISTS (SELECT 1 FROM {} WHERE {} = p_group AND {} = p_member)", g.closure, g.group_col, g.member_col),
                 ..Default::default()
             });

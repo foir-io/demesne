@@ -799,6 +799,7 @@ struct Tally {
     specs: usize,
     compared: usize,
     invalid: Vec<String>,
+    newly_accepted: Vec<String>,
     uninstallable: Vec<String>,
     rules: usize,
     both_ways: usize,
@@ -819,7 +820,10 @@ fn compare_spec(config: &Config, name: &str, src: &str, tally: &mut Tally) {
         return;
     };
     let role = "authenticated".to_string();
-    let before = ddl_before(src).unwrap_or_else(|| panic!("{name}: the current release emits it, so the earlier one must too"));
+    let Some(before) = ddl_before(src) else {
+        tally.newly_accepted.push(name.to_string());
+        return;
+    };
     let keys = claim_keys(&[&before, &now]);
     let pools = Pools::new(s.id_type(), &[&before, &now], &keys.all);
     let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
@@ -1080,6 +1084,11 @@ fn every_rule_admits_the_rows_v1_1_0_admitted() {
     assert!(tally.differing.is_empty(), "rules admit different rows:\n{summary}");
     let stuck: Vec<&str> = tally.uninstallable.iter().map(|u| u.split(": ").next().unwrap_or(u)).collect();
     assert_eq!(stuck, UUID_SPECS_WHOSE_DEFINERS_TAKE_TEXT, "the specs whose SQL no schema can hold:\n{summary}");
-    assert_eq!(tally.compared + stuck.len(), tally.specs - tally.invalid.len(), "every spec that compiles is compared:\n{summary}");
+    assert_eq!(
+        tally.newly_accepted,
+        ["testdata/corpus/fixtures/bed6930cc54d3a21.demesne", "testdata/corpus/fixtures/fda4c3fcab458614.demesne"],
+        "the specs v1.1.0 refused and this release compiles: a closure relation on an object with no owner subject, refused then for want of the owner's claim:\n{summary}"
+    );
+    assert_eq!(tally.compared + stuck.len(), tally.specs - tally.invalid.len() - tally.newly_accepted.len(), "every spec both compile is compared:\n{summary}");
     assert!(tally.both_ways * 100 >= tally.rules * 85, "too few rules both admitted and refused a row to prove anything:\n{summary}");
 }
