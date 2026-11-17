@@ -77,6 +77,32 @@ exit: 0
         }
       ]
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.is_tenant_staff(text, text)",
+      "digest": "6ada980ecbd77503e35ec6172d37ceb743755115112b74d4c56662a8567d038a"
+    },
+    {
+      "object": "function auth.staff_has_perm(text, text, text, text)",
+      "digest": "a47d7cfa4af39972a1c8d08d10a954adebcde790a04acc506a2511a72046cb44"
+    },
+    {
+      "object": "function auth.staff_has_resource_role(text, text, text)",
+      "digest": "08425eddbc705aea8d66f6261b3eeadaf8982b39f9853d1b2821af3c6e5394ca"
+    },
+    {
+      "object": "policy resources_select on public.resources",
+      "digest": "adfe6bafeafb9c8738ac92126731c282c6508b1d067e8e48c42217e72bfcc776"
+    },
+    {
+      "object": "policy resources_update on public.resources",
+      "digest": "3eed932e3516d17678bc1dda01de37e4450a914ea15dd36f9983b589f9da76e0"
+    },
+    {
+      "object": "rls public.resources",
+      "digest": "e00b6edcd1ae28b81a5de0599e1a8253e30cc61434c63bf6f72c656d36e6221a"
+    }
   ]
 }
 

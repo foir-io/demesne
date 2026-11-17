@@ -148,6 +148,26 @@ uses it as before.
 `Sql::manifest` always fills it, and `Manifest::from_sql` leaves it `None`,
 since SQL alone does not say which functions a spec line makes yours.
 
+### `emit migrate` writes only what changed, in one transaction
+
+The manifest now records a digest of the statements that create each object,
+under `digests`. `emit migrate` writes only the objects whose statements
+changed or are new since the manifest it is given, with the policies a renamed
+function's drop takes (below). An unchanged policy is not dropped and created
+again, so its table is not locked and the policy keeps its oid. A manifest
+without digests gives the whole SQL, with a comment line saying so. Since an
+unchanged object is not written, a migration no longer undoes a hand edit to
+one, such as a revoke from PUBLIC: `demesne diff` reports it, and applying the
+whole SQL restores it.
+
+`emit migrate` and `emit --file … migrate` now wrap what they write in
+`BEGIN` and `COMMIT`. A migration that drops a policy and creates it again
+must be one transaction: between the two, a reader saw the table without that
+policy, and without a restrictive `_require` policy that means rows it bars.
+`--no-transaction` leaves the wrapping out, for a runner that wraps each
+migration itself (sqlx does, and a `COMMIT` inside would end its transaction
+early).
+
 ### `emit migrate` drops first a function whose parameters changed
 
 Some generated parameters are named after a subject or a level, such as

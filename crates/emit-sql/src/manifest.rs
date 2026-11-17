@@ -28,6 +28,9 @@ pub struct Manifest {
     /// Each function's parameters and return type, and the policies that call it, by identity signature. `None` for a
     /// manifest written before these were recorded, whose next migration cannot see a renamed parameter.
     pub heads: Option<BTreeMap<String, Head>>,
+    /// A digest of the statements that create each object, by [`Object`] as [`object_key`] names it. `None` for a
+    /// manifest written before these were recorded, whose next migration writes every object again.
+    pub digests: Option<BTreeMap<String, String>>,
 }
 
 /// What a function declares beyond its identity, and the policies that call it.
@@ -104,6 +107,7 @@ impl Manifest {
             }
         }
         m.heads = Some(heads);
+        m.digests = units(sql).ok().map(|us| us.iter().map(|(object, unit)| (object_key(object), digest(unit))).collect());
         for (object, _) in made {
             match object {
                 Object::Function(sig) => m.functions.insert(sig),
@@ -173,6 +177,7 @@ impl Manifest {
             tables: names("tables")?,
             rls: names("rls")?,
             heads: v.get("heads").map(read_heads).transpose()?,
+            digests: v.get("digests").map(read_digests).transpose()?,
         })
     }
 
@@ -212,6 +217,10 @@ impl Manifest {
             };
             fields.push(("heads".into(), Value::Array(heads.iter().map(head).collect())));
         }
+        if let Some(digests) = &self.digests {
+            let entry = |(k, d): (&String, &String)| Value::Struct(vec![("object".into(), Value::str(k.as_str())), ("digest".into(), Value::str(d.as_str()))]);
+            fields.push(("digests".into(), Value::Array(digests.iter().map(entry).collect())));
+        }
         let v = Value::Struct(fields);
         let mut out = json::marshal_indent(&v, "", "  ");
         out.push('\n');
@@ -238,6 +247,28 @@ impl Manifest {
             writeln!(b, "DROP FUNCTION IF EXISTS {f};").expect("fmt::Write for String never fails");
         }
         b
+    }
+
+    fn changed_since(&self, sql: &str, previous: &Self) -> Result<String, String> {
+        let Some(before) = &previous.digests else {
+            return Ok(format!("-- the previous manifest records no digests, so every object is written again\n{sql}"));
+        };
+        let dropped: BTreeSet<(String, String)> = match (&self.heads, &previous.heads) {
+            (Some(now), Some(was)) => was
+                .iter()
+                .filter(|(f, h)| now.get(*f).is_some_and(|n| (&n.parameters, &n.returns) != (&h.parameters, &h.returns)))
+                .flat_map(|(_, h)| h.policies.iter().cloned())
+                .collect(),
+            _ => BTreeSet::new(),
+        };
+        let mut out = String::new();
+        for (object, unit) in units(sql)? {
+            let again = matches!(&object, Object::Policy { table, name } if dropped.contains(&(table.clone(), name.clone())));
+            if again || before.get(&object_key(&object)) != Some(&digest(&unit)) {
+                out.push_str(&unit);
+            }
+        }
+        Ok(out)
     }
 
     /// Returns the SQL that removes what `previous` created and this manifest does not: exact drops, then a check that fails the migration if any of them survived.
@@ -394,6 +425,38 @@ fn read_heads(v: &Value) -> Result<BTreeMap<String, Head>, String> {
         .collect()
 }
 
+/// Returns the name a manifest's digests record `object` under, such as `function auth.f(text)` or `policy p on public.t`.
+#[must_use]
+pub fn object_key(object: &Object) -> String {
+    match object {
+        Object::Function(sig) => format!("function {sig}"),
+        Object::Policy { table, name } => format!("policy {name} on {table}"),
+        Object::Trigger { table, name } => format!("trigger {name} on {table}"),
+        Object::Index { table, name } => format!("index {name} on {table}"),
+        Object::Table(t) => format!("table {t}"),
+        Object::Rls(t) => format!("rls {t}"),
+    }
+}
+
+fn digest(unit: &str) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(unit.as_bytes()).iter().fold(String::new(), |mut hex, b| {
+        write!(hex, "{b:02x}").expect("fmt::Write for String never fails");
+        hex
+    })
+}
+
+fn read_digests(v: &Value) -> Result<BTreeMap<String, String>, String> {
+    let items = v.as_array().ok_or("manifest: \"digests\" is not a list")?;
+    items
+        .iter()
+        .map(|i| match (i.get("object").and_then(Value::as_str), i.get("digest").and_then(Value::as_str)) {
+            (Some(o), Some(d)) => Ok((o.to_string(), d.to_string())),
+            _ => Err("manifest: a digest needs an object and a digest".to_string()),
+        })
+        .collect()
+}
+
 fn function_head(stmt: &str) -> Option<(String, String)> {
     let open = stmt.find('(')?;
     let close = open + stmt[open..].find(")\nRETURNS ")?;
@@ -463,6 +526,7 @@ pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
 impl Manifest {
     pub(crate) fn union(mut self, other: &Manifest) -> Manifest {
         self.execute = None;
+        self.digests = None;
         self.heads = match (self.heads.take(), &other.heads) {
             (Some(mut mine), Some(theirs)) => {
                 for (f, h) in theirs {
@@ -551,7 +615,7 @@ impl Sql<'_> {
         self.write_all_sql(&mut b)?;
         let current = Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))?;
         let mut out = current.renamed_since(previous);
-        out.push_str(&b);
+        out.push_str(&current.changed_since(&b, previous).map_err(Error::unplaced)?);
         out.push_str(&current.drops_since(previous));
         Ok(out)
     }

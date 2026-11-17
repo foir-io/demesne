@@ -300,6 +300,148 @@ exit: 0
         }
       ]
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.approvals_reach_in_folder(text, text, text, text)",
+      "digest": "a9622657b9eae268c5c96ddf7597dcc025235c710c8bfbc100b493ddf8ab514a"
+    },
+    {
+      "object": "function auth.approvals_reach_in_space(text, text, text)",
+      "digest": "f01364c2ccff46a62363959e38ab9411e9b536c4a401936f740499544028e411"
+    },
+    {
+      "object": "function auth.approvals_reach_set(text)",
+      "digest": "bf99c86de900e675de22ede93a7a09b4707e4cee020c2cbdc1351bab5dde8b71"
+    },
+    {
+      "object": "function auth.approvals_reach_unscoped_set(text)",
+      "digest": "a92de1840fdc55802d75fb0aa614ee6bd3412876a17b9f3b2582184d5fca356b"
+    },
+    {
+      "object": "function auth.catalog_can_bound(text)",
+      "digest": "e45748efeacbaa6abd0691b43f24aeb96fd3a4beedd7567b0226e4c928ca2c5f"
+    },
+    {
+      "object": "function auth.catalog_can_bound_for_select(text)",
+      "digest": "e49eb2eb9de7d9b6b8f1895151dbdc16d3fe093a03a7b35c78e9a249decedbae"
+    },
+    {
+      "object": "function auth.folder_write_allowed(text, text, text)",
+      "digest": "f708615115fe077589e84eb4d9820e413b51a02d5e3900b158550e9970259f53"
+    },
+    {
+      "object": "function auth.paths_reach_set(text)",
+      "digest": "a8e009f9ce8d1ef682604432c7cd1d47f14996e58d9777cf8572304069c6b070"
+    },
+    {
+      "object": "function auth.paths_reachable(text, text)",
+      "digest": "83f1adeedbb03e800f8ac0cb43ae36555651137a8774d7c58d7c49a882f4bffd"
+    },
+    {
+      "object": "function auth.paths_up_reach_set(text)",
+      "digest": "660e6663172d692c0dc9dd70bea1c0e5b6869b89c4fed92a4a52df81c13d8f46"
+    },
+    {
+      "object": "policy allowances_delete on public.allowances",
+      "digest": "77ea3c016b927823b4c8f3720e0a3deffcb909f745b26d4b53a086d8782240f0"
+    },
+    {
+      "object": "policy allowances_insert on public.allowances",
+      "digest": "11f876dd7ec1c1ec4eeeb3adec61748c6077d820017164d36cae68c73c6c8feb"
+    },
+    {
+      "object": "policy allowances_select on public.allowances",
+      "digest": "9b47d4a6c3409d72a3c06bec19e9782f9a2eb48a87ebc94d9da3094ee9a90a5b"
+    },
+    {
+      "object": "policy allowances_update on public.allowances",
+      "digest": "527fc8e52d96bbecb5b22d53d05444029f542e0bd2822593e31bf82d2ffaa3df"
+    },
+    {
+      "object": "policy assets_insert on public.assets",
+      "digest": "b693eaaba45cf71f470e76e360d8819f0c4ea205099602020feca1e7404934e6"
+    },
+    {
+      "object": "policy assets_select on public.assets",
+      "digest": "60022341844675df8d0f50823f29544452beab223e7cbf25a5731cc5359d3737"
+    },
+    {
+      "object": "policy assets_update on public.assets",
+      "digest": "376cc4fed1d77d65be0c62ed9990ea9fd33da0ca4cead294325c80be6bd5716d"
+    },
+    {
+      "object": "policy blueprints_select on public.blueprints",
+      "digest": "1a31aad26ad91a48569d8af9818a4142a3b1276464941759f9040fa19310573a"
+    },
+    {
+      "object": "policy blueprints_update on public.blueprints",
+      "digest": "30bdfa4aa411773fdbab9ba36e4d41eb72f0f7e2da63e76db38453f051b79c1a"
+    },
+    {
+      "object": "policy entries_select on public.entries",
+      "digest": "79426cccc09144959401a12e7f3437c68256e522615f00588e6fac1964c4b4a5"
+    },
+    {
+      "object": "policy entries_update on public.entries",
+      "digest": "500bc361f00882a603f8fa91f09f5119bac2570ef6f5e29a4d9b00f5a67c57f9"
+    },
+    {
+      "object": "policy folders_delete on public.folders",
+      "digest": "e819b8d57b50c937f9d6ffedcb60af43a51efe5a009395b73c428b6695ade516"
+    },
+    {
+      "object": "policy folders_insert on public.folders",
+      "digest": "b157257a84808c296c5c500a8a70cd9916b5cdf226259feba70aa894038d58c5"
+    },
+    {
+      "object": "policy folders_select on public.folders",
+      "digest": "bec7d5f255ae59a0a69cc2b162b1835d47f68f605010726d8fd85f547c680940"
+    },
+    {
+      "object": "policy folders_update on public.folders",
+      "digest": "b571bb011d32d3863e494617c21a38ef47c3460a093225671ef22f6bf335c547"
+    },
+    {
+      "object": "policy ledgers_select on public.ledgers",
+      "digest": "c1e058605fe764219aef82771ea5ab71979a628a2d5ee17d5f41a10421a7fdff"
+    },
+    {
+      "object": "policy spaces_select on public.spaces",
+      "digest": "887a13a9616321591f10ffd2fcce166efe800a1440af0ef8134426ef1ab4e1b0"
+    },
+    {
+      "object": "policy spaces_update on public.spaces",
+      "digest": "b31cea8d7608d983ca919457934c240bd163a8afb9db320f6cecb2463ed5eb23"
+    },
+    {
+      "object": "rls public.allowances",
+      "digest": "15ae014e118a3bba2bccd92bca31e949f33a074c6b49c53de79acd408bffc425"
+    },
+    {
+      "object": "rls public.assets",
+      "digest": "44d72c3caaf9c056bde683bc92afccaa671f57955c1580ed62c90b7bb79eb13b"
+    },
+    {
+      "object": "rls public.blueprints",
+      "digest": "8952da6c2eadb5f37f2aa2697963e60d4a305e1963fbc97a4317b2b0ba0621b4"
+    },
+    {
+      "object": "rls public.entries",
+      "digest": "c14a9c918b1251eeaf6e7bc3cd905f0741086ea9b749a3ae6590282407f156ca"
+    },
+    {
+      "object": "rls public.folders",
+      "digest": "9e9dfef4402bd6a626e475d31129cdaefdb00cefe89338738dd9889ab572b65f"
+    },
+    {
+      "object": "rls public.ledgers",
+      "digest": "b24302801f71f712415f87f5057eba516cbf82f327d17b2f5f90742798d357f7"
+    },
+    {
+      "object": "rls public.spaces",
+      "digest": "89f17b4a0549b894a19e4cdb70693bec78bcd00f72035b3f2bcce3c4e59bdcc4"
+    }
   ]
 }
 

@@ -104,6 +104,64 @@ exit: 0
       "returns": "trigger",
       "policies": []
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.note_grants_changelog()",
+      "digest": "f84716752d1a75d2d334b88aca03397e20fb789447da3fab959cef7f1b7c87b6"
+    },
+    {
+      "object": "function auth.note_grants_grants(text, text, text)",
+      "digest": "1f2b0ec07804b7f5a1d387a4786cf22cc2c348b77470a318cd7deacdaa092762"
+    },
+    {
+      "object": "function auth.notes_accessors_conditional(text)",
+      "digest": "9ac6c8e2f251c28245683030483f45558b619ee287222f075cbf2baa716a22f4"
+    },
+    {
+      "object": "function auth.notes_admits(text, jsonb)",
+      "digest": "f54d3c848b0aad7b1e7c236b762cad03f4824bbb7b0b095a90ad82f2eded164c"
+    },
+    {
+      "object": "function auth.notes_obj_changelog()",
+      "digest": "13e0c75e40ce89aafe3ce52f097f6f2d6cc15a46d428306b892032dd6ef24ea6"
+    },
+    {
+      "object": "index _authz_changelog_principal_idx on auth._authz_changelog",
+      "digest": "c78de3ceb34bc4ebbe50fc3a57940b2f64529336105a72709624950d83e501a1"
+    },
+    {
+      "object": "index _authz_changelog_rel_txid_idx on auth._authz_changelog",
+      "digest": "ddb6dc3489a10ea381391be2bf8afd3a817e0afadb5e16e64ba1d2d95265e2db"
+    },
+    {
+      "object": "index _authz_changelog_seq_idx on auth._authz_changelog",
+      "digest": "4e26f73063f2b8e022ef90835d5030963ba05f91ef07157c49ee2d53fb43f6a6"
+    },
+    {
+      "object": "policy notes_select on public.notes",
+      "digest": "4d04cf33f57832bb7207f6ba3e654eaa6797aa1b0dc84b94ec2aa000052be2ff"
+    },
+    {
+      "object": "policy notes_update on public.notes",
+      "digest": "4f65947a6efc5bdaa1779f673490714d63256c290c826969e92c2f58c0d18fe6"
+    },
+    {
+      "object": "rls public.notes",
+      "digest": "d8dc01b58dded4571bda73f3e8f14aa31923cbe1c2a9c67feabd8b8edb197340"
+    },
+    {
+      "object": "table auth._authz_changelog",
+      "digest": "5f45b87c41772dfa2cf15c34319c4da9dd4ac02de604305d3572962aa5fb0de3"
+    },
+    {
+      "object": "trigger note_grants_changelog on public.note_grants",
+      "digest": "e51ac17b4705caf3da40206427b1d048a25b56a300b1f0f92d03a9cddfd4f20c"
+    },
+    {
+      "object": "trigger notes_obj_changelog on public.notes",
+      "digest": "d6524759a088db6f6e2540f86e55427f3c239c9cad707c356f80df8d2ccdafc8"
+    }
   ]
 }
 

@@ -60,6 +60,36 @@ exit: 0
         }
       ]
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.folder_closure_maintain()",
+      "digest": "f51788e54bc071291124deec6b0418837dc12c0bbafd509911e957c7bafcb722"
+    },
+    {
+      "object": "function auth.folder_closure_reachable(text, text)",
+      "digest": "9a5c0d409511ad0fc058ae0f7efbcbda2b8a830b3f4244732190ad1b88503a15"
+    },
+    {
+      "object": "policy documents_select on public.documents",
+      "digest": "2a62f7fe1aee04cd40566d79890fa2bc4c910af040c1e1b5330df2f07499a740"
+    },
+    {
+      "object": "rls public.documents",
+      "digest": "f51b9d67743ab7ca18c5d4317607c086dde6ff505432316ecfcc99cdea6204c6"
+    },
+    {
+      "object": "trigger folder_closure_maintain_del on public.folders",
+      "digest": "68938b398179d81fec20c94d5d0ef661f7bbaa0088679b3d37839b0f87a7060b"
+    },
+    {
+      "object": "trigger folder_closure_maintain_ins on public.folders",
+      "digest": "c0a4122682d3095b199b565eee114573fc337bada1cc24d4cd868c09ff669ad7"
+    },
+    {
+      "object": "trigger folder_closure_maintain_upd on public.folders",
+      "digest": "8291749eb08d0f2f403c0c23a8a5a8789dc3d6b6be637d41f8769afee3d719a3"
+    }
   ]
 }
 

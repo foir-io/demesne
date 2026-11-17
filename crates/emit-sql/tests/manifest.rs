@@ -21,8 +21,8 @@ fn a_migration_drops_exactly_what_the_previous_surface_had_and_this_one_does_not
     let previous = Sql::new(&spec("migrate-before.demesne")).manifest().expect("a manifest");
     let after = spec("migrate-after.demesne");
     let migration = Sql::new(&after).migration(&previous).expect("a migration");
-    let plain = all_sql(&after);
-    let drops = migration.strip_prefix(plain.as_str()).expect("the migration starts with the spec's whole SQL");
+    let drops = Manifest::from_sql(&all_sql(&after)).expect("a manifest").drops_since(&previous);
+    assert!(migration.ends_with(&drops), "the migration ends with its drops:\n{migration}");
     let lines: Vec<&str> = drops.lines().filter(|l| l.starts_with("DROP ")).collect();
     assert_eq!(
         lines,
@@ -44,10 +44,10 @@ fn a_migration_drops_exactly_what_the_previous_surface_had_and_this_one_does_not
 }
 
 #[test]
-fn a_migration_from_its_own_surface_is_the_plain_sql() {
+fn a_migration_from_its_own_surface_writes_nothing() {
     let after = spec("migrate-after.demesne");
     let own = Sql::new(&after).manifest().expect("a manifest");
-    assert_eq!(Sql::new(&after).migration(&own), Ok(all_sql(&after)));
+    assert_eq!(Sql::new(&after).migration(&own), Ok(String::new()));
 }
 
 #[test]
@@ -410,6 +410,10 @@ object doc {
 }
 
 fn renaming(subject: &str) -> demesne_syntax::Spec {
+    renaming_with(subject, "")
+}
+
+fn renaming_with(subject: &str, note: &str) -> demesne_syntax::Spec {
     let src = format!(
         "topology {{ level tenant }}
 subject {subject} {{ anchor tenant; reach self; identifies member_id; roles none; binds owner }}
@@ -425,12 +429,27 @@ object note {{
   scoped tenant
   relation owner: {subject} via owner_id
   permission view = owner @rls maps select
-}}
+{note}}}
 "
     );
     let s = demesne_syntax::parse(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
     validate(&s).unwrap_or_else(|e| panic!("{e}\n{src}"));
     s
+}
+
+#[test]
+fn a_migration_writes_only_what_changed_since_the_previous_manifest() {
+    let before = Sql::new(&renaming("member")).manifest().expect("a manifest");
+    let after = renaming_with("member", "  permission edit = owner @rls maps update\n");
+    let migration = Sql::new(&after).migration(&before).expect("the migration compiles");
+    assert_eq!(migration.matches("CREATE POLICY").count(), 1, "only the new policy:\n{migration}");
+    assert!(migration.contains("CREATE POLICY notes_update ON public.notes"), "{migration}");
+    assert!(!migration.contains("CREATE OR REPLACE FUNCTION auth.acl_grants("), "an unchanged function is not written again:\n{migration}");
+    let same = Sql::new(&renaming("member")).migration(&before).expect("the migration compiles");
+    assert_eq!(same.matches("CREATE ").count(), 0, "nothing changed, nothing written:\n{same}");
+    let older = Manifest { digests: None, ..before };
+    let whole = Sql::new(&after).migration(&older).expect("the migration compiles");
+    assert!(whole.contains("-- the previous manifest records no digests") && whole.matches("CREATE POLICY").count() == 3, "{whole}");
 }
 
 #[test]

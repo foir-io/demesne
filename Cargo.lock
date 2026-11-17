@@ -222,6 +222,7 @@ dependencies = [
  "demesne-model 5.0.0",
  "demesne-runtime 5.0.0",
  "demesne-syntax 5.0.0",
+ "sha2",
 ]
 
 [[package]]

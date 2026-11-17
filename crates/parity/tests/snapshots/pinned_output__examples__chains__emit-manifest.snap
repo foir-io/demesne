@@ -227,6 +227,128 @@ exit: 0
       "returns": "TABLE(doc_id text, field text, kind text, rule text)",
       "policies": []
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.demesne_instant(text)",
+      "digest": "def526b8ec7b734845f42164d6a857e8ab06d597162d805e0f49f2340d25f54c"
+    },
+    {
+      "object": "function auth.doc_composition_lent(text, text, text)",
+      "digest": "4f49d3fde213971e33dda2ea9166e6684ed4887f801ae44d2912753704df6a52"
+    },
+    {
+      "object": "function auth.doc_composition_lent_0(text, text, text)",
+      "digest": "ed393de3f7ce9e92db18c1a6c85dadde8d0546bb72135e3967c2b634e8982b1b"
+    },
+    {
+      "object": "function auth.doc_shared_keyed(text, text, text)",
+      "digest": "d3ea4fe26841d524e73c3f308a4479b0ac6a85211796b0401a63e5eeae7f62b0"
+    },
+    {
+      "object": "function auth.doc_shared_keyed_inside(text, text, text)",
+      "digest": "829f7d295c31cfabf2a42304497e291c4a1e3a2212b9e19632caa16142ba545b"
+    },
+    {
+      "object": "function auth.doc_terms_hold(text, text, jsonb)",
+      "digest": "9c5d7bd25f831ef6eb415c176a2e5796b8fca992eb2b5abd53173f976797e960"
+    },
+    {
+      "object": "function auth.doc_terms_hold_inside(text, text, jsonb)",
+      "digest": "fe7d3480e03cd0a474153c66240158fc9800d6f4a978f7ee85e2c590f259fd6b"
+    },
+    {
+      "object": "function auth.keeper_memberin_space(text, text)",
+      "digest": "ce8cfab417ec6480c81de292453ccd393930819cad446d2e578737114488ae17"
+    },
+    {
+      "object": "function auth.live_skin(text)",
+      "digest": "c391215b439fb74bdbd1037cabb03d4138f024c9aad1f2505d6208d30a90d914"
+    },
+    {
+      "object": "function auth.live_skin_own(text)",
+      "digest": "9ec3cf7997619404cfb50a0c17cbb260136debb46f30ee17abe7f4d95ef0e94c"
+    },
+    {
+      "object": "function auth.paths_maintain()",
+      "digest": "562b0c1ae64f6f31eae0c705639805824820207b1cc0c0764727bfce082f44b5"
+    },
+    {
+      "object": "function auth.paths_path(text)",
+      "digest": "5797ed099313b025c9923999b34256627ced6b2701a4fcd234479bd2dbf86489"
+    },
+    {
+      "object": "function auth.rule_slots_declared_by_rule(text)",
+      "digest": "39602b2c488c4bc71c0bb1fc2ddf72a397c679af9c0ab1e32ea0264417f3aab2"
+    },
+    {
+      "object": "function auth.spaces_accessors(text)",
+      "digest": "5696193640fef7241a5eedc6057339d1c6b79d6ac460e14d471f24f92aa6f7a9"
+    },
+    {
+      "object": "function auth.spaces_admits(text, jsonb)",
+      "digest": "2227e4644667a5d3db833d3c853644d79aa3eddf28276283436c3aedc8ed68b2"
+    },
+    {
+      "object": "function auth.trail_hops_declared_by_trail(text)",
+      "digest": "a6ef182ab2a2b53d205db8425ef84210ed014f12abe7aac9a01b813642868fe0"
+    },
+    {
+      "object": "policy banners_select on public.banners",
+      "digest": "4fc0e5b9cae9fdf93183d9d30e55461c703f610ce33480008ce34c5c385f3e37"
+    },
+    {
+      "object": "policy banners_select_require on public.banners",
+      "digest": "52a31ea9cc1ef0b9ae17f395af6c7ac29cedc4ecee3fad3eacf38193faf5a4d9"
+    },
+    {
+      "object": "policy docs_select on public.docs",
+      "digest": "7e0d8458370cf82aadf6e97e1d43b542c978a530a53304ebeaa3734e2bfc1491"
+    },
+    {
+      "object": "policy keeper_profiles_select on public.keeper_profiles",
+      "digest": "619e4018d1bafabae4c0e77b0c37ddb9e7d46bdae7647108ab475df31d1aa227"
+    },
+    {
+      "object": "policy skins_select on public.skins",
+      "digest": "f2b371e6d0f161e4c5f30039ad09c1fcb64a75e26f4cc1d88902a3f075a179aa"
+    },
+    {
+      "object": "policy spaces_select on public.spaces",
+      "digest": "122aad3b79d416bde7024e591c4ecd2a4b64d3227f8c62527e5245527d0b1d01"
+    },
+    {
+      "object": "rls public.banners",
+      "digest": "fa424da85a98b0d4b5e411a8707822282dabd25c4367dfb8e273f988090bb880"
+    },
+    {
+      "object": "rls public.docs",
+      "digest": "7cb507caa91f74539002e69c1d224ad6fcf0947645ce4bdefc4a76512ff741ce"
+    },
+    {
+      "object": "rls public.keeper_profiles",
+      "digest": "a61eea85b309096c5e2cf41c7efab4f53e794aca74eb132172b009625b99e476"
+    },
+    {
+      "object": "rls public.skins",
+      "digest": "e0f88da6a82c39cc0465a91fc869b25d5b3aac00f5fa0985b962a80c382f1d5b"
+    },
+    {
+      "object": "rls public.spaces",
+      "digest": "89f17b4a0549b894a19e4cdb70693bec78bcd00f72035b3f2bcce3c4e59bdcc4"
+    },
+    {
+      "object": "trigger paths_maintain_del on public.folders",
+      "digest": "fc6732aec350ea0dbf33d15db13a7716a52252d03bcd6b4c5b1bb79a1d43662a"
+    },
+    {
+      "object": "trigger paths_maintain_ins on public.folders",
+      "digest": "7d9aee57241c411e9f910ff61bd5de4d5136a565ecdc993c158b717c8150ab99"
+    },
+    {
+      "object": "trigger paths_maintain_upd on public.folders",
+      "digest": "1d2ed274074ab1285b17fc81b9eac1b3f4ac1a1b6479e025c2f1d4a62062cbec"
+    }
   ]
 }
 

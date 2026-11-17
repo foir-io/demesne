@@ -342,6 +342,236 @@ exit: 0
       "returns": "text",
       "policies": []
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.folder_path()",
+      "digest": "fe8fd91e4d43281cf9a3d958ee1708742d750c89d01d68cc20411edd0ad42e17"
+    },
+    {
+      "object": "function auth.live_skin(text)",
+      "digest": "c391215b439fb74bdbd1037cabb03d4138f024c9aad1f2505d6208d30a90d914"
+    },
+    {
+      "object": "function auth.live_skin_own(text)",
+      "digest": "9ec3cf7997619404cfb50a0c17cbb260136debb46f30ee17abe7f4d95ef0e94c"
+    },
+    {
+      "object": "function auth.paths_ancestors(text)",
+      "digest": "f36cde70887083b8529cb76d11485f9122a32d5475e84c8d8617b9fc9dac078e"
+    },
+    {
+      "object": "function auth.paths_descendants(text)",
+      "digest": "7d63174d347945057ed2100b418b44a1aecdfd3f9ad025016502327ae00416f7"
+    },
+    {
+      "object": "function auth.paths_maintain()",
+      "digest": "562b0c1ae64f6f31eae0c705639805824820207b1cc0c0764727bfce082f44b5"
+    },
+    {
+      "object": "function auth.paths_path(text)",
+      "digest": "5797ed099313b025c9923999b34256627ced6b2701a4fcd234479bd2dbf86489"
+    },
+    {
+      "object": "function auth.paths_reach_set(text)",
+      "digest": "848a5b561633f155de4722076edebd3a4ca4143609dbb049173438764a527709"
+    },
+    {
+      "object": "function auth.paths_up_reach_set(text)",
+      "digest": "fb97b7a31a53103b678becef5965a2919e8982a17a73385e21f2be4733fe1e93"
+    },
+    {
+      "object": "function auth.space_by_name(text)",
+      "digest": "c4ac81823dbe3ddef4263190d90e4835aabfb59f288f5324992630d8a2e7e3db"
+    },
+    {
+      "object": "function auth.space_can_view(text)",
+      "digest": "8685a5665ac3a8a10a2d2b2c4a4dfd523d61022e623d81797da36ba973b444ee"
+    },
+    {
+      "object": "function auth.space_cards()",
+      "digest": "f0a761b2a38b03a1118bf230b3097d355ccc3536e518ce2000ea753db1c27a0b"
+    },
+    {
+      "object": "function auth.space_named(text)",
+      "digest": "fb151f78d1fde3147f1c4371fb22d6bc1410378efd38c04fdea8e1456074edee"
+    },
+    {
+      "object": "function auth.spaces_in_estate()",
+      "digest": "16eae4d368ca158b7efb3a44e18b5de38f85a8cac8a25c9b2ee49a0fcab826bc"
+    },
+    {
+      "object": "function auth.theme_color(text)",
+      "digest": "7595dc1e0c0c36bd4b5d9f6d6a6897ee5a245faf6e062eba894d2099f6312e02"
+    },
+    {
+      "object": "policy atlases_select on public.atlases",
+      "digest": "6a505deb6043ef53c029fd9360ea4a3d1d31f121919c60ecddaaf671fe9a5053"
+    },
+    {
+      "object": "policy atlases_update on public.atlases",
+      "digest": "7d88a753fd3bd813d4dff9a77cc55c697072d5889462133216432be362b37d2e"
+    },
+    {
+      "object": "policy banners_select on public.banners",
+      "digest": "4fc0e5b9cae9fdf93183d9d30e55461c703f610ce33480008ce34c5c385f3e37"
+    },
+    {
+      "object": "policy banners_select_require on public.banners",
+      "digest": "52a31ea9cc1ef0b9ae17f395af6c7ac29cedc4ecee3fad3eacf38193faf5a4d9"
+    },
+    {
+      "object": "policy drafts_select on public.drafts",
+      "digest": "618ca86fa2db3ace0f76d6f7fa1e6c10ef9a1c38d47f3e23ccfadf40f284128c"
+    },
+    {
+      "object": "policy drafts_select_require on public.drafts",
+      "digest": "0a662cee919d5a61bac31db9f4cc2b1c3359a8ba7b05e5120bbdb82ca1b42d7b"
+    },
+    {
+      "object": "policy folders_delete on public.folders",
+      "digest": "2548d8b3b5e22891af4aad1a805c0516e3e4345b94cf8f18e6f606e5d08d704d"
+    },
+    {
+      "object": "policy folders_insert on public.folders",
+      "digest": "7e0708e258c59bef3e7c9232ee5116bbb6c5353dae30cf4c182980f6f091eb1d"
+    },
+    {
+      "object": "policy folders_select on public.folders",
+      "digest": "8e0a3f9dd6e687dcec919431df3b474524c9c572b2f38b2e618146dbce11e6c5"
+    },
+    {
+      "object": "policy folders_update on public.folders",
+      "digest": "cdcd4e0840e44ed57b4422414d8e44bf92e86a8288b9e4c36786468d19bf28ed"
+    },
+    {
+      "object": "policy ledgers_select on public.ledgers",
+      "digest": "c918e87cee40bcb4257e11f3c451d322707adcc29b5eebc8ac0a96fb9974af7f"
+    },
+    {
+      "object": "policy ledgers_update on public.ledgers",
+      "digest": "c0fcee16dc205d0909fe3e81d276df8b561d466736e87e7eb0ec6ad1bd114c3b"
+    },
+    {
+      "object": "policy ledgers_update_require on public.ledgers",
+      "digest": "330e164804ec501ea18727b5ef5da7cec5bb783f31fb59c00947e01fbe7a488f"
+    },
+    {
+      "object": "policy notices_delete on public.notices",
+      "digest": "e1fc363505cb89dc48d8b550b9f9f8930a2c041aa0b49ab8fe57f9c502a6ae5e"
+    },
+    {
+      "object": "policy notices_insert on public.notices",
+      "digest": "492c8064d21f5b071e1c71257b68750a526ad8cc04052e17c48c02875c4b7de6"
+    },
+    {
+      "object": "policy notices_select on public.notices",
+      "digest": "9dad7f701cf68b176deb8a7c1fc68eb114d603e402b432fb346aa3f581a2c93e"
+    },
+    {
+      "object": "policy notices_update on public.notices",
+      "digest": "2d50cf827cc77dca65f581cb540450e7c41329d1bf71dd1bcbba6c08c3ce4c4b"
+    },
+    {
+      "object": "policy pages_select on public.pages",
+      "digest": "da1da33da9d908b271e65ebcf0c88f74c3a83878f9043641006df2e6898e2c24"
+    },
+    {
+      "object": "policy sheets_select on public.sheets",
+      "digest": "fd0eeb7e95842c32a3b0e2f43f89e7ff9d6ae45a7c516b7dec48e5fd2a6180a7"
+    },
+    {
+      "object": "policy skins_select on public.skins",
+      "digest": "f2b371e6d0f161e4c5f30039ad09c1fcb64a75e26f4cc1d88902a3f075a179aa"
+    },
+    {
+      "object": "policy spaces_select on public.spaces",
+      "digest": "2d776683b4d058313e9702169e3203423d59b95b5c21de4256c3b65576ffddf9"
+    },
+    {
+      "object": "policy templates_delete on public.templates",
+      "digest": "fede59d9a99197da9e55b61b8e6da3a92f2b6eee748a119bf63ac6f528e85592"
+    },
+    {
+      "object": "policy templates_insert on public.templates",
+      "digest": "003e8f243d081ae50aa9bc8d7861dfb1c84b1e6fcc6a5624cc90ed6ed31241b8"
+    },
+    {
+      "object": "policy templates_select on public.templates",
+      "digest": "0410f358ad73061468063d85e9cd8ad53fe8c6a7cd8bc01aeda5a562a38a7504"
+    },
+    {
+      "object": "policy templates_select_require on public.templates",
+      "digest": "f63c39c2133a6cf43802ea854a798d0627441ec7e43db5fe06fe30079d3a51d9"
+    },
+    {
+      "object": "policy templates_update on public.templates",
+      "digest": "d996aacdd42f79bd0b4aaab73c88b197a35610465e384c246b1055bb1b48bab3"
+    },
+    {
+      "object": "policy themes_select on public.themes",
+      "digest": "336f905d9c69eaf7803c8ae48e181b465b5f3802f1ff213a76c2c60edd460126"
+    },
+    {
+      "object": "rls public.atlases",
+      "digest": "823449b7202762013cb72bd8b477a274755a957640e198b767f0d8cb187ca8ed"
+    },
+    {
+      "object": "rls public.banners",
+      "digest": "fa424da85a98b0d4b5e411a8707822282dabd25c4367dfb8e273f988090bb880"
+    },
+    {
+      "object": "rls public.drafts",
+      "digest": "8f1939cab8970f8a6866025668e8b3213c13fda77af5f38659c14e2037a85e46"
+    },
+    {
+      "object": "rls public.folders",
+      "digest": "9e9dfef4402bd6a626e475d31129cdaefdb00cefe89338738dd9889ab572b65f"
+    },
+    {
+      "object": "rls public.ledgers",
+      "digest": "b24302801f71f712415f87f5057eba516cbf82f327d17b2f5f90742798d357f7"
+    },
+    {
+      "object": "rls public.notices",
+      "digest": "25713236e1b893b43373757ca8d0446b5ced45836b3d004862d370e43f98375c"
+    },
+    {
+      "object": "rls public.pages",
+      "digest": "3fd58784f233586ffb3500ca40bb97819e33d41ff1fa67a0db01f3a10ac7ac38"
+    },
+    {
+      "object": "rls public.sheets",
+      "digest": "83978468b4811a335588f0583ce5411c881566b7195724973e56f43260819829"
+    },
+    {
+      "object": "rls public.skins",
+      "digest": "e0f88da6a82c39cc0465a91fc869b25d5b3aac00f5fa0985b962a80c382f1d5b"
+    },
+    {
+      "object": "rls public.spaces",
+      "digest": "89f17b4a0549b894a19e4cdb70693bec78bcd00f72035b3f2bcce3c4e59bdcc4"
+    },
+    {
+      "object": "rls public.templates",
+      "digest": "55d4398fa939dab79df2bee34014900358a56249646a4760e2d384f6dbd16532"
+    },
+    {
+      "object": "rls public.themes",
+      "digest": "9852c9de39b5c857268aaf2e9e79a903402c7f4532a5108953d1a5c82c5e3726"
+    },
+    {
+      "object": "trigger paths_maintain_del on public.folders",
+      "digest": "fc6732aec350ea0dbf33d15db13a7716a52252d03bcd6b4c5b1bb79a1d43662a"
+    },
+    {
+      "object": "trigger paths_maintain_ins on public.folders",
+      "digest": "7d9aee57241c411e9f910ff61bd5de4d5136a565ecdc993c158b717c8150ab99"
+    },
+    {
+      "object": "trigger paths_maintain_upd on public.folders",
+      "digest": "1d2ed274074ab1285b17fc81b9eac1b3f4ac1a1b6479e025c2f1d4a62062cbec"
+    }
   ]
 }
 

@@ -52,6 +52,28 @@ exit: 0
       "returns": "trigger",
       "policies": []
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.group_closure_member(text, text)",
+      "digest": "43fad2ac87e3f67bc5217386ea4830e4320ef1a1bdab822a7f964ef19eacf70a"
+    },
+    {
+      "object": "function auth.group_closure_rebuild()",
+      "digest": "d1e303c32182ba752c2fdf6841443633f0718dae01911aabb012049f9726f00f"
+    },
+    {
+      "object": "policy docs_select on public.docs",
+      "digest": "c90cbe85213d9885063500bcfd0c3be26d531d0d1b7136b30ebbeb154606a4f0"
+    },
+    {
+      "object": "rls public.docs",
+      "digest": "7cb507caa91f74539002e69c1d224ad6fcf0947645ce4bdefc4a76512ff741ce"
+    },
+    {
+      "object": "trigger group_closure_rebuild on public.group_memberships",
+      "digest": "582a4385242c8b3a5976de71a171e5d3e7fd5a28f1c532d8d27e2c43f712ddce"
+    }
   ]
 }
 

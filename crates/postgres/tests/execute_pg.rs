@@ -239,7 +239,21 @@ fn renaming_a_subject_migrates_although_a_parameter_is_named_after_it() {
             .starts_with("DROP POLICY IF EXISTS docs_select ON demesne_rn_rows.docs;\nDROP FUNCTION IF EXISTS demesne_rn_auth.acl_grants(text, text, text);\n"),
         "{migration:.300}"
     );
+    let oids = |db: &mut Client| -> Vec<(String, u32)> {
+        db.query(
+            "SELECT polname::text, oid FROM pg_policy WHERE polrelid IN ('demesne_rn_rows.docs'::regclass, 'demesne_rn_rows.notes'::regclass) ORDER BY 1",
+            &[],
+        )
+        .expect("the policies")
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect()
+    };
+    let was = oids(&mut db);
     db.batch_execute(&migration).unwrap_or_else(|e| panic!("the migration applies: {e:?}"));
+    let is = oids(&mut db);
+    let kept: Vec<&str> = was.iter().filter(|w| is.contains(w)).map(|(name, _)| name.as_str()).collect();
+    assert_eq!(kept, ["notes_select"], "only the policy that calls the renamed check is created again: {was:?} -> {is:?}");
     let mut sql = String::new();
     Sql::new(&after).write_all_sql(&mut sql).expect("the SQL compiles");
     let d = demesne_postgres::drift(&mut db, &sql, &[]).unwrap_or_else(|e| panic!("diff: {e}"));
@@ -249,4 +263,74 @@ fn renaming_a_subject_migrates_although_a_parameter_is_named_after_it() {
         .expect("the check")
         .get(0);
     assert_eq!(named[0], "p_customer_id", "{named:?}");
+}
+
+fn guarded(subject: &str) -> demesne_syntax::Spec {
+    let src = format!(
+        "definers schema \"demesne_tx_auth\"
+tables schema \"demesne_tx_rows\"
+topology {{ level tenant }}
+subject {subject} {{ anchor tenant; reach self; identifies member_id; roles none; binds owner }}
+object doc {{
+  table docs
+  scoped tenant
+  relation owner: {subject} via owner_id
+  relation grantee: {subject} via grant acl(doc_id, principal_kind, principal_id, access)
+  permission view = owner @rls maps select
+  require view = grantee
+}}
+"
+    );
+    let s = demesne_syntax::parse(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    demesne_emit_sql::validate(&s).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    s
+}
+
+fn seen(reader: &mut Client) -> Result<i64, postgres::Error> {
+    let mut tx = reader.transaction()?;
+    tx.batch_execute(
+        "SET LOCAL lock_timeout = '300ms'; SET LOCAL ROLE demesne_tx_reader;
+         SELECT set_config('request.jwt.claims', '{\"member_id\":\"m1\",\"tenant_id\":\"t1\"}', true);",
+    )?;
+    let n = tx.query_one("SELECT count(*) FROM demesne_tx_rows.docs", &[])?.get(0);
+    tx.rollback()?;
+    Ok(n)
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_reader_never_sees_a_table_without_its_require_while_a_migration_renames_what_it_calls() {
+    let mut db = connect();
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS demesne_tx_rows CASCADE; DROP SCHEMA IF EXISTS demesne_tx_auth CASCADE;
+         CREATE SCHEMA demesne_tx_rows; CREATE SCHEMA demesne_tx_auth;
+         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'demesne_tx_reader') THEN CREATE ROLE demesne_tx_reader NOLOGIN; END IF; END $$;
+         GRANT authenticated TO demesne_tx_reader;
+         CREATE TABLE demesne_tx_rows.docs (id text PRIMARY KEY, tenant_id text, owner_id text);
+         CREATE TABLE demesne_tx_rows.acl (doc_id text, principal_kind text, principal_id text, access text);
+         INSERT INTO demesne_tx_rows.docs VALUES ('d1', 't1', 'm1');
+         GRANT USAGE ON SCHEMA demesne_tx_rows, demesne_tx_auth TO demesne_tx_reader;
+         GRANT SELECT ON ALL TABLES IN SCHEMA demesne_tx_rows TO demesne_tx_reader;",
+    )
+    .expect("fresh schemas, and a row its owner may read only without the require");
+    let (before, after) = (guarded("member"), guarded("customer"));
+    let mut b = String::new();
+    Sql::new(&before).write_all_sql(&mut b).expect("the SQL compiles");
+    db.batch_execute(&b).unwrap_or_else(|e| panic!("apply: {e:?}"));
+    let mut reader = connect();
+    assert_eq!(seen(&mut reader).expect("a read"), 0, "the require bars the owner, who holds no grant");
+    let migration = Sql::new(&after).migration(&Sql::new(&before).manifest().expect("a manifest")).expect("the migration compiles");
+    assert!(migration.contains("DROP POLICY IF EXISTS docs_select_require ON demesne_tx_rows.docs;"), "{migration:.400}");
+    db.batch_execute(&format!("BEGIN;\n{migration}")).unwrap_or_else(|e| panic!("the migration, inside one transaction: {e:?}"));
+    let waited = seen(&mut reader).expect_err("a read waits for the migration");
+    assert_eq!(waited.code(), Some(&postgres::error::SqlState::LOCK_NOT_AVAILABLE), "{waited:?}");
+    db.batch_execute("COMMIT").expect("commit");
+    assert_eq!(seen(&mut reader).expect("a read"), 0, "after the migration the require bars the owner again");
+    let back = Sql::new(&before).migration(&Sql::new(&after).manifest().expect("a manifest")).expect("the migration compiles");
+    let (first, rest) = back.split_at(back.find("CREATE OR REPLACE FUNCTION").expect("the migration creates a function"));
+    db.batch_execute(first).expect("the drops, outside a transaction");
+    assert_eq!(seen(&mut reader).expect("a read"), 1, "without one transaction a reader sees the row the require bars");
+    db.batch_execute(rest).expect("the rest");
+    assert_eq!(seen(&mut reader).expect("a read"), 0);
 }

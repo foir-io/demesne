@@ -92,8 +92,18 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 
    `CREATE OR REPLACE` alone never removes anything, so a definer, policy or
    trigger the spec renamed or removed would stay live and keep answering.
-   `migrate` writes the whole current SQL, then drops each object the manifest
-   records and the spec no longer emits:
+   `migrate` writes, as one transaction, the objects that changed since the
+   manifest (each object's digest is in it), then drops each object the
+   manifest records and the spec no longer emits. An object that didn't change
+   is not written again, so its table isn't locked. If your migration runner
+   wraps each file in a transaction of its own, as sqlx does, give
+   `--no-transaction`: a `COMMIT` inside its transaction would end it early.
+   Otherwise apply the file as it is, so that no reader ever sees a table
+   between a policy's drop and its creation. `migrate` also drops first a
+   function whose parameters changed, with the policies that call it, since
+   `CREATE OR REPLACE` cannot rename a parameter. It writes only what changed,
+   so it doesn't undo a hand edit to an unchanged object: `diff` reports one,
+   and applying the whole SQL (`demesne emit authz.demesne all`) restores it.
 
    - Each drop names the object exactly. A function is named by its argument
      types, because `DROP FUNCTION IF EXISTS f(text)` succeeds, doing nothing,

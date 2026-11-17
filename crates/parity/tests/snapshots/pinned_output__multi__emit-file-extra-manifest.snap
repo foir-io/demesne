@@ -228,6 +228,100 @@ exit: 0
         }
       ]
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.acl_grants_doc(text, text, text)",
+      "digest": "7e64da2d6b8235befc9aec2c49c22d18394cb480ab3f5b86c8b44b850cdc74a6"
+    },
+    {
+      "object": "function auth.acl_grants_note(text, text, text)",
+      "digest": "f937f76b56cde02a9b14f02d2f97714cbca8159900351a1dff0862de2a9b20a8"
+    },
+    {
+      "object": "function auth.acl_manage(text, text)",
+      "digest": "32d7f7bd394f430a0adce9e6dcd7cce0a428ef45b2361317883a1306ccdd40d8"
+    },
+    {
+      "object": "function auth.doc_can_edit(text)",
+      "digest": "c23d8bc6389a97870b3fb3af7258abca9b8b60cb2f3ef1fe262af23cf910be54"
+    },
+    {
+      "object": "function auth.doc_can_view(text)",
+      "digest": "4f4a63afc64aaf7a6c700d426c478bc31976ddfdf0da8fec8c37fe309d32441e"
+    },
+    {
+      "object": "function auth.doc_readable(text, text, text, text)",
+      "digest": "d1a4edfccaa4063740dead36c064de2903e4460571a8b1f30d92b0b7cdd220e6"
+    },
+    {
+      "object": "function auth.docs_accessors(text)",
+      "digest": "8dcf5182b4e19ea700dc932ee9dead2da4bce92d92b217fc310261b14c6a1d8a"
+    },
+    {
+      "object": "function auth.docs_admits(text, jsonb)",
+      "digest": "679004d4ffd8bc26dc8868478bcc0fdbae05c6d17be760f4ce55850329b76e62"
+    },
+    {
+      "object": "function auth.note_can_edit(text)",
+      "digest": "8a787e549b04f92227d488613f3957cef884b67caf98442a9d73c253ba6c700c"
+    },
+    {
+      "object": "function auth.notes_accessors(text)",
+      "digest": "0c6a631f091516223ae58e3896658ee77a37c2128454577acacf148e61a2a0ae"
+    },
+    {
+      "object": "function auth.notes_admits(text, jsonb)",
+      "digest": "3e475f7ad4562475b06fafaa2dd0ef3edbe64815faea96d93a032cff87bbe273"
+    },
+    {
+      "object": "function auth.support_grants_reach_set(text)",
+      "digest": "c4a28c1f16c877c51728bfc597181f4beb8b9280b1aa8e712a4730dd2fc0b740"
+    },
+    {
+      "object": "policy acl_delete on public.acl",
+      "digest": "f37e372e51ff811287a967ad05b9fdde4420fca2c35be2816dfebdc30e172d95"
+    },
+    {
+      "object": "policy acl_insert on public.acl",
+      "digest": "3fbcf912df8eb6ecd0b92b588d84d8eeb131381c73148b1a1aedc13df6b5e887"
+    },
+    {
+      "object": "policy acl_select on public.acl",
+      "digest": "70e62475624efe40f0a315c8f5dd74525efac2e9b6017cb7eaa63fade6b2859e"
+    },
+    {
+      "object": "policy acl_update on public.acl",
+      "digest": "620a88392407156f27a3ab348014071b733b786caaede93da5c3484ca848e198"
+    },
+    {
+      "object": "policy docs_select on public.docs",
+      "digest": "419a3bee7649eb75f011090e08f5a27ce9a175ec6ae7cb2160784d55aaea013e"
+    },
+    {
+      "object": "policy docs_update on public.docs",
+      "digest": "f247b87c8d00eaf94f20406e27d64dfb789749de9f67578af5b45b016fe221d1"
+    },
+    {
+      "object": "policy notes_select on public.notes",
+      "digest": "a696d8550d6e54ac73c5085f2f9aaf1b0c1684925248401ce2c5679d1a812dcf"
+    },
+    {
+      "object": "policy notes_update on public.notes",
+      "digest": "6a17f2802716551c2b28bb403be6dabdd6e6ebfdb913fead6682e9683b17bf26"
+    },
+    {
+      "object": "rls public.acl",
+      "digest": "2dae82a541588d2bb1623f435de8ca050955d1a1006cf121413704f809597ce6"
+    },
+    {
+      "object": "rls public.docs",
+      "digest": "7cb507caa91f74539002e69c1d224ad6fcf0947645ce4bdefc4a76512ff741ce"
+    },
+    {
+      "object": "rls public.notes",
+      "digest": "d8dc01b58dded4571bda73f3e8f14aa31923cbe1c2a9c67feabd8b8edb197340"
+    }
   ]
 }
 

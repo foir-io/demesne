@@ -177,6 +177,76 @@ exit: 0
       "returns": "boolean",
       "policies": []
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.doc_acl_grants(text, text, text)",
+      "digest": "ddca2a0a902e2511a397b1235f19a3bd80deeb0d03be6c5d5be09a87afe64f89"
+    },
+    {
+      "object": "function auth.docs_accessors_conditional(text)",
+      "digest": "a30e3e502304c673c6844e252deea52527ebb04d4d7d8a24d0eefaad9515fc40"
+    },
+    {
+      "object": "function auth.docs_admits(text, jsonb)",
+      "digest": "96c7fa1cbf68401dcd79e0f4d7a618cdd7213dc45026115e3ded9937e84a57cc"
+    },
+    {
+      "object": "function auth.is_root(text)",
+      "digest": "e1c829c35ded44cee31a7e8c4975927099c5b8614d55d469629001acfb2354ee"
+    },
+    {
+      "object": "function auth.is_tenant_staff(text, text)",
+      "digest": "f567551c3054baabd2f87b46e01a912b471492dcec407915fd7a1219bcd6ed51"
+    },
+    {
+      "object": "function auth.member_can_access_doc(text, text, text)",
+      "digest": "814dde95334cc796e0566e930df2ead407a927da5882561a8b2a577f832b5868"
+    },
+    {
+      "object": "function auth.staff_has_workspace_role(text, text, text)",
+      "digest": "2e6ef5eb57709da9e2cff2152098da5a63b2803f11cee003313e5838249ed51b"
+    },
+    {
+      "object": "function auth.workspaces_accessors(text)",
+      "digest": "3e935538c8e64875378bc8b378afe3764f4c596900c92393ceee712c504e816f"
+    },
+    {
+      "object": "function auth.workspaces_admits(text, jsonb)",
+      "digest": "24fcaa7f60078599bf7d5fb38663d35a28a4898f3c7ea679539b2b4d85dd8ebd"
+    },
+    {
+      "object": "policy docs_delete on public.docs",
+      "digest": "1ad156b9f4fff60d9c06f98d6a92bb0495419af6adb1075dc4bda1206c02e5a1"
+    },
+    {
+      "object": "policy docs_insert on public.docs",
+      "digest": "976bdbac745c27dd46684ff8d59b85ef6f83997bb454f003961c9d0fb58832c8"
+    },
+    {
+      "object": "policy docs_select on public.docs",
+      "digest": "c749480e6541e87802c49867df6b8e0e4ad1d7c36f4042c39fd3213e18f3f79d"
+    },
+    {
+      "object": "policy docs_update on public.docs",
+      "digest": "7ed4e927adb6e75cdd9bd3d2fea2fe7e0e50f95c1a7ef6d06a269b22bf8ce259"
+    },
+    {
+      "object": "policy workspaces_select on public.workspaces",
+      "digest": "82684e9e5e08c48b795077811e3e85849e056383fb656e6f6af47986c288a220"
+    },
+    {
+      "object": "policy workspaces_update on public.workspaces",
+      "digest": "b9929d6cce4b2611be2d734e6d9330f33ccb9bd06f55c881fe9ec55e99d35f56"
+    },
+    {
+      "object": "rls public.docs",
+      "digest": "7cb507caa91f74539002e69c1d224ad6fcf0947645ce4bdefc4a76512ff741ce"
+    },
+    {
+      "object": "rls public.workspaces",
+      "digest": "727b44317e453b15affbe9f63dc381fb281045d4e1749ffdf0708c60b7ad3d62"
+    }
   ]
 }
 

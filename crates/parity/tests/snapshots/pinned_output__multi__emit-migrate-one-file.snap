@@ -4,7 +4,9 @@ expression: "record(&repo, \"\", &args)"
 ---
 exit: 0
 --- stdout ---
+BEGIN;
 -- the previous manifest records no parameters, so a function whose parameters changed is not dropped first
+-- the previous manifest records no digests, so every object is written again
 CREATE OR REPLACE FUNCTION auth.support_grants_reach_set(user_id text)
 RETURNS SETOF text
 LANGUAGE sql
@@ -167,6 +169,7 @@ BEGIN
 END
 $demesne$;
 -- table public.notes is no longer governed; row level security stays enabled and forced, so only roles that bypass it can read the table: disable it deliberately if that is intended
+COMMIT;
 
 --- stderr ---
 

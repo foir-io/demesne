@@ -177,6 +177,76 @@ exit: 0
       "returns": "boolean",
       "policies": []
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.asset_acl_grants(text, text, text)",
+      "digest": "d41b88b254834f199f26e353873cb1f12171448c87f287c5e39bbb22fa2bd245"
+    },
+    {
+      "object": "function auth.assets_accessors_conditional(text)",
+      "digest": "44636811abfe564b233576dc9cf831fc122eb1cc29b8d66dfb10060f43fc3082"
+    },
+    {
+      "object": "function auth.assets_admits(text, jsonb)",
+      "digest": "2f817a626f850d5e762fb9a66ab5667fecfe846d693f47a2dfee8511d5ee896c"
+    },
+    {
+      "object": "function auth.crew_has_space_role(text, text, text)",
+      "digest": "915d5bdf35af2cc3e9f5ba9785d1723e3eec4e6108df28215d651594a7a337c1"
+    },
+    {
+      "object": "function auth.is_ops(text)",
+      "digest": "4adc2c14629a7d6261ad08cc69c094862d875a76dfd89407508807577d1adcff"
+    },
+    {
+      "object": "function auth.is_tenant_crew(text, text)",
+      "digest": "07cbf5f555fd3516d44aee735066fca49ee68f927182259e7502da88de984548"
+    },
+    {
+      "object": "function auth.member_can_access_asset(text, text, text)",
+      "digest": "1fe77b4f6fdaa3636b635202df4c8e42d75a80db9358f75623f17950d4ff470e"
+    },
+    {
+      "object": "function auth.spaces_accessors(text)",
+      "digest": "df1c3db42f33bedf36c1b9f997b786ab925cc4dec7bc199b1d98768760761aba"
+    },
+    {
+      "object": "function auth.spaces_admits(text, jsonb)",
+      "digest": "e355f8b3cf8b9a8e863112bbdd9b68cb45a5f4ea5c6cf2601f9f33993b1a7dde"
+    },
+    {
+      "object": "policy assets_delete on public.assets",
+      "digest": "ba77ec728da9fafc8c21273397637a9fb22a1a70f97ffb681ca9ab9b06aa281d"
+    },
+    {
+      "object": "policy assets_insert on public.assets",
+      "digest": "a6b47636b26fe590958259cc81de6e98120403148f10f0ec8c0787007d946b6c"
+    },
+    {
+      "object": "policy assets_select on public.assets",
+      "digest": "f7a24c9c567469f77d9b93d199779db58a132c75e11a571c2363baba92173f74"
+    },
+    {
+      "object": "policy assets_update on public.assets",
+      "digest": "851524aae1cec65dbbe2e25e5962f2013d6be6273c22e58c22405d433d60143a"
+    },
+    {
+      "object": "policy spaces_select on public.spaces",
+      "digest": "fac96b4ec1d34261220ecfa05529353639281c38481c09f8da016d088b6dac9f"
+    },
+    {
+      "object": "policy spaces_update on public.spaces",
+      "digest": "326cc5ec5671b20a0bc09fe0b4611b0061e52f560d887c6066322ce6886e8b59"
+    },
+    {
+      "object": "rls public.assets",
+      "digest": "44d72c3caaf9c056bde683bc92afccaa671f57955c1580ed62c90b7bb79eb13b"
+    },
+    {
+      "object": "rls public.spaces",
+      "digest": "89f17b4a0549b894a19e4cdb70693bec78bcd00f72035b3f2bcce3c4e59bdcc4"
+    }
   ]
 }
 

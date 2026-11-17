@@ -56,6 +56,28 @@ exit: 0
       "returns": "boolean",
       "policies": []
     }
+  ],
+  "digests": [
+    {
+      "object": "function demesne.note_acl_grants(text, text, text)",
+      "digest": "2a41fdb5f6700bb445f7ebd0f5ac753e60f834e5b21d830b8b181c3aef501e8c"
+    },
+    {
+      "object": "function demesne.notes_accessors_conditional(text)",
+      "digest": "a24de5f495fcf4ec049d742ff2550ea68996d4deca5e79a6767a013741dd1764"
+    },
+    {
+      "object": "function demesne.notes_admits(text, jsonb)",
+      "digest": "f3b9f30642eccc43f98969ee35555a2a27ba8be28f0b801c7669246fcfa190ca"
+    },
+    {
+      "object": "policy notes_select on public.notes",
+      "digest": "125fa83d7dfe9f6044969ddb63795196d1e98c77729eb97d7093603a21b27108"
+    },
+    {
+      "object": "rls public.notes",
+      "digest": "d8dc01b58dded4571bda73f3e8f14aa31923cbe1c2a9c67feabd8b8edb197340"
+    }
   ]
 }
 

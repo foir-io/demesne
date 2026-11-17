@@ -56,6 +56,28 @@ exit: 0
       "returns": "boolean",
       "policies": []
     }
+  ],
+  "digests": [
+    {
+      "object": "function auth.note_acl_grants(text, text, text)",
+      "digest": "c3c0f6bacc47e8b941f55a16bd64856cf6eba300e3aa5947f4d9e3d91851eaca"
+    },
+    {
+      "object": "function auth.notes_accessors_conditional(text)",
+      "digest": "6c5e9df3ae10ed9a1cf2c305e71230f0c5db7fc5ae8df2423798835546f710b5"
+    },
+    {
+      "object": "function auth.notes_admits(text, jsonb)",
+      "digest": "f7aecc0bd9c85b4fab091c02225a7d75b4dad1fda537070135fdf7f3cb960d68"
+    },
+    {
+      "object": "policy notes_select on public.notes",
+      "digest": "aa441e474f5c7b017d14b5d9a002a7ff4f293788e500e9aa93f55983b8ce083c"
+    },
+    {
+      "object": "rls public.notes",
+      "digest": "d8dc01b58dded4571bda73f3e8f14aa31923cbe1c2a9c67feabd8b8edb197340"
+    }
   ]
 }
 
