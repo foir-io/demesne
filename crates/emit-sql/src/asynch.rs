@@ -51,6 +51,10 @@ impl AsyncIndex {
         format!("{}_{suffix}", self.base)
     }
 
+    pub(crate) fn grantable_functions(&self) -> [String; 3] {
+        ["apply", "rebuild", "watermark"].map(|suffix| self.fn_name(suffix))
+    }
+
     #[must_use]
     pub fn apply_fn_sql(&self) -> String {
         let f = self.fn_name("apply");
@@ -92,7 +96,7 @@ $$;",
             rel = quote_literal(self.rel_const()),
             b = self.base
         );
-        format!("{create}\n{}", Execute::Public.statement(&f, ""))
+        format!("{create}\n{}", Execute::Grantable.statement(&f, ""))
     }
 
     #[must_use]
@@ -127,7 +131,7 @@ $$;",
             gt = self.grant_table,
             w = where_
         );
-        format!("{create}\n{}", Execute::Public.statement(&f, ""))
+        format!("{create}\n{}", Execute::Grantable.statement(&f, ""))
     }
 
     #[must_use]
@@ -157,7 +161,7 @@ $$;",
             cur = self.cursor,
             key = quote_literal(self.index_key())
         );
-        format!("{create}\n{}", Execute::Public.statement(&f, ""))
+        format!("{create}\n{}", Execute::Grantable.statement(&f, ""))
     }
 }
 

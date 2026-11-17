@@ -10,6 +10,7 @@ exit: 0
     "auth.admin_has_perm(text, text, text, text)"
   ],
   "callable": [],
+  "grantable": [],
   "internal": [
     "auth.admin_has_perm(text, text, text, text)"
   ],

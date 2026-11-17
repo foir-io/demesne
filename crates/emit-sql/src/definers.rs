@@ -154,7 +154,7 @@ fn accessor_gen_fn_named(name: String, id_t: &str, branches: &[String]) -> GenFn
         returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text)"),
         raw_body: true,
         body: format!("  {}", branches.join("\n  UNION ALL\n  ")),
-        execute: Execute::Granted,
+        execute: Execute::Grantable,
         ..Default::default()
     }
 }
@@ -433,11 +433,13 @@ impl Sql<'_> {
             asked.extend(o.checks.iter().map(|c| c.check_sql.as_ref()));
         }
         let callable = self.adopter_callable();
-        for f in fns.iter_mut().filter(|f| f.execute == Execute::Public && !callable.contains(&f.name)) {
+        for f in fns.iter_mut().filter(|f| f.execute != Execute::Revoked && !callable.contains(&f.name)) {
             let call = format!("{}.{}(", f.schema(), f.name);
-            if !asked.iter().any(|text| text.contains(&call)) {
-                f.execute = Execute::Granted;
-            }
+            f.execute = match (asked.iter().any(|text| text.contains(&call)), f.execute) {
+                (true, _) => Execute::Public,
+                (false, Execute::Public) => Execute::Revoked,
+                (false, kept) => kept,
+            };
         }
         Ok(fns)
     }
@@ -936,7 +938,7 @@ impl Sql<'_> {
             raw_body: true,
             strict: true,
             language: Language::Plpgsql,
-            execute: Execute::Granted,
+            execute: Execute::Grantable,
             body: format!(
                 "#variable_conflict use_column\nDECLARE\n  prior text := current_setting({setting}, true);\n  admitted boolean;\nBEGIN\n  PERFORM set_config({setting}, p_claims::text, true);\n  admitted := EXISTS (SELECT 1 FROM {} WHERE {} = p_id AND ({pred}));\n  PERFORM set_config({setting}, coalesce(prior, ''), true);\n  RETURN admitted;\nEND",
                 obj.table,
@@ -1104,7 +1106,7 @@ impl Sql<'_> {
         if let Some(depth) = &c.depth_col {
             out.push(GenFn {
                 name: format!("{base}_path"),
-                execute: Execute::Granted,
+                execute: Execute::Grantable,
                 strict: true,
                 sig,
                 returns: format!("TABLE(node {id_t}, depth integer)"),
@@ -1451,7 +1453,7 @@ impl Sql<'_> {
             returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text, via_claim_keys text[], via_claim_values text[])"),
             raw_body: true,
             body: format!("  {}", branches.join("\n  UNION ALL\n  ")),
-            execute: Execute::Granted,
+            execute: Execute::Grantable,
             ..Default::default()
         }
     }
@@ -1779,7 +1781,7 @@ impl Sql<'_> {
             returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text)"),
             raw_body: true,
             body: format!("  {}", branches.join("\n  UNION\n  ")),
-            execute: Execute::Granted,
+            execute: Execute::Grantable,
             ..Default::default()
         }))
     }
@@ -2077,7 +2079,7 @@ impl Sql<'_> {
                 returns: n.ty.clone(),
                 raw_body: true,
                 body: format!("  SELECT x.v FROM (\n    {rows}\n  ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;"),
-                execute: Execute::Granted,
+                execute: Execute::Grantable,
                 ..Default::default()
             });
             let own = self.nearest_own_definer(n);

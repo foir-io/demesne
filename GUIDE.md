@@ -628,14 +628,21 @@ to PUBLIC made by hand. `demesne diff` reports a function whose live right
 differs, in either direction. A grant to a role of your own is left alone.
 
 **The manifest says who may run each function.** `demesne emit … manifest`
-puts every function the SQL creates in exactly one of three lists:
+puts every function the SQL creates in exactly one of four lists:
 
 - `callable`: a spec line makes it yours to call, as listed above;
+- `grantable`: PUBLIC may not run it, and it is yours to grant to a role of
+  your own. These are the listings of accessors, `<table>_admits`,
+  `<closure>_path`, a `nearest` lookup for any node, and the maintenance a
+  worker runs: the async tier's `<index>_apply()`, `_rebuild()` and
+  `_watermark()`, and a materialized group's `<flat>_reconcile()`. Each is an
+  interface, and a release changes one only as it changes a `callable` one;
 - `internal`: PUBLIC may run it, and no spec line makes it yours to call. Most
   are functions a policy, a generated check or a trigger runs as the caller;
-- `revoked`: PUBLIC may not run it, only a role you grant it to.
+- `revoked`: PUBLIC may not run it, and only the generated functions call it.
 
-Code of your own calls only what `callable` lists. A manifest written before
+Code of your own calls what `callable` lists, and what `grantable` lists from a
+role you granted it to. A manifest written before
 these lists existed has none of them; it still reads, as one that does not
 record who may run its functions, and `migrate` uses it as before.
 

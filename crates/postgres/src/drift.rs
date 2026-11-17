@@ -70,7 +70,7 @@ pub struct Drift {
 pub fn drift(client: &mut Client, sql: &str, allow: &[String]) -> Result<Drift, Error> {
     let objs = objects(sql).map_err(|e| Error::sql(e.to_string()))?;
     let execute =
-        revoked_from_public(sql).into_iter().map(|f| (f, Execute::Granted)).chain(granted_to_public(sql).into_iter().map(|f| (f, Execute::Public))).collect();
+        revoked_from_public(sql).into_iter().map(|f| (f, Execute::Revoked)).chain(granted_to_public(sql).into_iter().map(|f| (f, Execute::Public))).collect();
     compare(client, &objs, &execute, allow).map_err(Error::query)
 }
 
@@ -264,7 +264,7 @@ impl Comparison<'_> {
             if let Some(said) = off {
                 let detail = match said {
                     Execute::Public => "PUBLIC may not execute it, and the generated SQL grants that (re-apply it)",
-                    Execute::Granted => "PUBLIC may execute it, and the generated SQL revokes that (re-apply it)",
+                    Execute::Revoked | Execute::Grantable => "PUBLIC may execute it, and the generated SQL revokes that (re-apply it)",
                 };
                 self.found(DriftKind::Changed, object.clone(), detail.into());
             }
@@ -405,7 +405,7 @@ fn policy_change(live: &PolicyDef, generated: &PolicyDef) -> String {
 
 fn public_right(tx: &mut Transaction<'_>, oid: u32) -> Result<Execute, String> {
     let public = tx.query_one("SELECT has_function_privilege('public', $1::oid, 'EXECUTE')", &[&oid]).map_err(|e| query_error(&e))?.get::<_, bool>(0);
-    Ok(if public { Execute::Public } else { Execute::Granted })
+    Ok(if public { Execute::Public } else { Execute::Revoked })
 }
 
 fn schema_of(sig: &str) -> String {

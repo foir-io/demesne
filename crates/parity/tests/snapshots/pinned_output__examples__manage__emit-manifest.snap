@@ -11,6 +11,7 @@ exit: 0
     "auth.member_perm_implied_by(text)"
   ],
   "callable": [],
+  "grantable": [],
   "internal": [
     "auth.member_has_perm(text, text, text, text)"
   ],

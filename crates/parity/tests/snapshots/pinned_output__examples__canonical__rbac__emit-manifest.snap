@@ -12,6 +12,7 @@ exit: 0
     "auth.staff_has_resource_role(text, text, text)"
   ],
   "callable": [],
+  "grantable": [],
   "internal": [
     "auth.is_tenant_staff(text, text)",
     "auth.staff_has_perm(text, text, text, text)",

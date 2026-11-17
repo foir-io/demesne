@@ -349,7 +349,7 @@ object doc {{
         let surface = Sql::new(&s).emit_app_surface().expect("the application surface compiles");
         let lists_through = surface.objects.iter().any(|o| o.flat_list_fn.contains(".docs_team_flat_resources"));
         assert_eq!(lists_through, listed, "{view}: {surface:?}");
-        let execute = if listed { Execute::Public } else { Execute::Granted };
+        let execute = if listed { Execute::Public } else { Execute::Revoked };
         assert_eq!(resources.execute, execute, "{view}: {}", resources.create_sql());
         let lists = Sql::new(&s).manifest().expect("a manifest").execute.expect("the manifest records who may run each function");
         let callable = lists.callable.iter().any(|f| f.contains(".docs_team_flat_resources("));
@@ -516,7 +516,7 @@ fn a_copy_public_cannot_run_is_called_only_with_the_callers_own_claim_and_never_
     let mut calls = 0;
     for (copy, position) in [("doc_shared_keyed_inside", 0), ("doc_terms_hold_inside", 2)] {
         let f = defs.iter().find(|d| d.name == copy).unwrap_or_else(|| panic!("{copy} is emitted"));
-        assert_eq!(f.execute, Execute::Granted, "{copy}");
+        assert_eq!(f.execute, Execute::Revoked, "{copy}");
         assert!(!f.create_sql().contains("demesne.auth."), "{copy} reads no remembered value:\n{}", f.create_sql());
         let call = format!("auth.{copy}(");
         let texts: Vec<String> = defs.iter().filter(|d| d.name != copy).map(GenFn::create_sql).collect();

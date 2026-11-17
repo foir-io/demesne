@@ -11,6 +11,7 @@ exit: 0
     "auth.folder_closure_reachable(text, text)"
   ],
   "callable": [],
+  "grantable": [],
   "internal": [
     "auth.folder_closure_maintain()",
     "auth.folder_closure_reachable(text, text)"

@@ -246,13 +246,13 @@ fn name_of(signature: &str) -> &str {
 }
 
 #[test]
-fn every_function_the_sql_creates_is_in_exactly_one_of_callable_internal_and_revoked() {
-    let (mut wrong, mut totals, mut specs) = (Vec::new(), [0usize; 3], 0);
+fn every_function_the_sql_creates_is_in_exactly_one_of_callable_grantable_internal_and_revoked() {
+    let (mut wrong, mut totals, mut specs) = (Vec::new(), [0usize; 4], 0);
     for (path, s) in emitting_specs() {
         let m = Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{path}: {e}"));
         let written = json::parse(&m.to_json()).unwrap_or_else(|e| panic!("{path}: {e}"));
         let functions = listed(&written, "functions", &path);
-        let lists = ["callable", "internal", "revoked"].map(|key| (key, listed(&written, key, &path)));
+        let lists = ["callable", "grantable", "internal", "revoked"].map(|key| (key, listed(&written, key, &path)));
         for (total, (key, list)) in totals.iter_mut().zip(&lists) {
             *total += list.len();
             wrong.extend(list.iter().filter(|f| !functions.contains(*f)).map(|f| format!("{path}: {key} lists {f}, which the SQL does not create")));
@@ -266,8 +266,11 @@ fn every_function_the_sql_creates_is_in_exactly_one_of_callable_internal_and_rev
         specs += 1;
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-    let [callable, internal, revoked] = totals;
-    assert!(specs > 150 && callable > 15 && internal > 300 && revoked > 300, "{specs} specs, {callable} callable, {internal} internal, {revoked} revoked");
+    let [callable, grantable, internal, revoked] = totals;
+    assert!(
+        specs > 150 && callable > 15 && grantable > 200 && internal > 300 && revoked > 120,
+        "{specs} specs, {callable} callable, {grantable} grantable, {internal} internal, {revoked} revoked"
+    );
 }
 
 #[test]
@@ -285,8 +288,11 @@ fn each_list_holds_the_functions_its_name_says() {
             .collect();
         for f in sql.emit_definers().unwrap_or_else(|e| panic!("{path}: {e}")) {
             let sig = identity(&f);
-            if (f.execute == Execute::Granted) != lists.revoked.contains(&sig) {
+            if (f.execute == Execute::Revoked) != lists.revoked.contains(&sig) {
                 wrong.push(format!("{path}: {sig} is {:?} and the manifest's revoked list says otherwise", f.execute));
+            }
+            if (f.execute == Execute::Grantable) != lists.grantable.contains(&sig) {
+                wrong.push(format!("{path}: {sig} is {:?} and the manifest's grantable list says otherwise", f.execute));
             }
             if declared.contains(f.name.as_str()) && !lists.callable.contains(&sig) {
                 wrong.push(format!("{path}: a spec line declares {sig}, and it is not callable"));
@@ -296,6 +302,30 @@ fn each_list_holds_the_functions_its_name_says() {
             let name = name_of(c);
             if !(declared.contains(name) || name.contains("_can_access_") || name.ends_with("_resources")) {
                 wrong.push(format!("{path}: {c} is callable, and no spec line makes it so"));
+            }
+        }
+        let nearest: BTreeSet<&str> = s.objects.iter().flat_map(|o| o.nearests.iter().map(|n| n.name.as_str())).collect();
+        for g in &lists.grantable {
+            let name = name_of(g);
+            let family = [
+                "_accessors",
+                "_accessors_conditional",
+                "_direct_accessors",
+                "_admits",
+                "_path",
+                "_async_apply",
+                "_async_rebuild",
+                "_async_watermark",
+                "_reconcile",
+            ];
+            if !(family.iter().any(|f| name.ends_with(f)) || nearest.contains(name)) {
+                wrong.push(format!("{path}: {g} is grantable, and it is not an interface for a role"));
+            }
+        }
+        for f in lists.callable.iter().chain(&lists.internal).chain(&lists.revoked) {
+            let name = name_of(f);
+            if ["_admits", "_async_apply", "_async_rebuild", "_async_watermark", "_reconcile"].iter().any(|t| name.ends_with(t)) {
+                wrong.push(format!("{path}: {f} is meant for a role you grant, and it is not grantable"));
             }
         }
     }
@@ -318,20 +348,30 @@ fn a_manifest_whose_lists_do_not_hold_each_function_once_is_refused() {
         )
     };
     for (lists, want) in [
-        (r#""callable": ["auth.f(text)"], "internal": ["auth.g(text)"],"#, r#"no "revoked" list"#),
-        (r#""revoked": ["auth.f(text)", "auth.g(text)"],"#, r#"no "callable" or "internal" list"#),
-        (r#""callable": ["auth.f(text)"], "internal": ["auth.f(text)"], "revoked": ["auth.g(text)"],"#, r#""auth.f(text)" is in more than one"#),
-        (r#""callable": ["auth.f(text)"], "internal": [], "revoked": [],"#, r#""auth.g(text)" is in none"#),
+        (r#""callable": ["auth.f(text)"], "grantable": [], "internal": ["auth.g(text)"],"#, r#"no "revoked" list"#),
+        (r#""callable": ["auth.f(text)"], "internal": ["auth.g(text)"], "revoked": [],"#, r#"no "grantable" list"#),
+        (r#""revoked": ["auth.f(text)", "auth.g(text)"],"#, r#"no "callable" or "grantable" or "internal" list"#),
         (
-            r#""callable": ["auth.f(text)", "auth.h(text)"], "internal": ["auth.g(text)"], "revoked": [],"#,
+            r#""callable": ["auth.f(text)"], "grantable": [], "internal": ["auth.f(text)"], "revoked": ["auth.g(text)"],"#,
+            r#""auth.f(text)" is in more than one"#,
+        ),
+        (r#""callable": [], "grantable": ["auth.f(text)"], "internal": [], "revoked": ["auth.f(text)"],"#, r#""auth.f(text)" is in more than one"#),
+        (r#""callable": ["auth.f(text)"], "grantable": [], "internal": [], "revoked": [],"#, r#""auth.g(text)" is in none"#),
+        (
+            r#""callable": ["auth.f(text)", "auth.h(text)"], "grantable": [], "internal": ["auth.g(text)"], "revoked": [],"#,
             r#""callable" lists "auth.h(text)", which functions does not"#,
         ),
     ] {
         let err = Manifest::from_json(&with(lists)).map(|m| m.to_json()).expect_err(lists).to_string();
         assert!(err.contains(want), "{lists}: {err}");
     }
-    let whole = Manifest::from_json(&with(r#""callable": ["auth.f(text)"], "internal": [], "revoked": ["auth.g(text)"],"#)).expect("a whole manifest");
-    assert_eq!(whole.execute.map(|e| e.revoked.into_iter().collect::<Vec<_>>()), Some(vec!["auth.g(text)".to_string()]));
+    let whole =
+        Manifest::from_json(&with(r#""callable": [], "grantable": ["auth.f(text)"], "internal": [], "revoked": ["auth.g(text)"],"#)).expect("a whole manifest");
+    let lists = whole.execute.expect("the lists");
+    assert_eq!(
+        (lists.grantable.into_iter().collect::<Vec<_>>(), lists.revoked.into_iter().collect::<Vec<_>>()),
+        (vec!["auth.f(text)".to_string()], vec!["auth.g(text)".to_string()])
+    );
 }
 
 #[test]

@@ -11,6 +11,7 @@ exit: 0
     "auth.group_closure_rebuild()"
   ],
   "callable": [],
+  "grantable": [],
   "internal": [
     "auth.group_closure_member(text, text)",
     "auth.group_closure_rebuild()"

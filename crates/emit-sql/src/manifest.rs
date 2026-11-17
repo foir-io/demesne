@@ -1,6 +1,6 @@
 use crate::Sql;
 use crate::error::{Error, ManifestError};
-use crate::genfn::definers_sql;
+use crate::genfn::{Execute, definers_sql};
 use demesne_gocompat::json::{self, Value};
 use demesne_gocompat::quote;
 use std::collections::BTreeSet;
@@ -27,34 +27,37 @@ pub struct Manifest {
     pub rls: BTreeSet<String>,
 }
 
-/// Every function a manifest records, in exactly one of three lists by who may run it.
+/// Every function a manifest records, in exactly one of four lists by who may run it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ExecuteLists {
     /// Functions a spec line makes yours to call: PUBLIC may run each, and each answers only about the caller.
     pub callable: BTreeSet<String>,
+    /// Functions the SQL revokes `EXECUTE` on from PUBLIC that are yours to grant to a role of your own, such as a listing
+    /// of accessors, `<table>_admits` or the async tier's maintenance: each is an interface, versioned like `callable`.
+    pub grantable: BTreeSet<String>,
     /// Functions PUBLIC may run because generated SQL runs them as the caller, and no spec line makes yours to call.
     pub internal: BTreeSet<String>,
-    /// Functions the SQL revokes `EXECUTE` on from PUBLIC: only a role you grant one to may run it.
+    /// Functions the SQL revokes `EXECUTE` on from PUBLIC that only the generated functions call.
     pub revoked: BTreeSet<String>,
 }
 
-const EXECUTE_KEYS: [&str; 3] = ["callable", "internal", "revoked"];
+const EXECUTE_KEYS: [&str; 4] = ["callable", "grantable", "internal", "revoked"];
 
 impl ExecuteLists {
     fn covers(&self, functions: &BTreeSet<String>) -> Result<(), String> {
-        let listed = EXECUTE_KEYS.iter().zip([&self.callable, &self.internal, &self.revoked]);
+        let listed = EXECUTE_KEYS.iter().zip([&self.callable, &self.grantable, &self.internal, &self.revoked]);
         let mut seen = BTreeSet::new();
         for (key, f) in listed.flat_map(|(key, list)| list.iter().map(move |f| (key, f))) {
             if !functions.contains(f) {
                 return Err(format!("manifest: {} lists {}, which functions does not", quote(key), quote(f)));
             }
             if !seen.insert(f) {
-                return Err(format!("manifest: {} is in more than one of callable, internal and revoked", quote(f)));
+                return Err(format!("manifest: {} is in more than one of callable, grantable, internal and revoked", quote(f)));
             }
         }
         match functions.iter().find(|f| !seen.contains(f)) {
-            Some(f) => Err(format!("manifest: {} is in none of callable, internal and revoked", quote(f))),
+            Some(f) => Err(format!("manifest: {} is in none of callable, grantable, internal and revoked", quote(f))),
             None => Ok(()),
         }
     }
@@ -113,16 +116,17 @@ impl Manifest {
         };
         let functions = names("functions")?;
         let execute = match EXECUTE_KEYS.map(|key| v.get(key).is_some()) {
-            [false, false, false] => None,
-            [true, true, true] => {
-                let lists = ExecuteLists { callable: names("callable")?, internal: names("internal")?, revoked: names("revoked")? };
+            [false, false, false, false] => None,
+            [true, true, true, true] => {
+                let lists =
+                    ExecuteLists { callable: names("callable")?, grantable: names("grantable")?, internal: names("internal")?, revoked: names("revoked")? };
                 lists.covers(&functions)?;
                 Some(lists)
             }
             present => {
                 let missing: Vec<String> = EXECUTE_KEYS.iter().zip(present).filter(|(_, here)| !here).map(|(key, _)| quote(key)).collect();
                 return Err(format!(
-                    "manifest: no {} list: a manifest records who may run each function in all of callable, internal and revoked, or in none",
+                    "manifest: no {} list: a manifest records who may run each function in all of callable, grantable, internal and revoked, or in none",
                     missing.join(" or ")
                 ));
             }
@@ -151,6 +155,7 @@ impl Manifest {
         if let Some(lists) = &self.execute {
             fields.extend([
                 ("callable".into(), names(&lists.callable)),
+                ("grantable".into(), names(&lists.grantable)),
                 ("internal".into(), names(&lists.internal)),
                 ("revoked".into(), names(&lists.revoked)),
             ]);
@@ -405,6 +410,14 @@ impl Sql<'_> {
         Ok(())
     }
 
+    fn grantable(&self) -> Result<BTreeSet<String>, Error> {
+        let definers = self.emit_definers()?.into_iter().filter(|f| f.execute == Execute::Grantable).map(|f| format!("{}.{}", f.schema(), f.name));
+        let mut names: BTreeSet<String> = definers.collect();
+        names.extend(self.emit_async_indexes().iter().flat_map(crate::asynch::AsyncIndex::grantable_functions));
+        names.extend(self.emit_materialized_flats().iter().map(crate::closure::MaterializedFlat::reconcile_fn));
+        Ok(names)
+    }
+
     /// Returns the manifest of everything [`Sql::write_all_sql`] creates.
     ///
     /// # Errors
@@ -420,7 +433,9 @@ impl Sql<'_> {
         }
         let yours = self.adopter_callable();
         let (callable, internal) = granted.into_iter().partition(|f| yours.contains(&function_name(f).1));
-        m.execute = Some(ExecuteLists { callable, internal, revoked: revoked.into_iter().collect() });
+        let roles = self.grantable()?;
+        let (grantable, revoked) = revoked.into_iter().partition(|f| roles.contains(f.split('(').next().unwrap_or_default()));
+        m.execute = Some(ExecuteLists { callable, grantable, internal, revoked });
         Ok(m)
     }
 

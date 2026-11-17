@@ -33,6 +33,11 @@ exit: 0
     "auth.space_named(text)",
     "auth.spaces_in_estate()"
   ],
+  "grantable": [
+    "auth.live_skin(text)",
+    "auth.paths_path(text)",
+    "auth.theme_color(text)"
+  ],
   "internal": [
     "auth.live_skin_own(text)",
     "auth.paths_ancestors(text)",
@@ -43,12 +48,9 @@ exit: 0
     "auth.space_can_view(text)"
   ],
   "revoked": [
-    "auth.live_skin(text)",
-    "auth.paths_path(text)",
     "auth.paths_reach(text, text)",
     "auth.paths_reachable(text, text)",
-    "auth.paths_up_reach(text, text)",
-    "auth.theme_color(text)"
+    "auth.paths_up_reach(text, text)"
   ],
   "policies": [
     {

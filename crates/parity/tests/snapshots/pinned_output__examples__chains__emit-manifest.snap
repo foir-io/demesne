@@ -29,6 +29,12 @@ exit: 0
     "auth.trail_hops_declared_by_trail(text)"
   ],
   "callable": [],
+  "grantable": [
+    "auth.live_skin(text)",
+    "auth.paths_path(text)",
+    "auth.spaces_accessors(text)",
+    "auth.spaces_admits(text, jsonb)"
+  ],
   "internal": [
     "auth.doc_composition_lent(text, text, text)",
     "auth.doc_shared_keyed(text, text, text)",
@@ -44,13 +50,9 @@ exit: 0
     "auth.doc_select_holds_at(text, text)",
     "auth.doc_shared_keyed_inside(text, text, text)",
     "auth.doc_terms_hold_inside(text, text, jsonb)",
-    "auth.live_skin(text)",
     "auth.paths_ancestors(text)",
     "auth.paths_descendants(text)",
-    "auth.paths_path(text)",
     "auth.paths_reachable(text, text)",
-    "auth.spaces_accessors(text)",
-    "auth.spaces_admits(text, jsonb)",
     "auth.trail_hops_declared_by_trail(text)"
   ],
   "policies": [

@@ -88,8 +88,11 @@ What breaks for an adopter:
   needs instead, under a role that may. Granting `EXECUTE` gives back only
   what the caller could ask about itself, since the binding still holds.
 - **A role that lists accessors or reads `<closure>_path` needs
-  `GRANT EXECUTE`** on those functions. The manifest's `revoked` list names
-  every function the SQL revokes (below).
+  `GRANT EXECUTE`** on those functions. So does the role your async worker
+  runs as, on `<index>_apply()`, `_rebuild()` and `_watermark()`, and the role
+  that reconciles a materialized group, on `<flat>_reconcile()`: PUBLIC could
+  run those four before. The manifest's `grantable` list names every function
+  meant for a role you grant (below).
 - **A revoke from PUBLIC that you made by hand on a function the SQL grants is
   undone** when you apply the SQL. So is one made by default privileges
   (`ALTER DEFAULT PRIVILEGES … REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`). The
@@ -101,11 +104,16 @@ Re-emit and apply the definers; nothing else moves.
 ### The manifest says who may run each function
 
 `demesne emit <spec> manifest`, and its `--file` form, puts every function the
-SQL creates in exactly one of three lists beside `functions`. `callable` holds
-the functions a spec line makes yours to call, `internal` those PUBLIC may run
-that no spec line makes yours, and `revoked` those PUBLIC may not run. Code of
-your own calls only what `callable` lists. Every manifest gains the three
-lists, empty ones included.
+SQL creates in exactly one of four lists beside `functions`. `callable` holds
+the functions a spec line makes yours to call. `grantable` holds those PUBLIC
+may not run that are yours to grant to a role of your own: the listings of
+accessors, `<table>_admits`, `<closure>_path`, a `nearest` lookup for any
+node, the async tier's `<index>_apply()`, `_rebuild()` and `_watermark()`, and
+a materialized group's `<flat>_reconcile()`. `internal` holds those PUBLIC may
+run that no spec line makes yours, and `revoked` those PUBLIC may not run that
+only the generated functions call. Code of your own calls what `callable`
+lists, and what `grantable` lists from a role you granted it to. Every
+manifest gains the four lists, empty ones included.
 
 Reading a manifest refuses one whose lists hold a function twice, leave one out
 or name one `functions` does not, and one with some of the lists and not the

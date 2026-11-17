@@ -25,6 +25,7 @@ exit: 0
   "callable": [
     "auth.folder_write_allowed(text, text, text)"
   ],
+  "grantable": [],
   "internal": [
     "auth.approvals_reach_set(text)",
     "auth.approvals_reach_unscoped_set(text)",

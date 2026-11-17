@@ -43,7 +43,8 @@ fn every_function_the_sql_creates_says_whether_public_may_run_it() {
         let named: BTreeSet<&String> = revoked.iter().chain(&granted).collect();
         assert!(named.iter().all(|f| functions.contains(*f)), "{at}: an EXECUTE statement names a function the SQL does not create: {named:?}");
         let lists = sql.manifest().unwrap_or_else(|e| panic!("{at}: {e}")).execute.expect("the manifest records who may run each function");
-        assert_eq!(lists.revoked, revoked.iter().cloned().collect::<BTreeSet<_>>(), "{at}");
+        let unrun: BTreeSet<String> = lists.grantable.union(&lists.revoked).cloned().collect();
+        assert_eq!(unrun, revoked.iter().cloned().collect::<BTreeSet<_>>(), "{at}");
         let public: BTreeSet<String> = lists.callable.union(&lists.internal).cloned().collect();
         assert_eq!(public, granted.iter().cloned().collect::<BTreeSet<_>>(), "{at}");
         checked += 1;

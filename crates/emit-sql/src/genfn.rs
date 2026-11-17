@@ -22,15 +22,17 @@ pub enum Execute {
     /// Every role: the SQL grants execute to PUBLIC, so applying it again restores what a revoke took away.
     #[default]
     Public,
-    /// Only the roles the adopter grants it to: execute is revoked from PUBLIC.
-    Granted,
+    /// No role but the definer's owner: execute is revoked from PUBLIC, and only generated functions call it.
+    Revoked,
+    /// The roles the adopter grants it to: execute is revoked from PUBLIC, and the function is an interface for such a role.
+    Grantable,
 }
 
 impl Execute {
     pub(crate) fn statement(self, function: &str, arg_types: &str) -> String {
         match self {
             Execute::Public => format!("GRANT EXECUTE ON FUNCTION {function}({arg_types}) TO PUBLIC;"),
-            Execute::Granted => format!("REVOKE EXECUTE ON FUNCTION {function}({arg_types}) FROM PUBLIC;"),
+            Execute::Revoked | Execute::Grantable => format!("REVOKE EXECUTE ON FUNCTION {function}({arg_types}) FROM PUBLIC;"),
         }
     }
 }

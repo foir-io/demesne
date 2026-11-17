@@ -322,7 +322,7 @@ impl MaterializedFlat {
     fn fn_name(&self) -> String {
         format!("{}.{}_rebuild", self.schema(), self.flat)
     }
-    fn reconcile_fn(&self) -> String {
+    pub(crate) fn reconcile_fn(&self) -> String {
         format!("{}.{}_reconcile", self.schema(), self.flat)
     }
 
@@ -419,7 +419,7 @@ $$;",
             gc = self.group_col,
             col = self.col
         );
-        format!("{create}\n{}", Execute::Public.statement(&f, ""))
+        format!("{create}\n{}", Execute::Grantable.statement(&f, ""))
     }
 
     #[must_use]

@@ -174,7 +174,7 @@ fn called_inside(mut fns: Vec<GenFn>, inside: &[bool]) -> Vec<GenFn> {
                 name,
                 body: bound.inside,
                 bound: None,
-                execute: Execute::Granted,
+                execute: Execute::Revoked,
                 language: Language::Plpgsql,
                 raw_body: true,
                 ..fns[i].clone()

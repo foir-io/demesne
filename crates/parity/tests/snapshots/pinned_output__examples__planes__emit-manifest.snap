@@ -12,6 +12,7 @@ exit: 0
     "auth.platform_has_perm(text, text)"
   ],
   "callable": [],
+  "grantable": [],
   "internal": [
     "auth.operator_has_perm(text, text, text, text)",
     "auth.platform_has_perm(text, text)"
