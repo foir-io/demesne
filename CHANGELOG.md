@@ -433,8 +433,10 @@ with an owner column over 2000 rows, ran the check 2000 times in 5.5 ms;
 wrapped, it runs once in 0.26 ms, and the same rows pass.
 
 In a generated function that answers for one row per call, only the form
-changes: `<table>_admits` reuses the policy's predicate, and `<store>_manage`
-calls each kind's `<object>_can_edit(p_id)`. Each still runs its call once per
+changes: `<table>_admits` reuses the policy's predicate, `<store>_manage`
+calls each kind's `<object>_can_edit(p_id)`, and a role check
+`is_<level>_<admin>` first asks whether its `user_id` is an operator, through
+a membership check or a grant's `_reach`. Each still runs its call once per
 call. Over the same 2000 rows, `<store>_manage` called `<object>_can_edit`
 2000 times either way.
 

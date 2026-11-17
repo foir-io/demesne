@@ -23,7 +23,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (auth.is_ops(user_id) OR EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref IS NULL AND ra.killed_at IS NULL AND r.slug IN ('boss')));
+  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND ((SELECT auth.is_ops(user_id)) OR EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref IS NULL AND ra.killed_at IS NULL AND r.slug IN ('boss')));
 $$;
 GRANT EXECUTE ON FUNCTION auth.is_tenant_crew(text, text) TO PUBLIC;
 

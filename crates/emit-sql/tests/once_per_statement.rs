@@ -76,7 +76,13 @@ fn arguments(text: &str, open: usize) -> Option<(&str, usize)> {
     None
 }
 
-fn fixed(args: &str) -> bool {
+fn parameters(stmt: &str) -> BTreeSet<&str> {
+    let Some(open) = stmt.find('(') else { return BTreeSet::new() };
+    let Some((list, _)) = arguments(stmt, open) else { return BTreeSet::new() };
+    list.split(',').filter_map(|p| p.split_whitespace().next()).collect()
+}
+
+fn fixed(args: &str, params: &BTreeSet<&str>) -> bool {
     let a = without_strings(args);
     let bytes = a.as_bytes();
     let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
@@ -102,9 +108,7 @@ fn fixed(args: &str) -> bool {
             aliases.insert(*t);
         }
     }
-    tokens.iter().all(|(t, cast, call, _)| {
-        *cast || *call || KEYWORDS.contains(&t.to_ascii_lowercase().as_str()) || (t.starts_with("p_") && !t.contains('.')) || aliases.contains(t)
-    })
+    tokens.iter().all(|(t, cast, call, _)| *cast || *call || KEYWORDS.contains(&t.to_ascii_lowercase().as_str()) || params.contains(t) || aliases.contains(t))
 }
 
 struct Corpus {
@@ -117,12 +121,12 @@ struct Corpus {
 }
 
 impl Corpus {
-    fn calls(&mut self, at: &str, text: &str, name: &str, stable: bool, reads_claims: bool) {
+    fn calls(&mut self, at: &str, text: &str, params: &BTreeSet<&str>, name: &str, stable: bool, reads_claims: bool) {
         for (start, _) in text.match_indices(&format!("{name}(")) {
             let Some((args, close)) = arguments(text, start + name.len()) else { continue };
             let wrapped = text[..start].trim_end().ends_with("(SELECT") && text[close + 1..].starts_with(')');
             let site = || format!("{at}: {}", &text[start.saturating_sub(60)..(close + 1).min(text.len())]);
-            let fixed_claims = stable && reads_claims && fixed(args);
+            let fixed_claims = stable && reads_claims && fixed(args, params);
             self.fixed_calls += usize::from(fixed_claims);
             self.row_calls += usize::from(stable && reads_claims && !fixed_claims);
             if !stable && wrapped {
@@ -161,13 +165,13 @@ fn scan() -> Corpus {
             reads.extend(more);
         }
         for (o, stmt) in &stmts {
-            let text = match o {
-                Object::Function(_) => body(stmt),
-                Object::Policy { .. } | Object::Trigger { .. } => stmt.as_str(),
+            let (text, params) = match o {
+                Object::Function(_) => (body(stmt), parameters(stmt)),
+                Object::Policy { .. } | Object::Trigger { .. } => (stmt.as_str(), BTreeSet::new()),
                 _ => continue,
             };
             for (name, callee) in &functions {
-                c.calls(&at, text, name, stable(callee), reads.contains(name.as_str()));
+                c.calls(&at, text, &params, name, stable(callee), reads.contains(name.as_str()));
             }
         }
     }
@@ -191,16 +195,19 @@ fn a_volatile_function_is_never_made_once_per_statement() {
 
 #[test]
 fn an_argument_read_from_a_row_is_told_from_a_fixed_one() {
+    let params = parameters("CREATE OR REPLACE FUNCTION auth.f(p_id text, user_id text, check_org_id uuid)\nRETURNS boolean");
+    assert_eq!(params, BTreeSet::from(["p_id", "user_id", "check_org_id"]));
     for args in [
         "(SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')",
         "p_id",
+        "user_id, check_org_id",
         "'doc', p_id",
         "ARRAY(SELECT e::uuid FROM jsonb_array_elements_text((SELECT current_setting('c', true)::json ->> 'k')::jsonb) e)",
         "NULL, 'x'",
     ] {
-        assert!(fixed(args), "{args}");
+        assert!(fixed(args, &params), "{args}");
     }
-    for args in ["resource_id", "docs.id", "p_id, tenant_id", "(SELECT current_setting('c', true)::json ->> 'sub'), notes.id, 'write'"] {
-        assert!(!fixed(args), "{args}");
+    for args in ["resource_id", "docs.id", "p_id, tenant_id", "p_other", "(SELECT current_setting('c', true)::json ->> 'sub'), notes.id, 'write'"] {
+        assert!(!fixed(args, &params), "{args}");
     }
 }

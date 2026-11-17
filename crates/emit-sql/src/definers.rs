@@ -1,7 +1,7 @@
 use crate::Sql;
 use crate::error::Error;
 use crate::genfn::{Arg, Bound, Execute, GenFn, Language, binds_every, definer_call, grant_edge_exists, order_by_calls};
-use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
+use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, membership_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -1340,20 +1340,22 @@ impl Sql<'_> {
             or(rs.role_col.as_deref()),
             conds.join(" AND ")
         );
-        let body = if recurse.is_empty() { exists } else { format!("{}.{} OR {}", self.s.definer_schema(), recurse, exists) };
+        let body = if recurse.is_empty() { exists } else { format!("{recurse} OR {exists}") };
         GenFn { name: name.to_string(), sig: args.join(", "), body, principal: Some("user_id".into()), ..Default::default() }
     }
 
     fn operator_reach(&self, level: &str) -> String {
+        let schema = self.s.definer_schema();
         for sub in &self.s.subjects {
             if let Some(m) = &sub.membership {
-                return format!("{}(user_id)", m.flag_col);
+                return definer_call(&format!("{schema}.{}", membership_fn(m)), &[Arg::Fixed("user_id".into())]);
             }
             if sub.reach() == "grant"
                 && let Some(g) = self.s.grant_by_name(sub.reach_grant())
                 && g.level == level
             {
-                return format!("{}_reach(user_id, check_{}_id)", g.definer_base(), g.level);
+                let args = [Arg::Fixed("user_id".into()), Arg::Fixed(format!("check_{}_id", g.level))];
+                return definer_call(&format!("{schema}.{}_reach", g.definer_base()), &args);
             }
         }
         String::new()
