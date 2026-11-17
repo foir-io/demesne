@@ -426,6 +426,23 @@ PUBLIC.
 
 `demesne_syntax::Nearest` gains `filter`, and `Builtin` gains `Nearest`.
 
+### Breaking: `<object>_can_<verb>` takes one parameter list, whichever generator makes it
+
+A borrow (`via object <object>-><verb>`) and a `@store_manage` dispatch both
+make `<object>_can_<verb>`. The borrow named its parameter `p_<object>_id` and
+typed it `text`; the dispatch's copy named it `p_id` and typed it as the
+spec's identifiers. A spec that moved between the two failed to apply, since
+`CREATE OR REPLACE` cannot rename a parameter, and the migration dropped
+nothing, since the function's identity stayed. Both now take
+`p_<object>_id`, typed as the spec's identifiers. The SQL drops an earlier copy
+whose parameter is named otherwise before it creates the dispatch's, which no
+policy calls.
+
+What breaks: on a spec whose identifiers are not `text`, a borrow's function
+now takes that type, so it is a new function and a migration drops the `text`
+one. SQL of your own that names the dispatch copy's argument (`p_id => …`)
+names `p_<object>_id` instead.
+
 ### A generated function called with the same arguments for every row runs once per statement
 
 A policy or a generated function that calls a generated function with
@@ -528,6 +545,14 @@ to the changelog table. That statement now goes with the table's own
 statement, so a later file writes it only when it writes the table. The SQL
 these specs emit as one file doesn't change. `examples/changelog.demesne`
 declares one, so the pinned outputs and the corpus tests cover it.
+
+### Fixed: a migration that dropped no function failed to apply
+
+The check a migration runs after its drops, that nothing it dropped is still
+present, named its column only in the arm that looks for functions. A
+migration that dropped a policy, a trigger or an index and no function failed
+with `column "what" does not exist`. Every release from v1.0.0 has this. Each
+arm now names the column.
 
 ## v4.0.0
 

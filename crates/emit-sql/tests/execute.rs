@@ -1,4 +1,4 @@
-use demesne_emit_sql::{Manifest, Sql, file_sql, granted_to_public, revoked_from_public, validate_files};
+use demesne_emit_sql::{Before, Manifest, Sql, file_sql, granted_to_public, revoked_from_public, validate_files};
 use demesne_syntax::parse_files;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -95,4 +95,19 @@ fn a_later_file_that_lets_public_run_a_function_grants_it_again() {
         let at = sql[created..].find(said).unwrap_or_else(|| panic!("file {k}, {why}: no `{said}` after the function:\n{sql}"));
         assert!(!sql[created + 1..created + at].contains("CREATE "), "file {k}: `{said}` does not follow its function:\n{sql}");
     }
+}
+
+#[test]
+fn the_store_and_a_borrow_name_the_check_they_share_alike() {
+    let made = |src: &str| {
+        let s = demesne_syntax::parse(src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+        demesne_emit_sql::validate(&s).unwrap_or_else(|e| panic!("{e}\n{src}"));
+        let defs = Sql::new(&s).emit_definers().expect("the definers compile");
+        defs.into_iter().find(|d| d.name == "doc_can_edit").expect("the dispatch's check")
+    };
+    let store = made(BORROWED);
+    let borrow = made(&format!("{BORROWED}{}", note("", "doc")));
+    assert_eq!((store.sig.as_str(), borrow.sig.as_str()), ("p_doc_id text", "p_doc_id text"), "one parameter list, whichever generator makes it");
+    assert_eq!((store.before, borrow.before), (Before::DropRenamed, Before::Nothing), "only the copy no policy calls drops an earlier form");
+    assert!(store.create_sql().starts_with("DO $demesne$ BEGIN\n  IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('auth.doc_can_edit(text)') AND proargnames IS DISTINCT FROM ARRAY['p_doc_id']::text[]) THEN\n    DROP FUNCTION auth.doc_can_edit(text);"), "{}", store.create_sql());
 }

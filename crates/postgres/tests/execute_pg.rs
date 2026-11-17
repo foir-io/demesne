@@ -122,3 +122,69 @@ object doc {
     let affordance = lists.internal.iter().chain(&lists.callable).find(|f| f.contains("_async_affordance(")).expect("the affordance is PUBLIC's");
     assert!(may(&mut db, affordance), "PUBLIC may not run {affordance}");
 }
+
+fn moving(note: &str) -> demesne_syntax::Spec {
+    let src = format!(
+        r#"definers schema "demesne_mv_auth"
+tables schema "demesne_mv_rows"
+topology {{ level tenant level workspace parent tenant }}
+grant support at tenant via edge support_grants(holder_id, tenant_id)
+subject staff {{ anchor tenant; reach via grant support; identifies sub; roles none }}
+subject member {{ anchor workspace; reach self; identifies member_id; roles none; binds owner }}
+object acl_entry {{
+  table acl
+  scoped tenant > workspace
+  permission view = @store_manage @rls maps select
+  permission edit = @store_manage @rls maps update
+}}
+object doc {{
+  table docs
+  scoped tenant > workspace
+  relation owner: member via owner_id
+  relation grantee: member via grant acl(resource_id, principal_kind, principal_id, access) where resource_type = "doc"
+  permission view = owner + grantee:read + grantee:write @rls maps select
+  permission edit = owner + grantee:write @rls maps update
+}}
+{note}"#
+    );
+    let s = demesne_syntax::parse(&src).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    s
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_spec_moves_between_the_stores_check_and_a_borrows_and_back_by_migrating() {
+    let mut db = connect();
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS demesne_mv_rows CASCADE; DROP SCHEMA IF EXISTS demesne_mv_auth CASCADE;
+         CREATE SCHEMA demesne_mv_rows; CREATE SCHEMA demesne_mv_auth;
+         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         CREATE TABLE demesne_mv_rows.support_grants (holder_id text, tenant_id text);
+         CREATE TABLE demesne_mv_rows.acl (id text PRIMARY KEY, tenant_id text, workspace_id text, resource_type text, resource_id text, principal_kind text, principal_id text, access text);
+         CREATE TABLE demesne_mv_rows.docs (id text PRIMARY KEY, tenant_id text, workspace_id text, owner_id text);
+         CREATE TABLE demesne_mv_rows.notes (id text PRIMARY KEY, tenant_id text, workspace_id text, doc_id text);
+         CREATE FUNCTION demesne_mv_auth.doc_can_edit(p_id text) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;",
+    )
+    .expect("fresh schemas, and the check as an earlier release named it");
+    let store = moving("");
+    let borrow = moving(
+        "object note {\n  table notes\n  scoped tenant > workspace\n  relation doc: member via object doc->edit on doc_id\n  permission view = doc @rls maps select\n}\n",
+    );
+    let all = |s: &demesne_syntax::Spec| {
+        let mut b = String::new();
+        Sql::new(s).write_all_sql(&mut b).expect("the SQL compiles");
+        b
+    };
+    db.batch_execute(&all(&store)).unwrap_or_else(|e| panic!("over the earlier name: {e:?}"));
+    let named: Vec<String> =
+        db.query_one("SELECT proargnames::text[] FROM pg_proc WHERE oid = 'demesne_mv_auth.doc_can_edit(text)'::regprocedure", &[]).expect("the check").get(0);
+    assert_eq!(named, ["p_doc_id"], "the earlier name gave way");
+    for (from, to, what) in [(&store, &borrow, "store to borrow"), (&borrow, &store, "borrow to store")] {
+        let previous = Sql::new(from).manifest().expect("the previous manifest");
+        let migration = Sql::new(to).migration(&previous).expect("the migration compiles");
+        db.batch_execute(&migration).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        let d = demesne_postgres::drift(&mut db, &all(to), &[]).unwrap_or_else(|e| panic!("{what}: diff: {e}"));
+        assert_eq!(d.findings, [], "{what}: the database is what the spec emits");
+    }
+}

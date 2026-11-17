@@ -50,6 +50,18 @@ pub(crate) fn definer_call(function: &str, args: &[Arg]) -> String {
     if args.iter().all(|a| matches!(a, Arg::Fixed(_))) { format!("(SELECT {call})") } else { call }
 }
 
+/// What the SQL does before it creates a definer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Before {
+    /// Nothing.
+    #[default]
+    Nothing,
+    /// Drops a function of the same name and argument types whose parameters are named otherwise, since
+    /// `CREATE OR REPLACE` cannot rename a parameter. Only a function no policy calls is marked so, since a policy that
+    /// calls a function keeps it from being dropped.
+    DropRenamed,
+}
+
 /// How a function PUBLIC may run is bound to the caller's own claims.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Bound {
@@ -80,6 +92,8 @@ pub struct GenFn {
     pub bound: Option<Bound>,
     /// The parameter the generator filled from a principal. A function PUBLIC may run answers only when it is one of the caller's own claims.
     pub principal: Option<String>,
+    /// What the SQL does before it creates the function.
+    pub before: Before,
 }
 
 impl GenFn {
@@ -109,7 +123,9 @@ impl GenFn {
             body = self.arms_body();
         }
         let strict = if self.strict { "STRICT\n" } else { "" };
-        let mut sql = format!(
+        let mut sql = self.before_sql();
+        write!(
+            sql,
             "CREATE OR REPLACE FUNCTION {}.{}({})\nRETURNS {}\nLANGUAGE {}\nSTABLE\n{}SECURITY DEFINER\nSET search_path = {}\nAS $$\n{}\n$$;",
             self.schema(),
             self.name,
@@ -119,10 +135,26 @@ impl GenFn {
             strict,
             self.table_schema(),
             body
-        );
+        )
+        .expect("fmt::Write for String never fails");
         sql.push('\n');
         sql.push_str(&self.execute.statement(&format!("{}.{}", self.schema(), self.name), &sig_types(&self.sig)));
         sql
+    }
+
+    fn before_sql(&self) -> String {
+        match self.before {
+            Before::Nothing => String::new(),
+            Before::DropRenamed => {
+                let identity = format!("{}.{}({})", self.schema(), self.name, sig_types(&self.sig));
+                let names: Vec<String> = self.sig.split(", ").filter_map(|p| p.split_whitespace().next()).map(quote_literal).collect();
+                format!(
+                    "DO $demesne$ BEGIN\n  IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure({}) AND proargnames IS DISTINCT FROM ARRAY[{}]::text[]) THEN\n    DROP FUNCTION {identity};\n  END IF;\nEND $demesne$;\n",
+                    quote_literal(&identity),
+                    names.join(", ")
+                )
+            }
+        }
     }
 
     fn arms_body(&self) -> String {

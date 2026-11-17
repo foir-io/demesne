@@ -64,7 +64,12 @@ END
 $$;
 REVOKE EXECUTE ON FUNCTION auth.docs_admits(text, jsonb) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION auth.doc_can_edit(p_id text)
+DO $demesne$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('auth.doc_can_edit(text)') AND proargnames IS DISTINCT FROM ARRAY['p_doc_id']::text[]) THEN
+    DROP FUNCTION auth.doc_can_edit(text);
+  END IF;
+END $demesne$;
+CREATE OR REPLACE FUNCTION auth.doc_can_edit(p_doc_id text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
@@ -72,7 +77,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
+  SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_doc_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
 $$;
 REVOKE EXECUTE ON FUNCTION auth.doc_can_edit(text) FROM PUBLIC;
 
@@ -151,7 +156,7 @@ BEGIN
       WHERE (n.nspname, p.proname) IN (('auth'::name, 'acl_grants_note'::name), ('auth'::name, 'doc_can_view'::name), ('auth'::name, 'note_can_edit'::name), ('auth'::name, 'notes_accessors'::name), ('auth'::name, 'notes_admits'::name), ('auth'::name, 'retired'::name), ('auth'::name, 'support_grants_reach'::name))
         AND p.oid <> ALL (array_remove(ARRAY[]::oid[], NULL))
     UNION ALL
-    SELECT 'policy ' || pol.polname || ' on ' || pol.polrelid::regclass::text
+    SELECT 'policy ' || pol.polname || ' on ' || pol.polrelid::regclass::text AS what
       FROM pg_policy pol
       WHERE (pol.polrelid, pol.polname) IN ((to_regclass('public.notes')::oid, 'notes_select'::name), (to_regclass('public.notes')::oid, 'notes_update'::name))
   ) s;

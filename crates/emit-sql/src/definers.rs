@@ -1,6 +1,6 @@
 use crate::Sql;
 use crate::error::Error;
-use crate::genfn::{Arg, Bound, Execute, GenFn, Language, binds_every, definer_call, grant_edge_exists, order_by_calls};
+use crate::genfn::{Arg, Before, Bound, Execute, GenFn, Language, binds_every, definer_call, grant_edge_exists, order_by_calls};
 use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, membership_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
@@ -1217,7 +1217,7 @@ impl Sql<'_> {
                 return Err(format!("relation {} references unknown object {}", quote(&r.name), quote(&vo.object)));
             };
             let pred = self.object_verb_predicate_for(other, &vo.verb, vo.op.as_deref().unwrap_or(""), virt)?;
-            let sig = format!("p_{}_id text", vo.object);
+            let sig = format!("p_{}_id {}", vo.object, self.s.id_type());
             let key = format!("{}.{} = p_{}_id", other.table, other.pk(), vo.object);
             let strict = binds_every(&sig, &[std::slice::from_ref(&key)]);
             defs.fns.push(GenFn { name, sig, body: grant_edge_exists(&other.table, &[key, format!("({pred})")]), strict, ..Default::default() });
@@ -1269,10 +1269,12 @@ impl Sql<'_> {
 
     fn store_can_edit_definer(&self, name: &str, o: &Object, virt: &Virtual, store: &str) -> R<GenFn> {
         let pred = self.object_verb_predicate(o, "edit", virt).map_err(|e| format!("@store_manage dispatch for {}: {e}", quote(store)))?;
-        let sig = format!("p_id {}", self.s.id_type());
-        let key = format!("{}.{} = p_id", o.table, o.pk());
+        let param = format!("p_{}_id", o.name);
+        let sig = format!("{param} {}", self.s.id_type());
+        let key = format!("{}.{} = {param}", o.table, o.pk());
         let strict = binds_every(&sig, &[std::slice::from_ref(&key)]);
-        Ok(GenFn { name: name.to_string(), sig, body: grant_edge_exists(&o.table, &[key, format!("({pred})")]), strict, ..Default::default() })
+        let body = grant_edge_exists(&o.table, &[key, format!("({pred})")]);
+        Ok(GenFn { name: name.to_string(), sig, body, strict, before: Before::DropRenamed, ..Default::default() })
     }
 
     fn role_definer_for_term(

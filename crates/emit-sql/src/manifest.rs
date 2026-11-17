@@ -232,19 +232,19 @@ impl Manifest {
         };
         if !policies.is_empty() {
             arms.push(format!(
-                "SELECT 'policy ' || pol.polname || ' on ' || pol.polrelid::regclass::text\n      FROM pg_policy pol\n      WHERE (pol.polrelid, pol.polname) IN ({})",
+                "SELECT 'policy ' || pol.polname || ' on ' || pol.polrelid::regclass::text AS what\n      FROM pg_policy pol\n      WHERE (pol.polrelid, pol.polname) IN ({})",
                 on_table(policies)
             ));
         }
         if !triggers.is_empty() {
             arms.push(format!(
-                "SELECT 'trigger ' || t.tgname || ' on ' || t.tgrelid::regclass::text\n      FROM pg_trigger t\n      WHERE NOT t.tgisinternal AND (t.tgrelid, t.tgname) IN ({})",
+                "SELECT 'trigger ' || t.tgname || ' on ' || t.tgrelid::regclass::text AS what\n      FROM pg_trigger t\n      WHERE NOT t.tgisinternal AND (t.tgrelid, t.tgname) IN ({})",
                 on_table(triggers)
             ));
         }
         if !indexes.is_empty() {
             arms.push(format!(
-                "SELECT 'index ' || c.oid::regclass::text\n      FROM pg_class c\n      WHERE c.oid IN ({})",
+                "SELECT 'index ' || c.oid::regclass::text AS what\n      FROM pg_class c\n      WHERE c.oid IN ({})",
                 indexes.iter().map(|(t, n)| format!("to_regclass({})::oid", literal(&sibling(t, n)))).collect::<Vec<_>>().join(", ")
             ));
         }
@@ -346,7 +346,7 @@ pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
     for stmt in statements(sql) {
         let words: Vec<&str> = stmt.split_whitespace().collect();
         match words.as_slice() {
-            ["DROP", "POLICY" | "TRIGGER", "IF", "EXISTS", ..] => writeln!(before, "{stmt};").expect("fmt::Write for String never fails"),
+            ["DROP", "POLICY" | "TRIGGER", "IF", "EXISTS", ..] | ["DO", ..] => writeln!(before, "{stmt};").expect("fmt::Write for String never fails"),
             ["GRANT" | "REVOKE", "EXECUTE", "ON", "FUNCTION", ..] | ["ALTER", "TABLE", _, "FORCE", "ROW", "LEVEL", "SECURITY"] => {
                 let (_, unit) = out.last_mut().ok_or_else(|| format!("no object precedes {}", first_line(&stmt)))?;
                 writeln!(unit, "{stmt};").expect("fmt::Write for String never fails");
