@@ -250,7 +250,11 @@ terms applied.
 Now the terms apply on every shape. The same permission emits
 `(<reach> OR <scope>) AND <terms>`. A permission with no term under the scope
 at all (`view = @self(<column>)`) no longer admits the grant's holders. A
-permission that is `@scoped` alone emits what it did.
+permission that is `@scoped` alone emits what it did. An admit arm, a
+projection and the evaluator a `@holds_at` hop asks take the grant's reach the
+same way, beside the scope and under their own terms, so a grant's holder
+passes them where it passes the permission; they used to hold it to the scope
+its claims name on these two shapes.
 
 What breaks for an adopter, and how to keep a pass that was meant:
 

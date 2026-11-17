@@ -193,6 +193,13 @@ impl Branches {
         }
     }
 
+    pub(crate) fn beside_the_scope(&self, block: String) -> String {
+        if self.beside.is_empty() || block.is_empty() {
+            return block;
+        }
+        format!("({} OR ({block}))", self.beside.join(" OR "))
+    }
+
     fn bound_by_terms(&mut self, named: &[String], block: &str, terms: &[String], bears_containment: bool) -> String {
         let beside: Vec<String> = self.beside.iter().filter(|reach| !named.contains(reach)).cloned().collect();
         if beside.is_empty() || (terms.is_empty() && bears_containment) {
@@ -351,13 +358,13 @@ impl Sql<'_> {
         let cust_claim = cust.map_or("", demesne_syntax::Subject::identifies);
         let rels = rels_of(obj);
         let obj_leaf = leaf(obj);
-        let inject = self.rls_subject_branches(obj, virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op).inject;
+        let branches = self.rls_subject_branches(obj, virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op);
         let perm = a.perm(op);
         let terms = self.node_frags(obj, &perm, &a.tree, &rels, cust_claim)?;
         if terms.is_empty() {
             return Err(format!("object {} admit {}: no emittable term", quote(&obj.name), op));
         }
-        let block = self.rls_containment_block(obj, obj_leaf, &inject, op)?;
+        let block = branches.beside_the_scope(self.rls_containment_block(obj, obj_leaf, &branches.inject, op)?);
         if block.is_empty() {
             return Ok(terms.join(" OR "));
         }

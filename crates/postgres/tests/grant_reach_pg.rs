@@ -302,5 +302,34 @@ fn a_grant_gives_reach_and_the_permissions_terms_still_bind_its_callers() {
     judge_declared(&mut db, &mut cells);
     eprintln!("grant reach grid: {} cells, {} admitted, {} refused", cells.admitted + cells.refused, cells.admitted, cells.refused);
     assert!(cells.admitted > 40 && cells.refused > 40, "the grid both admits and refuses: {} and {}", cells.admitted, cells.refused);
+    judge_an_admit_arm(&mut db);
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
+}
+
+fn judge_an_admit_arm(db: &mut Client) {
+    let predicate = "  permission open_only = @scoped and @row(state, \"open\") @rls predicate\n}";
+    let spec = SPEC.replacen(
+        predicate,
+        "  permission open_only = @scoped and @row(state, \"open\") @rls predicate\n  admit select = @kind(\"auditor\") and @row(state, \"shut\")\n}",
+        1,
+    );
+    assert_ne!(spec, SPEC, "the ledger takes the arm");
+    install(db, &spec, TABLES, &[]);
+    fill(db);
+    let (mut cells, mut shut_by_grant) = (0, 0);
+    for who in CALLERS {
+        for auditor in [false, true] {
+            let claims = if auditor { who.claims().replacen('{', "{\"kind\":\"auditor\",", 1) } else { who.claims() };
+            let mut tx = db.transaction().expect("a transaction");
+            tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+            tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
+            let got: BTreeSet<String> = tx.query("SELECT id FROM ledgers", &[]).expect("the read").iter().map(|r| r.get(0)).collect();
+            tx.rollback().expect("rollback");
+            let want = wanted(PLAIN.iter().map(|(id, estate, state)| (*id, who.reaches(estate) && (*state == "open" || (auditor && *state == "shut")))));
+            assert_eq!(got, want, "{claims}");
+            cells += 1;
+            shut_by_grant += usize::from(auditor && PLAIN.iter().any(|(_, estate, state)| *state == "shut" && who.holds(estate) && !who.stands_in(estate)));
+        }
+    }
+    assert!(cells == 16 && shut_by_grant > 0, "{cells} callers, {shut_by_grant} auditors reaching a shut ledger by grant alone");
 }

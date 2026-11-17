@@ -176,3 +176,38 @@ fn a_pinned_borrow_is_refused_where_the_terms_bind_a_grants_callers() {
     let why = refusal(&pinned);
     assert!(why.contains("is `pinned` on") && why.contains("a grant reaches rows of this object outside its containment"), "{why}");
 }
+
+const AUDITOR: &str = "((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'auditor') AND (state = 'shut')";
+
+#[test]
+fn on_a_one_level_object_an_admit_arm_and_a_projection_take_the_grants_reach_as_the_permission_does() {
+    let ledger = "  permission open_only = @scoped and @row(state, \"open\") @rls predicate\n}";
+    let spec = SPEC.replacen(
+        ledger,
+        "  permission open_only = @scoped and @row(state, \"open\") @rls predicate\n  admit select = @kind(\"auditor\") and @row(state, \"shut\")\n  projection shut_ledgers(id text) = @kind(\"auditor\") and @row(state, \"shut\")\n}",
+        1,
+    );
+    assert_ne!(spec, SPEC, "the ledger takes the arm");
+    let sql = emitted(&spec);
+    assert_eq!(using(&sql, "ledgers_select"), format!("((({REACH} OR ({STANDS})) AND ((state = 'open')))) OR (({REACH} OR ({STANDS})) AND ({AUDITOR}))"));
+    assert!(sql.contains(&format!("SELECT ledgers.id::text FROM ledgers WHERE ({REACH} OR ({STANDS})) AND ({AUDITOR});")), "the projection:\n{sql}");
+}
+
+#[test]
+fn on_a_one_level_object_the_evaluator_a_hop_asks_takes_the_grants_reach_as_the_policy_does() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/chains.demesne");
+    let chains = std::fs::read_to_string(&path).expect("the chains example reads");
+    let topology = "topology { level estate level space parent estate level folder parent space }";
+    assert!(chains.contains(topology), "the example's topology");
+    let spec = chains.replacen(
+        topology,
+        "topology { level control virtual level estate parent control level space parent estate level folder parent space }\ngrant support at estate via edge approvals(holder_id, estate_id)\nsubject helper { anchor control; reach via grant support; identifies helper_id; roles none }",
+        1,
+    );
+    let sql = emitted(&spec);
+    let reach = "estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'helper_id')))";
+    assert!(
+        sql.contains(&format!("WHERE docs.id = demesne_hop.record AND ({reach} OR ({STANDS})) AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live)")),
+        "the hop's evaluator:\n{sql}"
+    );
+}
