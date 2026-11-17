@@ -236,12 +236,17 @@ impl Manifest {
         let (Some(now), Some(before)) = (&self.heads, &previous.heads) else {
             return "-- the previous manifest records no parameters, so a function whose parameters changed is not dropped first\n".to_string();
         };
-        let changed: Vec<(&String, &Head)> =
-            before.iter().filter(|(f, was)| now.get(*f).is_some_and(|is| (&is.parameters, &is.returns) != (&was.parameters, &was.returns))).collect();
-        let policies: BTreeSet<&(String, String)> = changed.iter().flat_map(|(_, was)| &was.policies).collect();
+        let changed: Vec<(&String, &Head)> = before
+            .iter()
+            .filter(|(f, was)| match now.get(*f) {
+                Some(is) => (&is.parameters, &is.returns) != (&was.parameters, &was.returns),
+                None => !self.functions.contains(*f) && !was.policies.is_empty(),
+            })
+            .collect();
+        let policies = self.taken_policies(previous);
         let mut b = String::new();
         for (table, name) in policies {
-            writeln!(b, "DROP POLICY IF EXISTS {} ON {table};", ident(name)).expect("fmt::Write for String never fails");
+            writeln!(b, "DROP POLICY IF EXISTS {} ON {table};", ident(&name)).expect("fmt::Write for String never fails");
         }
         for (f, _) in changed {
             writeln!(b, "DROP FUNCTION IF EXISTS {f};").expect("fmt::Write for String never fails");
@@ -249,18 +254,20 @@ impl Manifest {
         b
     }
 
+    fn taken_policies(&self, previous: &Self) -> BTreeSet<(String, String)> {
+        let (Some(now), Some(was)) = (&self.heads, &previous.heads) else { return BTreeSet::new() };
+        let taken = |f: &String, h: &Head| match now.get(f) {
+            Some(n) => (&n.parameters, &n.returns) != (&h.parameters, &h.returns),
+            None => !self.functions.contains(f),
+        };
+        was.iter().filter(|(f, h)| taken(f, h)).flat_map(|(_, h)| h.policies.iter().cloned()).collect()
+    }
+
     fn changed_since(&self, sql: &str, previous: &Self) -> Result<String, String> {
         let Some(before) = &previous.digests else {
             return Ok(format!("-- the previous manifest records no digests, so every object is written again\n{sql}"));
         };
-        let dropped: BTreeSet<(String, String)> = match (&self.heads, &previous.heads) {
-            (Some(now), Some(was)) => was
-                .iter()
-                .filter(|(f, h)| now.get(*f).is_some_and(|n| (&n.parameters, &n.returns) != (&h.parameters, &h.returns)))
-                .flat_map(|(_, h)| h.policies.iter().cloned())
-                .collect(),
-            _ => BTreeSet::new(),
-        };
+        let dropped = self.taken_policies(previous);
         let mut out = String::new();
         for (object, unit) in units(sql)? {
             let again = matches!(&object, Object::Policy { table, name } if dropped.contains(&(table.clone(), name.clone())));

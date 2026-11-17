@@ -342,11 +342,13 @@ fn a_grants_reach_sets_answer_for_the_callers_own_identity_alone() {
     let path = format!("{}/../../examples/reach.demesne", env!("CARGO_MANIFEST_DIR"));
     let s = compile(&std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}")));
     let sql = Sql::new(&s);
-    let own = format!("AND user_id IN ({}, {})", sql.session_claim("sub"), sql.session_claim("folder_id"));
+    let own = |key: &str| format!("AND user_id = {}", sql.session_claim(key));
     let defs = sql.emit_definers().expect("the definers compile");
-    for name in ["approvals_reach_set", "approvals_reach_unscoped_set", "paths_reach_set", "paths_up_reach_set"] {
+    for (name, key) in
+        [("approvals_reach_set", "sub"), ("approvals_reach_unscoped_set", "sub"), ("paths_reach_set", "folder_id"), ("paths_up_reach_set", "folder_id")]
+    {
         let set = definer(&defs, name);
         assert!(set.returns.starts_with("SETOF"), "{name} returns a set");
-        assert!(set.body.ends_with(&own), "{name} answers for an identity the caller's claims carry, and no other:\n{}", set.body);
+        assert!(set.body.ends_with(&own(key)), "{name} answers only for the identity of the subject that reaches through its grant:\n{}", set.body);
     }
 }

@@ -38,7 +38,10 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   relation's check (`<relation>_grants`, `<acl>_grants_<object>`) is bound on
   the principal it is asked about. Which argument is the principal is decided
   where the function is generated, not by its name, so a parameter of an
-  `export` or a `probe` is never taken for one.
+  `export` or a `probe` is never taken for one. A function is bound to the
+  identity claims of the subjects whose principal it takes, never another
+  subject's, so where ids collide across subjects (two integer sequences, say)
+  a caller of one subject is never taken for a principal of another.
 - **Revoked from PUBLIC, or not emitted.** A generated function stays PUBLIC
   only where something must run it as the caller: a policy calls it, a
   generated application check calls it (a `@check` point check, the edit
@@ -177,6 +180,9 @@ parameter. The manifest now records each function's parameters, its return
 type and the policies that call it, under `heads`. A migration from a manifest
 that has them first drops each function whose parameters or return type
 changed, and only the policies that call it; the SQL then creates both again.
+So does a function the migration drops because its argument types changed,
+with the policies that call it, since a policy whose text is the same would
+otherwise keep the old function and the drop would fail.
 A manifest written before has no `heads`, so its migration cannot see such a
 change and says so in a comment line: drop those functions by hand.
 `Manifest` gains `heads` and `Manifest::renamed_since`, and the multi-file

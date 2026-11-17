@@ -27,7 +27,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT p_member_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id')) AND (EXISTS (SELECT 1 FROM acl WHERE resource_id = p_doc_id AND resource_type = 'doc' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
+  SELECT p_member_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id') AND (EXISTS (SELECT 1 FROM acl WHERE resource_id = p_doc_id AND resource_type = 'doc' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
 $$;
 GRANT EXECUTE ON FUNCTION auth.acl_grants_doc(text, text, text) TO PUBLIC;
 

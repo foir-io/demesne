@@ -181,7 +181,7 @@ exit: 0
   "digests": [
     {
       "object": "function auth.doc_acl_grants(text, text, text)",
-      "digest": "ddca2a0a902e2511a397b1235f19a3bd80deeb0d03be6c5d5be09a87afe64f89"
+      "digest": "b30e5787cc60344eb3ad28589a26003af6efd286c1bd6b4b605261d4f2a85902"
     },
     {
       "object": "function auth.docs_accessors_conditional(text)",
@@ -193,19 +193,19 @@ exit: 0
     },
     {
       "object": "function auth.is_root(text)",
-      "digest": "e1c829c35ded44cee31a7e8c4975927099c5b8614d55d469629001acfb2354ee"
+      "digest": "cdc2b265d6a605ad02a8fe841b1e04d8a7feea57cc387315ef4618659c0a6e4c"
     },
     {
       "object": "function auth.is_tenant_staff(text, text)",
-      "digest": "f567551c3054baabd2f87b46e01a912b471492dcec407915fd7a1219bcd6ed51"
+      "digest": "416b4e94b06944a795a6824c1ef5d91b477c0e88066ec8f5e200a063ac8a4c5b"
     },
     {
       "object": "function auth.member_can_access_doc(text, text, text)",
-      "digest": "814dde95334cc796e0566e930df2ead407a927da5882561a8b2a577f832b5868"
+      "digest": "9d53fb45818afa9445f42424f82ca9f59510b69d7d13f1b14ff133051f9531fd"
     },
     {
       "object": "function auth.staff_has_workspace_role(text, text, text)",
-      "digest": "2e6ef5eb57709da9e2cff2152098da5a63b2803f11cee003313e5838249ed51b"
+      "digest": "603f6af8754512c4e08204355af33c8f239a9e97c4c8ca4cb3abffbb28146049"
     },
     {
       "object": "function auth.workspaces_accessors(text)",

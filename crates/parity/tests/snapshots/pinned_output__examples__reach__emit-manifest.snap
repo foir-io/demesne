@@ -304,19 +304,19 @@ exit: 0
   "digests": [
     {
       "object": "function auth.approvals_reach_in_folder(text, text, text, text)",
-      "digest": "a9622657b9eae268c5c96ddf7597dcc025235c710c8bfbc100b493ddf8ab514a"
+      "digest": "65e5fd493c13db527aaa89db460e4bff9a1db7187601d0f7cd9be2de394aef8d"
     },
     {
       "object": "function auth.approvals_reach_in_space(text, text, text)",
-      "digest": "f01364c2ccff46a62363959e38ab9411e9b536c4a401936f740499544028e411"
+      "digest": "c979327b426b45ea1dae1e55fbbd4969c828e1a4eac2eccb1001594d295223c5"
     },
     {
       "object": "function auth.approvals_reach_set(text)",
-      "digest": "bf99c86de900e675de22ede93a7a09b4707e4cee020c2cbdc1351bab5dde8b71"
+      "digest": "455c0bd25b773a501a485ffa9da14f9d131eeed63cd2ba7c76dd7a05ff6a88e9"
     },
     {
       "object": "function auth.approvals_reach_unscoped_set(text)",
-      "digest": "a92de1840fdc55802d75fb0aa614ee6bd3412876a17b9f3b2582184d5fca356b"
+      "digest": "8a79f81d207b08a53040cf9cb5cf777f4b1885cd114158fce42069e5a658aee5"
     },
     {
       "object": "function auth.catalog_can_bound(text)",
@@ -332,7 +332,7 @@ exit: 0
     },
     {
       "object": "function auth.paths_reach_set(text)",
-      "digest": "a8e009f9ce8d1ef682604432c7cd1d47f14996e58d9777cf8572304069c6b070"
+      "digest": "848a5b561633f155de4722076edebd3a4ca4143609dbb049173438764a527709"
     },
     {
       "object": "function auth.paths_reachable(text, text)",
@@ -340,7 +340,7 @@ exit: 0
     },
     {
       "object": "function auth.paths_up_reach_set(text)",
-      "digest": "660e6663172d692c0dc9dd70bea1c0e5b6869b89c4fed92a4a52df81c13d8f46"
+      "digest": "fb97b7a31a53103b678becef5965a2919e8982a17a73385e21f2be4733fe1e93"
     },
     {
       "object": "policy allowances_delete on public.allowances",

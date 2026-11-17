@@ -232,11 +232,11 @@ exit: 0
   "digests": [
     {
       "object": "function auth.acl_grants_doc(text, text, text)",
-      "digest": "7e64da2d6b8235befc9aec2c49c22d18394cb480ab3f5b86c8b44b850cdc74a6"
+      "digest": "c5f6f88599b6c26834d84f5a33fe5e90888fc045d9ba1db293f236cfcb0fb432"
     },
     {
       "object": "function auth.acl_grants_note(text, text, text)",
-      "digest": "f937f76b56cde02a9b14f02d2f97714cbca8159900351a1dff0862de2a9b20a8"
+      "digest": "bff9384fc826a1e2c4377cbf92ea790f1f2a281435477ac02106314f93e68226"
     },
     {
       "object": "function auth.acl_manage(text, text)",

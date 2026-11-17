@@ -12,7 +12,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT estate_id FROM approvals WHERE holder_id = user_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR space_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'space_id')) AND (folder_id IS NULL OR (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id') IS NULL OR folder_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')) AND user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id'));
+  SELECT estate_id FROM approvals WHERE holder_id = user_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR space_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'space_id')) AND (folder_id IS NULL OR (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id') IS NULL OR folder_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')) AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub');
 $$;
 GRANT EXECUTE ON FUNCTION auth.approvals_reach_set(text) TO PUBLIC;
 
@@ -24,7 +24,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT estate_id FROM approvals WHERE holder_id = user_id AND ended_at IS NULL AND expires_at > now() AND space_id IS NULL AND folder_id IS NULL AND user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id'));
+  SELECT estate_id FROM approvals WHERE holder_id = user_id AND ended_at IS NULL AND expires_at > now() AND space_id IS NULL AND folder_id IS NULL AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub');
 $$;
 GRANT EXECUTE ON FUNCTION auth.approvals_reach_unscoped_set(text) TO PUBLIC;
 
@@ -35,7 +35,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')) AND (EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR check_space_id = '' OR space_id = check_space_id)));
+  SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR check_space_id = '' OR space_id = check_space_id)));
 $$;
 GRANT EXECUTE ON FUNCTION auth.approvals_reach_in_space(text, text, text) TO PUBLIC;
 
@@ -46,7 +46,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')) AND (EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR check_space_id = '' OR space_id = check_space_id) AND (folder_id IS NULL OR check_folder_id = '' OR folder_id = check_folder_id)));
+  SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR check_space_id = '' OR space_id = check_space_id) AND (folder_id IS NULL OR check_folder_id = '' OR folder_id = check_folder_id)));
 $$;
 GRANT EXECUTE ON FUNCTION auth.approvals_reach_in_folder(text, text, text, text) TO PUBLIC;
 
@@ -58,7 +58,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT descendant_id FROM paths WHERE ancestor_id = user_id AND user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id'));
+  SELECT descendant_id FROM paths WHERE ancestor_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
 GRANT EXECUTE ON FUNCTION auth.paths_reach_set(text) TO PUBLIC;
 
@@ -70,7 +70,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT ancestor_id FROM paths WHERE descendant_id = user_id AND user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id'));
+  SELECT ancestor_id FROM paths WHERE descendant_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
 GRANT EXECUTE ON FUNCTION auth.paths_up_reach_set(text) TO PUBLIC;
 

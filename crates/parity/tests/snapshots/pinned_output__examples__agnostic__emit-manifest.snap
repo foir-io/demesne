@@ -181,7 +181,7 @@ exit: 0
   "digests": [
     {
       "object": "function auth.asset_acl_grants(text, text, text)",
-      "digest": "d41b88b254834f199f26e353873cb1f12171448c87f287c5e39bbb22fa2bd245"
+      "digest": "ea78d70d2ffa26511e22b3e6842363816164e865ba8c1ab554c92d9b40013706"
     },
     {
       "object": "function auth.assets_accessors_conditional(text)",
@@ -193,19 +193,19 @@ exit: 0
     },
     {
       "object": "function auth.crew_has_space_role(text, text, text)",
-      "digest": "915d5bdf35af2cc3e9f5ba9785d1723e3eec4e6108df28215d651594a7a337c1"
+      "digest": "4e663655d795a5f1f24c97b0a61385987b364143dc9cdb31212b99503c2f5e7f"
     },
     {
       "object": "function auth.is_ops(text)",
-      "digest": "4adc2c14629a7d6261ad08cc69c094862d875a76dfd89407508807577d1adcff"
+      "digest": "e1d703c72b4bd91bc25c15c4fa909208c3a5cf37e8dccbbea64480d0f8318d82"
     },
     {
       "object": "function auth.is_tenant_crew(text, text)",
-      "digest": "07cbf5f555fd3516d44aee735066fca49ee68f927182259e7502da88de984548"
+      "digest": "975789e5977df83b75fc970c379e4620bf33352f1b8b9ca3fa34e0c500a1c6ef"
     },
     {
       "object": "function auth.member_can_access_asset(text, text, text)",
-      "digest": "1fe77b4f6fdaa3636b635202df4c8e42d75a80db9358f75623f17950d4ff470e"
+      "digest": "fb612f7df0f6e06662535db2ef20b43dc11f5ed285c16ffe84a66bfe9f4614d9"
     },
     {
       "object": "function auth.spaces_accessors(text)",

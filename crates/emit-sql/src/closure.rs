@@ -292,6 +292,7 @@ $$;",
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MaterializedFlat {
+    pub principal_claims: Vec<String>,
     pub schema: String,
     pub table_schema: String,
     pub flat: String,
@@ -430,6 +431,7 @@ $$;",
             name: format!("{}_member", self.flat),
             sig: format!("p_resource {t}, p_principal {t}", t = self.id_type()),
             principal: Some("p_principal".to_string()),
+            principal_claims: self.principal_claims.clone(),
             body: format!("EXISTS (SELECT 1 FROM {} WHERE resource_id = p_resource AND principal_id = p_principal)", self.q_flat()),
             ..Default::default()
         }
@@ -599,6 +601,7 @@ impl Sql<'_> {
             });
             for (r, g) in materialized {
                 out.push(MaterializedFlat {
+                    principal_claims: self.identities_of(&r.types),
                     schema: self.s.definer_schema().into(),
                     table_schema: self.s.table_schema().into(),
                     flat: format!("{}_{}_flat", obj.table, r.name),

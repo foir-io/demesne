@@ -334,3 +334,88 @@ fn a_reader_never_sees_a_table_without_its_require_while_a_migration_renames_wha
     db.batch_execute(rest).expect("the rest");
     assert_eq!(seen(&mut reader).expect("a read"), 0);
 }
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_policy_that_calls_a_function_whose_argument_types_changed_is_created_again_though_its_text_is_the_same() {
+    let mut db = connect();
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS demesne_rt_rows CASCADE; DROP SCHEMA IF EXISTS demesne_rt_auth CASCADE;
+         CREATE SCHEMA demesne_rt_rows; CREATE SCHEMA demesne_rt_auth;
+         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         CREATE TABLE demesne_rt_rows.docs (id bigint PRIMARY KEY, tenant_id bigint, owner_id bigint);
+         CREATE TABLE demesne_rt_rows.notes (id bigint PRIMARY KEY, tenant_id bigint, doc_id integer);",
+    )
+    .expect("fresh schemas");
+    let src = "definers schema \"demesne_rt_auth\"\ntables schema \"demesne_rt_rows\"\nidentifiers bigint\ntopology { level tenant }\nsubject member { anchor tenant; reach self; identifies member_id; roles none; binds owner }\nobject doc {\n  table docs\n  scoped tenant\n  relation owner: member via owner_id\n  permission view = owner @rls maps select\n}\nobject note {\n  table notes\n  scoped tenant\n  relation doc: member via object doc->view on doc_id\n  permission view = doc @rls maps select\n}\n";
+    let s = demesne_syntax::parse(src).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    let mut sql = String::new();
+    Sql::new(&s).write_all_sql(&mut sql).expect("the SQL compiles");
+    db.batch_execute(&sql).unwrap_or_else(|e| panic!("apply: {e:?}"));
+    let (wide, narrow) = ("demesne_rt_auth.doc_can_view(bigint)", "demesne_rt_auth.doc_can_view(integer)");
+    let made = demesne_emit_sql::objects(&sql)
+        .expect("objects")
+        .into_iter()
+        .find(|(o, _)| *o == demesne_emit_sql::Object::Function(wide.to_string()))
+        .expect("the borrow")
+        .1;
+    let policy = demesne_emit_sql::objects(&sql)
+        .expect("objects")
+        .into_iter()
+        .find(|(o, _)| matches!(o, demesne_emit_sql::Object::Policy { name, .. } if name == "notes_select"))
+        .expect("the policy")
+        .1;
+    db.batch_execute(&format!(
+        "DROP POLICY notes_select ON demesne_rt_rows.notes; DROP FUNCTION {wide}; {}; {policy};",
+        made.replace("(p_doc_id bigint)", "(p_doc_id integer)")
+    ))
+    .expect("the borrow as an earlier spec typed it, and its policy, whose text is the same");
+    let mut previous = Sql::new(&s).manifest().expect("a manifest");
+    previous.execute = None;
+    previous.functions.remove(wide);
+    previous.functions.insert(narrow.to_string());
+    let heads = previous.heads.as_mut().expect("heads");
+    let head = heads.remove(wide).expect("the borrow's head");
+    assert!(head.policies.iter().any(|(_, name)| name == "notes_select"), "{head:?}");
+    heads.insert(narrow.to_string(), head);
+    let digests = previous.digests.as_mut().expect("digests");
+    let digest = digests.remove(&format!("function {wide}")).expect("the borrow's digest");
+    digests.insert(format!("function {narrow}"), digest);
+    let migration = Sql::new(&s).migration(&previous).expect("the migration compiles");
+    assert!(migration.starts_with("DROP POLICY IF EXISTS notes_select ON demesne_rt_rows.notes;\n"), "{migration:.300}");
+    db.batch_execute(&format!("BEGIN;\n{migration}COMMIT;")).unwrap_or_else(|e| panic!("the migration applies: {e:?}"));
+    let d = demesne_postgres::drift(&mut db, &sql, &[]).unwrap_or_else(|e| panic!("diff: {e}"));
+    assert_eq!(d.findings, [], "the database is what the spec emits");
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_function_answers_only_for_its_own_subjects_identity_though_another_subject_shares_the_id() {
+    let mut db = connect();
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS demesne_id_rows CASCADE; DROP SCHEMA IF EXISTS demesne_id_auth CASCADE;
+         CREATE SCHEMA demesne_id_rows; CREATE SCHEMA demesne_id_auth;
+         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         CREATE TABLE demesne_id_rows.docs (id text PRIMARY KEY, tenant_id text, owner_id text);
+         CREATE TABLE demesne_id_rows.acl (doc_id text, principal_kind text, principal_id text, access text);
+         INSERT INTO demesne_id_rows.acl VALUES ('10', 'member', '1', 'read');
+         GRANT USAGE ON SCHEMA demesne_id_rows, demesne_id_auth TO authenticated;",
+    )
+    .expect("fresh schemas, and member 1's grant on doc 10");
+    let src = "definers schema \"demesne_id_auth\"\ntables schema \"demesne_id_rows\"\ntopology { level tenant }\nsubject member { anchor tenant; reach self; identifies member_id; roles none; binds owner }\nsubject operator { anchor tenant; reach self; identifies operator_id; roles none }\nobject doc {\n  table docs\n  scoped tenant\n  relation owner: member via owner_id\n  relation grantee: member via grant acl(doc_id, principal_kind, principal_id, access)\n  permission view = owner + grantee:read @rls maps select\n}\n";
+    let s = demesne_syntax::parse(src).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    let mut sql = String::new();
+    Sql::new(&s).write_all_sql(&mut sql).expect("the SQL compiles");
+    db.batch_execute(&sql).unwrap_or_else(|e| panic!("apply: {e:?}"));
+    let asks = |db: &mut Client, claims: &str| -> bool {
+        let mut tx = db.transaction().expect("a transaction");
+        tx.batch_execute(&format!("SET LOCAL ROLE authenticated; SELECT set_config('request.jwt.claims', '{claims}', true);")).expect("the claims");
+        let held: Option<bool> = tx.query_one("SELECT demesne_id_auth.acl_grants('1', '10', 'read')", &[]).expect("the check").get(0);
+        tx.rollback().expect("rollback");
+        held.unwrap_or(false)
+    };
+    assert!(asks(&mut db, r#"{"member_id":"1","tenant_id":"7"}"#), "member 1 asks about its own grant");
+    assert!(!asks(&mut db, r#"{"operator_id":"1","tenant_id":"7"}"#), "operator 1 shares the id, and is not member 1");
+}
