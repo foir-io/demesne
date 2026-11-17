@@ -428,7 +428,7 @@ impl Sql<'_> {
         let policies = caller.emit_rls().map_err(|e| e.to_string())?;
         let surface = caller.app_surface().unwrap_or_default();
         let mut asked: Vec<(String, &str)> = Vec::new();
-        for p in policies.policies.iter() {
+        for p in &policies.policies {
             let who = format!("policy {} on {}", quote(&p.name), quote(&p.table));
             asked.extend([(who.clone(), p.using.as_str()), (who, p.check.as_str())]);
         }
