@@ -3,8 +3,8 @@ use crate::ast::{
     Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, DeclaredScope, ExportParameter, Extension, External, ExternalArg,
     FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker, Membership, Nearest,
     Object, Perm, PermNode, PermissionExport, PointCheck, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation,
-    RelationKind, Repr, Require, RoleForm, RoleStore, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned, ViaClosure,
-    ViaColumn, ViaComposition, ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    RelationKind, Repr, Require, RoleForm, RoleStore, SessionRel, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned,
+    ViaClosure, ViaColumn, ViaComposition, ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -1038,6 +1038,11 @@ impl Parser {
         }
         self.expect_kw("on")?;
         let col = self.ident()?;
+        let mut claims = Vec::new();
+        if self.accept_kw("from") {
+            self.expect_kw("claim")?;
+            claims = self.piped_idents()?;
+        }
         let materialized = self.accept_kw("materialized");
         Ok(Repr::Group(ViaGroup {
             closure,
@@ -1048,6 +1053,7 @@ impl Parser {
             edge_group: edge_cols[1].clone(),
             col,
             materialized,
+            claims,
         }))
     }
 
@@ -1349,13 +1355,7 @@ impl Parser {
 
     fn parse_term_builtin(&mut self, name: String) -> PResult<Builtin> {
         Ok(match name.as_str() {
-            "session" => {
-                let mut rel = None;
-                if self.peek() == Tok::LParen {
-                    rel = Some(self.paren_ident()?);
-                }
-                Builtin::Session(rel)
-            }
+            "session" => Builtin::Session(self.parse_session_rel()?),
             "app_scope" => Builtin::AppScope(self.parse_app_scope_excludes()?),
             "kind" => {
                 self.expect(Tok::LParen)?;
@@ -1493,6 +1493,26 @@ impl Parser {
             Tok::Str => Ok(ExternalArg::Lit(self.advance().lit)),
             _ => Ok(ExternalArg::Col(self.ident()?)),
         }
+    }
+
+    fn parse_session_rel(&mut self) -> PResult<Option<SessionRel>> {
+        if self.peek() != Tok::LParen {
+            return Ok(None);
+        }
+        self.expect(Tok::LParen)?;
+        let rel = self.ident()?;
+        let subjects = if self.accept_kw("as") { self.piped_idents()? } else { Vec::new() };
+        self.expect(Tok::RParen)?;
+        Ok(Some(SessionRel { rel, subjects }))
+    }
+
+    fn piped_idents(&mut self) -> PResult<Vec<String>> {
+        let mut out = vec![self.ident()?];
+        while self.peek() == Tok::Pipe {
+            self.advance();
+            out.push(self.ident()?);
+        }
+        Ok(out)
     }
 
     fn paren_ident(&mut self) -> PResult<String> {

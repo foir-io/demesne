@@ -1007,13 +1007,71 @@ impl Sql<'_> {
         Ok(vec![format!("{}.{}({}, {})", self.s.definer_schema(), store_manage_name(&obj.table), d, g.record_col)])
     }
 
+    fn session_frags(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
+        let rel = t.session_rel();
+        let Some(r) = rels.get(rel).copied() else {
+            return Err(format!("unknown relation {}", quote(rel)));
+        };
+        let named = t.session_subjects();
+        if let Some(stray) = named.iter().find(|n| !r.types.contains(n)) {
+            return Err(format!(
+                "object {}: `@session({rel} as {})`: relation {} names no subject {}",
+                quote(&obj.name),
+                named.join(" | "),
+                quote(rel),
+                quote(stray)
+            ));
+        }
+        let all: Vec<&str> = r.types.iter().map(String::as_str).collect();
+        let tagged: Vec<(Vec<&str>, String)> = match &r.repr {
+            Repr::Group(g) => self
+                .group_calls(obj, r, g, cust_claim)?
+                .into_iter()
+                .map(|(claim, frag)| (all.iter().copied().filter(|t| self.s.subject_by_name(t).is_some_and(|sub| sub.identifies() == claim)).collect(), frag))
+                .collect(),
+            Repr::Grant(_) => {
+                let frags = self.emit_term(obj, pm, &term_ref(rel), rels, cust_claim)?;
+                if frags.len() != all.len() {
+                    return Err(format!("object {}: grant relation {} emitted {} calls for {} subjects", quote(&obj.name), quote(rel), frags.len(), all.len()));
+                }
+                all.iter().map(|t| vec![*t]).zip(frags).collect()
+            }
+            _ => self.emit_term(obj, pm, &term_ref(rel), rels, cust_claim)?.into_iter().map(|frag| (all.clone(), frag)).collect(),
+        };
+        if named.is_empty() {
+            if tagged.len() > 1 {
+                return Err(format!(
+                    "object {}: `@session({rel})` admits through relation {}, which names {} and is judged by one call for each; v4.0.0 used only the first, {}'s. Write `@session({rel} as {})` to keep that, or `@session({rel} as {})` to admit each",
+                    quote(&obj.name),
+                    quote(rel),
+                    all.join(" | "),
+                    all[0],
+                    all[0],
+                    all.join(" | ")
+                ));
+            }
+            return Ok(tagged.into_iter().map(|(_, frag)| frag).collect());
+        }
+        let chosen: Vec<String> =
+            tagged.into_iter().filter(|(subjects, _)| subjects.iter().any(|s| named.iter().any(|n| n == s))).map(|(_, frag)| frag).collect();
+        if chosen.is_empty() {
+            return Err(format!(
+                "object {}: `@session({rel} as {})` selects no call relation {} is judged by",
+                quote(&obj.name),
+                named.join(" | "),
+                quote(rel)
+            ));
+        }
+        Ok(chosen)
+    }
+
     fn rls_emit_session(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
         let lf = leaf(obj);
         let me = format!("{} = {}", self.s.scope_col(obj, lf), self.id_claim(&self.s.claim_key_for_level(lf)));
         if t.session_rel().is_empty() {
             return Ok(vec![me]);
         }
-        let role_frags = self.emit_term(obj, pm, &term_ref(t.session_rel()), rels, cust_claim)?;
+        let role_frags = self.session_frags(obj, pm, t, rels, cust_claim)?;
         Ok(vec![match role_frags.as_slice() {
             [one] => format!("{me} AND {one}"),
             many => format!("{me} AND ({})", many.join(" OR ")),
@@ -1038,29 +1096,114 @@ impl Sql<'_> {
         })
     }
 
-    fn by_each_subject(&self, obj: &Object, r: &Relation, cust_claim: &str, what: &str, call: impl Fn(&str) -> R<String>) -> R<Vec<String>> {
-        let mut claims: Vec<&str> = Vec::new();
-        for key in r.types.iter().filter_map(|name| self.s.subject_by_name(name)).map(Subject::identifies).filter(|key| !key.is_empty()) {
-            if !claims.contains(&key) {
-                claims.push(key);
+    fn member_claims<'a>(
+        &'a self,
+        obj: &Object,
+        r: &'a Relation,
+        (explicit, matched): (&'a [String], &str),
+        cust_claim: &'a str,
+        form: &dyn Fn(&[&str]) -> String,
+    ) -> R<Vec<&'a str>> {
+        let named: Vec<(&str, &str)> =
+            r.types.iter().filter_map(|t| self.s.subject_by_name(t).map(|sub| (t.as_str(), sub.identifies()))).filter(|(_, key)| !key.is_empty()).collect();
+        let mut identities: Vec<&str> = Vec::new();
+        for (_, key) in &named {
+            if !identities.contains(key) {
+                identities.push(key);
             }
         }
-        if claims.is_empty() {
-            req_claim(cust_claim, obj, &format!("{what} {}", r.name))?;
-            claims.push(cust_claim);
+        if !explicit.is_empty() {
+            if let Some(key) = explicit.iter().find(|key| !identities.contains(&key.as_str())) {
+                return Err(format!(
+                    "object {}: relation {}: `from claim {key}` names no subject's identity claim; the subjects it names are identified by {}",
+                    quote(&obj.name),
+                    quote(&r.name),
+                    fmt_slice(&identities)
+                ));
+            }
+            return Ok(explicit.iter().map(String::as_str).collect());
         }
-        claims
+        if let Some((subject, key)) = named.iter().find(|(_, key)| *key != cust_claim) {
+            let shown = form(&identities);
+            return Err(if cust_claim.is_empty() {
+                format!(
+                    "object {}: relation {} names {subject}, identified by {}, and the object has no owner subject whose claim {matched}. To match each subject by its own claim, write `{shown}`",
+                    quote(&obj.name),
+                    quote(&r.name),
+                    quote(key)
+                )
+            } else {
+                format!(
+                    "object {}: relation {} names {subject}, identified by {}, but {matched} the owner's claim {}, as in v4.0.0, which admits no {subject}. To match each subject by its own claim, write `{shown}`; to keep the rows v4.0.0 admitted, name the owner subject alone",
+                    quote(&obj.name),
+                    quote(&r.name),
+                    quote(key),
+                    quote(cust_claim)
+                )
+            });
+        }
+        req_claim(cust_claim, obj, &format!("relation {}", r.name))?;
+        Ok(vec![cust_claim])
+    }
+
+    fn group_calls<'a>(&'a self, obj: &Object, r: &'a Relation, g: &'a ViaGroup, cust_claim: &'a str) -> R<Vec<(&'a str, String)>> {
+        let form = |keys: &[&str]| {
+            format!(
+                "relation {}: {} via group {}({}, {}) edge {}({}, {}) on {} from claim {}{}",
+                r.name,
+                r.types.join(" | "),
+                g.closure,
+                g.group_col,
+                g.member_col,
+                g.edge,
+                g.edge_member,
+                g.edge_group,
+                g.col,
+                keys.join(" | "),
+                if g.materialized { " materialized" } else { "" }
+            )
+        };
+        let pk = format!("{}.{}", obj.table, obj.pk());
+        let schema = self.s.definer_schema();
+        Ok(self
+            .member_claims(obj, r, (&g.claims, "its members are matched against"), cust_claim, &form)?
             .into_iter()
             .map(|claim| {
-                let frag = call(claim)?;
-                Ok(if cust_claim.is_empty() || claim == cust_claim { frag } else { format!("({frag} AND {} IS NULL)", self.claim(cust_claim)) })
+                let call = if g.materialized {
+                    format!("{}_member({}, {})", self.group_flat_name(obj, r, g), pk, self.id_claim(claim))
+                } else {
+                    format!("{}.{}_member({}, {})", schema, g.closure, g.col, self.id_claim(claim))
+                };
+                let frag = if cust_claim.is_empty() || claim == cust_claim { call } else { format!("({call} AND {} IS NULL)", self.claim(cust_claim)) };
+                (claim, frag)
             })
-            .collect()
+            .collect())
     }
 
     fn rls_closure_frag(&self, obj: &Object, r: &Relation, c: &ViaClosure, cust_claim: &str) -> R<Vec<String>> {
         let Some(claim) = &c.claim else {
-            return self.by_each_subject(obj, r, cust_claim, "closure relation", |claim| self.closure_lookup(c, &self.id_claim(claim)));
+            let form = |keys: &[&str]| {
+                let base = c
+                    .base
+                    .as_ref()
+                    .map(|b| format!(" base {b}({}, {})", c.base_id.as_deref().unwrap_or("id"), c.base_parent.as_deref().unwrap_or("parent")))
+                    .unwrap_or_default();
+                let key = keys.iter().find(|key| **key != cust_claim).or_else(|| keys.first()).copied().unwrap_or_default();
+                format!(
+                    "relation {}: {} via closure {}({}, {}){base} on {} from claim {key} missing deny",
+                    r.name,
+                    r.types.join(" | "),
+                    c.closure,
+                    c.ancestor_col,
+                    c.descendant_col,
+                    c.col
+                )
+            };
+            return self
+                .member_claims(obj, r, (&[], "the caller's node is read from"), cust_claim, &form)?
+                .into_iter()
+                .map(|claim| self.closure_lookup(c, &self.id_claim(claim)))
+                .collect();
         };
         let call = self.closure_lookup(c, &self.id_claim(claim))?;
         if c.missing.as_deref() == Some("allow") {
@@ -1113,13 +1256,7 @@ impl Sql<'_> {
                 }])
             }
             Repr::Closure(c) => self.rls_closure_frag(obj, r, c, cust_claim),
-            Repr::Group(g) => self.by_each_subject(obj, r, cust_claim, "group relation", |claim| {
-                Ok(if g.materialized {
-                    format!("{}_member({}, {})", self.group_flat_name(obj, r, g), pk, self.id_claim(claim))
-                } else {
-                    format!("{}.{}_member({}, {})", schema, g.closure, g.col, self.id_claim(claim))
-                })
-            }),
+            Repr::Group(g) => Ok(self.group_calls(obj, r, g, cust_claim)?.into_iter().map(|(_, frag)| frag).collect()),
             Repr::MemberIn(mi) => {
                 let name = format!("{}_memberin_{}", self.s.admin_name(), mi.level);
                 let mut frag = definer_call(&format!("{schema}.{name}"), &[self.arg_src(&mi.principal), self.arg_src(&mi.scope)]);

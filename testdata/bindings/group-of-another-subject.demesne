@@ -5,7 +5,7 @@ object doc {
   table docs
   scoped tenant > project
   relation owner: customer via owner_id
-  relation team: staff via group tc(grp, mem) edge te(mem, grp) on team_id
+  relation team: staff via group tc(grp, mem) edge te(mem, grp) on team_id from claim sub
   permission view = owner + team @rls maps select
 }
 object note {
@@ -17,12 +17,12 @@ object note {
 object board {
   table boards
   scoped tenant > project
-  relation crew: staff via group tc(grp, mem) edge te(mem, grp) on crew_id materialized
+  relation crew: staff via group tc(grp, mem) edge te(mem, grp) on crew_id from claim sub materialized
   permission view = crew @rls maps select
 }
 object page {
   table pages
   scoped tenant > project
-  relation in_folder: staff via closure folder_paths(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id
+  relation in_folder: staff via closure folder_paths(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id from claim sub missing deny
   permission view = in_folder @rls maps select
 }

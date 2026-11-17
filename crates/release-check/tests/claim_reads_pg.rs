@@ -1084,11 +1084,7 @@ fn every_rule_admits_the_rows_v1_1_0_admitted() {
     assert!(tally.differing.is_empty(), "rules admit different rows:\n{summary}");
     let stuck: Vec<&str> = tally.uninstallable.iter().map(|u| u.split(": ").next().unwrap_or(u)).collect();
     assert_eq!(stuck, UUID_SPECS_WHOSE_DEFINERS_TAKE_TEXT, "the specs whose SQL no schema can hold:\n{summary}");
-    assert_eq!(
-        tally.newly_accepted,
-        ["testdata/corpus/fixtures/bed6930cc54d3a21.demesne", "testdata/corpus/fixtures/fda4c3fcab458614.demesne"],
-        "the specs v1.1.0 refused and this release compiles: a closure relation on an object with no owner subject, refused then for want of the owner's claim:\n{summary}"
-    );
+    assert!(tally.newly_accepted.is_empty(), "no spec v1.1.0 refused compiles now: {:?}\n{summary}", tally.newly_accepted);
     assert_eq!(tally.compared + stuck.len(), tally.specs - tally.invalid.len() - tally.newly_accepted.len(), "every spec both compile is compared:\n{summary}");
     assert!(tally.both_ways * 100 >= tally.rules * 85, "too few rules both admitted and refused a row to prove anything:\n{summary}");
 }

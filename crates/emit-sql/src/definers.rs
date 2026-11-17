@@ -1133,9 +1133,16 @@ impl Sql<'_> {
     }
 
     fn closure_callers(&self, table: &str) -> Vec<String> {
-        let identities = || self.s.subjects.iter().map(Subject::identifies).collect::<Vec<_>>();
-        let named = closure::relations_over(self.s, table).flat_map(|relation| relation.claim.as_deref().map_or_else(identities, |key| vec![key]));
-        self.claims_once(named)
+        let owner = |obj: &Object| obj.scoped.last().and_then(|level| self.s.owner_subject(level)).map(|sub| sub.identifies().to_string()).unwrap_or_default();
+        let named: Vec<String> = self
+            .s
+            .relations()
+            .filter_map(|(obj, r)| match &r.repr {
+                Repr::Closure(c) if c.closure == table => Some(c.claim.clone().unwrap_or_else(|| owner(obj))),
+                _ => None,
+            })
+            .collect();
+        self.claims_once(named.iter().map(String::as_str))
     }
 
     fn claims_once<'k>(&self, keys: impl Iterator<Item = &'k str>) -> Vec<String> {

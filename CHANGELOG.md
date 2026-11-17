@@ -280,6 +280,50 @@ What breaks for an adopter, and how to keep a pass that was meant:
 `demesne_emit_sql`'s write check reports such a reach as part of the write
 term it now belongs to, not as "a subject's own reach".
 
+### Breaking: a relation of another subject, and `@session` over several calls, say what they admit
+
+A policy passed a group's `<closure>_member`, a materialized group's
+`<flat>_member` and an undeclared closure's `_reachable` the claim of the
+object's owner subject, whichever subject the relation names. A relation
+typed as another subject (`team: staff via group ...` on an object a customer
+owns) so admitted none of that subject. `@session(<relation>)` over a relation
+judged by one call per subject (a grant or group relation naming several)
+used only the first subject's call.
+
+Now the spec says which it means, or validation refuses it, naming the
+relation and showing the line to write:
+
+- **A group relation naming a subject other than the owner** takes
+  `from claim <key> [| <key>]` after `on <column>`: `relation team: staff via
+  group tc(grp, mem) edge te(mem, grp) on team_id from claim sub`. Each key is
+  the identity claim of a subject the relation names. The policy makes one call
+  per key and, as a grant relation does, judges a credential that also carries
+  the owner's claim only as the owner. To keep the rows v4.0.0 admitted, type
+  the relation as the owner subject alone.
+- **A closure relation naming a subject other than the owner** takes the
+  `from claim <key> missing allow|deny` it already could. A closure relation on
+  an object with no owner subject was refused before and still is, now with
+  that line shown.
+- **`@session(<relation>)` over a relation judged by more than one call**
+  names the subjects it admits: `@session(grantee as customer)` keeps v4.0.0's
+  meaning, the first subject's call; `@session(grantee as customer | staff)`
+  admits each. A subject the relation does not name is refused.
+
+No spec admits more after this release than before it.
+
+Alongside: a materialized group's `<flat>_resources()` matches the claims its
+policy passes and returns the spec's identifier type rather than `text`; a
+group's `<closure>_member` answers for the subjects of every group relation
+over that closure, not only the first; and an undeclared closure's
+`_reachable` answers for the claims its relations pass, no longer for every
+subject's identity.
+
+A corpus test checks that every call to a function bound to the caller passes,
+at the bound parameter, a claim that function binds. A live test admits staff
+through a team, a materialized crew and a closure that say `from claim sub` on
+a customer's objects, admits a customer through a group whose closure a staff
+relation shares, and refuses staff whose credential also carries a customer.
+
 ### `some`: one element of an array column, and what must hold for it
 
 ```demesne
@@ -649,28 +693,6 @@ present, named its column only in the arm that looks for functions. A
 migration that dropped a policy, a trigger or an index and no function failed
 with `column "what" does not exist`. Every release from v1.0.0 has this. Each
 arm now names the column.
-
-### Fixed: a group or closure relation of another subject was judged by the owner's claim
-
-A policy passed a group's `<closure>_member`, a materialized group's
-`<flat>_member` and an undeclared closure's `_reachable` the claim of the
-object's owner subject, whichever subject the relation names, while each
-function answers only for the claims of the subjects it serves. So a relation
-typed as another subject (`team: staff via group ...` on an object a customer
-owns) admitted none of its members. The policy now passes each subject the
-relation names its own identity claim, one call per subject, and, as a grant
-relation already did, judges a credential that carries the owner's claim only
-as the owner. A materialized group's `<flat>_resources()` reads the same
-claims, and returns the spec's identifier type rather than `text`. A group's
-`<closure>_member` answers for the subjects of every group relation over that
-closure, not only the first. A closure relation on an object with no owner
-subject now compiles, where it was refused for want of the owner's claim.
-
-A corpus test checks that every call to a function bound to the caller passes,
-at the bound parameter, a claim that function binds. A live test admits staff
-through a team, a materialized crew and a closure on a customer's objects,
-admits a customer through a group whose closure a staff relation shares, and
-refuses staff whose credential also carries a customer.
 
 ### Fixed: a group's and a closure's triggers ignored `tables schema`
 

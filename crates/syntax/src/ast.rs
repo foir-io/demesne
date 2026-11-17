@@ -694,6 +694,8 @@ pub struct ViaGroup {
     pub edge_group: String,
     pub col: String,
     pub materialized: bool,
+    /// `from claim <key> [| <key>]`: the claims the group's members are matched by, each the identity claim of a subject the relation names.
+    pub claims: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -990,9 +992,16 @@ pub enum TermKind {
     Builtin(Builtin),
 }
 
+/// `@session(<relation> [as <subject> | <subject>])`: the relation the session holds, and the subjects whose calls it admits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRel {
+    pub rel: String,
+    pub subjects: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Builtin {
-    Session(Option<String>),
+    Session(Option<SessionRel>),
     AppScope(Vec<String>),
     Kind(String),
     Claim {
@@ -1065,7 +1074,8 @@ impl Builtin {
     #[must_use]
     pub fn display(&self) -> String {
         match self {
-            Builtin::Session(Some(rel)) => format!("@session({rel})"),
+            Builtin::Session(Some(SessionRel { rel, subjects })) if subjects.is_empty() => format!("@session({rel})"),
+            Builtin::Session(Some(SessionRel { rel, subjects })) => format!("@session({rel} as {})", subjects.join(" | ")),
             Builtin::AppScope(rels) if !rels.is_empty() => format!("@app_scope(exclude {})", rels.join(", ")),
             Builtin::Kind(v) => format!("@kind({})", quote(v)),
             Builtin::Claim { key, val } => format!("@claim({}, {})", quote(key), quote(val)),
@@ -1163,8 +1173,17 @@ impl Term {
     #[must_use]
     pub fn session_rel(&self) -> &str {
         match self.builtin_ref() {
-            Some(Builtin::Session(Some(r))) => r,
+            Some(Builtin::Session(Some(r))) => &r.rel,
             _ => "",
+        }
+    }
+
+    /// Returns the subjects `@session(<relation> as …)` names, empty when it names none.
+    #[must_use]
+    pub fn session_subjects(&self) -> &[String] {
+        match self.builtin_ref() {
+            Some(Builtin::Session(Some(r))) => &r.subjects,
+            _ => &[],
         }
     }
 

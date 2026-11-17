@@ -4,7 +4,7 @@ use crate::{Execute, Sql};
 use demesne_model::SpecExt;
 use demesne_model::closure;
 use demesne_runtime::quote_literal;
-use demesne_syntax::{Relation, Repr, Subject};
+use demesne_syntax::{Repr, Subject, ViaGroup};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -594,11 +594,8 @@ impl Sql<'_> {
         b
     }
 
-    fn caller_match(&self, r: &Relation, owner: &str, member: &str) -> String {
-        let mut keys = self.identities_of(&r.types);
-        if keys.is_empty() {
-            keys.push(owner.to_string());
-        }
+    fn caller_match(&self, g: &ViaGroup, owner: &str, member: &str) -> String {
+        let keys = if g.claims.is_empty() { vec![owner.to_string()] } else { g.claims.clone() };
         let each: Vec<String> = keys
             .iter()
             .map(|key| {
@@ -619,7 +616,7 @@ impl Sql<'_> {
                 _ => None,
             });
             for (r, g) in materialized {
-                let caller_match = owner.map(|owner| self.caller_match(r, owner, &format!("c.{}", g.member_col))).unwrap_or_default();
+                let caller_match = owner.map(|owner| self.caller_match(g, owner, &format!("c.{}", g.member_col))).unwrap_or_default();
                 out.push(MaterializedFlat {
                     principal_claims: self.identities_of(&r.types),
                     schema: self.s.definer_schema().into(),
