@@ -537,3 +537,12 @@ fn a_spec_with_no_chain_gets_no_copy() {
         assert!(chained || copies.is_empty(), "{}: {copies:?}", e.path);
     }
 }
+
+#[test]
+fn a_role_check_does_not_count_a_grants_holder_as_holding_the_role() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus/fixtures/66e5cc6fd058fb60.demesne");
+    let s = demesne_syntax::parse(&std::fs::read_to_string(&path).expect("the fixture reads")).expect("the fixture parses");
+    let defs = Sql::new(&s).emit_definers().expect("the definers compile");
+    let check = defs.iter().find(|d| d.name == "is_tenant_member").expect("the role check");
+    assert!(!check.create_sql().contains("_reach("), "a grant gives reach, not the role:\n{}", check.create_sql());
+}

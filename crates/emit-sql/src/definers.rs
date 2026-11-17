@@ -935,7 +935,7 @@ impl Sql<'_> {
             if !defs.claim(&f) {
                 continue;
             }
-            defs.fns.push(self.role_definer(&f, rs, &lvl.name, preset_levels.get(&lvl.name), &self.operator_reach(&lvl.name)));
+            defs.fns.push(self.role_definer(&f, rs, &lvl.name, preset_levels.get(&lvl.name), &self.operator_reach()));
         }
     }
 
@@ -1361,7 +1361,7 @@ impl Sql<'_> {
             };
             let lvl = &parent.types[0];
             let f = format!("is_{}_{}", lvl, self.s.admin_name());
-            return Ok(Some(self.role_definer(&f, rs, lvl, preset_levels.get(lvl), &self.operator_reach(lvl))));
+            return Ok(Some(self.role_definer(&f, rs, lvl, preset_levels.get(lvl), &self.operator_reach())));
         }
         let rel_name = if t.builtin() == "session" && !t.session_rel().is_empty() { t.session_rel() } else { t.ident() };
         let Some(r) = rels.get(rel_name) else { return Ok(None) };
@@ -1425,21 +1425,14 @@ impl Sql<'_> {
         }
     }
 
-    fn operator_reach(&self, level: &str) -> String {
+    fn operator_reach(&self) -> String {
         let schema = self.s.definer_schema();
-        for sub in &self.s.subjects {
-            if let Some(m) = &sub.membership {
-                return definer_call(&format!("{schema}.{}", membership_fn(m)), &[Arg::Fixed("user_id".into())]);
-            }
-            if sub.reach() == "grant"
-                && let Some(g) = self.s.grant_by_name(sub.reach_grant())
-                && g.level == level
-            {
-                let args = [Arg::Fixed("user_id".into()), Arg::Fixed(format!("check_{}_id", g.level))];
-                return definer_call(&format!("{schema}.{}_reach", g.definer_base()), &args);
-            }
-        }
-        String::new()
+        self.s
+            .subjects
+            .iter()
+            .find_map(|sub| sub.membership.as_ref())
+            .map(|m| definer_call(&format!("{schema}.{}", membership_fn(m)), &[Arg::Fixed("user_id".into())]))
+            .unwrap_or_default()
     }
 
     fn pure_accessor_definers(&self, obj: &Object) -> Vec<GenFn> {

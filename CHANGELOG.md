@@ -255,6 +255,12 @@ What breaks for an adopter, and how to keep a pass that was meant:
   permission's terms.** Read every object scoped at a grant's own level and
   every level table a grant reaches. A holder who has no role, ownership or
   claim the terms ask for is now refused there.
+- **A role check no longer counts a grant's holder as holding the role.** The
+  check behind `<level>->owner` (`is_<level>_<subject>`) answered yes for a
+  caller who held a grant at that level, so such a term admitted the grant's
+  holders whatever role they had, and through an identity the check did not
+  bind. A grant gives reach, not a role: the check now answers from role
+  assignments, and a platform operator's membership, alone.
 - **To keep the pass, name the grant:** `permission view = (@scoped and
   <terms>) + via grant <name>`. That permission emits exactly what it emitted
   before. A `reach <grant> unscoped|bound|via … for <operations>` line on the

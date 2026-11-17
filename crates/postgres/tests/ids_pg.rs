@@ -253,6 +253,7 @@ struct Callers {
     owner: String,
     operator: String,
     lapsed: String,
+    supporter: String,
 }
 
 impl Callers {
@@ -267,13 +268,14 @@ impl Callers {
             owner: w.claims(&[("staff_id", OWNER), ("tenant_id", TENANT), ("project_id", PROJECT)], &[]),
             operator: w.claims(&[("operator_id", OPERATOR)], &[]),
             lapsed: w.claims(&[("operator_id", LAPSED)], &[]),
+            supporter: w.claims(&[("staff_id", HELPER), ("sub", HELPER), ("tenant_id", TENANT), ("project_id", PROJECT)], &[]),
         }
     }
 }
 
 fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
-    let Callers { member, unheld, stranger, helped, unhelped, viewer, owner, operator, lapsed } = c;
-    let rows: [(&str, &str, &[u32]); 24] = [
+    let Callers { member, unheld, stranger, helped, unhelped, viewer, owner, operator, lapsed, supporter } = c;
+    let rows: [(&str, &str, &[u32]); 25] = [
         (member, "docs", &[OWNED, GRANTED, CHILD, TEAMED]),
         (stranger, "docs", &[GRANTED]),
         (helped, "docs", &[OWNED, GRANTED, CHILD, TEAMED]),
@@ -298,6 +300,7 @@ fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
         (lapsed, "docs", &[]),
         (member, "boards", &[BOARD]),
         (stranger, "boards", &[]),
+        (supporter, "resources", &[]),
     ];
     for (claims, table, want) in rows {
         assert_eq!(w.visible(db, claims, table), w.ids(want), "{}: {table} under {claims}", w.ty);
@@ -305,7 +308,7 @@ fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
 }
 
 fn each_function_admits_and_refuses(w: &World, db: &mut Client, c: &Callers) {
-    let Callers { member, stranger, helped, unhelped, viewer, owner, operator, lapsed, .. } = c;
+    let Callers { member, stranger, helped, unhelped, viewer, owner, operator, lapsed, supporter, .. } = c;
     let (a, i) = (&w.auth, |n| w.lit(n));
     let calls: Vec<(&str, bool, String, bool)> = vec![
         (operator, true, format!("{a}.is_ops({})", i(OPERATOR)), true),
@@ -337,10 +340,9 @@ fn each_function_admits_and_refuses(w: &World, db: &mut Client, c: &Callers) {
         (owner, true, format!("{a}.staff_has_resource_role({}, {}, {})", i(OWNER), i(TENANT), i(PROJECT)), false),
         (owner, true, format!("{a}.is_tenant_staff({}, {})", i(OWNER), i(TENANT)), true),
         (viewer, true, format!("{a}.is_tenant_staff({}, {})", i(VIEWER), i(TENANT)), false),
+        (supporter, true, format!("{a}.is_tenant_staff({}, {})", i(HELPER), i(TENANT)), false),
         (helped, true, format!("{} IN (SELECT {a}.support_grants_reach_set({}))", i(TENANT), i(HELPER)), true),
         (unhelped, true, format!("{} IN (SELECT {a}.support_grants_reach_set({}))", i(TENANT), i(UNHELPED)), false),
-        (helped, false, format!("{a}.support_grants_reach({}, {})", i(HELPER), i(TENANT)), true),
-        (unhelped, false, format!("{a}.support_grants_reach({}, {})", i(HELPER), i(TENANT)), false),
         (stranger, false, format!("{a}.doc_can_edit({})", i(GRANTED)), true),
         (member, false, format!("{a}.doc_can_edit({})", i(GRANTED)), false),
         ("{}", false, format!("{a}.docs_admits({}, '{member}')", i(OWNED)), true),
