@@ -9,7 +9,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT p_member = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id') AND (EXISTS (SELECT 1 FROM group_closure WHERE grp = p_group AND mem = p_member));
 $$;
@@ -33,7 +33,7 @@ CREATE OR REPLACE FUNCTION auth.group_closure_rebuild()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   -- Fast path: nothing to close over and nothing stale to clear. Load-bearing

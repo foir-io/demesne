@@ -9,7 +9,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT (p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') OR p_space = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'space_id')) AND (EXISTS (SELECT 1 FROM role_grants WHERE principal_id = p_principal AND space_id = p_space AND principal_kind = 'keeper' AND revoked_at IS NULL));
 $$;
@@ -20,7 +20,7 @@ RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT 'role'::text, 'keeper'::text, ra.principal_id, 'read'::text
     FROM spaces e JOIN role_grants ra ON ra.principal_kind = 'keeper' AND ra.revoked_at IS NULL AND ra.space_id = e.id
@@ -34,7 +34,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -55,7 +55,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT ancestor_id, depth::integer FROM paths WHERE descendant_id = p_node ORDER BY depth DESC, ancestor_id;
 $$;
@@ -67,7 +67,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 BEGIN
@@ -88,7 +88,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 BEGIN
@@ -103,7 +103,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 BEGIN
@@ -118,7 +118,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 BEGIN
   IF p_text !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$' THEN
@@ -136,7 +136,7 @@ RETURNS boolean
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   c record;
@@ -208,7 +208,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT x.v FROM (
     SELECT t.id AS v, c.depth AS d FROM paths c JOIN skins t ON t.folder_id = c.ancestor_id WHERE c.descendant_id = p_node AND t.id IS NOT NULL AND t.status = 'live'
@@ -224,7 +224,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT auth.live_skin(p_node) WHERE p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
@@ -236,7 +236,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 BEGIN
@@ -250,7 +250,7 @@ RETURNS boolean
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   c record;
@@ -316,7 +316,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 BEGIN
@@ -334,7 +334,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 BEGIN
@@ -392,7 +392,7 @@ CREATE OR REPLACE FUNCTION auth.paths_maintain()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'DELETE') THEN

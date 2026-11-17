@@ -29,8 +29,11 @@ const SUBFOLDER: u32 = 110;
 const LOOSE_FOLDER: u32 = 111;
 const PAGE: u32 = 120;
 const LOOSE_PAGE: u32 = 121;
+const OPERATOR: u32 = 32;
+const LAPSED: u32 = 33;
+const NEW_FOLDER: u32 = 112;
 
-const NAMED: [(&str, u32); 27] = [
+const NAMED: [(&str, u32); 31] = [
     ("TENANT", TENANT),
     ("PROJECT", PROJECT),
     ("MEMBER", MEMBER),
@@ -38,6 +41,7 @@ const NAMED: [(&str, u32); 27] = [
     ("VIEWER", VIEWER),
     ("OWNER", OWNER),
     ("HELPER", HELPER),
+    ("UNHELPED", UNHELPED),
     ("OWNED", OWNED),
     ("GRANTED", GRANTED),
     ("CHILD", CHILD),
@@ -58,6 +62,9 @@ const NAMED: [(&str, u32); 27] = [
     ("LOOSE_FOLDER", LOOSE_FOLDER),
     ("PAGE", PAGE),
     ("LOOSE_PAGE", LOOSE_PAGE),
+    ("OPERATOR", OPERATOR),
+    ("LAPSED", LAPSED),
+    ("NEW_FOLDER", NEW_FOLDER),
 ];
 
 const TABLES: &str = "
@@ -76,6 +83,7 @@ CREATE TABLE folio_shares (member_id <T>, folio_id <T>, rule_id text);
 CREATE TABLE folders (id <T> PRIMARY KEY, parent_id <T>);
 CREATE TABLE folder_paths (ancestor_id <T>, descendant_id <T>, PRIMARY KEY (ancestor_id, descendant_id));
 CREATE TABLE pages (id <T> PRIMARY KEY, tenant_id <T>, project_id <T>, folder_id <T>);
+CREATE TABLE ops_users (user_ref <T> PRIMARY KEY, is_ops boolean, state text);
 ";
 
 const ROWS: &str = "
@@ -97,6 +105,21 @@ INSERT INTO folios VALUES (<SHARED>, <TENANT>, <PROJECT>, '{read.a}'), (<UNSHARE
 INSERT INTO folio_shares VALUES (<MEMBER>, <SHARED>, 'read.a');
 INSERT INTO folders VALUES (<MEMBER>, NULL), (<SUBFOLDER>, <MEMBER>), (<LOOSE_FOLDER>, NULL);
 INSERT INTO pages VALUES (<PAGE>, <TENANT>, <PROJECT>, <SUBFOLDER>), (<LOOSE_PAGE>, <TENANT>, <PROJECT>, <LOOSE_FOLDER>);
+INSERT INTO ops_users VALUES (<OPERATOR>, true, 'ON'), (<LAPSED>, true, 'OFF');
+";
+
+const FORGED: &str = "
+INSERT INTO pg_temp.ops_users VALUES (<LAPSED>, true, 'ON');
+INSERT INTO pg_temp.roles VALUES (<VIEWER_ROLE>, 'viewer'), (<OWNER_ROLE>, 'owner');
+INSERT INTO pg_temp.role_grants VALUES ('staff', <OWNER>, <TENANT>, <PROJECT>, <VIEWER_ROLE>, NULL), ('staff', <VIEWER>, <TENANT>, NULL, <OWNER_ROLE>, NULL);
+INSERT INTO pg_temp.acl VALUES (<GRANT>, <TENANT>, <PROJECT>, 'doc', <GRANTED>, 'member', <MEMBER>, 'write');
+INSERT INTO pg_temp.support_grants VALUES (<UNHELPED>, <TENANT>);
+INSERT INTO pg_temp.tc VALUES (<TEAM>, <STRANGER>);
+INSERT INTO pg_temp.te VALUES (<STRANGER>, <TEAM>);
+INSERT INTO pg_temp.folio_shares VALUES (<MEMBER>, <UNSHARED>, 'read.a');
+INSERT INTO pg_temp.folder_paths VALUES (<MEMBER>, <LOOSE_FOLDER>);
+INSERT INTO pg_temp.docs VALUES (<NOBODYS>, <TENANT>, <PROJECT>, <MEMBER>, NULL, NULL);
+INSERT INTO pg_temp.ledgers VALUES (<OTHER_LEDGER>, <TENANT>, <PROJECT>, <MEMBER>);
 ";
 
 fn connect() -> Client {
@@ -114,8 +137,8 @@ struct World {
 }
 
 impl World {
-    fn new(ty: &'static str) -> Self {
-        Self { ty, rows: format!("demesne_ids_{ty}_rows"), auth: format!("demesne_ids_{ty}_auth") }
+    fn new(ty: &'static str, what: &str) -> Self {
+        Self { ty, rows: format!("demesne_ids_{ty}_{what}_rows"), auth: format!("demesne_ids_{ty}_{what}_auth") }
     }
 
     fn id(&self, n: u32) -> String {
@@ -168,6 +191,23 @@ impl World {
         .expect("the rows");
     }
 
+    fn shadow(&self, db: &mut Client) {
+        let tables: Vec<String> = db
+            .query("SELECT tablename::text FROM pg_tables WHERE schemaname = $1 ORDER BY 1", &[&self.rows])
+            .expect("the tables")
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        let shadows: Vec<String> = tables.iter().map(|t| format!("CREATE TEMP TABLE {t} (LIKE {}.{t});", self.rows)).collect();
+        db.batch_execute(&format!(
+            "DO $$ BEGIN PERFORM pg_advisory_xact_lock(hashtext('demesne_ids_temporary')); IF NOT has_database_privilege('authenticated', current_database(), 'TEMPORARY') THEN EXECUTE format('GRANT TEMPORARY ON DATABASE %I TO authenticated', current_database()); END IF; END $$;
+             SET ROLE authenticated; {} {} RESET ROLE;",
+            shadows.join(" "),
+            self.fill(FORGED)
+        ))
+        .unwrap_or_else(|e| panic!("{}: a session holding TEMPORARY shadows every table: {e:?}", self.ty));
+    }
+
     fn visible(&self, db: &mut Client, claims: &str, table: &str) -> Vec<String> {
         let mut tx = db.transaction().expect("a transaction");
         tx.batch_execute("SET LOCAL ROLE authenticated").expect("the role");
@@ -202,6 +242,8 @@ struct Callers {
     unhelped: String,
     viewer: String,
     owner: String,
+    operator: String,
+    lapsed: String,
 }
 
 impl Callers {
@@ -214,13 +256,15 @@ impl Callers {
             unhelped: w.claims(&[("member_id", MEMBER), ("sub", UNHELPED), ("project_id", PROJECT)], &[]),
             viewer: w.claims(&[("staff_id", VIEWER), ("tenant_id", TENANT), ("project_id", PROJECT)], &[]),
             owner: w.claims(&[("staff_id", OWNER), ("tenant_id", TENANT), ("project_id", PROJECT)], &[]),
+            operator: w.claims(&[("operator_id", OPERATOR)], &[]),
+            lapsed: w.claims(&[("operator_id", LAPSED)], &[]),
         }
     }
 }
 
 fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
-    let Callers { member, unheld, stranger, helped, unhelped, viewer, owner } = c;
-    let rows: [(&str, &str, &[u32]); 20] = [
+    let Callers { member, unheld, stranger, helped, unhelped, viewer, owner, operator, lapsed } = c;
+    let rows: [(&str, &str, &[u32]); 22] = [
         (member, "docs", &[OWNED, GRANTED, CHILD, TEAMED]),
         (stranger, "docs", &[GRANTED]),
         (helped, "docs", &[OWNED, GRANTED, CHILD, TEAMED]),
@@ -241,6 +285,8 @@ fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
         (helped, "notes", &[NOTE]),
         (member, "pages", &[PAGE]),
         (stranger, "pages", &[]),
+        (operator, "docs", &[OWNED, GRANTED, CHILD, TEAMED, NOBODYS]),
+        (lapsed, "docs", &[]),
     ];
     for (claims, table, want) in rows {
         assert_eq!(w.visible(db, claims, table), w.ids(want), "{}: {table} under {claims}", w.ty);
@@ -248,9 +294,11 @@ fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
 }
 
 fn each_function_admits_and_refuses(w: &World, db: &mut Client, c: &Callers) {
-    let Callers { member, stranger, helped, unhelped, viewer, owner, .. } = c;
+    let Callers { member, stranger, helped, unhelped, viewer, owner, operator, lapsed, .. } = c;
     let (a, i) = (&w.auth, |n| w.lit(n));
     let calls: Vec<(&str, bool, String, bool)> = vec![
+        (operator, true, format!("{a}.is_ops({})", i(OPERATOR)), true),
+        (lapsed, true, format!("{a}.is_ops({})", i(LAPSED)), false),
         (member, true, format!("{a}.member_can_access_ledger({}, {}, 'edit')", i(MEMBER), i(LEDGER)), true),
         (member, true, format!("{a}.member_can_access_ledger({}, {}, 'edit')", i(MEMBER), i(OTHER_LEDGER)), false),
         (stranger, true, format!("{a}.member_can_access_ledger({}, {}, 'edit')", i(MEMBER), i(LEDGER)), false),
@@ -300,7 +348,7 @@ fn each_function_admits_and_refuses(w: &World, db: &mut Client, c: &Callers) {
 }
 
 fn admits_and_refuses_through_every_generator_taking_an_id(ty: &'static str) {
-    let w = World::new(ty);
+    let w = World::new(ty, "plain");
     let mut db = connect();
     w.build(&mut db);
     let callers = Callers::new(&w);
@@ -319,4 +367,38 @@ fn an_integer_id_spec_admits_and_refuses_through_every_generator_taking_an_id() 
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn a_uuid_id_spec_admits_and_refuses_through_every_generator_taking_an_id() {
     admits_and_refuses_through_every_generator_taking_an_id("uuid");
+}
+
+fn no_temporary_table_shadows_a_table_a_generated_function_reads(ty: &'static str) {
+    let w = World::new(ty, "shadowed");
+    let mut db = connect();
+    w.build(&mut db);
+    let callers = Callers::new(&w);
+    let mut forger = connect();
+    w.shadow(&mut forger);
+    each_caller_sees_its_rows(&w, &mut forger, &callers);
+    each_function_admits_and_refuses(&w, &mut forger, &callers);
+    let rows = &w.rows;
+    forger
+        .batch_execute(&w.fill(&format!("DELETE FROM {rows}.te WHERE mem = <MEMBER>; INSERT INTO {rows}.folders VALUES (<NEW_FOLDER>, <MEMBER>);")))
+        .expect("a write through the group's and the closure's triggers");
+    drop(forger);
+    let (a, i) = (&w.auth, |n| w.lit(n));
+    let left = format!("{a}.tc_member({}, {})", i(TEAM), i(MEMBER));
+    assert!(!w.answer(&mut db, &callers.member, true, &left), "{ty}: the group's rebuild cleared the real closure, not the forger's");
+    let added = format!("{a}.folder_paths_reachable({}, {})", i(MEMBER), i(NEW_FOLDER));
+    assert!(w.answer(&mut db, &callers.member, true, &added), "{ty}: the closure's trigger wrote the real closure, not the forger's");
+    db.batch_execute(&format!("DROP SCHEMA {} CASCADE; DROP SCHEMA {} CASCADE;", w.rows, w.auth)).expect("drop the schemas");
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn an_integer_id_spec_reads_no_table_a_temporary_one_shadows() {
+    no_temporary_table_shadows_a_table_a_generated_function_reads("integer");
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_uuid_id_spec_reads_no_table_a_temporary_one_shadows() {
+    no_temporary_table_shadows_a_table_a_generated_function_reads("uuid");
 }

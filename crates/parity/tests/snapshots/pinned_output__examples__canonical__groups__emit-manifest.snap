@@ -56,11 +56,11 @@ exit: 0
   "digests": [
     {
       "object": "function auth.group_closure_member(text, text)",
-      "digest": "43fad2ac87e3f67bc5217386ea4830e4320ef1a1bdab822a7f964ef19eacf70a"
+      "digest": "7fa564d5e898caf7a46a9b0159c046359567d8f3ff331a5545592f291f46ca13"
     },
     {
       "object": "function auth.group_closure_rebuild()",
-      "digest": "d1e303c32182ba752c2fdf6841443633f0718dae01911aabb012049f9726f00f"
+      "digest": "f6624b9bac62ba162622a98442ae0916978a40fe51a220158191977a8cafc224"
     },
     {
       "object": "policy docs_select on public.docs",

@@ -200,3 +200,36 @@ fn every_id_a_generator_declares_takes_the_specs_type_and_no_other_parameter_nam
     assert!(declared_ids > 500 && typed > 20, "{declared_ids} ids declared, {typed} on a spec whose identifiers are not text");
     assert!(wrong.is_empty(), "{} parameters:\n{}", wrong.len(), wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"));
 }
+
+#[test]
+fn every_emitted_function_searches_pg_temp_last() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut paths = Vec::new();
+    specs(&root.join("examples"), &mut paths);
+    specs(&root.join("testdata"), &mut paths);
+    paths.sort();
+    let (mut checked, mut wrong) = (0, BTreeMap::<String, String>::new());
+    for path in &paths {
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        let Ok(s) = demesne_syntax::parse(&src) else { continue };
+        if demesne_emit_sql::validate(&s).is_err() {
+            continue;
+        }
+        let mut b = String::new();
+        if Sql::new(&s).write_all_sql(&mut b).is_err() {
+            continue;
+        }
+        let at = path.display();
+        for (o, stmt) in objects(&b).unwrap_or_else(|e| panic!("{at}: {e}")) {
+            let Object::Function(sig) = &o else { continue };
+            checked += 1;
+            let paths: Vec<&str> = stmt.lines().filter_map(|line| line.split_once("SET search_path = ").map(|(_, path)| path.trim())).collect();
+            let entries: Vec<&str> = paths.first().map(|p| p.split(", ").collect()).unwrap_or_default();
+            if paths.len() != 1 || entries.last() != Some(&"pg_temp") || entries.iter().filter(|e| **e == "pg_temp").count() != 1 {
+                wrong.entry(sig.clone()).or_insert_with(|| format!("sets {paths:?} [{at}]"));
+            }
+        }
+    }
+    assert!(checked > 600, "{checked} functions checked");
+    assert!(wrong.is_empty(), "{} functions:\n{}", wrong.len(), wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"));
+}

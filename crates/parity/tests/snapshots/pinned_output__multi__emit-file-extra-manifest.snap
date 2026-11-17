@@ -232,51 +232,51 @@ exit: 0
   "digests": [
     {
       "object": "function auth.acl_grants_doc(text, text, text)",
-      "digest": "c5f6f88599b6c26834d84f5a33fe5e90888fc045d9ba1db293f236cfcb0fb432"
+      "digest": "c1cbe032c0eb57653518dd915989b8cb71873ce3fb0ff99bdf7a5d2f75f259b7"
     },
     {
       "object": "function auth.acl_grants_note(text, text, text)",
-      "digest": "bff9384fc826a1e2c4377cbf92ea790f1f2a281435477ac02106314f93e68226"
+      "digest": "7567de4cde07c20e1fe95d8761ce4d2f4783dff3d099c6a90f17293e3c1bde40"
     },
     {
       "object": "function auth.acl_manage(text, text)",
-      "digest": "32d7f7bd394f430a0adce9e6dcd7cce0a428ef45b2361317883a1306ccdd40d8"
+      "digest": "1098a9e2c2f0ec6c5a4090f1244469756465819a72be669edba1569e0bd8fdcc"
     },
     {
       "object": "function auth.doc_can_edit(text)",
-      "digest": "c23d8bc6389a97870b3fb3af7258abca9b8b60cb2f3ef1fe262af23cf910be54"
+      "digest": "7398b05000b61f0c5350534b6c97db66c3939c78f2de48edb94bf1888da51cbe"
     },
     {
       "object": "function auth.doc_can_view(text)",
-      "digest": "4f4a63afc64aaf7a6c700d426c478bc31976ddfdf0da8fec8c37fe309d32441e"
+      "digest": "c73ad69242948e4363cc7293640903732bd76af4701c01986ba69948e9a55e19"
     },
     {
       "object": "function auth.doc_readable(text, text, text, text)",
-      "digest": "d1a4edfccaa4063740dead36c064de2903e4460571a8b1f30d92b0b7cdd220e6"
+      "digest": "8dfca93b25e4d9ac30303c017b525e997cf2d3f34577f0ca1ac3804d9b7801b7"
     },
     {
       "object": "function auth.docs_accessors(text)",
-      "digest": "8dcf5182b4e19ea700dc932ee9dead2da4bce92d92b217fc310261b14c6a1d8a"
+      "digest": "c323f7d9c7520f22a959f5640138f7ef0317b6812fcc152ae5a53d306d61e615"
     },
     {
       "object": "function auth.docs_admits(text, jsonb)",
-      "digest": "679004d4ffd8bc26dc8868478bcc0fdbae05c6d17be760f4ce55850329b76e62"
+      "digest": "33e02c39af19a96f3ce9b7fc1eb1a2a4465734f75d62823ed8b741d9097322ec"
     },
     {
       "object": "function auth.note_can_edit(text)",
-      "digest": "8a787e549b04f92227d488613f3957cef884b67caf98442a9d73c253ba6c700c"
+      "digest": "d00b574965919da18ee9625ada1d92b81b1d8c78c404f843d867a822762d6b46"
     },
     {
       "object": "function auth.notes_accessors(text)",
-      "digest": "0c6a631f091516223ae58e3896658ee77a37c2128454577acacf148e61a2a0ae"
+      "digest": "fa7114be6c97eac0e25124fe281e82f21bfaec58f536f21bab59728ac57e66fb"
     },
     {
       "object": "function auth.notes_admits(text, jsonb)",
-      "digest": "3e475f7ad4562475b06fafaa2dd0ef3edbe64815faea96d93a032cff87bbe273"
+      "digest": "71c085f5954c225738db74729d73084999f80195711c1a23b444698afd1e5353"
     },
     {
       "object": "function auth.support_grants_reach_set(text)",
-      "digest": "c4a28c1f16c877c51728bfc597181f4beb8b9280b1aa8e712a4730dd2fc0b740"
+      "digest": "10fa24d2f87eec7dd005fc604784b35b303a2d7ce793724483e8df428200d843"
     },
     {
       "object": "policy acl_delete on public.acl",

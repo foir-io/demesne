@@ -17,7 +17,7 @@ fn written_check(changelog: &str, table: &str, indent: &str, event: [&str; 5]) -
 
 fn checking_function(name: &str, body: &str) -> String {
     format!(
-        "CREATE OR REPLACE FUNCTION {name}()\nRETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = pg_catalog, public\nAS $$\nBEGIN\n{body}  RETURN NULL;\nEND;\n$$;\n{}",
+        "CREATE OR REPLACE FUNCTION {name}()\nRETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = pg_catalog, public, pg_temp\nAS $$\nBEGIN\n{body}  RETURN NULL;\nEND;\n$$;\n{}",
         Execute::Public.statement(name, "")
     )
 }
@@ -74,7 +74,7 @@ impl ChangelogTrigger {
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
@@ -218,7 +218,7 @@ impl ObjectChangelogTrigger {
         }
         let f = self.fn_name();
         format!(
-            "CREATE OR REPLACE FUNCTION {f}()\nRETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = pg_catalog, public\nAS $$\nBEGIN\n{body}  RETURN NEW;\nEND;\n$$;\n{}",
+            "CREATE OR REPLACE FUNCTION {f}()\nRETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = pg_catalog, public, pg_temp\nAS $$\nBEGIN\n{body}  RETURN NEW;\nEND;\n$$;\n{}",
             Execute::Public.statement(&f, "")
         )
     }

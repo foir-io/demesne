@@ -231,67 +231,67 @@ exit: 0
   "digests": [
     {
       "object": "function auth.demesne_instant(text)",
-      "digest": "def526b8ec7b734845f42164d6a857e8ab06d597162d805e0f49f2340d25f54c"
+      "digest": "7d7348f34a078edc0c89336f0d788f0b52274f8ae778ce447ab1cba2703405de"
     },
     {
       "object": "function auth.doc_composition_lent(text, text, text)",
-      "digest": "4f49d3fde213971e33dda2ea9166e6684ed4887f801ae44d2912753704df6a52"
+      "digest": "90a02ca9eb32022173df404d7035afaa56bae979467633fe17147ef3bd3e1c3c"
     },
     {
       "object": "function auth.doc_composition_lent_0(text, text, text)",
-      "digest": "ed393de3f7ce9e92db18c1a6c85dadde8d0546bb72135e3967c2b634e8982b1b"
+      "digest": "40a23eac16eacf999181d71c9975899768be4c99ca76160daf8d510b7c190ac3"
     },
     {
       "object": "function auth.doc_shared_keyed(text, text, text)",
-      "digest": "d3ea4fe26841d524e73c3f308a4479b0ac6a85211796b0401a63e5eeae7f62b0"
+      "digest": "412ae2142c83dbc6542842461a7079e47924ab15156d0093cc3ad367083a2ae3"
     },
     {
       "object": "function auth.doc_shared_keyed_inside(text, text, text)",
-      "digest": "829f7d295c31cfabf2a42304497e291c4a1e3a2212b9e19632caa16142ba545b"
+      "digest": "3df628f95fdf40c8b123a2e62216ce19378f05bf550ca4fd36430c3f60268437"
     },
     {
       "object": "function auth.doc_terms_hold(text, text, jsonb)",
-      "digest": "9c5d7bd25f831ef6eb415c176a2e5796b8fca992eb2b5abd53173f976797e960"
+      "digest": "f599b55d7094d5b6fdb2748f1e8daf07088d7b553cccc26aa8b4b99a1f096791"
     },
     {
       "object": "function auth.doc_terms_hold_inside(text, text, jsonb)",
-      "digest": "fe7d3480e03cd0a474153c66240158fc9800d6f4a978f7ee85e2c590f259fd6b"
+      "digest": "95e3e408bc37a0220b4628ccf4118d4536e606f6bf540b6dd8bc67e58b4ae7e8"
     },
     {
       "object": "function auth.keeper_memberin_space(text, text)",
-      "digest": "ce8cfab417ec6480c81de292453ccd393930819cad446d2e578737114488ae17"
+      "digest": "eeb4f2297bf967e04be83844926fc3db3c88d74dd2f752eb43df7497dde5b7b3"
     },
     {
       "object": "function auth.live_skin(text)",
-      "digest": "c391215b439fb74bdbd1037cabb03d4138f024c9aad1f2505d6208d30a90d914"
+      "digest": "a95072689a83d232a1d723d00ef8ae11934f3d598b6638028730be681c1c5a0c"
     },
     {
       "object": "function auth.live_skin_own(text)",
-      "digest": "9ec3cf7997619404cfb50a0c17cbb260136debb46f30ee17abe7f4d95ef0e94c"
+      "digest": "9a2d1456b83bcbab36cc4a1d895f1bfc5d029ac1c03b09b9d5958f0db3f79a61"
     },
     {
       "object": "function auth.paths_maintain()",
-      "digest": "562b0c1ae64f6f31eae0c705639805824820207b1cc0c0764727bfce082f44b5"
+      "digest": "5ff3ccaafa91b96c668ed5852ce10c648aff1576cd9f388d03d2353dce3f60ce"
     },
     {
       "object": "function auth.paths_path(text)",
-      "digest": "5797ed099313b025c9923999b34256627ced6b2701a4fcd234479bd2dbf86489"
+      "digest": "a916d315b9fdd9aea156957f419d123e0bcda74d80f7c6442a6434cfce97edc9"
     },
     {
       "object": "function auth.rule_slots_declared_by_rule(text)",
-      "digest": "39602b2c488c4bc71c0bb1fc2ddf72a397c679af9c0ab1e32ea0264417f3aab2"
+      "digest": "dc9b508dc55904a50e22f0f8949eac79d383fd8b4208e4ea8a303e4c27700161"
     },
     {
       "object": "function auth.spaces_accessors(text)",
-      "digest": "5696193640fef7241a5eedc6057339d1c6b79d6ac460e14d471f24f92aa6f7a9"
+      "digest": "ffe22328d468c8b86b55af44185e45101172bc671bd062a367d3cddabf8bdbaf"
     },
     {
       "object": "function auth.spaces_admits(text, jsonb)",
-      "digest": "2227e4644667a5d3db833d3c853644d79aa3eddf28276283436c3aedc8ed68b2"
+      "digest": "33c9d2e8cbf9344a5f4449e51019e6f891a4a235ae72c0c551c93dda007516de"
     },
     {
       "object": "function auth.trail_hops_declared_by_trail(text)",
-      "digest": "a6ef182ab2a2b53d205db8425ef84210ed014f12abe7aac9a01b813642868fe0"
+      "digest": "e459ccaacc1488803c6fc66afceb58734caa55c7b27ebc126892df47238adc51"
     },
     {
       "object": "policy banners_select on public.banners",

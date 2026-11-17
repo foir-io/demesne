@@ -81,15 +81,15 @@ exit: 0
   "digests": [
     {
       "object": "function auth.is_tenant_staff(text, text)",
-      "digest": "6ada980ecbd77503e35ec6172d37ceb743755115112b74d4c56662a8567d038a"
+      "digest": "bc08631e2e555930401366607a399baec2ab82c2043b5d4e889400b50187d874"
     },
     {
       "object": "function auth.staff_has_perm(text, text, text, text)",
-      "digest": "a47d7cfa4af39972a1c8d08d10a954adebcde790a04acc506a2511a72046cb44"
+      "digest": "2b071d28e14db072ef936614e28654f0ededbdff192ea82f2a8ec59757238f34"
     },
     {
       "object": "function auth.staff_has_resource_role(text, text, text)",
-      "digest": "08425eddbc705aea8d66f6261b3eeadaf8982b39f9853d1b2821af3c6e5394ca"
+      "digest": "d622c013b7053e4de79a10ac039140f5490c53e6c5108f6a642b100ce36c6c5a"
     },
     {
       "object": "policy resources_select on public.resources",

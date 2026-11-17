@@ -96,7 +96,7 @@ impl ClosureTrigger {
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, {ts}
+SET search_path = pg_catalog, {ts}, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'DELETE') THEN
@@ -146,7 +146,7 @@ $$;",
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, {ts}
+SET search_path = pg_catalog, {ts}, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
@@ -237,7 +237,7 @@ impl GroupTrigger {
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, {ts}
+SET search_path = pg_catalog, {ts}, pg_temp
 AS $$
 BEGIN
   -- Fast path: nothing to close over and nothing stale to clear. Load-bearing
@@ -348,7 +348,7 @@ impl MaterializedFlat {
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   -- Serialize concurrent rebuilds (CONCURRENCY): a full DELETE+INSERT under READ
@@ -385,7 +385,7 @@ $$;",
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = {s}
+SET search_path = {s}, pg_temp
 AS $$
 DECLARE
   v_missing integer;

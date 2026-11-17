@@ -190,7 +190,7 @@ impl GenFn {
         let mut sql = self.before_sql();
         write!(
             sql,
-            "CREATE OR REPLACE FUNCTION {}.{}({})\nRETURNS {}\nLANGUAGE {}\nSTABLE\n{}SECURITY DEFINER\nSET search_path = {}\nAS $$\n{}\n$$;",
+            "CREATE OR REPLACE FUNCTION {}.{}({})\nRETURNS {}\nLANGUAGE {}\nSTABLE\n{}SECURITY DEFINER\nSET search_path = {}, pg_temp\nAS $$\n{}\n$$;",
             self.schema(),
             self.name,
             self.sig(),

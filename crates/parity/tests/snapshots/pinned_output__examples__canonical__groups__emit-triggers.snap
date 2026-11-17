@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION auth.group_closure_rebuild()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   -- Fast path: nothing to close over and nothing stale to clear. Load-bearing

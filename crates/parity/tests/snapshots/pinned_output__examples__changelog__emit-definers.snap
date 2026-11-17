@@ -10,7 +10,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT p_member_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM note_grants WHERE note_id = p_note_id AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
 $$;
@@ -21,7 +21,7 @@ RETURNS TABLE(source text, principal_kind text, principal_id text, access text, 
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text[] AS via_claim_keys, NULL::text[] AS via_claim_values
     FROM (
@@ -43,7 +43,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE

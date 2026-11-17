@@ -62,7 +62,7 @@ impl AsyncIndex {
         let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS xid8
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
   h xid8 := pg_snapshot_xmin(pg_current_snapshot());
@@ -107,7 +107,7 @@ $$;",
         let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS xid8
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE h xid8 := pg_snapshot_xmin(pg_current_snapshot());
 BEGIN
@@ -143,7 +143,7 @@ $$;",
         let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}({sig})
 RETURNS TABLE(allowed boolean, as_of xid8)
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 AS $$
   SELECT EXISTS(SELECT 1 FROM {b} WHERE resource_id = p_resource AND principal_kind = p_kind AND principal_id = p_principal),
          COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8);
@@ -159,7 +159,7 @@ $$;",
     pub fn watermark_fn_sql(&self) -> String {
         let f = self.fn_name("watermark");
         let create = format!(
-            "CREATE OR REPLACE FUNCTION {f}()\nRETURNS xid8\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public\nAS $$ SELECT COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8); $$;",
+            "CREATE OR REPLACE FUNCTION {f}()\nRETURNS xid8\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp\nAS $$ SELECT COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8); $$;",
             cur = self.cursor,
             key = quote_literal(self.index_key())
         );

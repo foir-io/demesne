@@ -10,7 +10,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT descendant_id FROM paths WHERE ancestor_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
@@ -22,7 +22,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT ancestor_id FROM paths WHERE descendant_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
@@ -34,7 +34,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT descendant_id FROM paths WHERE ancestor_id = p_node AND p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
@@ -46,7 +46,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT ancestor_id FROM paths WHERE descendant_id = p_node AND p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
@@ -58,7 +58,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT ancestor_id, depth::integer FROM paths WHERE descendant_id = p_node ORDER BY depth DESC, ancestor_id;
 $$;
@@ -70,7 +70,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM spaces WHERE spaces.id = p_space_id AND ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((status = 'open')))));
 $$;
@@ -82,7 +82,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND name = space_named.p_name);
 $$;
@@ -93,7 +93,7 @@ RETURNS bigint
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT count(*) FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id'));
 $$;
@@ -105,7 +105,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT id FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND name = space_by_name.wanted ORDER BY id LIMIT 1;
 $$;
@@ -117,7 +117,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT x.v FROM (
     SELECT t.color AS v, c.depth AS d FROM paths c JOIN themes t ON t.folder_id = c.ancestor_id WHERE c.descendant_id = p_node AND t.color IS NOT NULL
@@ -133,7 +133,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT x.v FROM (
     SELECT t.id AS v, c.depth AS d FROM paths c JOIN skins t ON t.folder_id = c.ancestor_id WHERE c.descendant_id = p_node AND t.id IS NOT NULL AND t.status = 'live'
@@ -149,7 +149,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT auth.live_skin(p_node) WHERE p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
@@ -160,7 +160,7 @@ RETURNS TABLE(id text, title text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT folders.id::text, folders.name::text FROM folders WHERE estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (id IN (SELECT auth.paths_ancestors((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))));
 $$;
@@ -171,7 +171,7 @@ RETURNS TABLE(id text, title text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT spaces.id::text, spaces.name::text FROM spaces WHERE estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'member');
 $$;
@@ -327,7 +327,7 @@ CREATE OR REPLACE FUNCTION auth.paths_maintain()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'DELETE') THEN

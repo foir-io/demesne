@@ -691,6 +691,16 @@ fn upgrade_from_v4(config: &Config, name: &str, src: &str) -> Option<(usize, usi
     for f in &current.functions {
         assert!(live(&mut tx, f), "{name}: {f} is missing after the migration");
     }
+    let searches_pg_temp_last = |tx: &mut Transaction<'_>, f: &str| -> bool {
+        tx.query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_proc p, unnest(p.proconfig) c WHERE p.oid = to_regprocedure($1) AND c LIKE 'search_path=%, pg_temp')",
+            &[&f],
+        )
+        .expect("the search path")
+        .get(0)
+    };
+    let unsafe_path: Vec<&String> = current.functions.iter().filter(|f| !searches_pg_temp_last(&mut tx, f)).collect();
+    assert!(unsafe_path.is_empty(), "{name}: after the migration every function searches pg_temp last: {unsafe_path:?}");
     tx.rollback().expect("rollback");
     Some((gone.len(), current.functions.len()))
 }

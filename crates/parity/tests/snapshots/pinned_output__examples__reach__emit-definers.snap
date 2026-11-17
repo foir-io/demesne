@@ -10,7 +10,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT estate_id FROM approvals WHERE holder_id = user_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR space_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'space_id')) AND (folder_id IS NULL OR (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id') IS NULL OR folder_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')) AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub');
 $$;
@@ -22,7 +22,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT estate_id FROM approvals WHERE holder_id = user_id AND ended_at IS NULL AND expires_at > now() AND space_id IS NULL AND folder_id IS NULL AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub');
 $$;
@@ -33,7 +33,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR check_space_id = '' OR space_id = check_space_id)));
 $$;
@@ -44,7 +44,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM approvals WHERE holder_id = user_id AND estate_id = check_estate_id AND ended_at IS NULL AND expires_at > now() AND (space_id IS NULL OR check_space_id = '' OR space_id = check_space_id) AND (folder_id IS NULL OR check_folder_id = '' OR folder_id = check_folder_id)));
 $$;
@@ -56,7 +56,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT descendant_id FROM paths WHERE ancestor_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
@@ -68,7 +68,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT ancestor_id FROM paths WHERE descendant_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
@@ -80,7 +80,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant AND (p_ancestor = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id') OR p_descendant = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')));
 $$;
@@ -92,7 +92,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM catalogs WHERE catalogs.id = p_catalog_id AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((folder_id IS NULL OR folder_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')) OR folder_id IN (SELECT auth.paths_up_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))) OR (SELECT current_setting('request.jwt.claims', true)::json ->> 'view_mode') = 'all') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))));
 $$;
@@ -104,7 +104,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM catalogs WHERE catalogs.id = p_catalog_id AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))));
 $$;
@@ -115,7 +115,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id))))) FROM (SELECT check_folder_id AS id, row_estate_id AS estate_id, row_space_id AS space_id) AS folders;
 $$;

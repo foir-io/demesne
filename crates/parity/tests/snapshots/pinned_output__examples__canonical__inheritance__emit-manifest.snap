@@ -64,11 +64,11 @@ exit: 0
   "digests": [
     {
       "object": "function auth.folder_closure_maintain()",
-      "digest": "f51788e54bc071291124deec6b0418837dc12c0bbafd509911e957c7bafcb722"
+      "digest": "50df046896fb76ecd1f5d0b7b36d8a964c34f8a2c6c80bf5306966f218318522"
     },
     {
       "object": "function auth.folder_closure_reachable(text, text)",
-      "digest": "7c39d075fae10a8a881b26c66ce3ab3acef4fb549eadbab35ee59a132acb915d"
+      "digest": "35aeb15a5393816a599cd006e9401725f3697720b64c231c1def2cacbe5dac40"
     },
     {
       "object": "policy documents_select on public.documents",

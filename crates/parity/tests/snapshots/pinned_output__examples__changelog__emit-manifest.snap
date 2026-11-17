@@ -108,23 +108,23 @@ exit: 0
   "digests": [
     {
       "object": "function auth.note_grants_changelog()",
-      "digest": "f84716752d1a75d2d334b88aca03397e20fb789447da3fab959cef7f1b7c87b6"
+      "digest": "427c4884613253add8ec8d5f1f3d6ba3ca96eaa3f314cf100aa3ab3b6db74cb1"
     },
     {
       "object": "function auth.note_grants_grants(text, text, text)",
-      "digest": "1f2b0ec07804b7f5a1d387a4786cf22cc2c348b77470a318cd7deacdaa092762"
+      "digest": "c7327db31ce322a1caa0ad6160f86e3a398c5cf9dcd5f67448b1197e103f8c7a"
     },
     {
       "object": "function auth.notes_accessors_conditional(text)",
-      "digest": "9ac6c8e2f251c28245683030483f45558b619ee287222f075cbf2baa716a22f4"
+      "digest": "743937f7106202d802747f83b1f91d57946e8766b5bfe273c2bf2fd38229c201"
     },
     {
       "object": "function auth.notes_admits(text, jsonb)",
-      "digest": "f54d3c848b0aad7b1e7c236b762cad03f4824bbb7b0b095a90ad82f2eded164c"
+      "digest": "2348f08fae39b6c3ff8d4fd5d06db9cf7dcbee7733d0e809133798c16e3ac498"
     },
     {
       "object": "function auth.notes_obj_changelog()",
-      "digest": "13e0c75e40ce89aafe3ce52f097f6f2d6cc15a46d428306b892032dd6ef24ea6"
+      "digest": "02f39b09fb3d495a9eeace6a7b90babaaa217120063480bd04a9ae9235d38c4e"
     },
     {
       "object": "index _authz_changelog_principal_idx on auth._authz_changelog",

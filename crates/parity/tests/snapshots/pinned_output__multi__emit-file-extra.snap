@@ -10,7 +10,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT tenant_id FROM support_grants WHERE holder_id = user_id AND ended_at IS NULL AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub');
 $$;
@@ -22,7 +22,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT p_member_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id') AND (EXISTS (SELECT 1 FROM acl WHERE resource_id = p_note_id AND resource_type = 'note' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
 $$;
@@ -33,7 +33,7 @@ RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT 'owner'::text AS source, 'member'::text AS principal_kind, owner_id AS principal_id, 'write'::text AS access
     FROM notes WHERE id = p_id AND owner_id IS NOT NULL
@@ -54,7 +54,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_doc_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'read') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
 $$;
@@ -66,7 +66,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -92,7 +92,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM notes WHERE notes.id = p_note_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_note((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), notes.id, 'write')))));
 $$;
@@ -103,7 +103,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT (CASE p_type WHEN 'doc' THEN (SELECT auth.doc_can_edit(p_id)) WHEN 'note' THEN (SELECT auth.note_can_edit(p_id)) ELSE false END);
 $$;

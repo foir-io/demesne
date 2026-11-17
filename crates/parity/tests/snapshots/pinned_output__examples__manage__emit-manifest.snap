@@ -60,11 +60,11 @@ exit: 0
   "digests": [
     {
       "object": "function auth.member_has_perm(text, text, text, text)",
-      "digest": "307f45c8c0c36dfa3890069662935558b3f1c7dec7f444e80014b142b45f9780"
+      "digest": "a2d6ccfacadac5191dbb32d0efac0763cb120a21b8d8fade1b932989dfdb04cd"
     },
     {
       "object": "function auth.member_perm_implied_by(text)",
-      "digest": "4c78b5b8e9669a3c0bca3b6062336398332c15e4e1bcded3c214b31b74ae20d0"
+      "digest": "f89121d1550049bb03607b5d1e9fce42e723996fc3558de89c763306783d2467"
     },
     {
       "object": "policy records_select on public.records",

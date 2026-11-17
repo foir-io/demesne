@@ -94,15 +94,15 @@ exit: 0
   "digests": [
     {
       "object": "function auth.operator_has_perm(text, text, text, text)",
-      "digest": "b707ad8fda4de1021b946296aa25c04d49aaa3bbdf5968a2daed16465884285d"
+      "digest": "1e92b3664c4174ef4edf9f590d98b7c85300e38bf2d51223f47b3e57f8b86da7"
     },
     {
       "object": "function auth.operator_perm_implied_by(text)",
-      "digest": "91cbdb344a2fb93e8b1f17c4f7099230ed856276b3dbd07ad0387f3d9771aaef"
+      "digest": "b4737c7b5bd1b116a9c5ecb9605e95e831802d936a87d6b8fdb8f085a0c2b02a"
     },
     {
       "object": "function auth.platform_has_perm(text, text)",
-      "digest": "210ee2c9250a8de39fc2180b43e66a3eeaa9dd360d125921110b6a876023df44"
+      "digest": "08c7cb2d7875638b5a1b9ce5d5c97418ae4157abd48cc26d4585292931010255"
     },
     {
       "object": "policy documents_select on public.documents",

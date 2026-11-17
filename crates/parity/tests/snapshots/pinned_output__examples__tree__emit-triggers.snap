@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION auth.paths_maintain()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'DELETE') THEN

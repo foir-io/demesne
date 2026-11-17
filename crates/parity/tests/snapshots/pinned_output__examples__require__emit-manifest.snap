@@ -67,7 +67,7 @@ exit: 0
   "digests": [
     {
       "object": "function auth.admin_has_perm(text, text, text, text)",
-      "digest": "06903c6875811925d2e1ee33fe16533ebeb63b8d55f8c10a35ae2c01ec777661"
+      "digest": "ae8e7f2ab1a019f6100e118c94b622d3076ab4f3645cc1adee871eb09a261f63"
     },
     {
       "object": "policy invitations_insert on public.invitations",

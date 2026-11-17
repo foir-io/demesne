@@ -60,15 +60,15 @@ exit: 0
   "digests": [
     {
       "object": "function demesne.note_acl_grants(text, text, text)",
-      "digest": "2a41fdb5f6700bb445f7ebd0f5ac753e60f834e5b21d830b8b181c3aef501e8c"
+      "digest": "995c6d9e96d259e443ffc25f58037089cd94b7ac91eebe1bd545600b8bcff3cf"
     },
     {
       "object": "function demesne.notes_accessors_conditional(text)",
-      "digest": "a24de5f495fcf4ec049d742ff2550ea68996d4deca5e79a6767a013741dd1764"
+      "digest": "ae6aafccc60bbf04071d013d4c4feb19c95ca520b679c447193a7606cc90dd41"
     },
     {
       "object": "function demesne.notes_admits(text, jsonb)",
-      "digest": "f3b9f30642eccc43f98969ee35555a2a27ba8be28f0b801c7669246fcfa190ca"
+      "digest": "353797bf4256c76bde236e562d77c03d281767a01c84b223d97f1604a0861954"
     },
     {
       "object": "policy notes_select on public.notes",

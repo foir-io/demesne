@@ -181,39 +181,39 @@ exit: 0
   "digests": [
     {
       "object": "function auth.asset_acl_grants(text, text, text)",
-      "digest": "ea78d70d2ffa26511e22b3e6842363816164e865ba8c1ab554c92d9b40013706"
+      "digest": "fc37f317b746dfe2e322fbcf9ee3d57679140c8a07b5db634b835533f11e8e60"
     },
     {
       "object": "function auth.assets_accessors_conditional(text)",
-      "digest": "44636811abfe564b233576dc9cf831fc122eb1cc29b8d66dfb10060f43fc3082"
+      "digest": "ac03be8f0daed41212addcdd7ccd7f31c4c9f7ce08c0bd2fae27a82cb333921e"
     },
     {
       "object": "function auth.assets_admits(text, jsonb)",
-      "digest": "2f817a626f850d5e762fb9a66ab5667fecfe846d693f47a2dfee8511d5ee896c"
+      "digest": "8ec797ed612f97788f862c71b977a07a54f04e1a420d056092bdbc507f4a8e9b"
     },
     {
       "object": "function auth.crew_has_space_role(text, text, text)",
-      "digest": "4e663655d795a5f1f24c97b0a61385987b364143dc9cdb31212b99503c2f5e7f"
+      "digest": "60b437261496e870f985e6816d1bfe33e5824447d0a87e299604293ad75181e4"
     },
     {
       "object": "function auth.is_ops(text)",
-      "digest": "e1d703c72b4bd91bc25c15c4fa909208c3a5cf37e8dccbbea64480d0f8318d82"
+      "digest": "807c75eb4dc609308587b74c0c93dcb6891af75c4911cb14e16dca9332291a40"
     },
     {
       "object": "function auth.is_tenant_crew(text, text)",
-      "digest": "975789e5977df83b75fc970c379e4620bf33352f1b8b9ca3fa34e0c500a1c6ef"
+      "digest": "7162edc4eb6136454f82ac26c233da1c23bbcdc09bd0663a946c6ec580793b1a"
     },
     {
       "object": "function auth.member_can_access_asset(text, text, text)",
-      "digest": "fb612f7df0f6e06662535db2ef20b43dc11f5ed285c16ffe84a66bfe9f4614d9"
+      "digest": "65584b0f29678e9b237ff330e9774572a73b8fbe9f84682e011c16e17c9427be"
     },
     {
       "object": "function auth.spaces_accessors(text)",
-      "digest": "df1c3db42f33bedf36c1b9f997b786ab925cc4dec7bc199b1d98768760761aba"
+      "digest": "058059aac43bad08a0d6f2d78000aa987b2b6bf61ba880cbe0e31309f80a46a4"
     },
     {
       "object": "function auth.spaces_admits(text, jsonb)",
-      "digest": "e355f8b3cf8b9a8e863112bbdd9b68cb45a5f4ea5c6cf2601f9f33993b1a7dde"
+      "digest": "2903989fbd3def43a30bb0d4a26ad4e3d351b5dc8a17ede3ba1ae8dc88f3a1db"
     },
     {
       "object": "policy assets_delete on public.assets",

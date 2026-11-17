@@ -12,6 +12,26 @@ entry), and a call to a generated function whose arguments are the same for
 every row, which now runs once per statement. Its generated functions change: see "Breaking" first. The Go
 module's API doesn't change, so it is `go/v1.6.0`.
 
+### Security: a temporary table could stand in for a table a generated function reads
+
+Every generated function runs as its owner and names the tables it reads
+without a schema, relying on the search path it sets. Postgres searches a
+session's temporary schema before that path unless the path names `pg_temp`.
+A caller who may create temporary tables, as PUBLIC may in a new database,
+could create one named like a table a function reads (a subject's membership
+table, a role store's assignments or roles, a grant table, a group's
+closure) and the function read the caller's rows instead: a check answered
+from rows the caller wrote. A trigger that keeps a closure in step could
+likewise write the caller's table and leave the real one stale.
+
+Every generated function now sets its search path with `pg_temp` last. Every
+release from v1.0.0 has this, and so does the Go engine's v0.93.x. Upgrading
+fixes it: `emit migrate` from a v4.0.0 manifest writes the whole SQL, so every
+function is created again, and `diff` names any live function whose
+definition still lacks `pg_temp`. A live test shadows every table a spec reads
+with forged rows in a session that may create temporary tables, and every
+check, and both triggers, still use the real tables.
+
 ### Breaking: a generated function answers only about the caller, or PUBLIC cannot run it
 
 Every generated function is `SECURITY DEFINER`, and Postgres lets PUBLIC

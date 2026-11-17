@@ -181,39 +181,39 @@ exit: 0
   "digests": [
     {
       "object": "function auth.doc_acl_grants(text, text, text)",
-      "digest": "b30e5787cc60344eb3ad28589a26003af6efd286c1bd6b4b605261d4f2a85902"
+      "digest": "168487488b383902fd597699bc0dcc6bd67c2e17b030837fbea05363ab6fe0ac"
     },
     {
       "object": "function auth.docs_accessors_conditional(text)",
-      "digest": "a30e3e502304c673c6844e252deea52527ebb04d4d7d8a24d0eefaad9515fc40"
+      "digest": "0de786ede305bdb5fa3033b14412f928f8cf366bcf563ed553f892a6d45e2dc1"
     },
     {
       "object": "function auth.docs_admits(text, jsonb)",
-      "digest": "96c7fa1cbf68401dcd79e0f4d7a618cdd7213dc45026115e3ded9937e84a57cc"
+      "digest": "f2b322933cd38edf0547ead6c3ef32c800c87ae243448ba0513589b7800021df"
     },
     {
       "object": "function auth.is_root(text)",
-      "digest": "cdc2b265d6a605ad02a8fe841b1e04d8a7feea57cc387315ef4618659c0a6e4c"
+      "digest": "fec43e18f664c4cbe5ad90c73981cc106ae320a4fd1ad01f5accbdf86ec2ecf2"
     },
     {
       "object": "function auth.is_tenant_staff(text, text)",
-      "digest": "416b4e94b06944a795a6824c1ef5d91b477c0e88066ec8f5e200a063ac8a4c5b"
+      "digest": "8a539dc72aa461a681feab07793db0e8221a4af7c18fd5666f22060cc0022611"
     },
     {
       "object": "function auth.member_can_access_doc(text, text, text)",
-      "digest": "9d53fb45818afa9445f42424f82ca9f59510b69d7d13f1b14ff133051f9531fd"
+      "digest": "42d3e14ce5e1abade886b1738aaf74d4ee7235ea123c7d766e386da04dc90406"
     },
     {
       "object": "function auth.staff_has_workspace_role(text, text, text)",
-      "digest": "603f6af8754512c4e08204355af33c8f239a9e97c4c8ca4cb3abffbb28146049"
+      "digest": "2565474b1c6d98b7d68fb185320f3e19787ba41ca37bb8c6b3bcdbcd2cac44e6"
     },
     {
       "object": "function auth.workspaces_accessors(text)",
-      "digest": "3e935538c8e64875378bc8b378afe3764f4c596900c92393ceee712c504e816f"
+      "digest": "2739a1c025859c0a21c03435d40e23b88fecead29beda573fc7364c77fb6a393"
     },
     {
       "object": "function auth.workspaces_admits(text, jsonb)",
-      "digest": "24fcaa7f60078599bf7d5fb38663d35a28a4898f3c7ea679539b2b4d85dd8ebd"
+      "digest": "77ae93e0e2ea33d48155bbac6a4784fdeac9940098d4471dbd0c9f0f6549da31"
     },
     {
       "object": "policy docs_delete on public.docs",
