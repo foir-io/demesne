@@ -492,14 +492,24 @@ policy calls.
 
 What breaks: on a spec whose identifiers are not `text`, a borrow's function
 now takes that type, so it is a new function and a migration drops the `text`
-one. So do a grant relation's check (`<acl>_grants…`), a `@kernel` check and a
-composition's function, whose id parameters were `text` too: a spec with
+one. So do a grant relation's check (`<acl>_grants…`), a `@kernel` check, a
+composition's function, a group's `<closure>_member`, a materialized group's
+`<flat>_member` and an undeclared closure's `_reachable`, whose id parameters
+were `text` too: a spec with
 `identifiers integer` or `uuid` and a grant relation could not be applied
 before, since Postgres compares an integer or uuid column with a `text`
 parameter only through a cast the SQL did not write. A corpus test now holds
 every generated parameter that names an id to the spec's identifier type, and
 `testdata/ids` holds an integer and a uuid spec that a live test applies and
-judges. SQL of your own that names the dispatch copy's argument (`p_id => …`)
+judges.
+
+A generated function's parameters are now typed values, `demesne_emit_sql::Param`
+with a `ParamKind`, and `GenFn::params` replaces the `sig` string, which
+`GenFn::sig()` renders. A parameter that holds an id is `ParamKind::Id`, and
+takes the spec's identifier type when the SQL is written, so no generator can
+give one another type. The corpus test reads each function's declared
+parameters, checks every id against the SQL, and refuses a parameter whose
+name says id that its generator declared otherwise. SQL of your own that names the dispatch copy's argument (`p_id => …`)
 names `p_<object>_id` instead.
 
 ### A generated function called with the same arguments for every row runs once per statement

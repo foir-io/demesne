@@ -1,4 +1,5 @@
 use crate::Sql;
+use crate::genfn::Param;
 use crate::genfn::{Bound, GenFn, Language};
 use crate::rls::conditions_fn;
 use demesne_syntax::{Object, Relation, Repr, ViaConditions};
@@ -81,7 +82,7 @@ fn operators(sql: &Sql, c: &ViaConditions) -> Vec<(String, String)> {
 fn instant_definer() -> GenFn {
     GenFn {
         name: INSTANT_FN.into(),
-        sig: "p_text text".into(),
+        params: vec![Param::typed("p_text", "text")],
         returns: "timestamptz".into(),
         strict: true,
         raw_body: true,
@@ -98,7 +99,7 @@ impl Sql<'_> {
         for (name, holds) in operators(self, c) {
             write!(cases, "\n      WHEN '{name}' THEN holds := {holds};").expect("fmt::Write for String never fails");
         }
-        let key_arg = if c.key.is_some() { ", p_key text" } else { "" };
+        let key_arg = c.key.as_ref().map(|_| Param::typed("p_key", "text"));
         let keyed = c.key.as_ref().map(|k| format!(" AND c.{k} = p_key")).unwrap_or_default();
         let read = |name: &str, value: &str| format!("    {name} := {value};\n");
         let caller = [
@@ -136,7 +137,7 @@ impl Sql<'_> {
         };
         GenFn {
             name,
-            sig: format!("p_object {}{key_arg}, p_values jsonb", self.s.id_type()),
+            params: [Param::id("p_object")].into_iter().chain(key_arg).chain([Param::typed("p_values", "jsonb")]).collect(),
             raw_body: true,
             language: Language::Plpgsql,
             body: body(&asked),

@@ -29,8 +29,8 @@ fn the_policy_passes_the_row_the_element_and_the_callers_values_read_once() {
     assert!(using.contains(&format!("auth.doc_fits_hold(docs.id, {FACTS})")), "{using}");
     assert!(using.contains(&format!("auth.doc_matches_hold(docs.id, demesne_element.v, {FACTS})")), "{using}");
     let get = |name: &str| defs.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("no {name}"));
-    assert_eq!(get("doc_fits_hold").sig, "p_object text, p_values jsonb");
-    assert_eq!(get("doc_matches_hold").sig, "p_object text, p_key text, p_values jsonb");
+    assert_eq!(get("doc_fits_hold").sig(), "p_object text, p_values jsonb");
+    assert_eq!(get("doc_matches_hold").sig(), "p_object text, p_key text, p_values jsonb");
     assert_eq!(defs.iter().filter(|d| d.name == "demesne_instant").count(), 1, "one instant parser for the spec");
 }
 

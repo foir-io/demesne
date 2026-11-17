@@ -37,7 +37,7 @@ fn a_point_check_is_the_borrow_of_its_permission_on_the_one_row_its_key_names() 
         let borrow = named(&defs, borrow);
         assert!(borrow.body.contains("ledgers.id = p_ledger_id AND "), "the borrow's key: {}", borrow.body);
         let point = named(&defs, "ledger_open");
-        assert_eq!((point.sig.as_str(), point.strict, point.principal.as_deref()), ("id text", true, None), "{}", point.create_sql());
+        assert_eq!((point.sig().as_str(), point.strict, point.principal.as_deref()), ("id text", true, None), "{}", point.create_sql());
         assert_eq!(point.body, borrow.body.replace("ledgers.id = p_ledger_id AND ", "ledgers.id = $1 AND "), "{check}");
         assert!(!point.body.contains("= id") && !point.body.contains("(id)"), "the argument is never read by its name: {}", point.body);
     }
@@ -63,7 +63,7 @@ fn a_point_check_is_the_adopters_to_call_and_answers_without_a_principal() {
     demesne_emit_sql::validate(&s).expect("a check is a use of the permission it lends");
     let defs = Sql::new(&s).emit_definers().expect("compiles");
     let check = named(&defs, "ledger_open");
-    assert_eq!(check.sig, "ledger text");
+    assert_eq!(check.sig(), "ledger text");
     assert_eq!(check.execute, Execute::Public, "{}", check.create_sql());
     assert!(check.create_sql().contains("SECURITY DEFINER"), "{}", check.create_sql());
     assert!(!defs.iter().any(|d| d.name.starts_with("ledger_can_")), "no borrow, so no borrow function");

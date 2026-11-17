@@ -50,7 +50,7 @@ fn emitted() -> Vec<Emitted> {
 }
 
 fn parameters(f: &GenFn) -> Vec<&str> {
-    f.sig.split(',').filter_map(|p| p.split_whitespace().next()).collect()
+    f.params.iter().map(|p| p.name.as_str()).collect()
 }
 
 fn bound(f: &GenFn, parameter: &str) -> bool {
@@ -152,10 +152,10 @@ fn a_parameter_the_generator_filled_from_a_principal_is_the_callers_own_in_every
     for e in &all {
         for f in e.defs.iter().filter(|f| f.execute == Execute::Public) {
             let Some(principal) = f.principal.as_deref() else { continue };
-            assert!(parameters(f).contains(&principal), "{}({}) marks {principal}, which it does not take [{}]", f.name, f.sig, e.path);
+            assert!(parameters(f).contains(&principal), "{}({}) marks {principal}, which it does not take [{}]", f.name, f.sig(), e.path);
             checked += 1;
             if !bound(f, principal) {
-                unbound.insert(format!("{}({}) takes {principal} unbound", f.name, f.sig));
+                unbound.insert(format!("{}({}) takes {principal} unbound", f.name, f.sig()));
             }
         }
     }
@@ -186,7 +186,7 @@ fn a_function_public_may_run_that_any_call_passes_a_claim_binds_an_argument_to_t
             }
             asked += 1;
             if !binds_any(f) {
-                unbound.insert(format!("{}({}) is passed the caller's claim and binds nothing [{}]", f.name, f.sig, e.path));
+                unbound.insert(format!("{}({}) is passed the caller's claim and binds nothing [{}]", f.name, f.sig(), e.path));
             }
         }
     }
@@ -213,7 +213,7 @@ fn a_function_is_public_only_where_a_policy_calls_it_or_a_spec_line_makes_it_the
             public += 1;
             let call = format!("{}.{}(", f.schema(), f.name);
             if !callable.contains(&f.name) && !e.callers.iter().any(|t| t.contains(&call)) {
-                stray.insert(format!("{}({}) [{}]", f.name, f.sig, e.path));
+                stray.insert(format!("{}({}) [{}]", f.name, f.sig(), e.path));
             }
         }
     }
@@ -237,7 +237,7 @@ fn every_function_a_policy_or_the_application_surface_calls_is_one_the_caller_ma
             }
             calls += 1;
             if f.execute != Execute::Public {
-                refused.insert(format!("{}({}) [{}]", f.name, f.sig, e.path));
+                refused.insert(format!("{}({}) [{}]", f.name, f.sig(), e.path));
             }
         }
     }
@@ -480,7 +480,7 @@ fn a_copy_is_emitted_only_under_a_name_postgres_keeps_whole_and_nothing_else_has
     let (_, defs) = the_chains_example_with(taken);
     let named: Vec<&GenFn> = defs.iter().filter(|d| d.name == "doc_shared_keyed_inside").collect();
     assert_eq!(named.len(), 1, "the name is the lookup's");
-    assert_eq!(named[0].sig, "p_node text");
+    assert_eq!(named[0].sig(), "p_node text");
     assert!(all_sql(&defs).contains("auth.doc_shared_keyed((SELECT current_setting("), "so a chain function asks the bound function");
 }
 

@@ -1,4 +1,5 @@
 use crate::definers::Definers;
+use crate::genfn::Param;
 use crate::genfn::{Bound, DefinerArm, Execute, GenFn, Language};
 use crate::rls::{Virtual, leaf};
 use crate::{Binds, Sql};
@@ -188,10 +189,10 @@ impl<'a> Sql<'a> {
         if arms.is_empty() {
             return Err(format!("object {} composition relation {}: object has no cascadable @rls verb predicate", quote(&obj.name), quote(&r.name)));
         }
-        let slot_arg = if vc.slot.is_some() { ", p_slot text" } else { "" };
+        let slot_arg = vc.slot.as_ref().map(|_| Param::typed("p_slot", "text"));
         Ok(Some(GenFn {
             name,
-            sig: format!("p_{}_id {}, p_access text{slot_arg}", obj.name, self.s.id_type()),
+            params: [Param::id(format!("p_{}_id", obj.name)), Param::typed("p_access", "text")].into_iter().chain(slot_arg).collect(),
             arm_param: "p_access".into(),
             arms,
             strict: true,
@@ -303,7 +304,7 @@ impl<'a> Sql<'a> {
             let name = evaluator_fn(obj, op);
             if defs.claim(&name) {
                 let body = self.judged(None, false).evaluator_body(obj, pm, virt)?;
-                defs.fns.push(GenFn { name, sig: format!("p_record {}, p_element text", self.s.id_type()), body, strict: true, ..Default::default() });
+                defs.fns.push(GenFn { name, params: vec![Param::id("p_record"), Param::typed("p_element", "text")], body, strict: true, ..Default::default() });
             }
         }
         Ok(())

@@ -63,7 +63,7 @@ fn the_marker_condition_joins_the_objects_own_require_and_each_marker_adds_its_o
 fn the_definer_reads_the_container_whoever_asks_and_fails_closed() {
     let (_, defs) = compiled(&spec(MADE_BY, "")).expect("compiles");
     let f = defs.iter().find(|d| d.name == "spaces_made_by_marker_admits").expect("the definer");
-    assert_eq!((f.sig.as_str(), f.strict), ("p_container text, p_claim text", false));
+    assert_eq!((f.sig().as_str(), f.strict), ("p_container text, p_claim text", false));
     assert_eq!(
         f.body,
         "p_claim IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'job_id') AND EXISTS (SELECT 1 FROM spaces m WHERE m.id = p_container AND (m.made_by IS NULL OR m.made_by::text = p_claim))",

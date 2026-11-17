@@ -27,10 +27,10 @@ fn a_probe_answers_inside_the_callers_containment_and_takes_only_what_it_matches
     let sql = Sql::new(&s);
     let contained = format!("(estate_id = {} AND (space_id IS NULL OR space_id = {}))", sql.claim("estate_id"), sql.claim("space_id"));
     let exists = probe(&src, "room_named");
-    assert_eq!((exists.sig.as_str(), exists.returns.as_str(), exists.strict), ("p_name text, on_floor integer", "", true));
+    assert_eq!((exists.sig().as_str(), exists.returns.as_str(), exists.strict), ("p_name text, on_floor integer", "", true));
     assert_eq!(exists.body, format!("EXISTS (SELECT 1 FROM rooms WHERE {contained} AND name = room_named.p_name AND floor = room_named.on_floor)"));
     let count = probe(&src, "rooms_here");
-    assert_eq!((count.sig.as_str(), count.returns.as_str(), count.strict), ("", "bigint", false));
+    assert_eq!((count.sig().as_str(), count.returns.as_str(), count.strict), ("", "bigint", false));
     assert_eq!(count.body, format!("count(*) FROM rooms WHERE {contained}"));
     let key = probe(&src, "room_by_name");
     assert_eq!((key.returns.as_str(), key.strict), ("text", true));

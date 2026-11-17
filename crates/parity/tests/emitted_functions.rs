@@ -128,31 +128,39 @@ fn a_function_the_corpus_names_twice_has_parameters_of_one_shape_and_one_return_
     assert!(clashes.is_empty(), "two generators make one function with parameters of different shapes:\n{}", clashes.join("\n"));
 }
 
-fn names_an_id(param: &str) -> bool {
-    ["user_id", "p_principal", "p_object", "p_node", "p_resource"].contains(&param)
+fn looks_like_an_id(param: &str) -> bool {
+    ["user_id", "p_principal", "p_object", "p_node", "p_resource", "p_group", "p_member", "p_ancestor", "p_descendant", "p_record", "p_container"]
+        .contains(&param)
         || (param.ends_with("_id") && (param.starts_with("p_") || param.starts_with("check_")))
 }
 
+fn header(stmt: &str) -> Option<Vec<(&str, &str)>> {
+    let open = stmt.find('(')?;
+    let close = stmt.find(")\nRETURNS ")?;
+    Some(stmt[open + 1..close].split(", ").filter_map(|p| p.split_once(' ')).collect())
+}
+
 #[test]
-fn every_generated_parameter_that_names_an_id_takes_the_specs_id_type() {
+fn every_id_a_generator_declares_takes_the_specs_type_and_no_other_parameter_names_an_id() {
+    use demesne_emit_sql::ParamKind;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut paths = Vec::new();
     specs(&root.join("examples"), &mut paths);
     specs(&root.join("testdata"), &mut paths);
     paths.sort();
-    let (mut wrong, mut typed) = (BTreeMap::<String, String>::new(), 0);
+    let (mut wrong, mut declared_ids, mut typed) = (BTreeMap::<String, String>::new(), 0, 0);
     for path in &paths {
         let Ok(src) = std::fs::read_to_string(path) else { continue };
         let Ok(s) = demesne_syntax::parse(&src) else { continue };
         if demesne_emit_sql::validate(&s).is_err() {
             continue;
         }
+        let sql = Sql::new(&s);
         let mut b = String::new();
-        if Sql::new(&s).write_all_sql(&mut b).is_err() {
-            continue;
-        }
+        let (Ok(()), Ok(defs)) = (sql.write_all_sql(&mut b), sql.emit_definers()) else { continue };
         let id_type = s.id_type().to_string();
-        let declared: std::collections::BTreeSet<&str> = s
+        let kinds: BTreeMap<String, &[demesne_emit_sql::Param]> = defs.iter().map(|f| (format!("{}.{}", f.schema(), f.name), f.params.as_slice())).collect();
+        let spec_lines: std::collections::BTreeSet<&str> = s
             .objects
             .iter()
             .flat_map(|o| {
@@ -164,25 +172,31 @@ fn every_generated_parameter_that_names_an_id_takes_the_specs_id_type() {
                     .chain(o.point_checks.iter().map(|c| c.name.as_str()))
             })
             .collect();
-        for (o, stmt) in objects(&b).unwrap_or_else(|e| panic!("{}: {e}", path.display())) {
-            let (Object::Function(sig), Some(open)) = (&o, stmt.find('(')) else { continue };
-            if declared.contains(sig.split('(').next().unwrap_or_default().rsplit('.').next().unwrap_or_default()) {
+        let at = path.display();
+        for (o, stmt) in objects(&b).unwrap_or_else(|e| panic!("{at}: {e}")) {
+            let (Object::Function(sig), Some(params)) = (&o, header(&stmt)) else { continue };
+            let function = sig.split('(').next().unwrap_or_default();
+            if spec_lines.contains(function.rsplit('.').next().unwrap_or_default()) {
                 continue;
             }
-            let Some(close) = stmt.find(")\nRETURNS ") else { continue };
-            let ids: Vec<(&str, &str)> = stmt[open + 1..close].split(", ").filter_map(|p| p.split_once(' ')).filter(|(name, _)| names_an_id(name)).collect();
-            typed += ids.len() * usize::from(id_type != "text");
-            let function = sig.split('(').next().unwrap_or_default().rsplit('.').next().unwrap_or_default();
-            for (param, ty) in ids.into_iter().filter(|(_, ty)| *ty != id_type) {
-                wrong.entry(format!("{function}({param})")).or_insert_with(|| format!("{ty} {id_type} [{}]", path.display()));
+            let declared = kinds.get(function);
+            for (name, ty) in params {
+                let kind = declared.and_then(|ps| ps.iter().find(|p| p.name == name)).map(|p| &p.kind);
+                let id = matches!(kind, Some(ParamKind::Id | ParamKind::Ids));
+                declared_ids += usize::from(id);
+                typed += usize::from(id && id_type != "text");
+                let want = match kind {
+                    Some(ParamKind::Ids) => Some(format!("{id_type}[]")),
+                    Some(ParamKind::Id) => Some(id_type.clone()),
+                    None if looks_like_an_id(name) => Some(id_type.clone()),
+                    _ => None,
+                };
+                let mistyped = want.filter(|want| ty != want).map(|want| format!("is {ty}, wants {want} [{at}]"));
+                let undeclared = (declared.is_some() && looks_like_an_id(name) && !id).then(|| format!("names an id and is declared {kind:?} [{at}]"));
+                wrong.extend(mistyped.or(undeclared).map(|issue| (format!("{function}({name})"), issue)));
             }
         }
     }
-    assert!(typed > 20, "the corpus must type ids other than text: {typed}");
-    assert!(
-        wrong.is_empty(),
-        "{} parameters naming an id take another type:\n{}",
-        wrong.len(),
-        wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n")
-    );
+    assert!(declared_ids > 500 && typed > 20, "{declared_ids} ids declared, {typed} on a spec whose identifiers are not text");
+    assert!(wrong.is_empty(), "{} parameters:\n{}", wrong.len(), wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"));
 }

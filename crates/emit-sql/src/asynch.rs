@@ -1,3 +1,4 @@
+use crate::genfn::{Param, render, sig_types};
 use crate::{Execute, Sql};
 use demesne_model::SpecExt;
 use demesne_runtime::quote_literal;
@@ -137,8 +138,10 @@ $$;",
     #[must_use]
     pub fn affordance_fn_sql(&self) -> String {
         let f = self.fn_name("affordance");
+        let params = [Param::id("p_resource"), Param::typed("p_kind", "text"), Param::id("p_principal")];
+        let sig = render(&params, self.id_type());
         let create = format!(
-            r"CREATE OR REPLACE FUNCTION {f}(p_resource {t}, p_kind text, p_principal {t})
+            r"CREATE OR REPLACE FUNCTION {f}({sig})
 RETURNS TABLE(allowed boolean, as_of xid8)
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public
 AS $$
@@ -148,9 +151,8 @@ $$;",
             b = self.base,
             cur = self.cursor,
             key = quote_literal(self.index_key()),
-            t = self.id_type()
         );
-        format!("{create}\n{}", Execute::Public.statement(&f, &format!("{t}, text, {t}", t = self.id_type())))
+        format!("{create}\n{}", Execute::Public.statement(&f, &sig_types(&sig)))
     }
 
     #[must_use]

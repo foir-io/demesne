@@ -107,7 +107,7 @@ fn the_store_and_a_borrow_name_the_check_they_share_alike() {
     };
     let store = made(BORROWED);
     let borrow = made(&format!("{BORROWED}{}", note("", "doc")));
-    assert_eq!((store.sig.as_str(), borrow.sig.as_str()), ("p_doc_id text", "p_doc_id text"), "one parameter list, whichever generator makes it");
+    assert_eq!((store.sig().as_str(), borrow.sig().as_str()), ("p_doc_id text", "p_doc_id text"), "one parameter list, whichever generator makes it");
     assert_eq!((store.before, borrow.before), (Before::DropRenamed, Before::Nothing), "only the copy no policy calls drops an earlier form");
     assert!(store.create_sql().starts_with("DO $demesne$ BEGIN\n  IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('auth.doc_can_edit(text)') AND proargnames IS DISTINCT FROM ARRAY['p_doc_id']::text[]) THEN\n    DROP FUNCTION auth.doc_can_edit(text);"), "{}", store.create_sql());
 }

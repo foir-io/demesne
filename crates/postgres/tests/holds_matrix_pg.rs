@@ -267,8 +267,8 @@ fn run_holds_matrix(t: &T, url: &str, tgt: &MatrixTarget) {
             continue;
         }
         found = true;
-        let got = d.sig.matches(',').count() + 1;
-        assert!(got == scope_args + 2, "{} takes {got} arguments, want {} (subject + {scope_args} scope + perm): {:?}", d.name, scope_args + 2, d.sig);
+        let got = d.sig().matches(',').count() + 1;
+        assert!(got == scope_args + 2, "{} takes {got} arguments, want {} (subject + {scope_args} scope + perm): {:?}", d.name, scope_args + 2, d.sig());
     }
     assert!(found, "spec emits no definer {:?}", tgt.definer);
 

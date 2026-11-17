@@ -52,7 +52,7 @@ fn the_declared_rows_come_through_one_definer_that_returns_only_the_columns_the_
     let rows: Vec<&GenFn> = defs.iter().filter(|d| d.name.starts_with("rule_slots_declared")).collect();
     assert_eq!(rows.len(), 1, "one definer for the table and key");
     let f = rows[0];
-    assert_eq!((f.name.as_str(), f.sig.as_str(), f.strict), ("rule_slots_declared_by_rule_id", "p_key text", true));
+    assert_eq!((f.name.as_str(), f.sig().as_str(), f.strict), ("rule_slots_declared_by_rule_id", "p_key text", true));
     assert_eq!(f.returns, "TABLE(kind text, param text, role text, slot text)");
     assert_eq!(
         f.body,
@@ -66,7 +66,7 @@ fn a_slot_binds_into_a_keyed_edge_and_into_the_hops_a_composition_follows() {
         emitted(&view("some r in rules_live (every s in rule_slots(rule_id) ((@slot(kind, \"edge\") and by_part) + (@slot(kind, \"borrow\") and borrow)))"));
     let get = |name: &str| defs.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("no {name}"));
     let edge = get("doc_by_part_keyed");
-    assert_eq!(edge.sig, "p_principal text, p_object text, p_key text, p_slot text");
+    assert_eq!(edge.sig(), "p_principal text, p_object text, p_key text, p_slot text");
     assert_eq!(
         edge.body,
         "p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM doc_edges WHERE principal_id = p_principal AND object_id = p_object AND rule_id = p_key AND part::text = p_slot))"
@@ -77,9 +77,9 @@ fn a_slot_binds_into_a_keyed_edge_and_into_the_hops_a_composition_follows() {
     );
     let (_, plain) = emitted(&view("some r in rules_live (named)"));
     let named = plain.iter().find(|d| d.name == "doc_named_keyed").expect("an edge a rule reads");
-    assert_eq!(named.sig, "p_principal text, p_object text, p_key text", "an edge with no slot keeps three arguments");
+    assert_eq!(named.sig(), "p_principal text, p_object text, p_key text", "an edge with no slot keeps three arguments");
     let borrow = get("doc_composition_borrow");
-    assert_eq!(borrow.sig, "p_doc_id text, p_access text, p_slot text");
+    assert_eq!(borrow.sig(), "p_doc_id text, p_access text, p_slot text");
     assert!(borrow.arms[0].body.starts_with("EXISTS (SELECT 1 FROM doc_reads e WHERE e.descendant_id = p_doc_id AND e.first_field::text = p_slot AND EXISTS (SELECT 1 FROM docs WHERE docs.id = e.ancestor_id AND "), "{}", borrow.arms[0].body);
     assert!(using.contains("auth.doc_composition_borrow(docs.id, 'read', demesne_slot.param)"), "{using}");
 }

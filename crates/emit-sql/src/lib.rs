@@ -22,7 +22,7 @@ pub use changelog::{CHANGELOG_CHANNEL, ChangelogTrigger, ObjectChangelogTrigger}
 pub use closure::{ClosureTrigger, DeclaredMaintenance, GroupTrigger, MaterializedFlat};
 pub use error::{Error, ManifestError};
 pub use files::{file_migration, file_sql, validate_files, validate_files_warnings};
-pub use genfn::{Before, Bound, DefinerArm, Execute, GenFn, Language, definers_sql};
+pub use genfn::{Before, Bound, DefinerArm, Execute, GenFn, Language, Param, ParamKind, definers_sql, render};
 pub use manifest::{ExecuteLists, Head, Manifest, Object, granted_to_public, object_key, objects, revoked_from_public};
 pub use rls::{Policy, RlsResult, scan_definers};
 

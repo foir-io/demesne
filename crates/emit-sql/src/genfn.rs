@@ -50,6 +50,59 @@ pub(crate) fn definer_call(function: &str, args: &[Arg]) -> String {
     if args.iter().all(|a| matches!(a, Arg::Fixed(_))) { format!("(SELECT {call})") } else { call }
 }
 
+/// A parameter of a generated function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Param {
+    /// The parameter's name, such as `p_doc_id`.
+    pub name: String,
+    /// What the parameter holds, which decides its type.
+    pub kind: ParamKind,
+}
+
+/// What a generated function's parameter holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParamKind {
+    /// The id of a subject, an object or a level's node, typed as the spec's identifiers.
+    Id,
+    /// An array of such ids.
+    Ids,
+    /// A value of the named SQL type, such as `text` for an access or `jsonb` for claims.
+    Typed(String),
+}
+
+impl Param {
+    /// A parameter that holds an id, typed as the spec's identifiers.
+    #[must_use]
+    pub fn id(name: impl Into<String>) -> Self {
+        Self { name: name.into(), kind: ParamKind::Id }
+    }
+
+    /// A parameter that holds an array of ids.
+    #[must_use]
+    pub fn ids(name: impl Into<String>) -> Self {
+        Self { name: name.into(), kind: ParamKind::Ids }
+    }
+
+    /// A parameter of the named SQL type.
+    #[must_use]
+    pub fn typed(name: impl Into<String>, sql_type: impl Into<String>) -> Self {
+        Self { name: name.into(), kind: ParamKind::Typed(sql_type.into()) }
+    }
+}
+
+/// Returns `params` as a signature, each id typed as `id_type`, such as `p_doc_id text, p_access text`.
+#[must_use]
+pub fn render(params: &[Param], id_type: &str) -> String {
+    let typed = |p: &Param| match &p.kind {
+        ParamKind::Id => format!("{} {id_type}", p.name),
+        ParamKind::Ids => format!("{} {id_type}[]", p.name),
+        ParamKind::Typed(t) => format!("{} {t}", p.name),
+    };
+    params.iter().map(typed).collect::<Vec<_>>().join(", ")
+}
+
 /// What the SQL does before it creates a definer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Before {
@@ -80,7 +133,9 @@ pub struct GenFn {
     pub name: String,
     pub schema: String,
     pub table_schema: String,
-    pub sig: String,
+    pub params: Vec<Param>,
+    /// The spec's identifier type, which every [`ParamKind::Id`] parameter takes; `text` when empty.
+    pub id_type: String,
     pub body: String,
     pub returns: String,
     pub raw_body: bool,
@@ -103,6 +158,12 @@ impl GenFn {
     #[must_use]
     pub fn schema(&self) -> &str {
         if self.schema.is_empty() { "auth" } else { &self.schema }
+    }
+
+    /// Returns the parameter list as the SQL declares it.
+    #[must_use]
+    pub fn sig(&self) -> String {
+        render(&self.params, if self.id_type.is_empty() { "text" } else { &self.id_type })
     }
 
     #[must_use]
@@ -132,7 +193,7 @@ impl GenFn {
             "CREATE OR REPLACE FUNCTION {}.{}({})\nRETURNS {}\nLANGUAGE {}\nSTABLE\n{}SECURITY DEFINER\nSET search_path = {}\nAS $$\n{}\n$$;",
             self.schema(),
             self.name,
-            self.sig,
+            self.sig(),
             returns,
             lang,
             strict,
@@ -141,7 +202,7 @@ impl GenFn {
         )
         .expect("fmt::Write for String never fails");
         sql.push('\n');
-        sql.push_str(&self.execute.statement(&format!("{}.{}", self.schema(), self.name), &sig_types(&self.sig)));
+        sql.push_str(&self.execute.statement(&format!("{}.{}", self.schema(), self.name), &sig_types(&self.sig())));
         sql
     }
 
@@ -149,8 +210,8 @@ impl GenFn {
         match self.before {
             Before::Nothing => String::new(),
             Before::DropRenamed => {
-                let identity = format!("{}.{}({})", self.schema(), self.name, sig_types(&self.sig));
-                let names: Vec<String> = self.sig.split(", ").filter_map(|p| p.split_whitespace().next()).map(quote_literal).collect();
+                let identity = format!("{}.{}({})", self.schema(), self.name, sig_types(&self.sig()));
+                let names: Vec<String> = self.params.iter().map(|p| quote_literal(&p.name)).collect();
                 format!(
                     "DO $demesne$ BEGIN\n  IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure({}) AND proargnames IS DISTINCT FROM ARRAY[{}]::text[]) THEN\n    DROP FUNCTION {identity};\n  END IF;\nEND $demesne$;\n",
                     quote_literal(&identity),
@@ -179,7 +240,7 @@ impl GenFn {
     }
 }
 
-fn sig_types(sig: &str) -> String {
+pub(crate) fn sig_types(sig: &str) -> String {
     sig.split(',').map(|p| p.split_whitespace().skip(1).collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(", ")
 }
 

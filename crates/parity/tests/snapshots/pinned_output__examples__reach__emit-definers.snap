@@ -82,7 +82,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant AND (p_ancestor = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')::text OR p_descendant = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')::text));
+  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant AND (p_ancestor = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id') OR p_descendant = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id')));
 $$;
 GRANT EXECUTE ON FUNCTION auth.paths_reachable(text, text) TO PUBLIC;
 

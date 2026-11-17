@@ -1,6 +1,6 @@
 use crate::Sql;
 use crate::error::Error;
-use crate::genfn::{Arg, Before, Bound, Execute, GenFn, Language, binds_every, definer_call, grant_edge_exists, order_by_calls};
+use crate::genfn::{Arg, Before, Bound, Execute, GenFn, Language, Param, binds_every, definer_call, grant_edge_exists, order_by_calls, render};
 use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, membership_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
@@ -104,7 +104,8 @@ fn claimed(side: &ArgSrc) -> Option<&str> {
 
 fn caller_parameter(f: &GenFn) -> Option<(String, String)> {
     let principal = f.principal.as_deref()?;
-    let found = f.sig.split(',').map(|p| p.split_whitespace().collect::<Vec<_>>()).find(|p| p.first() == Some(&principal))?;
+    let sig = f.sig();
+    let found = sig.split(',').map(|p| p.split_whitespace().collect::<Vec<_>>()).find(|p| p.first() == Some(&principal))?;
     Some((principal.to_string(), found.get(1..)?.join(" ")))
 }
 
@@ -150,7 +151,7 @@ fn accessor_repr_covered(r: &Repr) -> bool {
 fn accessor_gen_fn_named(name: String, id_t: &str, branches: &[String]) -> GenFn {
     GenFn {
         name,
-        sig: format!("p_id {id_t}"),
+        params: vec![Param::id("p_id")],
         returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text)"),
         raw_body: true,
         body: format!("  {}", branches.join("\n  UNION ALL\n  ")),
@@ -401,6 +402,7 @@ impl Sql<'_> {
         for f in &mut out {
             f.schema = self.s.definer_schema().to_string();
             f.table_schema = self.s.table_schema().to_string();
+            f.id_type = self.s.id_type().to_string();
         }
         self.who_runs(order_by_calls(crate::chains::plans_kept(out, &self.chain_fns())))
     }
@@ -456,12 +458,13 @@ impl Sql<'_> {
             if let Some(ac) = &m.active_col {
                 conj.push(format!("{ac} = {}", quote_literal(or(m.active_val.as_deref()))));
             }
-            let sig = format!("user_id {}", self.s.id_type());
+            let params = vec![Param::id("user_id")];
+            let sig = render(&params, self.s.id_type());
             let strict = binds_every(&sig, &[&conj]);
             out.push(GenFn {
                 name: m.flag_col.clone(),
                 body: grant_edge_exists(&m.table, &conj),
-                sig,
+                params,
                 strict,
                 principal: Some("user_id".into()),
                 principal_claims: vec![sub.identifies().to_string()],
@@ -499,13 +502,15 @@ impl Sql<'_> {
         let mut set_conj = vec![conj[0].clone()];
         set_conj.extend(unscoped[2..].iter().cloned());
         set_conj.push(is_the_callers("user_id", &self.grant_claims(g)));
-        let unscoped_sig = format!("user_id {id_t}, check_{}_id {id_t}", g.level);
-        let set_sig = format!("user_id {id_t}");
+        let unscoped_params = vec![Param::id("user_id"), Param::id(format!("check_{}_id", g.level))];
+        let unscoped_sig = render(&unscoped_params, id_t);
+        let set_params = vec![Param::id("user_id")];
+        let set_sig = render(&set_params, id_t);
         let mut out = vec![
             GenFn {
                 name: format!("{base}_unscoped"),
                 strict: binds_every(&unscoped_sig, &[&unscoped]),
-                sig: unscoped_sig,
+                params: unscoped_params,
                 body: grant_edge_exists(g.table(), &unscoped),
                 principal: Some("user_id".into()),
                 principal_claims: self.grant_keys(g),
@@ -514,7 +519,7 @@ impl Sql<'_> {
             GenFn {
                 name: format!("{base}_unscoped_set"),
                 strict: binds_every(&set_sig, &[&set_conj]),
-                sig: set_sig,
+                params: set_params.clone(),
                 principal: Some("user_id".into()),
                 principal_claims: self.grant_keys(g),
                 returns: format!("SETOF {id_t}"),
@@ -523,17 +528,17 @@ impl Sql<'_> {
             },
         ];
         let mut explicit = conj.to_vec();
-        let mut args = vec![format!("user_id {id_t}"), format!("check_{}_id {id_t}", g.level)];
+        let mut args = vec![Param::id("user_id"), Param::id(format!("check_{}_id", g.level))];
         for scope in &g.scopes {
             let param = format!("check_{}_id", scope.level);
             let empty = if id_t == "text" { format!("{param} = ''") } else { format!("{param} IS NULL") };
             explicit.push(format!("({c} IS NULL OR {empty} OR {c} = {param})", c = scope.column));
-            args.push(format!("{param} {id_t}"));
-            let sig = args.join(", ");
+            args.push(Param::id(param.clone()));
+            let sig = render(&args, id_t);
             out.push(GenFn {
                 name: format!("{base}_in_{}", scope.level),
                 strict: binds_every(&sig, &[&explicit]),
-                sig,
+                params: args.clone(),
                 principal: Some("user_id".into()),
                 principal_claims: self.grant_keys(g),
                 body: grant_edge_exists(g.table(), &explicit),
@@ -545,6 +550,9 @@ impl Sql<'_> {
 
     fn bind_callers(&self, fns: &mut [GenFn]) {
         let id_t = self.s.id_type();
+        for f in fns.iter_mut() {
+            f.id_type = id_t.to_string();
+        }
         for f in fns.iter_mut().filter(|f| f.execute == Execute::Public && f.returns.is_empty() && !f.raw_body && f.arms.is_empty()) {
             let Some((parameter, ty)) = caller_parameter(f) else { continue };
             let identities = self.claims_once(f.principal_claims.iter().map(String::as_str));
@@ -560,7 +568,7 @@ impl Sql<'_> {
     }
 
     fn bound_on(&self, f: &GenFn, parameter: &str, own: &str) -> Option<Bound> {
-        let argument = crate::genfn::sig_args(&f.sig).iter().position(|arg| *arg == parameter)?;
+        let argument = f.params.iter().position(|p| p.name == parameter)?;
         let mut claims = Vec::new();
         for key in f.principal_claims.iter().filter(|key| !key.is_empty()) {
             for read in [self.claim(key), self.id_claim(key), self.session_claim(key)] {
@@ -644,11 +652,12 @@ impl Sql<'_> {
             }
             let mut scoped = conj.clone();
             scoped.extend(self.grant_session_scope_conjuncts(g));
-            let sig = format!("user_id {id_t}, check_{}_id {id_t}", g.level);
+            let params = vec![Param::id("user_id"), Param::id(format!("check_{}_id", g.level))];
+            let sig = render(&params, id_t);
             out.push(GenFn {
                 name: name.clone(),
                 strict: binds_every(&sig, &[&scoped]),
-                sig,
+                params,
                 body: grant_edge_exists(g.table(), &scoped),
                 principal: Some("user_id".into()),
                 principal_claims: self.grant_keys(g),
@@ -657,11 +666,12 @@ impl Sql<'_> {
             let mut set_conj = vec![format!("{} = user_id", g.grantee_col())];
             set_conj.extend(scoped[2..].iter().cloned());
             set_conj.push(is_the_callers("user_id", &self.grant_claims(g)));
-            let set_sig = format!("user_id {id_t}");
+            let set_params = vec![Param::id("user_id")];
+            let set_sig = render(&set_params, id_t);
             out.push(GenFn {
                 name: format!("{name}_set"),
                 strict: binds_every(&set_sig, &[&set_conj]),
-                sig: set_sig,
+                params: set_params.clone(),
                 principal: Some("user_id".into()),
                 principal_claims: self.grant_keys(g),
                 returns: format!("SETOF {id_t}"),
@@ -713,10 +723,9 @@ impl Sql<'_> {
         conds.extend(kind_cond(rs, ""));
         conds.extend(revoked_cond(rs, ""));
         let body = format!("EXISTS (SELECT 1 FROM {} WHERE {})", or(rs.assignments.as_deref()), conds.join(" AND "));
-        let id_t = self.s.id_type();
         GenFn {
             name,
-            sig: format!("p_principal {id_t}, p_{level} {id_t}"),
+            params: vec![Param::id("p_principal"), Param::id(format!("p_{level}"))],
             body,
             principal: Some("p_principal".into()),
             principal_claims: vec![self.s.admin_identify().to_string()],
@@ -761,23 +770,22 @@ impl Sql<'_> {
         let Some(entity) = self.s.objects.iter().find(|o| o.level() == level) else {
             return Err(format!("{} on {}: no object declares `level {level}`, so nothing says which values exist there", t.display(), quote(&obj.name)));
         };
-        let id_t = self.s.id_type();
-        let mut sig = vec![format!("user_id {id_t}")];
+        let mut sig = vec![Param::id("user_id")];
         let mut held = vec!["user_id".to_string()];
         let mut inside = vec![format!("e.{} = v.id", entity.pk())];
         for l in &levels {
             if l == level {
-                sig.push(format!("check_{l}_ids {id_t}[]"));
+                sig.push(Param::ids(format!("check_{l}_ids")));
                 held.push("v.id".into());
                 continue;
             }
-            sig.push(format!("check_{l}_id {id_t}"));
+            sig.push(Param::id(format!("check_{l}_id")));
             held.push(format!("check_{l}_id"));
             if contains(&entity.scoped, l) {
                 inside.push(format!("e.{} = check_{l}_id", self.s.scope_col(entity, l)));
             }
         }
-        sig.push("p_perm text".into());
+        sig.push(Param::typed("p_perm", "text"));
         held.push("p_perm".into());
         let schema = self.s.definer_schema();
         let body = format!(
@@ -788,7 +796,7 @@ impl Sql<'_> {
         );
         defs.fns.push(GenFn {
             name,
-            sig: sig.join(", "),
+            params: sig,
             body,
             principal: Some("user_id".into()),
             principal_claims: vec![self.s.admin_identify().to_string()],
@@ -836,7 +844,7 @@ impl Sql<'_> {
         let confers = if implied_by.is_empty() { "v = p_perm".to_string() } else { format!("v = ANY({implied_by}(p_perm))") };
         GenFn {
             name: held_fn(holds_fn),
-            sig: "p_perm text".into(),
+            params: vec![Param::typed("p_perm", "text")],
             strict: true,
             body: format!(
                 "CASE WHEN jsonb_typeof({carried}) = 'array' THEN EXISTS (SELECT 1 FROM jsonb_array_elements_text({carried}) v WHERE {confers}) ELSE false END"
@@ -848,8 +856,7 @@ impl Sql<'_> {
     fn holds_perm_definer(&self, name: &str, rs: &RoleStore, implied_by: &str) -> GenFn {
         let chain = topology::chain(self.s).unwrap_or_default();
         let plane_depth = self.s.rolestore_plane_depth(rs);
-        let id_t = self.s.id_type();
-        let mut args = vec![format!("user_id {id_t}")];
+        let mut args = vec![Param::id("user_id")];
         let mut scope = Vec::new();
         let mut i = 0;
         for l in chain {
@@ -862,14 +869,14 @@ impl Sql<'_> {
             let col = &rs.scope_cols[i];
             if i < plane_depth {
                 let arg = format!("check_{}_id", l.name);
-                args.push(format!("{arg} {id_t}"));
+                args.push(Param::id(arg.clone()));
                 scope.push(format!("(ra.{col} IS NULL OR ra.{col} = {arg})"));
             } else {
                 scope.push(format!("ra.{col} IS NULL"));
             }
             i += 1;
         }
-        args.push("p_perm text".into());
+        args.push(Param::typed("p_perm", "text"));
         let mut conds = kind_cond(rs, "ra.");
         conds.push(format!("ra.{} = user_id", or(rs.subject_col.as_deref())));
         conds.extend(scope);
@@ -886,7 +893,7 @@ impl Sql<'_> {
         );
         GenFn {
             name: name.to_string(),
-            sig: args.join(", "),
+            params: args,
             body,
             principal: Some("user_id".into()),
             principal_claims: vec![self.s.admin_identify().to_string()],
@@ -911,7 +918,7 @@ impl Sql<'_> {
         }
         Ok(GenFn {
             name: self.s.perm_implied_by_fn(rs),
-            sig: "p_perm text".into(),
+            params: vec![Param::typed("p_perm", "text")],
             returns: "text[]".into(),
             body: format!("COALESCE((SELECT m.impliers FROM (VALUES {}) AS m(perm, impliers) WHERE m.perm = p_perm), ARRAY[p_perm]::text[])", rows.join(", ")),
             ..Default::default()
@@ -986,7 +993,7 @@ impl Sql<'_> {
         let setting = quote_literal(self.claims_setting().0);
         Ok(Some(GenFn {
             name: format!("{}_admits", obj.table),
-            sig: format!("p_id {}, p_claims jsonb", self.s.id_type()),
+            params: vec![Param::id("p_id"), Param::typed("p_claims", "jsonb")],
             raw_body: true,
             strict: true,
             language: Language::Plpgsql,
@@ -1110,15 +1117,15 @@ impl Sql<'_> {
             if !defs.claim(&name) {
                 continue;
             }
-            let sig = "p_ancestor text, p_descendant text".to_string();
+            let params = vec![Param::id("p_ancestor"), Param::id("p_descendant")];
+            let sig = render(&params, self.s.id_type());
             let callers = self.closure_callers(edge.table);
-            let as_text: Vec<String> = callers.iter().map(|caller| format!("{caller}::text")).collect();
             let conj = vec![
                 format!("{} = p_ancestor", edge.ancestor_col),
                 format!("{} = p_descendant", edge.descendant_col),
-                format!("({} OR {})", is_the_callers("p_ancestor", &as_text), is_the_callers("p_descendant", &as_text)),
+                format!("({} OR {})", is_the_callers("p_ancestor", &callers), is_the_callers("p_descendant", &callers)),
             ];
-            defs.fns.push(GenFn { name, strict: binds_every(&sig, &[&conj]), sig, body: grant_edge_exists(edge.table, &conj), ..Default::default() });
+            defs.fns.push(GenFn { name, strict: binds_every(&sig, &[&conj]), params, body: grant_edge_exists(edge.table, &conj), ..Default::default() });
             if let Some(declared) = edge.declared {
                 defs.add_each_once(self.closure_set_definers(declared, &callers));
             }
@@ -1144,11 +1151,11 @@ impl Sql<'_> {
     fn closure_set_definers(&self, c: &Closure, callers: &[String]) -> Vec<GenFn> {
         let id_t = self.s.id_type();
         let base = c.definer_base();
-        let sig = format!("p_node {id_t}");
+        let params = vec![Param::id("p_node")];
         let set = |name: String, returned: &str, bound: &str| GenFn {
             name,
             strict: true,
-            sig: sig.clone(),
+            params: params.clone(),
             returns: format!("SETOF {id_t}"),
             body: format!("{returned} FROM {} WHERE {bound} = p_node AND {}", c.table, is_the_callers("p_node", callers)),
             ..Default::default()
@@ -1160,7 +1167,7 @@ impl Sql<'_> {
                 name: format!("{base}_path"),
                 execute: Execute::Grantable,
                 strict: true,
-                sig,
+                params: params.clone(),
                 returns: format!("TABLE(node {id_t}, depth integer)"),
                 raw_body: true,
                 body: format!(
@@ -1193,7 +1200,7 @@ impl Sql<'_> {
             let selected: Vec<String> = cols.iter().map(|c| format!("{table}.{c}::text")).collect();
             defs.add_once(GenFn {
                 name: declared_fn(&table, &key_col),
-                sig: "p_key text".into(),
+                params: vec![Param::typed("p_key", "text")],
                 strict: true,
                 returns: format!("TABLE({})", returned.join(", ")),
                 raw_body: true,
@@ -1204,7 +1211,6 @@ impl Sql<'_> {
     }
 
     fn def_emit_keyed_edges(&self, defs: &mut Definers) {
-        let id_t = self.s.id_type();
         for (obj, r) in self.s.relations() {
             let Repr::Edge(e) = &r.repr else { continue };
             let (Some(key), [principal, object]) = (&e.key, e.cols.as_slice()) else { continue };
@@ -1212,14 +1218,14 @@ impl Sql<'_> {
             if let Some((col, val)) = &e.filter {
                 conds.push(format!("{col} = {}", quote_literal(val)));
             }
-            let mut slot_arg = "";
+            let mut slot_arg = Vec::new();
             if let Some((col, _)) = &e.slot {
                 conds.push(format!("{col}::text = p_slot"));
-                slot_arg = ", p_slot text";
+                slot_arg.push(Param::typed("p_slot", "text"));
             }
             defs.add_once(GenFn {
                 name: keyed_edge_fn(obj, r),
-                sig: format!("p_principal {id_t}, p_object {id_t}, p_key text{slot_arg}"),
+                params: [Param::id("p_principal"), Param::id("p_object"), Param::typed("p_key", "text")].into_iter().chain(slot_arg).collect(),
                 principal: Some("p_principal".into()),
                 principal_claims: self.identities_of(&r.types),
                 strict: true,
@@ -1238,7 +1244,7 @@ impl Sql<'_> {
             }
             defs.fns.push(GenFn {
                 name,
-                sig: "p_group text, p_member text".into(),
+                params: vec![Param::id("p_group"), Param::id("p_member")],
                 principal: Some("p_member".into()),
                 principal_claims: self.identities_of(&r.types),
                 body: format!("EXISTS (SELECT 1 FROM {} WHERE {} = p_group AND {} = p_member)", g.closure, g.group_col, g.member_col),
@@ -1269,10 +1275,11 @@ impl Sql<'_> {
                 return Err(format!("relation {} references unknown object {}", quote(&r.name), quote(&vo.object)));
             };
             let pred = self.object_verb_predicate_for(other, &vo.verb, vo.op.as_deref().unwrap_or(""), virt)?;
-            let sig = format!("p_{}_id {}", vo.object, self.s.id_type());
+            let params = vec![Param::id(format!("p_{}_id", vo.object))];
+            let sig = render(&params, self.s.id_type());
             let key = format!("{}.{} = p_{}_id", other.table, other.pk(), vo.object);
             let strict = binds_every(&sig, &[std::slice::from_ref(&key)]);
-            defs.fns.push(GenFn { name, sig, body: grant_edge_exists(&other.table, &[key, format!("({pred})")]), strict, ..Default::default() });
+            defs.fns.push(GenFn { name, params, body: grant_edge_exists(&other.table, &[key, format!("({pred})")]), strict, ..Default::default() });
         }
         Ok(())
     }
@@ -1297,7 +1304,7 @@ impl Sql<'_> {
             }
             defs.fns.push(GenFn {
                 name,
-                sig: format!("p_type text, p_id {}", self.s.id_type()),
+                params: vec![Param::typed("p_type", "text"), Param::id("p_id")],
                 body: format!("(CASE p_type {} ELSE false END)", whens.join(" ")),
                 ..Default::default()
             });
@@ -1322,11 +1329,12 @@ impl Sql<'_> {
     fn store_can_edit_definer(&self, name: &str, o: &Object, virt: &Virtual, store: &str) -> R<GenFn> {
         let pred = self.object_verb_predicate(o, "edit", virt).map_err(|e| format!("@store_manage dispatch for {}: {e}", quote(store)))?;
         let param = format!("p_{}_id", o.name);
-        let sig = format!("{param} {}", self.s.id_type());
+        let params = vec![Param::id(param.clone())];
+        let sig = render(&params, self.s.id_type());
         let key = format!("{}.{} = {param}", o.table, o.pk());
         let strict = binds_every(&sig, &[std::slice::from_ref(&key)]);
         let body = grant_edge_exists(&o.table, &[key, format!("({pred})")]);
-        Ok(GenFn { name: name.to_string(), sig, body, strict, before: Before::DropRenamed, ..Default::default() })
+        Ok(GenFn { name: name.to_string(), params, body, strict, before: Before::DropRenamed, ..Default::default() })
     }
 
     fn role_definer_for_term(
@@ -1365,8 +1373,7 @@ impl Sql<'_> {
         let chain = topology::chain(self.s).unwrap_or_default();
         let non_virtual: Vec<&str> = chain.iter().filter(|l| !l.is_virtual).map(|l| l.name.as_str()).collect();
         let on_path: HashSet<String> = topology::ancestor_path(self.s, level).map(|p| p.into_iter().map(|l| l.name.clone()).collect()).unwrap_or_default();
-        let id_t = self.s.id_type();
-        let mut args = vec![format!("user_id {id_t}")];
+        let mut args = vec![Param::id("user_id")];
         let mut scope = Vec::new();
         for (i, lvl) in non_virtual.iter().enumerate() {
             if i >= rs.scope_cols.len() {
@@ -1375,7 +1382,7 @@ impl Sql<'_> {
             let col = &rs.scope_cols[i];
             if on_path.contains(*lvl) {
                 let arg = format!("check_{lvl}_id");
-                args.push(format!("{arg} {id_t}"));
+                args.push(Param::id(arg.clone()));
                 scope.push(format!("ra.{col} = {arg}"));
             } else {
                 scope.push(format!("ra.{col} IS NULL"));
@@ -1401,7 +1408,7 @@ impl Sql<'_> {
         let body = if recurse.is_empty() { exists } else { format!("{recurse} OR {exists}") };
         GenFn {
             name: name.to_string(),
-            sig: args.join(", "),
+            params: args,
             body,
             principal: Some("user_id".into()),
             principal_claims: vec![self.s.admin_identify().to_string()],
@@ -1512,7 +1519,7 @@ impl Sql<'_> {
         }
         GenFn {
             name: format!("{}_accessors_conditional", obj.table),
-            sig: format!("p_id {id_t}"),
+            params: vec![Param::id("p_id")],
             returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text, via_claim_keys text[], via_claim_values text[])"),
             raw_body: true,
             body: format!("  {}", branches.join("\n  UNION ALL\n  ")),
@@ -1840,7 +1847,7 @@ impl Sql<'_> {
         let id_t = self.s.id_type();
         Ok(Some(GenFn {
             name: format!("{}_accessors", obj.table),
-            sig: format!("p_id {id_t}"),
+            params: vec![Param::id("p_id")],
             returns: format!("TABLE(source text, principal_kind text, principal_id {id_t}, access text)"),
             raw_body: true,
             body: format!("  {}", branches.join("\n  UNION\n  ")),
@@ -1988,7 +1995,7 @@ impl Sql<'_> {
         let body = format!("EXISTS (SELECT 1 FROM {} r WHERE r.{} = p_{}_id AND {})", obj.table, obj.pk(), obj.name, owner_match);
         Ok(GenFn {
             name: format!("{}_can_access_{}", principal, obj.name),
-            sig: format!("p_{}_id {id_t}, p_{}_id {id_t}, p_access text", principal, obj.name, id_t = self.s.id_type()),
+            params: vec![Param::id(format!("p_{principal}_id")), Param::id(format!("p_{}_id", obj.name)), Param::typed("p_access", "text")],
             principal: Some(format!("p_{principal}_id")),
             principal_claims: self.identities_of(std::slice::from_ref(&principal)),
             body,
@@ -2031,7 +2038,7 @@ impl Sql<'_> {
             };
             out.push(GenFn {
                 name: probe.name.clone(),
-                sig: probe.params.iter().map(|p| format!("{} {}", p.name(), p.ty)).collect::<Vec<_>>().join(", "),
+                params: probe.params.iter().map(|p| Param::typed(p.name(), p.ty.clone())).collect(),
                 strict: !probe.params.is_empty(),
                 returns,
                 body,
@@ -2074,7 +2081,7 @@ impl Sql<'_> {
             let conds = [format!("{}.{} = $1", obj.table, obj.pk()), format!("({pred})")];
             out.push(GenFn {
                 name: c.name.clone(),
-                sig: format!("{} {}", key.name(), key.ty),
+                params: vec![Param::typed(key.name(), key.ty.clone())],
                 strict: true,
                 body: grant_edge_exists(&obj.table, &conds),
                 ..Default::default()
@@ -2103,7 +2110,7 @@ impl Sql<'_> {
                 )
                 .expect("fmt::Write for String never fails");
             }
-            out.push(GenFn { name, sig: format!("p_container {}, p_claim text", self.s.id_type()), body, ..Default::default() });
+            out.push(GenFn { name, params: vec![Param::id("p_container"), Param::typed("p_claim", "text")], body, ..Default::default() });
         }
         Ok(())
     }
@@ -2138,7 +2145,7 @@ impl Sql<'_> {
             }
             out.push(GenFn {
                 name: n.name.clone(),
-                sig: format!("p_node {}", self.s.id_type()),
+                params: vec![Param::id("p_node")],
                 strict: true,
                 returns: n.ty.clone(),
                 raw_body: true,
@@ -2163,7 +2170,7 @@ impl Sql<'_> {
         }
         Some(GenFn {
             name: nearest_own_fn(&n.name),
-            sig: format!("p_node {}", self.s.id_type()),
+            params: vec![Param::id("p_node")],
             strict: true,
             returns: n.ty.clone(),
             raw_body: true,
@@ -2182,11 +2189,11 @@ impl Sql<'_> {
                 return Err(format!("permission export {}: object {} has no mapped permission {}", quote(&export.name), quote(&obj.name), quote(&export.verb)));
             };
             let pred = self.admission_with_require(obj, pm, self.s.owner_subject(leaf(obj)), virt)?;
-            let args: Vec<String> = export.params.iter().map(|p| format!("{} {}", p.name(), p.ty)).collect();
+            let args: Vec<Param> = export.params.iter().map(|p| Param::typed(p.name(), p.ty.clone())).collect();
             let columns: Vec<String> = export.params.iter().map(|p| format!("{} AS {}", p.name(), p.column)).collect();
             out.push(GenFn {
                 name: export.name.clone(),
-                sig: args.join(", "),
+                params: args,
                 body: format!("{} FROM (SELECT {}) AS {}", pred, columns.join(", "), obj.table),
                 ..Default::default()
             });
@@ -2227,9 +2234,10 @@ fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, (kind, para
         write!(body, " OR {}", grant_group_exists(vg, obj, param)).expect("fmt::Write for String never fails");
         disjuncts.push(grant_group_conds(vg, obj, param));
     }
-    let sig = format!("p_{}_id {id_t}, p_{}_id {id_t}, p_access text", param, obj.name);
+    let params = vec![Param::id(format!("p_{param}_id")), Param::id(format!("p_{}_id", obj.name)), Param::typed("p_access", "text")];
+    let sig = render(&params, id_t);
     let refs: Vec<&[String]> = disjuncts.iter().map(Vec::as_slice).collect();
-    GenFn { name, strict: binds_every(&sig, &refs), sig, body, principal: Some(format!("p_{param}_id")), principal_claims, ..Default::default() }
+    GenFn { name, strict: binds_every(&sig, &refs), params, body, principal: Some(format!("p_{param}_id")), principal_claims, ..Default::default() }
 }
 
 fn grant_access_match(vg: &ViaGrant, col: &str) -> String {
@@ -2322,7 +2330,7 @@ fn who_may_run(fns: &mut [GenFn], asked: &[(String, &str)], callable: &BTreeSet<
 
 #[cfg(test)]
 mod tests {
-    use super::{Execute, GenFn, caller_parameter, who_may_run};
+    use super::{Execute, GenFn, Param, caller_parameter, who_may_run};
     use std::collections::BTreeSet;
 
     #[test]
@@ -2341,7 +2349,8 @@ mod tests {
 
     #[test]
     fn the_callers_parameter_is_the_principals_own_wherever_it_stands() {
-        let f = GenFn { sig: "p_group text, p_member uuid, p_key text".into(), principal: Some("p_member".into()), ..Default::default() };
+        let params = vec![Param::id("p_group"), Param::id("p_member"), Param::typed("p_key", "text")];
+        let f = GenFn { params, id_type: "uuid".into(), principal: Some("p_member".into()), ..Default::default() };
         assert_eq!(caller_parameter(&f), Some(("p_member".to_string(), "uuid".to_string())), "{f:?}");
     }
 }

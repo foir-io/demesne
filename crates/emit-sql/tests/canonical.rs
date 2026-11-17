@@ -105,7 +105,7 @@ fn inheritance_reaches_documents_through_unbounded_folder_ancestry() {
     }
     let defs = sql.emit_definers().expect("the inheritance example's definers emit");
     let reach = definer(&defs, "folder_closure_reachable");
-    let own = format!("{}::text", sql.session_claim("viewer_folder"));
+    let own = sql.session_claim("viewer_folder");
     assert_eq!(
         reach.body,
         format!(

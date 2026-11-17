@@ -50,8 +50,8 @@ fn an_undeclared_closure_looks_each_row_up_with_the_caller_on_the_side_its_relat
         let defs = sql.emit_definers().expect("the definers compile");
         assert_eq!(names(&defs), ["paths_reachable"], "an undeclared closure keeps its one lookup");
         let reach = definer(&defs, "paths_reachable");
-        assert_eq!(reach.sig, "p_ancestor text, p_descendant text");
-        let own = format!("{}::text", sql.session_claim("folder_id"));
+        assert_eq!(reach.sig(), "p_ancestor text, p_descendant text");
+        let own = sql.session_claim("folder_id");
         assert_eq!(
             reach.body,
             format!("EXISTS (SELECT 1 FROM paths WHERE {lookup} AND (p_ancestor = {own} OR p_descendant = {own}))"),
@@ -87,8 +87,8 @@ fn a_declared_closure_reads_each_direction_as_a_set_computed_once() {
             );
             let (below, above) = (definer(&defs, &format!("{base}_descendants")), definer(&defs, &format!("{base}_ancestors")));
             let own = sql.session_claim("folder_id");
-            assert_eq!((below.sig.as_str(), below.returns.as_str()), ("p_node text", "SETOF text"));
-            assert_eq!((above.sig.as_str(), above.returns.as_str()), ("p_node text", "SETOF text"));
+            assert_eq!((below.sig().as_str(), below.returns.as_str()), ("p_node text", "SETOF text"));
+            assert_eq!((above.sig().as_str(), above.returns.as_str()), ("p_node text", "SETOF text"));
             assert_eq!(below.body, format!("des FROM paths WHERE anc = p_node AND p_node = {own}"), "the set is the caller's own node's, never another's");
             assert_eq!(above.body, format!("anc FROM paths WHERE des = p_node AND p_node = {own}"));
             assert!(below.strict && above.strict, "a caller with no node reaches the empty set");
@@ -117,7 +117,7 @@ fn a_declared_depth_adds_the_ordered_path_and_an_identifier_type_carries_through
     let defs = Sql::new(&s).emit_definers().expect("the definers compile");
     assert_eq!(names(&defs), ["paths_path"], "no relation reads the closure, so only the path a role you grant reads is emitted");
     let path = definer(&defs, "paths_path");
-    assert_eq!((path.sig.as_str(), path.returns.as_str()), ("p_node uuid", "TABLE(node uuid, depth integer)"));
+    assert_eq!((path.sig().as_str(), path.returns.as_str()), ("p_node uuid", "TABLE(node uuid, depth integer)"));
     assert_eq!(path.body, "  SELECT anc, hops::integer FROM paths WHERE des = p_node ORDER BY hops DESC, anc;");
     assert!(path.strict && path.raw_body);
     assert!(

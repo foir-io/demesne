@@ -24,7 +24,7 @@ const ABOVE: &str = "SELECT t.color AS v, c.hops AS d FROM paths c JOIN themes t
 #[test]
 fn the_lookup_takes_the_nearest_row_above_that_sets_the_value() {
     let f = lookup("closure paths(anc, des) depth hops");
-    assert_eq!((f.sig.as_str(), f.returns.as_str(), f.strict, f.execute), ("p_node text", "text", true, Execute::Grantable));
+    assert_eq!((f.sig().as_str(), f.returns.as_str(), f.strict, f.execute), ("p_node text", "text", true, Execute::Grantable));
     assert_eq!(f.body, format!("  SELECT x.v FROM (\n    {ABOVE}\n  ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;"));
     assert!(
         f.create_sql().ends_with("REVOKE EXECUTE ON FUNCTION auth.theme_color(text) FROM PUBLIC;"),
@@ -112,7 +112,7 @@ fn a_require_compares_a_column_with_the_nearest_value_at_the_callers_own_node() 
     assert_eq!(floor, &format!("{claim} IS NULL OR theme_id = (SELECT auth.live_theme_own({claim}))"));
     let defs = sql.emit_definers().expect("the definers compile");
     let own = defs.iter().find(|d| d.name == "live_theme_own").expect("the claim-bound form");
-    assert_eq!((own.sig.as_str(), own.returns.as_str(), own.strict, own.execute), ("p_node text", "text", true, Execute::Public));
+    assert_eq!((own.sig().as_str(), own.returns.as_str(), own.strict, own.execute), ("p_node text", "text", true, Execute::Public));
     assert_eq!(
         own.body,
         format!("  SELECT auth.live_theme(p_node) WHERE p_node = {};", sql.session_claim("folder_id")),

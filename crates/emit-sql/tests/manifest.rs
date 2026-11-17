@@ -237,7 +237,7 @@ fn listed(manifest: &Value, key: &str, path: &str) -> BTreeSet<String> {
 }
 
 fn identity(f: &demesne_emit_sql::GenFn) -> String {
-    let types: Vec<String> = f.sig.split(',').map(|p| p.split_whitespace().skip(1).collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()).collect();
+    let types: Vec<String> = f.sig().split(',').map(|p| p.split_whitespace().skip(1).collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()).collect();
     format!("{}.{}({})", f.schema(), f.name, types.join(", "))
 }
 

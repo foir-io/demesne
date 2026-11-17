@@ -336,7 +336,7 @@ exit: 0
     },
     {
       "object": "function auth.paths_reachable(text, text)",
-      "digest": "83f1adeedbb03e800f8ac0cb43ae36555651137a8774d7c58d7c49a882f4bffd"
+      "digest": "aa9eca637f78e5dd0a936c01b6cf36f39e43b2e8b0eddae2766f1a0f5274c5e4"
     },
     {
       "object": "function auth.paths_up_reach_set(text)",

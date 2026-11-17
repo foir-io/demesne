@@ -1,4 +1,5 @@
 use crate::genfn::GenFn;
+use crate::genfn::Param;
 use crate::{Execute, Sql};
 use demesne_model::SpecExt;
 use demesne_model::closure;
@@ -429,7 +430,8 @@ $$;",
             schema: self.schema().into(),
             table_schema: self.table_schema().into(),
             name: format!("{}_member", self.flat),
-            sig: format!("p_resource {t}, p_principal {t}", t = self.id_type()),
+            params: vec![Param::id("p_resource"), Param::id("p_principal")],
+            id_type: self.id_type().to_string(),
             principal: Some("p_principal".to_string()),
             principal_claims: self.principal_claims.clone(),
             body: format!("EXISTS (SELECT 1 FROM {} WHERE resource_id = p_resource AND principal_id = p_principal)", self.q_flat()),
