@@ -1,0 +1,24 @@
+topology { level platform virtual level tenant parent platform level project parent tenant }
+vocabulary staff {
+  permission resource:read
+  preset viewer @ project = resource:read
+  preset owner @ tenant = *
+  rank owner > viewer
+}
+rolestore staff {
+  assignments role_grants
+  kind        grantee_kind = "staff"
+  subject     grantee_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+subject operator { anchor platform; reach descendants; identifies sub via membership ops_users(user_ref, is_ops) active state = "ON"; roles none }
+subject staff { anchor tenant; reach descendants; identifies sub; roles configurable staff; binds admin }
+object resource {
+  table resources
+  scoped tenant > project
+  relation tenant: tenant via tenant_id
+  relation holder: staff via role
+  permission view = holder + tenant->owner @rls maps select
+}

@@ -254,6 +254,7 @@ struct Callers {
     operator: String,
     lapsed: String,
     supporter: String,
+    dual: String,
 }
 
 impl Callers {
@@ -269,13 +270,14 @@ impl Callers {
             operator: w.claims(&[("operator_id", OPERATOR)], &[]),
             lapsed: w.claims(&[("operator_id", LAPSED)], &[]),
             supporter: w.claims(&[("staff_id", HELPER), ("sub", HELPER), ("tenant_id", TENANT), ("project_id", PROJECT)], &[]),
+            dual: w.claims(&[("staff_id", OPERATOR), ("operator_id", OPERATOR), ("tenant_id", TENANT), ("project_id", PROJECT)], &[]),
         }
     }
 }
 
 fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
-    let Callers { member, unheld, stranger, helped, unhelped, viewer, owner, operator, lapsed, supporter } = c;
-    let rows: [(&str, &str, &[u32]); 25] = [
+    let Callers { member, unheld, stranger, helped, unhelped, viewer, owner, operator, lapsed, supporter, dual } = c;
+    let rows: [(&str, &str, &[u32]); 26] = [
         (member, "docs", &[OWNED, GRANTED, CHILD, TEAMED]),
         (stranger, "docs", &[GRANTED]),
         (helped, "docs", &[OWNED, GRANTED, CHILD, TEAMED]),
@@ -301,6 +303,7 @@ fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
         (member, "boards", &[BOARD]),
         (stranger, "boards", &[]),
         (supporter, "resources", &[]),
+        (dual, "resources", &[]),
     ];
     for (claims, table, want) in rows {
         assert_eq!(w.visible(db, claims, table), w.ids(want), "{}: {table} under {claims}", w.ty);
@@ -308,7 +311,7 @@ fn each_caller_sees_its_rows(w: &World, db: &mut Client, c: &Callers) {
 }
 
 fn each_function_admits_and_refuses(w: &World, db: &mut Client, c: &Callers) {
-    let Callers { member, stranger, helped, unhelped, viewer, owner, operator, lapsed, supporter, .. } = c;
+    let Callers { member, stranger, helped, unhelped, viewer, owner, operator, lapsed, supporter, dual, .. } = c;
     let (a, i) = (&w.auth, |n| w.lit(n));
     let calls: Vec<(&str, bool, String, bool)> = vec![
         (operator, true, format!("{a}.is_ops({})", i(OPERATOR)), true),
@@ -341,6 +344,7 @@ fn each_function_admits_and_refuses(w: &World, db: &mut Client, c: &Callers) {
         (owner, true, format!("{a}.is_tenant_staff({}, {})", i(OWNER), i(TENANT)), true),
         (viewer, true, format!("{a}.is_tenant_staff({}, {})", i(VIEWER), i(TENANT)), false),
         (supporter, true, format!("{a}.is_tenant_staff({}, {})", i(HELPER), i(TENANT)), false),
+        (dual, true, format!("{a}.is_tenant_staff({}, {})", i(OPERATOR), i(TENANT)), false),
         (helped, true, format!("{} IN (SELECT {a}.support_grants_reach_set({}))", i(TENANT), i(HELPER)), true),
         (unhelped, true, format!("{} IN (SELECT {a}.support_grants_reach_set({}))", i(TENANT), i(UNHELPED)), false),
         (stranger, false, format!("{a}.doc_can_edit({})", i(GRANTED)), true),

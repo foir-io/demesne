@@ -1437,6 +1437,7 @@ impl Sql<'_> {
         self.s
             .subjects
             .iter()
+            .filter(|sub| sub.identifies() == self.s.admin_identify())
             .find_map(|sub| sub.membership.as_ref())
             .map(|m| definer_call(&format!("{schema}.{}", membership_fn(m)), &[Arg::Fixed("user_id".into())]))
             .unwrap_or_default()

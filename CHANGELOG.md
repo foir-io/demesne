@@ -6,11 +6,14 @@ The crates are 5.0.0 because public types of `demesne-syntax`,
 `demesne-model` and `demesne-emit-sql` gain fields and variants, named under
 each change, and `demesne_emit_sql::Sql` gains private fields, so it is built
 with `Sql::new`. A spec that uses none of the constructs below emits the
-policies v4.0.0 did, with four exceptions: the two under "Fixed", a
+policies v4.0.0 did, with five exceptions: the first two under "Fixed"; a
 permission whose terms a grant's holder used to pass (the second "Breaking"
-entry), and a call to a generated function whose arguments are the same for
-every row, which now runs once per statement. Its generated functions change: see "Breaking" first. The Go
-module's API doesn't change, so it is `go/v1.6.0`.
+entry); a call to a generated function whose arguments are the same for every
+row, which now runs once per statement; and a group or closure relation of a
+subject other than the owner, or an `@session` over a relation judged by
+several calls, which is refused until the spec says what it admits (the third
+"Breaking" entry). Its generated functions change: see "Breaking" first. The
+Go module's API doesn't change, so it is `go/v1.6.0`.
 
 ### Security: a temporary table could stand in for a table a generated function reads
 
@@ -260,7 +263,12 @@ What breaks for an adopter, and how to keep a pass that was meant:
   caller who held a grant at that level, so such a term admitted the grant's
   holders whatever role they had, and through an identity the check did not
   bind. A grant gives reach, not a role: the check now answers from role
-  assignments, and a platform operator's membership, alone.
+  assignments alone, and from a platform operator's membership only where the
+  operator is identified by the same claim as the role's subject. There an
+  operator presenting a scope's claims holds every role in it, which the
+  operator's own branch, for a caller presenting no scope, does not give.
+  Where the claims differ, the membership was asked about the role subject's
+  id and answered only for a credential carrying both claims with one value.
 - **To keep the pass, name the grant:** `permission view = (@scoped and
   <terms>) + via grant <name>`. That permission emits exactly what it emitted
   before. A `reach <grant> unscoped|bound|via … for <operations>` line on the

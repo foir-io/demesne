@@ -489,3 +489,54 @@ fn a_relation_of_another_subject_than_the_owner_admits_that_subject_by_its_own_c
     }
     db.batch_execute("DROP SCHEMA demesne_gp_rows CASCADE; DROP SCHEMA demesne_gp_auth CASCADE;").expect("drop the schemas");
 }
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn an_operator_identified_as_the_staff_are_holds_every_role_where_it_presents_a_scope() {
+    let mut db = connect();
+    db.batch_execute(
+        "DROP SCHEMA IF EXISTS demesne_op_rows CASCADE; DROP SCHEMA IF EXISTS demesne_op_auth CASCADE;
+         CREATE SCHEMA demesne_op_rows; CREATE SCHEMA demesne_op_auth;
+         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         CREATE TABLE demesne_op_rows.resources (id text PRIMARY KEY, tenant_id text, project_id text);
+         CREATE TABLE demesne_op_rows.roles (id text PRIMARY KEY, key text);
+         CREATE TABLE demesne_op_rows.role_grants (grantee_kind text, grantee_id text, tenant_id text, project_id text, role_id text, revoked_at timestamptz);
+         CREATE TABLE demesne_op_rows.ops_users (user_ref text PRIMARY KEY, is_ops boolean, state text);",
+    )
+    .expect("fresh schemas");
+    let path = format!("{}/../../testdata/bindings/operator-holds-every-role.demesne", env!("CARGO_MANIFEST_DIR"));
+    let body = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let s = demesne_syntax::parse(&format!("definers schema \"demesne_op_auth\"\ntables schema \"demesne_op_rows\"\n{body}")).expect("the spec parses");
+    demesne_emit_sql::validate(&s).expect("the spec validates");
+    let mut sql = String::new();
+    Sql::new(&s).write_all_sql(&mut sql).expect("the SQL compiles");
+    db.batch_execute(&sql).unwrap_or_else(|e| panic!("apply: {e:?}"));
+    db.batch_execute(
+        "INSERT INTO demesne_op_rows.ops_users VALUES ('o1', true, 'ON');
+         INSERT INTO demesne_op_rows.resources VALUES ('r1', 't1', 'p1');
+         GRANT USAGE ON SCHEMA demesne_op_rows, demesne_op_auth TO authenticated;
+         GRANT SELECT ON ALL TABLES IN SCHEMA demesne_op_rows TO authenticated;",
+    )
+    .expect("operator o1, holding no role, and a resource in tenant t1");
+    let read = |db: &mut Client, claims: &str| -> i64 {
+        let mut tx = db.transaction().expect("a transaction");
+        tx.batch_execute("SET LOCAL ROLE authenticated").expect("the role");
+        tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
+        let n: i64 = tx.query_one("SELECT count(*) FROM demesne_op_rows.resources", &[]).expect("the read").get(0);
+        tx.rollback().expect("rollback");
+        n
+    };
+    let cases = [
+        (
+            "operator o1 presenting the project's scope holds the tenant's owner role, through the role check alone",
+            r#"{"sub":"o1","tenant_id":"t1","project_id":"p1"}"#,
+            1,
+        ),
+        ("o1 presenting no project is admitted by the operator's own branch", r#"{"sub":"o1"}"#, 1),
+        ("a staff member with no role is not", r#"{"sub":"s9","tenant_id":"t1","project_id":"p1"}"#, 0),
+    ];
+    for (why, claims, want) in cases {
+        assert_eq!(read(&mut db, claims), want, "{why}");
+    }
+    db.batch_execute("DROP SCHEMA demesne_op_rows CASCADE; DROP SCHEMA demesne_op_auth CASCADE;").expect("drop the schemas");
+}
