@@ -979,20 +979,50 @@ fn without_store_copy_guards(sql: &str) -> String {
     out
 }
 
-fn declared_as_v1_1_0(now: &str, before: &str, id_type: &str) -> String {
+fn kinds_declared(s: &Spec) -> BTreeMap<String, Vec<demesne_emit_sql::ParamKind>> {
+    demesne_emit_sql::Sql::new(s)
+        .emit_definers()
+        .expect("a spec that emits its SQL emits its definers")
+        .into_iter()
+        .map(|f| (format!("{}.{}({})", f.schema(), f.name, f.sig()), f.params.into_iter().map(|p| p.kind).collect()))
+        .collect()
+}
+
+const NAMED_IDS: [&str; 10] =
+    ["p_principal", "p_node", "p_resource", "p_object", "p_member", "p_group", "p_record", "p_ancestor", "p_descendant", "p_container"];
+
+fn names_an_id(s: &Spec, name: &str) -> bool {
+    name.ends_with("_id")
+        || name.ends_with("_ids")
+        || NAMED_IDS.contains(&name)
+        || s.topology.iter().flat_map(|t| &t.levels).any(|l| name == format!("p_{}", l.name))
+}
+
+fn declared_as_v1_1_0(now: &str, before: &str, s: &Spec) -> String {
+    let id_type = s.id_type();
+    let kinds = kinds_declared(s);
     let declared = demesne_emit_sql::objects(before).expect("v1.1.0's SQL splits into its objects");
     let theirs: BTreeMap<&str, Vec<(&str, &str)>> = declared.iter().filter_map(|(_, stmt)| parameters(stmt)).collect();
+    let listed = |ps: &[(&str, &str)]| ps.iter().map(|(n, t)| format!("{n} {t}")).collect::<Vec<_>>().join(", ");
     let mut out = without_store_copy_guards(now);
     for (_, stmt) in demesne_emit_sql::objects(now).expect("this release's SQL splits into its objects") {
         let Some((function, mine)) = parameters(&stmt) else { continue };
         let Some(was) = theirs.get(function) else { continue };
-        let retyped = |t: &str, u: &str| t == u || (t == id_type && u == "text") || (t == format!("{id_type}[]") && u == "text[]");
+        let declared = kinds.get(&format!("{function}({})", listed(&mine)));
+        let retyped = |at: usize, name: &str, t: &str, u: &str| {
+            t == u
+                || names_an_id(s, name)
+                    && match declared.and_then(|k| k.get(at)) {
+                        Some(demesne_emit_sql::ParamKind::Id) => t == id_type && u == "text",
+                        Some(demesne_emit_sql::ParamKind::Ids) => t == format!("{id_type}[]") && u == "text[]",
+                        _ => false,
+                    }
+        };
         let store_copy = function.contains("_can_") && guarded(now, function);
         let renamed = |m: &str, w: &str| m == w || (store_copy && w == "p_id" && m.starts_with("p_") && m.ends_with("_id"));
-        if mine.len() != was.len() || !mine.iter().zip(was).all(|((m, t), (w, u))| retyped(t, u) && renamed(m, w)) {
+        if mine.len() != was.len() || !mine.iter().zip(was).enumerate().all(|(at, ((m, t), (w, u)))| retyped(at, m, t, u) && renamed(m, w)) {
             continue;
         }
-        let listed = |ps: &[(&str, &str)]| ps.iter().map(|(n, t)| format!("{n} {t}")).collect::<Vec<_>>().join(", ");
         let mut fixed = stmt.replacen(&format!("({})", listed(&mine)), &format!("({})", listed(was)), 1);
         for ((m, _), (w, _)) in mine.iter().zip(was) {
             if m != w {
@@ -1121,22 +1151,16 @@ fn the_sql_differs_from_v1_1_0_only_in_the_ways_this_release_states() {
                     demesne_emit_sql::Sql::new(&s).unused_definers().unwrap_or_else(|e| panic!("{name}: {e}")).into_iter().collect();
                 if terms_now_bind_a_reach(&name) {
                     assert_ne!(
-                        calls_per_row(&answering_any_caller(
-                            &read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, s.id_type())),
-                            &before
-                        )),
+                        calls_per_row(&answering_any_caller(&read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, &s)), &before)),
                         calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
                         "{name}: no term binds a grant's reach here any more"
                     );
                     bound += 1;
                 } else {
                     assert_eq!(
-                        calls_per_row(&answering_any_caller(
-                            &read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, s.id_type())),
-                            &before
-                        )),
+                        calls_per_row(&answering_any_caller(&read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, &s)), &before)),
                         calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
-                        "{name}: the SQL changed beyond its claim reads, the callers its sets answer, pg_temp last, the triggers' tables schema, the functions since pruned, and the parameters retyped to the spec's ids or renamed"
+                        "{name}: the SQL changed beyond its claim reads, the callers its sets answer, pg_temp last, the triggers' tables schema, the functions since pruned, the parameters declared and named as ids retyped to the spec's ids, and the store copy's renamed parameter"
                     );
                 }
                 compared += 1;
