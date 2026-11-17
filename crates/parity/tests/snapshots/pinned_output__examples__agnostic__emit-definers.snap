@@ -14,6 +14,7 @@ SET search_path = public
 AS $$
   SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (EXISTS (SELECT 1 FROM ops_users WHERE user_ref = user_id AND is_ops AND state = 'ON'));
 $$;
+GRANT EXECUTE ON FUNCTION auth.is_ops(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.is_tenant_crew(user_id text, check_tenant_id text)
 RETURNS boolean
@@ -24,6 +25,7 @@ SET search_path = public
 AS $$
   SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (auth.is_ops(user_id) OR EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref IS NULL AND ra.killed_at IS NULL AND r.slug IN ('boss')));
 $$;
+GRANT EXECUTE ON FUNCTION auth.is_tenant_crew(text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.crew_has_space_role(user_id text, check_tenant_id text, check_space_id text)
 RETURNS boolean
@@ -34,6 +36,7 @@ SET search_path = public
 AS $$
   SELECT user_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref = check_space_id AND ra.killed_at IS NULL AND r.slug IN ('editor', 'viewer')));
 $$;
+GRANT EXECUTE ON FUNCTION auth.crew_has_space_role(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.member_can_access_asset(p_member_id text, p_asset_id text, p_access text)
 RETURNS boolean
@@ -44,6 +47,7 @@ SET search_path = public
 AS $$
   SELECT p_member_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (EXISTS (SELECT 1 FROM assets r WHERE r.asset_pk = p_asset_id AND r.holder_ref = p_member_id));
 $$;
+GRANT EXECUTE ON FUNCTION auth.member_can_access_asset(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.asset_acl_grants(p_member_id text, p_asset_id text, p_access text)
 RETURNS boolean
@@ -55,6 +59,7 @@ SET search_path = public
 AS $$
   SELECT p_member_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref')) AND (EXISTS (SELECT 1 FROM asset_acl WHERE asset_ref = p_asset_id AND grantee_kind = 'member' AND grantee_ref = p_member_id AND perm = p_access));
 $$;
+GRANT EXECUTE ON FUNCTION auth.asset_acl_grants(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.assets_accessors_conditional(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])

@@ -297,6 +297,12 @@ pub fn revoked_from_public(sql: &str) -> Vec<String> {
     statements(sql).iter().filter_map(|stmt| stmt.strip_prefix("REVOKE EXECUTE ON FUNCTION ")?.strip_suffix(" FROM PUBLIC").map(str::to_string)).collect()
 }
 
+/// Returns the signature of each function `sql` grants `EXECUTE` on to PUBLIC, such as `auth.notes_can_view(text)`, in script order.
+#[must_use]
+pub fn granted_to_public(sql: &str) -> Vec<String> {
+    statements(sql).iter().filter_map(|stmt| stmt.strip_prefix("GRANT EXECUTE ON FUNCTION ")?.strip_suffix(" TO PUBLIC").map(str::to_string)).collect()
+}
+
 fn read_objects(sql: &str) -> Result<Vec<(Object, String)>, String> {
     let mut out = Vec::new();
     for stmt in statements(sql) {
@@ -327,7 +333,7 @@ fn object_of(stmt: &str) -> Result<Option<Object>, String> {
 }
 
 /// Splits `sql` into one unit per object, in script order: the statement that creates the object, with the `DROP … IF
-/// EXISTS` written before it and the `REVOKE` or `FORCE ROW LEVEL SECURITY` written after it.
+/// EXISTS` written before it and the `GRANT`, `REVOKE` or `FORCE ROW LEVEL SECURITY` written after it.
 pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
     let mut out: Vec<(Object, String)> = Vec::new();
     let mut before = String::new();
@@ -335,7 +341,7 @@ pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
         let words: Vec<&str> = stmt.split_whitespace().collect();
         match words.as_slice() {
             ["DROP", "POLICY" | "TRIGGER", "IF", "EXISTS", ..] => writeln!(before, "{stmt};").expect("fmt::Write for String never fails"),
-            ["REVOKE", "EXECUTE", "ON", "FUNCTION", ..] | ["ALTER", "TABLE", _, "FORCE", "ROW", "LEVEL", "SECURITY"] => {
+            ["GRANT" | "REVOKE", "EXECUTE", "ON", "FUNCTION", ..] | ["ALTER", "TABLE", _, "FORCE", "ROW", "LEVEL", "SECURITY"] => {
                 let (_, unit) = out.last_mut().ok_or_else(|| format!("no object precedes {}", first_line(&stmt)))?;
                 writeln!(unit, "{stmt};").expect("fmt::Write for String never fails");
             }
@@ -408,10 +414,13 @@ impl Sql<'_> {
         let mut b = String::new();
         self.write_all_sql(&mut b)?;
         let mut m = Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))?;
-        let revoked: BTreeSet<String> = revoked_from_public(&b).into_iter().collect();
+        let (revoked, granted) = (revoked_from_public(&b), granted_to_public(&b));
+        if let Some(f) = m.functions.iter().find(|f| revoked.iter().chain(&granted).filter(|g| g == f).count() != 1) {
+            return Err(Error::unplaced(format!("function {f} is not followed by exactly one statement granting or revoking EXECUTE for PUBLIC")));
+        }
         let yours = self.adopter_callable();
-        let (callable, internal) = m.functions.iter().filter(|f| !revoked.contains(*f)).cloned().partition(|f| yours.contains(&function_name(f).1));
-        m.execute = Some(ExecuteLists { callable, internal, revoked });
+        let (callable, internal) = granted.into_iter().partition(|f| yours.contains(&function_name(f).1));
+        m.execute = Some(ExecuteLists { callable, internal, revoked: revoked.into_iter().collect() });
         Ok(m)
     }
 

@@ -618,6 +618,15 @@ functions call is one of them too, so SQL of your own that calls it as the
 caller role gets `permission denied`. Grant one to a role of your own only if
 your code needs it.
 
+**The SQL states PUBLIC's right to every function it creates.** Each
+`CREATE OR REPLACE FUNCTION` is followed by `GRANT EXECUTE … TO PUBLIC` or
+`REVOKE EXECUTE … FROM PUBLIC`. `CREATE OR REPLACE` keeps the privileges a
+function already has, so without the statement a function an earlier release
+revoked would stay revoked after a release that makes it PUBLIC. Applying the
+SQL leaves PUBLIC exactly the right it states, and undoes a revoke or a grant
+to PUBLIC made by hand. `demesne diff` reports a function whose live right
+differs, in either direction. A grant to a role of your own is left alone.
+
 **The manifest says who may run each function.** `demesne emit … manifest`
 puts every function the SQL creates in exactly one of three lists:
 
@@ -1598,7 +1607,8 @@ empty principal columns.
 The changelog table gains a `txid` column, which defaults to the writing
 transaction, and that is how a row is matched to its change. The application's
 role needs INSERT on the table. Order within the transaction doesn't matter,
-since the check runs at commit.
+since the check runs at commit. `examples/changelog.demesne` declares one over
+a tracked grant, an owner and a visibility.
 
 ## The runtime glue
 

@@ -557,7 +557,7 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-const SPECS_V1_1_0_CANNOT_PARSE: [&str; 2] = ["examples/chains.demesne", "examples/tree.demesne"];
+const SPECS_V1_1_0_CANNOT_PARSE: [&str; 3] = ["examples/chains.demesne", "examples/changelog.demesne", "examples/tree.demesne"];
 
 const SPECS_WHERE_TERMS_NOW_BIND_A_GRANTS_REACH: [&str; 8] = [
     "testdata/corpus/fixtures/1f18a238f968d83f.demesne",
@@ -792,9 +792,11 @@ fn without_leading_guards(sql: &str) -> String {
 
 fn answering_any_caller(sql: &str, before: &str) -> String {
     let sql = &without_leading_guards(sql);
-    let revoked_since = |line: &&str| line.starts_with("REVOKE EXECUTE ON FUNCTION ") && !before.lines().any(|kept| kept == *line);
+    let stated_since = |line: &&str| {
+        (line.starts_with("REVOKE EXECUTE ON FUNCTION ") || line.starts_with("GRANT EXECUTE ON FUNCTION ")) && !before.lines().any(|kept| kept == *line)
+    };
     let mut out = sql.replace(" AND false", "");
-    for line in sql.lines().filter(revoked_since) {
+    for line in sql.lines().filter(stated_since) {
         out = out.replace(&format!("\n{line}"), "");
     }
     for prefix in OWN {

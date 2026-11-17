@@ -19,11 +19,20 @@ pub enum Language {
 /// Which roles may execute a definer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Execute {
-    /// Every role: Postgres grants execute on a new function to PUBLIC.
+    /// Every role: the SQL grants execute to PUBLIC, so applying it again restores what a revoke took away.
     #[default]
     Public,
     /// Only the roles the adopter grants it to: execute is revoked from PUBLIC.
     Granted,
+}
+
+impl Execute {
+    pub(crate) fn statement(self, function: &str, arg_types: &str) -> String {
+        match self {
+            Execute::Public => format!("GRANT EXECUTE ON FUNCTION {function}({arg_types}) TO PUBLIC;"),
+            Execute::Granted => format!("REVOKE EXECUTE ON FUNCTION {function}({arg_types}) FROM PUBLIC;"),
+        }
+    }
 }
 
 /// How a function PUBLIC may run is bound to the caller's own claims.
@@ -96,13 +105,8 @@ impl GenFn {
             self.table_schema(),
             body
         );
-        match self.execute {
-            Execute::Public => {}
-            Execute::Granted => {
-                write!(sql, "\nREVOKE EXECUTE ON FUNCTION {}.{}({}) FROM PUBLIC;", self.schema(), self.name, sig_types(&self.sig))
-                    .expect("fmt::Write for String never fails");
-            }
-        }
+        sql.push('\n');
+        sql.push_str(&self.execute.statement(&format!("{}.{}", self.schema(), self.name), &sig_types(&self.sig)));
         sql
     }
 

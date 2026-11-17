@@ -1,5 +1,5 @@
 use crate::{Error, query_error};
-use demesne_emit_sql::{Object, objects, revoked_from_public};
+use demesne_emit_sql::{Execute, Object, granted_to_public, objects, revoked_from_public};
 use demesne_runtime::quote_literal;
 use postgres::{Client, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
@@ -60,7 +60,7 @@ pub struct Drift {
 
 /// Compares the live database with `sql`, the spec's whole SQL, in both directions.
 ///
-/// Policies are compared by command, roles, permissive, `USING` and `WITH CHECK`, and functions and triggers by their whole definition. A function the SQL revokes `EXECUTE` on from PUBLIC is also changed when PUBLIC may execute it live. Orphans are the policies on a governed table, and the functions in a definer schema or triggers calling them, that the SQL does not create.
+/// Policies are compared by command, roles, permissive, `USING` and `WITH CHECK`, and functions and triggers by their whole definition. A function is also changed when PUBLIC may execute it live and the SQL revokes that, or may not and the SQL grants it. Orphans are the policies on a governed table, and the functions in a definer schema or triggers calling them, that the SQL does not create.
 ///
 /// Each generated object is created as a temporary copy and read back, so both sides are compared as Postgres deparses them. Nothing outside the session's temporary schema is created, and the transaction is rolled back. An `allow` entry is an orphan's object text, such as `function auth.f(text)`, to leave unreported; an entry that matches no orphan is reported as stale.
 ///
@@ -69,17 +69,18 @@ pub struct Drift {
 /// The SQL creates an object the manifest does not record, or a catalog query fails.
 pub fn drift(client: &mut Client, sql: &str, allow: &[String]) -> Result<Drift, Error> {
     let objs = objects(sql).map_err(|e| Error::sql(e.to_string()))?;
-    let revoked = revoked_from_public(sql).into_iter().collect();
-    compare(client, &objs, &revoked, allow).map_err(Error::query)
+    let execute =
+        revoked_from_public(sql).into_iter().map(|f| (f, Execute::Granted)).chain(granted_to_public(sql).into_iter().map(|f| (f, Execute::Public))).collect();
+    compare(client, &objs, &execute, allow).map_err(Error::query)
 }
 
-fn compare(client: &mut Client, objs: &[(Object, String)], revoked: &BTreeSet<String>, allow: &[String]) -> Result<Drift, String> {
+fn compare(client: &mut Client, objs: &[(Object, String)], execute: &BTreeMap<String, Execute>, allow: &[String]) -> Result<Drift, String> {
     let mut tx = client.transaction().map_err(|e| query_error(&e))?;
     tx.batch_execute("SET LOCAL check_function_bodies = off; SELECT set_config('search_path', current_setting('search_path') || ', pg_temp', true)")
         .map_err(|e| query_error(&e))?;
     let mut c = Comparison {
         objs,
-        revoked,
+        execute,
         live: BTreeMap::new(),
         shadow: BTreeMap::new(),
         governed: BTreeSet::new(),
@@ -110,7 +111,7 @@ struct PolicyDef {
 
 struct Comparison<'a> {
     objs: &'a [(Object, String)],
-    revoked: &'a BTreeSet<String>,
+    execute: &'a BTreeMap<String, Execute>,
     live: BTreeMap<String, u32>,
     shadow: BTreeMap<String, (String, u32)>,
     governed: BTreeSet<String>,
@@ -256,10 +257,16 @@ impl Comparison<'_> {
                 self.found(DriftKind::Missing, object, "generated but not live (apply it)".into());
                 continue;
             };
-            let open = self.revoked.contains(sig)
-                && tx.query_one("SELECT has_function_privilege('public', $1::oid, 'EXECUTE')", &[&live_oid]).map_err(|e| query_error(&e))?.get::<_, bool>(0);
-            if open {
-                self.found(DriftKind::Changed, object.clone(), "PUBLIC may execute it, and the generated SQL revokes that (re-apply it)".into());
+            let off = match self.execute.get(sig) {
+                Some(&said) if public_right(tx, live_oid)? != said => Some(said),
+                _ => None,
+            };
+            if let Some(said) = off {
+                let detail = match said {
+                    Execute::Public => "PUBLIC may not execute it, and the generated SQL grants that (re-apply it)",
+                    Execute::Granted => "PUBLIC may execute it, and the generated SQL revokes that (re-apply it)",
+                };
+                self.found(DriftKind::Changed, object.clone(), detail.into());
             }
             let scratch = self.scratch.get(o).cloned().unwrap_or_default();
             let defs = tx
@@ -270,7 +277,7 @@ impl Comparison<'_> {
                 Some((l, g)) => {
                     self.found(DriftKind::Changed, object, format!("its live definition is not the generated one (re-apply it): live `{l}`, generated `{g}`"));
                 }
-                None if !open => self.out.functions += 1,
+                None if off.is_none() => self.out.functions += 1,
                 None => {}
             }
         }
@@ -394,6 +401,11 @@ fn policy_change(live: &PolicyDef, generated: &PolicyDef) -> String {
         parts.push(format!("WITH CHECK: live `{}`, generated `{}`", live.check, generated.check));
     }
     parts.join("; ")
+}
+
+fn public_right(tx: &mut Transaction<'_>, oid: u32) -> Result<Execute, String> {
+    let public = tx.query_one("SELECT has_function_privilege('public', $1::oid, 'EXECUTE')", &[&oid]).map_err(|e| query_error(&e))?.get::<_, bool>(0);
+    Ok(if public { Execute::Public } else { Execute::Granted })
 }
 
 fn schema_of(sig: &str) -> String {

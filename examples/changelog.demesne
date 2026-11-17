@@ -1,0 +1,16 @@
+changelog checked
+
+topology { level workspace level project parent workspace }
+
+subject member { anchor project; reach self; identifies sub; roles none; binds owner }
+
+object note {
+  table notes
+  scoped workspace > project
+  relation owner:  member via owner_id where owner_kind = "member"
+  relation reader: member via grant note_grants(note_id, principal_kind, principal_id, access) tracked
+  permission view = owner + mode visibility = "public" + reader:read + reader:write @rls maps select
+  permission edit = owner + reader:write @rls maps update
+  track owner
+  track visibility
+}

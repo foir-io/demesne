@@ -45,6 +45,7 @@ BEGIN
   RETURN NULL;
 END;
 $$;
+GRANT EXECUTE ON FUNCTION auth.folder_closure_maintain() TO PUBLIC;
 
 DROP TRIGGER IF EXISTS folder_closure_maintain_ins ON public.folders;
 CREATE TRIGGER folder_closure_maintain_ins AFTER INSERT ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.folder_closure_maintain();

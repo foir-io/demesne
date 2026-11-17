@@ -213,7 +213,7 @@ fn every_example_validates_without_warnings() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 14, "the example count changed; update the test if that was deliberate");
+    assert_eq!(checked, 15, "the example count changed; update the test if that was deliberate");
 }
 
 #[test]

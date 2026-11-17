@@ -13,6 +13,7 @@ SET search_path = public
 AS $$
   SELECT p_member = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id') AND (EXISTS (SELECT 1 FROM group_closure WHERE grp = p_group AND mem = p_member));
 $$;
+GRANT EXECUTE ON FUNCTION auth.group_closure_member(text, text) TO PUBLIC;
 
 
 ALTER TABLE public.docs ENABLE ROW LEVEL SECURITY;
@@ -65,6 +66,7 @@ BEGIN
   RETURN NULL;
 END;
 $$;
+GRANT EXECUTE ON FUNCTION auth.group_closure_rebuild() TO PUBLIC;
 
 DROP TRIGGER IF EXISTS group_closure_rebuild ON public.group_memberships;
 CREATE TRIGGER group_closure_rebuild AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON public.group_memberships FOR EACH STATEMENT EXECUTE FUNCTION auth.group_closure_rebuild();

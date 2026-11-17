@@ -9,6 +9,7 @@ SET search_path = public
 AS $$
   SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM role_assignments ra JOIN roles r ON r.id = ra.role_id WHERE ra.principal_kind = 'admin' AND ra.principal_id = user_id AND (ra.tenant_id IS NULL OR ra.tenant_id = check_tenant_id) AND (ra.project_id IS NULL OR ra.project_id = check_project_id) AND ra.revoked_at IS NULL AND p_perm = ANY(r.permissions)));
 $$;
+GRANT EXECUTE ON FUNCTION auth.admin_has_perm(text, text, text, text) TO PUBLIC;
 
 
 ALTER TABLE public.invitations ENABLE ROW LEVEL SECURITY;

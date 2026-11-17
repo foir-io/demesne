@@ -52,6 +52,7 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+GRANT EXECUTE ON FUNCTION auth.paths_maintain() TO PUBLIC;
 
 DROP TRIGGER IF EXISTS paths_maintain_ins ON public.folders;
 CREATE TRIGGER paths_maintain_ins AFTER INSERT ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.paths_maintain();

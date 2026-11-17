@@ -46,6 +46,7 @@ BEGIN
   RETURN NULL;
 END;
 $$;
+GRANT EXECUTE ON FUNCTION auth.group_closure_rebuild() TO PUBLIC;
 
 DROP TRIGGER IF EXISTS group_closure_rebuild ON public.group_memberships;
 CREATE TRIGGER group_closure_rebuild AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON public.group_memberships FOR EACH STATEMENT EXECUTE FUNCTION auth.group_closure_rebuild();

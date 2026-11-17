@@ -26,6 +26,7 @@ SET search_path = public
 AS $$
   SELECT tenant_id FROM support_grants WHERE holder_id = user_id AND ended_at IS NULL AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub');
 $$;
+GRANT EXECUTE ON FUNCTION auth.support_grants_reach_set(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.acl_grants_note(p_member_id text, p_note_id text, p_access text)
 RETURNS boolean
@@ -37,6 +38,7 @@ SET search_path = public
 AS $$
   SELECT p_member_id IN ((SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub'), (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id')) AND (EXISTS (SELECT 1 FROM acl WHERE resource_id = p_note_id AND resource_type = 'note' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
 $$;
+GRANT EXECUTE ON FUNCTION auth.acl_grants_note(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.notes_accessors(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
@@ -68,6 +70,7 @@ SET search_path = public
 AS $$
   SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_doc_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'read') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
 $$;
+GRANT EXECUTE ON FUNCTION auth.doc_can_view(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.notes_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -111,6 +114,7 @@ SET search_path = public
 AS $$
   SELECT (CASE p_type WHEN 'doc' THEN auth.doc_can_edit(p_id) WHEN 'note' THEN auth.note_can_edit(p_id) ELSE false END);
 $$;
+GRANT EXECUTE ON FUNCTION auth.acl_manage(text, text) TO PUBLIC;
 
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notes FORCE ROW LEVEL SECURITY;

@@ -13,6 +13,7 @@ SET search_path = public
 AS $$
   SELECT (p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') OR p_space = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'space_id')) AND (EXISTS (SELECT 1 FROM role_grants WHERE principal_id = p_principal AND space_id = p_space AND principal_kind = 'keeper' AND revoked_at IS NULL));
 $$;
+GRANT EXECUTE ON FUNCTION auth.keeper_memberin_space(text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.spaces_accessors(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
@@ -115,6 +116,7 @@ BEGIN
   RETURN p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));
 END
 $$;
+GRANT EXECUTE ON FUNCTION auth.doc_shared_keyed(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.rule_slots_declared_by_rule(p_key text)
 RETURNS TABLE(kind text, param text, role text)
@@ -129,6 +131,7 @@ BEGIN
   RETURN QUERY SELECT rule_slots.kind::text, rule_slots.param::text, rule_slots.role::text FROM rule_slots WHERE rule_slots.rule = p_key;
 END
 $$;
+GRANT EXECUTE ON FUNCTION auth.rule_slots_declared_by_rule(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.trail_hops_declared_by_trail(p_key text)
 RETURNS TABLE(doc_id text, field text, kind text, rule text)
@@ -233,6 +236,7 @@ BEGIN
   RETURN CASE WHEN undecided THEN NULL ELSE true END;
 END
 $$;
+GRANT EXECUTE ON FUNCTION auth.doc_terms_hold(text, text, jsonb) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.live_skin(p_node text)
 RETURNS text
@@ -260,6 +264,7 @@ SET search_path = public
 AS $$
   SELECT auth.live_skin(p_node) WHERE p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
+GRANT EXECUTE ON FUNCTION auth.live_skin_own(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.doc_shared_keyed_inside(p_principal text, p_object text, p_key text)
 RETURNS boolean
@@ -375,6 +380,7 @@ BEGIN
   RETURN false;
 END
 $$;
+GRANT EXECUTE ON FUNCTION auth.doc_composition_lent(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.doc_select_holds_at(p_record text, p_element text)
 RETURNS boolean

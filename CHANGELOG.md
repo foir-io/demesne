@@ -66,6 +66,15 @@ The binding assumes only your API sets the claims. A caller who can run
 arbitrary SQL as the caller role can set them with `set_config`, as it always
 could; the guide now says so in as many words.
 
+Every function the SQL creates is now followed by `GRANT EXECUTE … TO PUBLIC`
+or `REVOKE EXECUTE … FROM PUBLIC`. `CREATE OR REPLACE FUNCTION` keeps a
+function's privileges, so without the grant a function that one release
+revoked and a later one made PUBLIC again would have stayed revoked. Applying
+the SQL now leaves PUBLIC exactly the right it states. `demesne diff` reports a
+function PUBLIC may not run that the SQL grants, as well as one PUBLIC may run
+that the SQL revokes. `demesne_emit_sql::granted_to_public` reads the grants as
+`revoked_from_public` reads the revokes. Every spec's SQL gains these lines.
+
 What breaks for an adopter:
 
 - **SQL of your own that calls a bound function with another principal's id,
@@ -80,6 +89,11 @@ What breaks for an adopter:
 - **A role that lists accessors or reads `<closure>_path` needs
   `GRANT EXECUTE`** on those functions. The manifest's `revoked` list names
   every function the SQL revokes (below).
+- **A revoke from PUBLIC that you made by hand on a function the SQL grants is
+  undone** when you apply the SQL. So is one made by default privileges
+  (`ALTER DEFAULT PRIVILEGES … REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`). The
+  manifest's `callable` and `internal` lists name every function the SQL
+  grants.
 
 Re-emit and apply the definers; nothing else moves.
 
@@ -449,7 +463,8 @@ A spec in several files that declares it was refused too. Every file after the
 first failed on the `ALTER TABLE … ADD COLUMN txid` that the declaration adds
 to the changelog table. That statement now goes with the table's own
 statement, so a later file writes it only when it writes the table. The SQL
-these specs emit as one file doesn't change.
+these specs emit as one file doesn't change. `examples/changelog.demesne`
+declares one, so the pinned outputs and the corpus tests cover it.
 
 ## v4.0.0
 

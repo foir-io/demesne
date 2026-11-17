@@ -1,5 +1,5 @@
-use crate::Sql;
 use crate::genfn::GenFn;
+use crate::{Execute, Sql};
 use demesne_model::SpecExt;
 use demesne_model::closure;
 use demesne_runtime::quote_literal;
@@ -89,7 +89,8 @@ impl ClosureTrigger {
         }
         let acyclic = self.refusal("acyclic", &format!("a row of {} cannot sit beneath itself", self.base));
         let known = self.refusal("parent_known", &format!("the {par} of a row of {} names no row the closure {clo} holds", self.base));
-        format!(
+        let f = self.fn_name();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -130,15 +131,16 @@ BEGIN
   RETURN NEW;
 END;
 $$;",
-            f = self.fn_name(),
             ts = or_default(&self.table_schema, "public"),
             lock_old = lock("OLD"),
             lock_new = lock("NEW"),
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     fn relation_function_sql(&self) -> String {
-        format!(
+        let f = self.fn_name();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -175,13 +177,13 @@ BEGIN
   RETURN NULL;
 END;
 $$;",
-            f = self.fn_name(),
             clo = self.closure,
             anc = self.ancestor,
             desc = self.descendant,
             id = self.base_id,
             par = self.base_parent
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     fn update_condition(&self) -> String {
@@ -227,7 +229,8 @@ impl GroupTrigger {
 
     #[must_use]
     pub fn function_sql(&self) -> String {
-        format!(
+        let f = self.fn_name();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -265,14 +268,14 @@ BEGIN
   RETURN NULL;
 END;
 $$;",
-            f = self.fn_name(),
             clo = self.closure,
             gc = self.group_col,
             mc = self.member_col,
             em = self.edge_member,
             eg = self.edge_group,
             edge = self.edge
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     #[must_use]
@@ -335,7 +338,8 @@ impl MaterializedFlat {
 
     #[must_use]
     pub fn function_sql(&self) -> String {
-        format!(
+        let f = self.fn_name();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -356,7 +360,6 @@ BEGIN
   RETURN NULL;
 END;
 $$;",
-            f = self.fn_name(),
             q = self.q_flat(),
             pk = self.obj_pk,
             kind = quote_literal(&self.kind),
@@ -366,12 +369,14 @@ $$;",
             clo = self.closure,
             gc = self.group_col,
             col = self.col
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     #[must_use]
     pub fn reconcile_sql(&self) -> String {
-        format!(
+        let f = self.reconcile_fn();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS integer
 LANGUAGE plpgsql
@@ -403,7 +408,6 @@ BEGIN
   RETURN v_missing + v_stale;
 END;
 $$;",
-            f = self.reconcile_fn(),
             s = self.schema(),
             q = self.q_flat(),
             pk = self.obj_pk,
@@ -414,7 +418,8 @@ $$;",
             clo = self.closure,
             gc = self.group_col,
             col = self.col
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     #[must_use]

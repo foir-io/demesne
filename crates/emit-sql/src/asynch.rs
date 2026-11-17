@@ -1,4 +1,4 @@
-use crate::Sql;
+use crate::{Execute, Sql};
 use demesne_model::SpecExt;
 use demesne_runtime::quote_literal;
 use demesne_syntax::Repr;
@@ -53,7 +53,8 @@ impl AsyncIndex {
 
     #[must_use]
     pub fn apply_fn_sql(&self) -> String {
-        format!(
+        let f = self.fn_name("apply");
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS xid8
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
@@ -85,19 +86,20 @@ BEGIN
   RETURN h;
 END;
 $$;",
-            f = self.fn_name("apply"),
             cur = self.cursor,
             key = quote_literal(self.index_key()),
             cl = self.changelog,
             rel = quote_literal(self.rel_const()),
             b = self.base
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     #[must_use]
     pub fn rebuild_fn_sql(&self) -> String {
         let where_ = if self.discrim_col.is_empty() { String::new() } else { format!(" WHERE {} = {}", self.discrim_col, quote_literal(&self.discrim_val)) };
-        format!(
+        let f = self.fn_name("rebuild");
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS xid8
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
@@ -115,7 +117,6 @@ BEGIN
   RETURN h;
 END;
 $$;",
-            f = self.fn_name("rebuild"),
             cur = self.cursor,
             key = quote_literal(self.index_key()),
             b = self.base,
@@ -125,12 +126,14 @@ $$;",
             ts = self.table_schema(),
             gt = self.grant_table,
             w = where_
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     #[must_use]
     pub fn affordance_fn_sql(&self) -> String {
-        format!(
+        let f = self.fn_name("affordance");
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}(p_resource {t}, p_kind text, p_principal {t})
 RETURNS TABLE(allowed boolean, as_of xid8)
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public
@@ -138,22 +141,23 @@ AS $$
   SELECT EXISTS(SELECT 1 FROM {b} WHERE resource_id = p_resource AND principal_kind = p_kind AND principal_id = p_principal),
          COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8);
 $$;",
-            f = self.fn_name("affordance"),
             b = self.base,
             cur = self.cursor,
             key = quote_literal(self.index_key()),
             t = self.id_type()
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, &format!("{t}, text, {t}", t = self.id_type())))
     }
 
     #[must_use]
     pub fn watermark_fn_sql(&self) -> String {
-        format!(
+        let f = self.fn_name("watermark");
+        let create = format!(
             "CREATE OR REPLACE FUNCTION {f}()\nRETURNS xid8\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public\nAS $$ SELECT COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8); $$;",
-            f = self.fn_name("watermark"),
             cur = self.cursor,
             key = quote_literal(self.index_key())
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 }
 

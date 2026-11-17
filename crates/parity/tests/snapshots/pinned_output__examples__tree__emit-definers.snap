@@ -26,6 +26,7 @@ SET search_path = public
 AS $$
   SELECT descendant_id FROM paths WHERE ancestor_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
+GRANT EXECUTE ON FUNCTION auth.paths_reach_set(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_up_reach(user_id text, check_folder_id text)
 RETURNS boolean
@@ -49,6 +50,7 @@ SET search_path = public
 AS $$
   SELECT ancestor_id FROM paths WHERE descendant_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
+GRANT EXECUTE ON FUNCTION auth.paths_up_reach_set(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_reachable(p_ancestor text, p_descendant text)
 RETURNS boolean
@@ -72,6 +74,7 @@ SET search_path = public
 AS $$
   SELECT descendant_id FROM paths WHERE ancestor_id = p_node AND p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
+GRANT EXECUTE ON FUNCTION auth.paths_descendants(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_ancestors(p_node text)
 RETURNS SETOF text
@@ -83,6 +86,7 @@ SET search_path = public
 AS $$
   SELECT ancestor_id FROM paths WHERE descendant_id = p_node AND p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
+GRANT EXECUTE ON FUNCTION auth.paths_ancestors(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_path(p_node text)
 RETURNS TABLE(node text, depth integer)
@@ -106,6 +110,7 @@ SET search_path = public
 AS $$
   SELECT EXISTS (SELECT 1 FROM spaces WHERE spaces.id = p_space_id AND ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((status = 'open')))));
 $$;
+GRANT EXECUTE ON FUNCTION auth.space_can_view(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.space_named(p_name text)
 RETURNS boolean
@@ -117,6 +122,7 @@ SET search_path = public
 AS $$
   SELECT EXISTS (SELECT 1 FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND name = space_named.p_name);
 $$;
+GRANT EXECUTE ON FUNCTION auth.space_named(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.spaces_in_estate()
 RETURNS bigint
@@ -127,6 +133,7 @@ SET search_path = public
 AS $$
   SELECT count(*) FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id'));
 $$;
+GRANT EXECUTE ON FUNCTION auth.spaces_in_estate() TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.space_by_name(wanted text)
 RETURNS text
@@ -138,6 +145,7 @@ SET search_path = public
 AS $$
   SELECT id FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND name = space_by_name.wanted ORDER BY id LIMIT 1;
 $$;
+GRANT EXECUTE ON FUNCTION auth.space_by_name(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.theme_color(p_node text)
 RETURNS text
@@ -181,6 +189,7 @@ SET search_path = public
 AS $$
   SELECT auth.live_skin(p_node) WHERE p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
+GRANT EXECUTE ON FUNCTION auth.live_skin_own(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.folder_path()
 RETURNS TABLE(id text, title text)
@@ -191,6 +200,7 @@ SET search_path = public
 AS $$
   SELECT folders.id::text, folders.name::text FROM folders WHERE estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (id IN (SELECT auth.paths_ancestors((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))));
 $$;
+GRANT EXECUTE ON FUNCTION auth.folder_path() TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.space_cards()
 RETURNS TABLE(id text, title text)
@@ -201,6 +211,7 @@ SET search_path = public
 AS $$
   SELECT spaces.id::text, spaces.name::text FROM spaces WHERE estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'member');
 $$;
+GRANT EXECUTE ON FUNCTION auth.space_cards() TO PUBLIC;
 
 
 --- stderr ---
