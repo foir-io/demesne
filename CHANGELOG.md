@@ -443,7 +443,13 @@ TRIGGER`, and the manifest didn't read that statement. So `demesne emit
 manifest`, `demesne emit migrate` and `demesne diff` each refused such a spec
 and named the trigger. v4.0.0 has this. The manifest now records a constraint
 trigger like any other trigger, a migration drops it with `DROP TRIGGER`, and
-`diff` compares it. The SQL these specs emit doesn't change.
+`diff` compares it.
+
+A spec in several files that declares it was refused too. Every file after the
+first failed on the `ALTER TABLE … ADD COLUMN txid` that the declaration adds
+to the changelog table. That statement now goes with the table's own
+statement, so a later file writes it only when it writes the table. The SQL
+these specs emit as one file doesn't change.
 
 ## v4.0.0
 

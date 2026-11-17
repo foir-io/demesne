@@ -165,3 +165,34 @@ fn a_warning_names_its_file_once() {
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].starts_with("blind.demesne:7: permission ledger.delete maps delete"), "{warnings:?}");
 }
+
+#[test]
+fn a_checked_changelogs_column_is_written_with_its_table() {
+    let first = "changelog checked
+topology { level estate level space parent estate }
+subject member { anchor space; reach self; identifies sub; roles none; binds owner }
+object doc {
+  table docs
+  scoped estate > space
+  relation owner: member via owner_id where owner_kind = \"member\"
+  permission view = owner @rls maps select
+  track owner
+}
+";
+    let second = "object note {
+  table notes
+  scoped estate > space
+  relation owner: member via owner_id where owner_kind = \"member\"
+  permission view = owner @rls maps select
+  track owner
+}
+";
+    let files = named(&[("a.demesne", first), ("b.demesne", second)]).expect("the files parse");
+    validate_files(&files).expect("the files validate");
+    let column = "ALTER TABLE auth._authz_changelog ADD COLUMN IF NOT EXISTS txid";
+    let earlier = file_sql(&files, 0).unwrap_or_else(|e| panic!("{e}"));
+    assert!(earlier.contains(column), "{earlier}");
+    let later = file_sql(&files, 1).unwrap_or_else(|e| panic!("{e}"));
+    assert!(later.contains("CREATE CONSTRAINT TRIGGER notes_obj_changelog"), "{later}");
+    assert!(!later.contains(column), "the table is unchanged, so its column is not written again:\n{later}");
+}

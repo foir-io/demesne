@@ -339,6 +339,11 @@ pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
                 let (_, unit) = out.last_mut().ok_or_else(|| format!("no object precedes {}", first_line(&stmt)))?;
                 writeln!(unit, "{stmt};").expect("fmt::Write for String never fails");
             }
+            ["ALTER", "TABLE", table, "ADD", "COLUMN", ..] => {
+                let created = Object::Table((*table).to_string());
+                let (_, unit) = out.iter_mut().find(|(o, _)| *o == created).ok_or_else(|| format!("no table precedes {}", first_line(&stmt)))?;
+                writeln!(unit, "{stmt};").expect("fmt::Write for String never fails");
+            }
             _ => {
                 let object = object_of(&stmt)?.ok_or_else(|| format!("a statement that belongs to no object: {}", first_line(&stmt)))?;
                 out.push((object, format!("{}{stmt};\n", std::mem::take(&mut before))));
