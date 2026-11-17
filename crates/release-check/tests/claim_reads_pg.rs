@@ -621,6 +621,70 @@ fn ddl_before(src: &str) -> Option<String> {
     Some(ddl)
 }
 
+fn ddl_v4(src: &str) -> Option<(String, demesne_emit_sql::Manifest)> {
+    let s = demesne_syntax_v4::parse(src).ok()?;
+    demesne_emit_sql_v4::validate(&s).ok()?;
+    let sql = demesne_emit_sql_v4::Sql::new(&s);
+    let mut ddl = String::new();
+    sql.write_all_sql(&mut ddl).ok()?;
+    let manifest = demesne_emit_sql::Manifest::from_json(&sql.manifest().ok()?.to_json()).ok()?;
+    Some((ddl, manifest))
+}
+
+fn upgrade_from_v4(config: &Config, name: &str, src: &str) -> Option<(usize, usize)> {
+    let ((s, now), (v4, previous)) = (ddl_now(src)?, ddl_v4(src)?);
+    let keys = claim_keys(&[&v4, &now]);
+    let pools = Pools::new(s.id_type(), &[&v4, &now], &keys.all);
+    let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
+    let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
+    let mut db = config.connect(NoTls).expect("connect to the scratch database");
+    install(&mut db, &mut setup, &pools, &now).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let current = demesne_emit_sql::Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{name}: {e}"));
+    let migration = demesne_emit_sql::Sql::new(&s).migration(&previous).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let mut tx = db.transaction().expect("a transaction");
+    create(&mut tx, &setup, &pools).unwrap_or_else(|e| panic!("{name}: the tables: {}", why(&e)));
+    tx.batch_execute(&v4).unwrap_or_else(|e| panic!("{name}: v4.0.0's SQL: {}", why(&e)));
+    tx.batch_execute(&migration).unwrap_or_else(|e| panic!("{name}: the migration: {}", why(&e)));
+    let live = |tx: &mut Transaction<'_>, f: &str| -> bool { tx.query_one("SELECT to_regprocedure($1) IS NOT NULL", &[&f]).expect("the lookup").get(0) };
+    let gone: Vec<&String> = previous.functions.iter().filter(|f| !current.functions.contains(*f)).collect();
+    for f in &gone {
+        assert!(!live(&mut tx, f), "{name}: {f}, which v5.0.0 does not emit, is left after the migration");
+    }
+    for f in &current.functions {
+        assert!(live(&mut tx, f), "{name}: {f} is missing after the migration");
+    }
+    tx.rollback().expect("rollback");
+    Some((gone.len(), current.functions.len()))
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn upgrading_from_v4_0_0_by_migrating_leaves_no_function_v5_0_0_does_not_emit() {
+    let url = require_env("DEMESNE_PG_URL");
+    let (config, scratch) = scratch_database(&url);
+    config
+        .connect(NoTls)
+        .expect("connect to the scratch database")
+        .batch_execute(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$",
+        )
+        .expect("the role");
+    let (mut specs, mut dropped, mut kept) = (0, 0, 0);
+    let mut pruned_example = false;
+    for (name, src) in every_spec().into_iter().filter(|(name, _)| !UUID_SPECS_WHOSE_DEFINERS_TAKE_TEXT.contains(&name.as_str())) {
+        let Some((gone, now)) = upgrade_from_v4(&config, &name, &src) else { continue };
+        specs += 1;
+        dropped += gone;
+        kept += now;
+        pruned_example |= name == "examples/example.demesne" && gone > 0;
+    }
+    eprintln!("v4.0.0 to v5.0.0 by migrating: {specs} specs, {dropped} functions dropped, {kept} kept");
+    let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
+    admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");
+    assert!(specs > 150 && dropped > 50 && kept > 400, "{specs} specs, {dropped} dropped, {kept} kept");
+    assert!(pruned_example, "examples/example.demesne loses has_org_role, among others");
+}
+
 fn require_env(var: &str) -> String {
     std::env::var(var).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| panic!("set ${var} to run the claim-read checks against a live Postgres"))
 }

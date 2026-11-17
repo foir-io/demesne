@@ -107,7 +107,16 @@ What breaks for an adopter:
   manifest's `callable` and `internal` lists name every function the SQL
   grants.
 
-Re-emit and apply the definers; nothing else moves.
+**Upgrade with `emit migrate`, never by applying the new SQL alone.** v5.0.0
+no longer emits functions v4.0.0 did (above). Applying v5's SQL over a v4
+database leaves each of them as v4 made it: PUBLIC, unbound, and answering for
+any argument. `auth.has_org_role(user_id)`, for one, would go on telling any
+caller whether any user holds the role. Keep v4's manifest, or write it with
+v4's CLI (`npx @foir/demesne-cli@4.0.0 emit <spec> manifest > v4.json`), and
+apply `demesne emit <spec> migrate v4.json`: v5's SQL, then exact drops of
+what v4 created and v5 does not, then a check that nothing dropped is still
+there. If v4's manifest is lost, apply v5's SQL and run `demesne diff`: it
+reports each function v4 left behind as an orphan, and you drop each one.
 
 ### The manifest says who may run each function
 
@@ -527,8 +536,9 @@ terms are branches of a union, including a union that is one side of an `and`,
 emits exactly what it did. The change can only narrow what a spec admits.
 
 To check a spec, look for a `via composition` relation named beside `and` or
-after `not` in a permission. After upgrading, re-emit and apply the definers:
-the fix is in the generated `<object>_composition_<relation>` functions.
+after `not` in a permission. The upgrade's migration (see the first
+"Breaking" entry) carries the fix, which is in the generated
+`<object>_composition_<relation>` functions.
 
 ### Fixed: the manifest refused every spec that declares `changelog checked`
 

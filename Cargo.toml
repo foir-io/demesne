@@ -26,6 +26,8 @@ demesne-emit-go = { path = "crates/emit-go", version = "5.0.0" }
 demesne-postgres = { path = "crates/postgres", version = "5.0.0" }
 demesne-emit-sql-v1-1 = { package = "demesne-emit-sql", version = "=1.1.0" }
 demesne-syntax-v1-1 = { package = "demesne-syntax", version = "=1.1.0" }
+demesne-emit-sql-v4 = { package = "demesne-emit-sql", version = "=4.0.0" }
+demesne-syntax-v4 = { package = "demesne-syntax", version = "=4.0.0" }
 insta = { version = "1.49.0", default-features = false }
 nix = { version = "0.30", default-features = false, features = ["user"] }
 postgres = "0.19.14"

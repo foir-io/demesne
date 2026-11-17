@@ -204,6 +204,18 @@ dependencies = [
 
 [[package]]
 name = "demesne-emit-sql"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4191388a934de9b565d0c208295c4fe7985184a3aa33ad883b7fdd09338a10f3"
+dependencies = [
+ "demesne-gocompat 4.0.0",
+ "demesne-model 4.0.0",
+ "demesne-runtime 4.0.0",
+ "demesne-syntax 4.0.0",
+]
+
+[[package]]
+name = "demesne-emit-sql"
 version = "5.0.0"
 dependencies = [
  "demesne-gocompat 5.0.0",
@@ -231,6 +243,12 @@ checksum = "fa9fd4e696977ea4bf1dd9454c4215b11303ded600bdaac14dcc46a5a76faf21"
 
 [[package]]
 name = "demesne-gocompat"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b21e84bbb5a035915729edb400b622b06b624eb5bdcdc9d4d1f3167574c0d7b0"
+
+[[package]]
+name = "demesne-gocompat"
 version = "5.0.0"
 
 [[package]]
@@ -242,6 +260,17 @@ dependencies = [
  "demesne-gocompat 1.1.0",
  "demesne-runtime 1.1.0",
  "demesne-syntax 1.1.0",
+]
+
+[[package]]
+name = "demesne-model"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f1fa9c53d6d2d1fd75aa7d8525afe060e1cecb05d054ae0cacc631c7f5e0efb"
+dependencies = [
+ "demesne-gocompat 4.0.0",
+ "demesne-runtime 4.0.0",
+ "demesne-syntax 4.0.0",
 ]
 
 [[package]]
@@ -293,9 +322,11 @@ name = "demesne-release-check"
 version = "5.0.0"
 dependencies = [
  "demesne-emit-sql 1.1.0",
+ "demesne-emit-sql 4.0.0",
  "demesne-emit-sql 5.0.0",
  "demesne-model 5.0.0",
  "demesne-syntax 1.1.0",
+ "demesne-syntax 4.0.0",
  "demesne-syntax 5.0.0",
  "postgres",
 ]
@@ -307,6 +338,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd9b1b1318a3edc0b00cad4bf73b29da9aab968c5628001759fd5dabc4a7c70f"
 dependencies = [
  "demesne-gocompat 1.1.0",
+]
+
+[[package]]
+name = "demesne-runtime"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "880e018c90c26e1370c6f7ff5009c29a73bae2de907ba49e8591eef636adaa7a"
+dependencies = [
+ "demesne-gocompat 4.0.0",
 ]
 
 [[package]]
@@ -357,6 +397,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a0eb60ea250def1e9b35fa552b21f14d835dc37d0c41bd7f8b70f5a1ed59662"
 dependencies = [
  "demesne-gocompat 1.1.0",
+]
+
+[[package]]
+name = "demesne-syntax"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26bfcb66fc642e801f3521f172bcd1b230c5b7a677f521d9fe2ac859d7fc51d5"
+dependencies = [
+ "demesne-gocompat 4.0.0",
 ]
 
 [[package]]
