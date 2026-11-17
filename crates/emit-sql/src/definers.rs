@@ -1,6 +1,6 @@
 use crate::Sql;
 use crate::error::Error;
-use crate::genfn::{Bound, Execute, GenFn, Language, binds_every, grant_edge_exists, order_by_calls};
+use crate::genfn::{Arg, Bound, Execute, GenFn, Language, binds_every, definer_call, grant_edge_exists, order_by_calls};
 use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
@@ -1257,7 +1257,8 @@ impl Sql<'_> {
                 defs.fns.push(self.store_can_edit_definer(&can_edit, o, virt, store)?);
             }
             let dv = object_grant_edge(o).and_then(|e| e.discrim_val.clone()).unwrap_or_default();
-            whens.push(format!("WHEN {} THEN {}.{}(p_id)", quote_literal(&dv), self.s.definer_schema(), can_edit));
+            let call = definer_call(&format!("{}.{can_edit}", self.s.definer_schema()), &[Arg::Fixed("p_id".into())]);
+            whens.push(format!("WHEN {} THEN {call}", quote_literal(&dv)));
         }
         Ok(whens)
     }

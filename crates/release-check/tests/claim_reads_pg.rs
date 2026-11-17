@@ -739,6 +739,29 @@ fn read_per_row(sql: &str) -> String {
     sql.replace("(SELECT current_setting(", "(current_setting(").replace("(SELECT NULLIF(current_setting(", "(NULLIF(current_setting(")
 }
 
+fn calls_per_row(sql: &str) -> String {
+    const WRAP: &str = "(SELECT ";
+    let mut out = sql.to_string();
+    let mut from = 0;
+    while let Some(found) = out[from..].find(WRAP) {
+        let open = from + found;
+        let call = open + WRAP.len();
+        from = call;
+        let name = out[call..].find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.')).unwrap_or(0);
+        if !out[call..call + name].contains('.') || !out[call + name..].starts_with('(') {
+            continue;
+        }
+        let end = call + name + bound_ends(&out[call + name..]);
+        if !out[end..].starts_with(')') {
+            continue;
+        }
+        out.replace_range(end..=end, "");
+        out.replace_range(open..call, "");
+        from = open;
+    }
+    out
+}
+
 const OWN: [&str; 5] = [" AND user_id = ", " AND user_id IN ", " AND p_node = ", " AND p_node IN ", " AND (p_ancestor "];
 
 fn bound_ends(rest: &str) -> usize {
@@ -816,12 +839,16 @@ fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads_and_in_whose_node_a_set_a
         match (ddl_now(&src), ddl_before(&src)) {
             (Some((_, now)), Some(before)) => {
                 if terms_now_bind_a_reach(&name) {
-                    assert_ne!(answering_any_caller(&read_per_row(&now), &before), before, "{name}: no term binds a grant's reach here any more");
+                    assert_ne!(
+                        calls_per_row(&answering_any_caller(&read_per_row(&now), &before)),
+                        calls_per_row(&before),
+                        "{name}: no term binds a grant's reach here any more"
+                    );
                     bound += 1;
                 } else {
                     assert_eq!(
-                        answering_any_caller(&read_per_row(&now), &before),
-                        before,
+                        calls_per_row(&answering_any_caller(&read_per_row(&now), &before)),
+                        calls_per_row(&before),
                         "{name}: the SQL changed beyond its claim reads and the callers its sets answer"
                     );
                 }

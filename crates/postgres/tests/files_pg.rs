@@ -51,7 +51,7 @@ fn each_file_applied_in_order_leaves_the_database_its_prefix_describes() {
         assert!(found.is_empty(), "after {}, the database differs from its prefix:\n{}", files.names()[k], found.join("\n"));
     }
     let manage: String = db.query_one("SELECT pg_get_functiondef('multi_auth.acl_manage(text, text)'::regprocedure)", &[]).expect("the function exists").get(0);
-    assert!(manage.contains("WHEN 'note' THEN multi_auth.note_can_edit(p_id)"), "{manage}");
+    assert!(manage.contains("WHEN 'note' THEN (SELECT multi_auth.note_can_edit(p_id))"), "{manage}");
     let gone: Option<String> = db.query_one("SELECT to_regproc('multi_auth.doc_readable')::text", &[]).expect("the lookup runs").get(0);
     assert_eq!(gone, None);
 }

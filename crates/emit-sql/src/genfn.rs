@@ -35,6 +35,19 @@ impl Execute {
     }
 }
 
+pub(crate) enum Arg {
+    Fixed(String),
+    Row(String),
+}
+
+pub(crate) fn definer_call(function: &str, args: &[Arg]) -> String {
+    let list = args.iter().map(|a| match a {
+        Arg::Fixed(s) | Arg::Row(s) => s.as_str(),
+    });
+    let call = format!("{function}({})", list.collect::<Vec<_>>().join(", "));
+    if args.iter().all(|a| matches!(a, Arg::Fixed(_))) { format!("(SELECT {call})") } else { call }
+}
+
 /// How a function PUBLIC may run is bound to the caller's own claims.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Bound {

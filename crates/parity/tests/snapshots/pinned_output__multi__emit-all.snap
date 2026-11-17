@@ -172,7 +172,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT (CASE p_type WHEN 'doc' THEN auth.doc_can_edit(p_id) WHEN 'note' THEN auth.note_can_edit(p_id) ELSE false END);
+  SELECT (CASE p_type WHEN 'doc' THEN (SELECT auth.doc_can_edit(p_id)) WHEN 'note' THEN (SELECT auth.note_can_edit(p_id)) ELSE false END);
 $$;
 GRANT EXECUTE ON FUNCTION auth.acl_manage(text, text) TO PUBLIC;
 

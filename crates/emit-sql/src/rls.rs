@@ -1,5 +1,6 @@
 use crate::chains::HOP;
 use crate::error::Error;
+use crate::genfn::{Arg, definer_call};
 use crate::{Binds, Sql};
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_model::SpecExt;
@@ -424,7 +425,7 @@ impl Sql<'_> {
             {
                 branches.top.push(self.membership_branch(obj, sub, m, obj_leaf, obj_is_global));
             } else if self.s.is_platform_role_subject(sub) && (has_staff || (obj_is_global && sub.anchor() == obj_leaf)) {
-                branches.top.push(format!("{}.{}({})", schema, platform_role_fn(sub.anchor()), self.id_claim(sub.identifies())));
+                branches.top.push(definer_call(&format!("{schema}.{}", platform_role_fn(sub.anchor())), &[Arg::Fixed(self.id_claim(sub.identifies()))]));
             } else if sub.reach() == "grant"
                 && let Some(reach) = self.grant_reach_for_subject(obj, sub, obj_leaf, obj_is_global, op)
             {
@@ -436,7 +437,7 @@ impl Sql<'_> {
     }
 
     fn membership_branch(&self, obj: &Object, sub: &Subject, m: &Membership, obj_leaf: &str, obj_is_global: bool) -> String {
-        let f = format!("{}.{}({})", self.s.definer_schema(), membership_fn(m), self.id_claim(sub.identifies()));
+        let f = definer_call(&format!("{}.{}", self.s.definer_schema(), membership_fn(m)), &[Arg::Fixed(self.id_claim(sub.identifies()))]);
         if obj.is_level_entity() || obj_is_global {
             return f;
         }
@@ -637,10 +638,10 @@ impl Sql<'_> {
         self.perm_predicate(obj, &borrowed, cust, virt)
     }
 
-    fn arg_src_sql(&self, a: &ArgSrc) -> String {
+    fn arg_src(&self, a: &ArgSrc) -> Arg {
         match a {
-            ArgSrc::Claim(c) if !c.is_empty() => self.id_claim(c),
-            _ => a.col().to_string(),
+            ArgSrc::Claim(c) if !c.is_empty() => Arg::Fixed(self.id_claim(c)),
+            _ => Arg::Row(a.col().to_string()),
         }
     }
 
@@ -753,32 +754,33 @@ impl Sql<'_> {
         let level = &parent.types[0];
         let path = topology::ancestor_path(self.s, level).map_err(|e| format!("role-walk {}->{}: {e}", quote(t.ident()), t.walk_verb()))?;
         let non_virtual: Vec<&Level> = path.into_iter().filter(|l| !l.is_virtual).collect();
-        let mut args = vec![self.id_claim(self.s.admin_identify())];
+        let mut args = vec![Arg::Fixed(self.id_claim(self.s.admin_identify()))];
         for (i, lvl) in non_virtual.iter().enumerate() {
             if i == non_virtual.len() - 1 {
-                args.push(col.column.clone());
+                args.push(Arg::Row(col.column.clone()));
             } else {
-                args.push(self.s.scope_col(obj, &lvl.name));
+                args.push(Arg::Row(self.s.scope_col(obj, &lvl.name)));
             }
         }
-        Ok(vec![format!("{}.is_{}_{}({})", self.s.definer_schema(), level, self.s.admin_name(), args.join(", "))])
+        Ok(vec![definer_call(&format!("{}.is_{}_{}", self.s.definer_schema(), level, self.s.admin_name()), &args)])
     }
 
     fn memberin_reach_frag(&self, level: &str, member: bool) -> R<String> {
         let schema = self.s.definer_schema();
         if member {
             let name = format!("{}_memberin_{}", self.s.admin_name(), level);
-            return Ok(format!("{}.{}({}, {})", schema, name, self.id_claim(self.s.admin_identify()), self.id_claim(&self.s.claim_key_for_level(level))));
+            let args = [Arg::Fixed(self.id_claim(self.s.admin_identify())), Arg::Fixed(self.id_claim(&self.s.claim_key_for_level(level)))];
+            return Ok(definer_call(&format!("{schema}.{name}"), &args));
         }
         let path = topology::ancestor_path(self.s, level).map_err(|e| format!("memberin {level} reachedby: {e}"))?;
-        let mut args = vec![self.id_claim(self.s.admin_identify())];
+        let mut args = vec![Arg::Fixed(self.id_claim(self.s.admin_identify()))];
         for lvl in path {
             if lvl.is_virtual {
                 continue;
             }
-            args.push(self.id_claim(&self.s.claim_key_for_level(&lvl.name)));
+            args.push(Arg::Fixed(self.id_claim(&self.s.claim_key_for_level(&lvl.name))));
         }
-        Ok(format!("{}.is_{}_{}({})", schema, level, self.s.admin_name(), args.join(", ")))
+        Ok(definer_call(&format!("{}.is_{}_{}", schema, level, self.s.admin_name()), &args))
     }
 
     fn rls_emit_builtin(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> Option<R<Vec<String>>> {
@@ -831,22 +833,23 @@ impl Sql<'_> {
         }
         let chain = topology::chain(self.s).map_err(|e| e.to_string())?;
         let plane_depth = self.s.rolestore_plane_depth(rs);
-        let mut args = vec![self.id_claim(self.s.admin_identify())];
+        let mut args = vec![Arg::Fixed(self.id_claim(self.s.admin_identify()))];
         let mut stands = Vec::new();
         for l in chain.into_iter().filter(|l| !l.is_virtual).take(rs.scope_cols.len().min(plane_depth)) {
             let claim = self.id_claim(&l.claim_key());
             let top = stands.is_empty();
             let col = contains(&obj.scoped, &l.name).then(|| self.s.scope_col(obj, &l.name));
             stands.push(session_stands(top, &claim, col.as_deref()));
-            args.push(col.unwrap_or_else(|| "NULL".into()));
+            args.push(col.map_or_else(|| Arg::Fixed("NULL".into()), Arg::Row));
         }
-        args.push(quote_literal(perm));
+        args.push(Arg::Fixed(quote_literal(perm)));
         let schema = self.s.definer_schema();
-        let assigned = format!("{}.{}({})", schema, self.s.holds_perm_fn(rs), args.join(", "));
+        let assigned = definer_call(&format!("{schema}.{}", self.s.holds_perm_fn(rs)), &args);
         if rs.held_claim.is_none() {
             return Ok(vec![assigned]);
         }
-        Ok(vec![format!("({assigned} OR ((SELECT {schema}.{}({})) AND {}))", held_fn(&self.s.holds_perm_fn(rs)), quote_literal(perm), stands.join(" AND "))])
+        let held = definer_call(&format!("{schema}.{}", held_fn(&self.s.holds_perm_fn(rs))), &[Arg::Fixed(quote_literal(perm))]);
+        Ok(vec![format!("({assigned} OR ({held} AND {}))", stands.join(" AND "))])
     }
 
     fn rls_emit_declared(&self, obj: &Object, pm: &Perm, t: &Term, rels: &Rels, cust_claim: &str) -> R<Vec<String>> {
@@ -1097,7 +1100,7 @@ impl Sql<'_> {
             }
             Repr::MemberIn(mi) => {
                 let name = format!("{}_memberin_{}", self.s.admin_name(), mi.level);
-                let mut frag = format!("{}.{}({}, {})", schema, name, self.arg_src_sql(&mi.principal), self.arg_src_sql(&mi.scope));
+                let mut frag = definer_call(&format!("{schema}.{name}"), &[self.arg_src(&mi.principal), self.arg_src(&mi.scope)]);
                 if mi.reached_by {
                     let reach = self.memberin_reach_frag(&mi.level, mi.reach_member)?;
                     frag = format!("({frag} AND {reach})");
@@ -1106,7 +1109,7 @@ impl Sql<'_> {
             }
             Repr::Object(vo) if vo.pinned => {
                 let claim = self.pinned_claim(obj, r, vo, pm.maps())?;
-                Ok(vec![format!("(SELECT {}.{}({}))", schema, vo.function_name(), claim)])
+                Ok(vec![definer_call(&format!("{schema}.{}", vo.function_name()), &[Arg::Fixed(claim)])])
             }
             Repr::Object(vo) => {
                 let call = format!("{}.{}({})", schema, vo.function_name(), vo.col);
@@ -1170,11 +1173,14 @@ impl Sql<'_> {
         if let Some(st) = self.s.subject_by_name(&r.types[0])
             && self.s.is_platform_role_subject(st)
         {
-            return vec![format!("{}.{}({})", self.s.definer_schema(), platform_role_fn(st.anchor()), self.id_claim(st.identifies()))];
+            return vec![definer_call(
+                &format!("{}.{}", self.s.definer_schema(), platform_role_fn(st.anchor())),
+                &[Arg::Fixed(self.id_claim(st.identifies()))],
+            )];
         }
-        let cols: Vec<String> = obj.scoped.iter().map(|l| self.s.scope_col(obj, l)).collect();
-        let f = format!("{}_has_{}_role", self.s.admin_name(), obj.name);
-        vec![format!("{}.{}({}, {})", self.s.definer_schema(), f, self.id_claim(self.s.admin_identify()), cols.join(", "))]
+        let mut args = vec![Arg::Fixed(self.id_claim(self.s.admin_identify()))];
+        args.extend(obj.scoped.iter().map(|l| Arg::Row(self.s.scope_col(obj, l))));
+        vec![definer_call(&format!("{}.{}_has_{}_role", self.s.definer_schema(), self.s.admin_name(), obj.name), &args)]
     }
 
     fn emit_grant_frags(&self, obj: &Object, r: &Relation, vg: &ViaGrant, access: &str, cust_claim: &str) -> R<Vec<String>> {
@@ -1244,7 +1250,10 @@ impl Sql<'_> {
             return Ok(vec![format!("{} = {}", t.self_col(), self.id_claim(self.s.admin_identify()))]);
         }
         if let Some((lookup, col, claim)) = t.nearest() {
-            return Ok(vec![format!("{col} = (SELECT {}.{}({}))", self.s.definer_schema(), nearest_own_fn(lookup), self.id_claim(claim))]);
+            return Ok(vec![format!(
+                "{col} = {}",
+                definer_call(&format!("{}.{}", self.s.definer_schema(), nearest_own_fn(lookup)), &[Arg::Fixed(self.id_claim(claim))])
+            )]);
         }
         if rels.get(t.ident()).is_some_and(|r| matches!(&r.repr, Repr::Object(vo) if vo.pinned)) {
             return Err(format!(

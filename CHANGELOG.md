@@ -6,9 +6,10 @@ The crates are 5.0.0 because public types of `demesne-syntax`,
 `demesne-model` and `demesne-emit-sql` gain fields and variants, named under
 each change, and `demesne_emit_sql::Sql` gains private fields, so it is built
 with `Sql::new`. A spec that uses none of the constructs below emits the
-policies v4.0.0 did, with three exceptions: the two under "Fixed", and a
+policies v4.0.0 did, with four exceptions: the two under "Fixed", a
 permission whose terms a grant's holder used to pass (the second "Breaking"
-entry). Its generated functions change: see "Breaking" first. The Go
+entry), and a call to a generated function whose arguments are the same for
+every row, which now runs once per statement. Its generated functions change: see "Breaking" first. The Go
 module's API doesn't change, so it is `go/v1.6.0`.
 
 ### Breaking: a generated function answers only about the caller, or PUBLIC cannot run it
@@ -403,6 +404,45 @@ only at the caller's own claimed node; the lookup itself stays revoked from
 PUBLIC.
 
 `demesne_syntax::Nearest` gains `filter`, and `Builtin` gains `Nearest`.
+
+### A generated function called with the same arguments for every row runs once per statement
+
+A policy or a generated function that calls a generated function with
+arguments that are the same for every row now wraps the call in a scalar
+subquery, as v1.2.0 did for each claim read:
+
+```sql
+(SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))
+```
+
+Such arguments are claims, literals and the calling function's own
+parameters. Postgres evaluates the subquery once per statement. The emitter
+wraps only calls to the functions it declares `STABLE`, which answer the same
+within a statement, and never a call to a `VOLATILE` function. A call that reads a column of the row stays as it was.
+
+In a policy this changes how often the function runs. These calls ran once
+for each row the policy looked at:
+
+- a membership check such as `is_ops`;
+- a platform role check, `has_<anchor>_role`;
+- `<admin>_memberin_<level>`, and `is_<level>_<admin>` reached by `memberin`;
+- `@holds` on a plane above the object's own scope.
+
+On Postgres 17, a filter shaped like such a policy, a membership check ORed
+with an owner column over 2000 rows, ran the check 2000 times in 5.5 ms;
+wrapped, it runs once in 0.26 ms, and the same rows pass.
+
+In a generated function that answers for one row per call, only the form
+changes: `<table>_admits` reuses the policy's predicate, and `<store>_manage`
+calls each kind's `<object>_can_edit(p_id)`. Each still runs its call once per
+call. Over the same 2000 rows, `<store>_manage` called `<object>_can_edit`
+2000 times either way.
+
+The policies admit the rows they admitted. The comparison with v1.1.0 sets
+these wraps aside as it does the claim reads. A corpus test finds every call
+to a generated function that reads claims with arguments fixed for the
+statement, and fails if one is left to run per row or if a `VOLATILE`
+function is wrapped.
 
 ### A worked example: `examples/chains.demesne`
 

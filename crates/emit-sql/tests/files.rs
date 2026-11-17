@@ -43,7 +43,7 @@ fn the_first_file_emits_its_whole_sql() {
 fn a_later_file_writes_again_a_function_it_widens() {
     let files = multi();
     let sql = file_sql(&files, 1).expect("the second file emits");
-    assert!(function(&sql, "acl_manage").contains("WHEN 'note' THEN auth.note_can_edit(p_id)"), "{sql}");
+    assert!(function(&sql, "acl_manage").contains("WHEN 'note' THEN (SELECT auth.note_can_edit(p_id))"), "{sql}");
     assert!(!function(&all_sql(&files, 0), "acl_manage").contains("'note'"));
     assert!(sql.contains("CREATE POLICY notes_select ON public.notes"), "{sql}");
     assert!(!sql.contains("CREATE POLICY docs_select"), "an unchanged policy is written again:\n{sql}");
