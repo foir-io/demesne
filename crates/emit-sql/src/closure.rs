@@ -146,7 +146,7 @@ $$;",
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, {ts}
 AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
@@ -182,7 +182,8 @@ $$;",
             anc = self.ancestor,
             desc = self.descendant,
             id = self.base_id,
-            par = self.base_parent
+            par = self.base_parent,
+            ts = or_default(&self.table_schema, "public"),
         );
         format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
@@ -236,7 +237,7 @@ impl GroupTrigger {
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, {ts}
 AS $$
 BEGIN
   -- Fast path: nothing to close over and nothing stale to clear. Load-bearing
@@ -274,7 +275,8 @@ $$;",
             mc = self.member_col,
             em = self.edge_member,
             eg = self.edge_group,
-            edge = self.edge
+            edge = self.edge,
+            ts = or_default(&self.table_schema, "public"),
         );
         format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }

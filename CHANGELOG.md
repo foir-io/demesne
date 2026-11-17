@@ -624,6 +624,16 @@ migration that dropped a policy, a trigger or an index and no function failed
 with `column "what" does not exist`. Every release from v1.0.0 has this. Each
 arm now names the column.
 
+### Fixed: a group's and a closure's triggers ignored `tables schema`
+
+The trigger that rebuilds a group's closure from its edge table, and the one
+that keeps an undeclared closure in step with its base table, set their
+search path to `pg_catalog, public` and named their tables without a schema.
+In a spec that declares `tables schema`, the first write to the edge or base
+table failed with `relation ... does not exist`. Every release from v1.0.0 has
+this. Both now search the tables schema, as a declared closure's trigger
+already did; a spec whose tables are in `public` emits the same SQL.
+
 ## v4.0.0
 
 The crates are 4.0.0 because public types of `demesne-syntax` and

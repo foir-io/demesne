@@ -46,13 +46,16 @@ impl Tables {
 }
 
 fn leaves(tree: &PermNode) -> Vec<&Term> {
-    tree.leaves()
+    tree.leaves_deep()
 }
 
 fn term_cols(t: &mut Tables, s: &Spec, o: &Object, term: &Term) {
     let table = o.table.as_str();
     if let Some(m) = term.mode_col() {
         t.col(table, m, Kind::Text);
+    }
+    if let Some(scope) = term.some_scope() {
+        t.col(table, &scope.col, Kind::Perms);
     }
     t.col(table, term.self_col(), Kind::Id);
     t.col(table, term.row_col(), Kind::Text);
@@ -83,6 +86,9 @@ fn relation_cols(t: &mut Tables, o: &Object, repr: &Repr) {
             t.table(&e.table);
             for c in &e.cols {
                 t.col(&e.table, c, Kind::Id);
+            }
+            for c in [e.key.as_deref(), e.filter.as_ref().map(|f| f.0.as_str()), e.slot.as_ref().map(|f| f.0.as_str())].into_iter().flatten() {
+                t.col(&e.table, c, Kind::Text);
             }
         }
         Repr::Composition(c) => {

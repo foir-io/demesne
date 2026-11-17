@@ -54,3 +54,15 @@ object resource {
   relation holder: staff via role
   permission view = holder + tenant->owner @rls maps select
 }
+object folio {
+  table folios
+  scoped tenant > project
+  relation shared: member via edge folio_shares(member_id, folio_id) key rule_id
+  permission view = some r in rules_live prefix "read." held rules_held (shared) @rls maps select
+}
+object page {
+  table pages
+  scoped tenant > project
+  relation in_folder: member via closure folder_paths(ancestor_id, descendant_id) base folders(id, parent_id) on folder_id
+  permission view = in_folder @rls maps select
+}
