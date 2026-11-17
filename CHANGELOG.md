@@ -80,17 +80,18 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   `<table>_accessors_conditional`, `<table>_direct_accessors` and
   `<table>_<verb>_accessors`, which name the principals that reach any row id,
   `<closure>_path`, which returns any node's ancestors, `<table>_admits`, a
-  `nearest` lookup for any node, and the async tier's maintenance. Any other
-  function that only generated functions call is revoked, since they run as
-  its owner, and keeps its binding. A function nothing calls is no longer
-  emitted: a grant's `_reach`, `_reach_unscoped` and a `_reach_set` no policy
-  calls, a declared closure's functions no relation reads, and a role check, a
-  membership, a borrowed `<object>_can_<perm>`, an `<acl>_grants_<object>` or a
-  group lookup that no permission uses. Neither is a composition's lower bound
-  where only its upper bound is called, `<flat>_resources()` where the surface
-  doesn't list through it, or `<object>_<operation>_holds_at` (below). A
-  migration drops each one. `Sql::unused_definers()` names the functions a
-  spec's generators make and this rule leaves out.
+  `nearest` lookup for any node, the async tier's maintenance and a
+  materialized group's `<flat>_reconcile()`. Any other function that only
+  generated functions call is revoked, since they run as its owner, and keeps
+  its binding. A function nothing calls is no longer emitted: a grant's
+  `_reach`, `_reach_unscoped` and a `_reach_set` no policy calls, a declared
+  closure's functions no relation reads, and a role check, a membership, a
+  borrowed `<object>_can_<perm>`, an `<acl>_grants_<object>` or a group lookup
+  that no permission uses. Neither is a composition's lower bound where only
+  its upper bound is called, `<flat>_resources()` where the surface doesn't
+  list through it, or `<object>_<operation>_holds_at` (below). A migration
+  drops each one. `Sql::unused_definers()` names the functions a spec's
+  generators make and this rule leaves out.
 - **Left as it was.** `<table>_declared_by_<key>` returns the rows a rule table
   declares for a key. A policy calls it with a row's value, and what it returns
   is the rule vocabulary, not a tenant's rows.
@@ -126,7 +127,8 @@ What breaks for an adopter:
   function that keeps its binding gives back only what the caller could ask
   about itself. Grant no `<function>_inside` copy: it has no check. A function
   the `grantable` list names answers for any id or claims it is given, so
-  grant it only to a role meant to read across callers.
+  grant it only to a server-side role you trust, such as a worker's, never to
+  a role your API's callers run as.
 - **SQL of your own that called a generated function nothing else calls gets
   `function does not exist`**, since that function is no longer emitted. Read
   the tables in that statement instead, under a role that may.
@@ -135,7 +137,9 @@ What breaks for an adopter:
   runs as, on `<index>_apply()`, `_rebuild()` and `_watermark()`, and the role
   that reconciles a materialized group, on `<flat>_reconcile()`: PUBLIC could
   run those four before. The manifest's `grantable` list names every function
-  meant for a role you grant (below).
+  meant for a role you grant (below). Each answers for any id, so grant it
+  only to a server-side role you trust, never to a role your API's callers
+  run as.
 - **A revoke from PUBLIC that you made by hand on a function the SQL grants is
   undone** when you apply the SQL. So is one made by default privileges
   (`ALTER DEFAULT PRIVILEGES … REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`). The
@@ -164,10 +168,12 @@ the functions a spec line makes yours to call. `grantable` holds those PUBLIC
 may not run that are yours to grant to a role of your own: the listings of
 accessors, `<table>_admits`, `<closure>_path`, a `nearest` lookup for any
 node, the async tier's `<index>_apply()`, `_rebuild()` and `_watermark()`, and
-a materialized group's `<flat>_reconcile()`. `internal` holds those PUBLIC may
-run that no spec line makes yours, and `revoked` those PUBLIC may not run that
-only the generated functions call. Code of your own calls what `callable`
-lists, and what `grantable` lists from a role you granted it to. Every
+a materialized group's `<flat>_reconcile()`. Each answers for any id it is
+given, so grant it only to a server-side role you trust, never to a role your
+API's callers run as. `internal` holds those PUBLIC may run that no spec line
+makes yours, and `revoked` those PUBLIC may not run that only the generated
+functions call. Code of your own calls what `callable` lists, and what
+`grantable` lists from a role you granted it to. Every
 manifest gains the four lists, empty ones included. A policy or a generated
 check that would call a `grantable` function is refused when the SQL is
 emitted, naming both, since the caller's role may not run it; a function is
@@ -288,9 +294,10 @@ What breaks for an adopter, and how to keep a pass that was meant:
   object keeps it too, for the operations it names, and also emits what it
   did.
 - **A grant named in a permission where it adds nothing is refused at
-  validation.** On an object with a level below the grant's, or where the
-  reaching subject is anchored at the grant's level, `+ via grant <name>` was
-  silently dropped: the SQL was the same with it and without. The message
+  validation.** On an object with a level below the grant's, or where every
+  subject reaching by the grant is anchored at the grant's level,
+  `+ via grant <name>` was silently dropped: the SQL was the same with it and
+  without. The message
   names the level and says to remove the term. Removing it changes no SQL. No
   spec admits more after this release than before it.
 - **A `pinned` borrow on an object whose terms now bind a grant's callers is
@@ -722,10 +729,17 @@ arm now names the column.
 The trigger that rebuilds a group's closure from its edge table, and the one
 that keeps an undeclared closure in step with its base table, set their
 search path to `pg_catalog, public` and named their tables without a schema.
-In a spec that declares `tables schema`, the first write to the edge or base
-table failed with `relation ... does not exist`. Every release from v1.0.0 has
-this. Both now search the tables schema, as a declared closure's trigger
-already did; a spec whose tables are in `public` emits the same SQL.
+In a spec that declares `tables schema`, a write to the edge or base table
+failed with `relation ... does not exist` where `public` holds no table of
+the same name. Where it holds one, the trigger used that table instead: it
+wrote `public`'s closure table, which a group's trigger empties and refills
+from `public`'s edge table, and the closure in the tables schema missed the
+write. Every release from v1.0.0 has this. Both now search the tables schema,
+as a declared closure's trigger already did; a spec whose tables are in
+`public` emits the same SQL. After upgrading, check those tables in `public`
+and refill each closure that missed writes: a group's is rebuilt by the next
+write to its edge table, and an undeclared closure's trigger trusts the rows
+it holds, so refill that one from its base table.
 
 ## v4.0.0
 

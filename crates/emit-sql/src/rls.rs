@@ -502,23 +502,10 @@ impl Sql<'_> {
             {
                 continue;
             }
-            let reach = self.grant_ref_reach(obj, t.grant_ref(), pm.maps())?;
-            if reach.is_empty() {
-                continue;
-            }
-            if let Some((level, _)) = inject.iter().find(|(_, reaches)| reaches.contains(&reach)) {
-                return Err(format!(
-                    "object {} permission {}: `via grant {}` adds nothing here: the grant already widens level {} for the callers it reaches, and the permission's other terms still bind them; remove the term",
-                    quote(&obj.name),
-                    quote(&pm.verb),
-                    t.grant_ref(),
-                    quote(level)
-                ));
-            }
-            if !top.contains(&reach) {
-                top.push(reach.clone());
-            }
-            named.push(reach);
+            let added = self.reaches_a_named_grant_adds(obj, pm, t.grant_ref(), top, inject)?;
+            let fresh: Vec<String> = added.iter().filter(|reach| !top.contains(*reach)).cloned().collect();
+            top.extend(fresh);
+            named.extend(added);
         }
         for t in &leaves {
             if t.builtin() == "public" && !top.iter().any(|x| x == "true") {
@@ -570,7 +557,25 @@ impl Sql<'_> {
         col_pred
     }
 
-    fn grant_ref_reach(&self, obj: &Object, grant_name: &str, op: &str) -> R<String> {
+    fn reaches_a_named_grant_adds(&self, obj: &Object, pm: &Perm, grant: &str, placed: &[String], inject: &Inject) -> R<Vec<String>> {
+        let within = |reach: &String| inject.iter().find(|(_, reaches)| reaches.contains(reach)).map(|(level, _)| level.clone());
+        let (widened, beside): (Vec<String>, Vec<String>) =
+            self.grant_ref_reaches(obj, grant, pm.maps(), placed)?.into_iter().partition(|reach| within(reach).is_some());
+        if beside.is_empty()
+            && let Some(level) = widened.first().and_then(within)
+        {
+            return Err(format!(
+                "object {} permission {}: `via grant {}` adds nothing here: the grant already widens level {} for the callers it reaches, and the permission's other terms still bind them; remove the term",
+                quote(&obj.name),
+                quote(&pm.verb),
+                grant,
+                quote(&level)
+            ));
+        }
+        Ok(beside)
+    }
+
+    fn grant_ref_reaches(&self, obj: &Object, grant_name: &str, op: &str, placed: &[String]) -> R<Vec<String>> {
         let Some(g) = self.s.grant_by_name(grant_name) else {
             return Err(format!("object {}: permission references unknown grant {} (via grant)", quote(&obj.name), quote(grant_name)));
         };
@@ -583,17 +588,25 @@ impl Sql<'_> {
                 fmt_slice(&obj.scoped)
             ));
         }
-        let claim =
-            self.s.subjects.iter().find(|sub| sub.reach() == "grant" && sub.reach_grant() == grant_name).map_or("", demesne_syntax::Subject::identifies);
-        if claim.is_empty() {
+        let mut claims = self.s.subjects.iter().filter(|sub| sub.reach() == "grant" && sub.reach_grant() == grant_name).map(Subject::identifies);
+        let Some(first) = claims.next().filter(|claim| !claim.is_empty()) else {
             return Err(format!(
                 "object {}: grant {} has no reaching subject (a `subject … reach via grant {}`) to supply a claim",
                 quote(&obj.name),
                 quote(grant_name),
                 grant_name
             ));
+        };
+        let mut reaches: Vec<String> = self.grant_reach_predicate(obj, g, first, op).into_iter().collect();
+        for claim in claims {
+            if let Some(reach) = self.grant_reach_predicate(obj, g, claim, op)
+                && placed.contains(&reach)
+                && !reaches.contains(&reach)
+            {
+                reaches.push(reach);
+            }
         }
-        Ok(self.grant_reach_predicate(obj, g, claim, op).unwrap_or_default())
+        Ok(reaches)
     }
 
     fn grant_reach_predicate(&self, obj: &Object, g: &Grant, claim: &str, op: &str) -> Option<String> {
@@ -1290,16 +1303,13 @@ impl Sql<'_> {
         }
     }
 
-    fn named_reaches(&self, obj: &Object, pm: &Perm) -> R<Vec<String>> {
+    fn named_reaches(&self, obj: &Object, pm: &Perm, placed: &[String]) -> R<Vec<String>> {
         let mut named = Vec::new();
         for t in pm.tree.leaves().into_iter().filter(|t| !t.grant_ref().is_empty()) {
             if self.s.grant_by_name(t.grant_ref()).is_some_and(|g| !g.confers(pm.maps())) {
                 continue;
             }
-            let reach = self.grant_ref_reach(obj, t.grant_ref(), pm.maps())?;
-            if !reach.is_empty() {
-                named.push(reach);
-            }
+            named.extend(self.grant_ref_reaches(obj, t.grant_ref(), pm.maps(), placed)?);
         }
         Ok(named)
     }
@@ -1321,11 +1331,22 @@ impl Sql<'_> {
             return Err(refuse(format!("level {} is not on every path to {}", quote(level), quote(obj_leaf))));
         }
         let branches = self.rls_subject_branches(obj, &virt, obj_leaf, virt.contains(obj_leaf), self.s.object_references_staff(obj), op);
-        let named = self.named_reaches(obj, pm)?;
+        let named = self.named_reaches(obj, pm, &branches.top)?;
         if branches.beside.iter().any(|reach| !named.contains(reach)) {
-            return Err(refuse(
-                "a grant reaches rows of this object outside its containment for this operation, and the permission's terms bind those callers too, so the column is not always the caller's claim".into(),
-            ));
+            let unnamed: BTreeSet<String> = self
+                .s
+                .subjects
+                .iter()
+                .filter(|sub| sub.reach() == "grant")
+                .filter(|sub| {
+                    matches!(self.grant_reach_for_subject(obj, sub, obj_leaf, virt.contains(obj_leaf), op), Some(GrantReach::Beside(reach)) if !named.contains(&reach))
+                })
+                .map(|sub| format!("+ via grant {}", sub.reach_grant()))
+                .collect();
+            return Err(refuse(format!(
+                "a grant reaches rows of this object outside its containment for this operation, and the permission's terms bind those callers too, so the column is not always the caller's claim. Drop `pinned`, or name the grant in the permission: `{}`",
+                unnamed.into_iter().collect::<Vec<_>>().join(" ")
+            )));
         }
         let inject = branches.inject;
         if inject.get(level).is_some_and(|reaches| !reaches.is_empty()) {

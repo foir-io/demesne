@@ -174,7 +174,9 @@ fn a_pinned_borrow_is_refused_where_the_terms_bind_a_grants_callers() {
         );
     assert_ne!(pinned, SPEC);
     let why = refusal(&pinned);
-    assert!(why.contains("is `pinned` on") && why.contains("a grant reaches rows of this object outside its containment"), "{why}");
+    assert!(why.contains("relation \"in_open_memo\" is `pinned` on \"estate_id\""), "{why}");
+    assert!(why.contains("a grant reaches rows of this object outside its containment"), "{why}");
+    assert!(why.ends_with("Drop `pinned`, or name the grant in the permission: `+ via grant support`"), "{why}");
 }
 
 #[test]
@@ -235,4 +237,67 @@ fn on_a_one_level_object_the_evaluator_a_hop_asks_takes_the_grants_reach_as_the_
         sql.contains(&format!("WHERE docs.id = demesne_hop.record AND ({reach} OR ({STANDS})) AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live)")),
         "the hop's evaluator:\n{sql}"
     );
+}
+
+const AGENT: &str = "estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'agent_id')))";
+
+fn with_agent(spec: &str, anchor: &str) -> String {
+    let helper = "subject helper { anchor control; reach via grant support; identifies sub; roles none }\n";
+    let two = spec.replacen(helper, &format!("{helper}subject agent {{ anchor {anchor}; reach via grant support; identifies agent_id; roles none }}\n"), 1);
+    assert_ne!(two, spec, "the spec takes a second subject reaching by the grant");
+    two
+}
+
+fn pinned_under(spec: &str, view: &str) -> String {
+    let pinned = spec
+        .replace(
+            "table ledgers\n  scoped estate\n",
+            "table ledgers\n  scoped estate\n  relation in_open_memo: member via object memo->view on estate_id pinned\n",
+        )
+        .replace(
+            "permission view = @scoped and @row(state, \"open\") @rls maps select\n  permission edit",
+            &format!("permission view = {view} @rls maps select\n  permission edit"),
+        )
+        .replace("permission edit = @scoped and @row(state, \"open\") @rls maps update", &format!("permission edit = {view} @rls maps update"));
+    assert_ne!(pinned, spec, "the ledger takes the pinned borrow");
+    pinned
+}
+
+#[test]
+fn a_grant_two_subjects_reach_by_is_named_for_both_and_binds_both_where_it_is_not() {
+    let sql = emitted(&with_agent(SPEC, "control"));
+    assert_eq!(using(&sql, "passbooks_select"), format!("{REACH} OR {AGENT} OR ({STANDS} AND ((state = 'open')))"));
+    assert_eq!(using(&sql, "ledgers_select"), format!("(({REACH} OR {AGENT} OR ({STANDS})) AND ((state = 'open')))"));
+    let pinned = emitted(&pinned_under(&with_agent(SPEC, "control"), "(@scoped and in_open_memo) + via grant support"));
+    assert!(using(&pinned, "ledgers_select").starts_with(&format!("{REACH} OR {AGENT} OR ({STANDS} AND ")), "{pinned}");
+}
+
+#[test]
+fn a_grant_named_adds_nothing_only_where_it_widens_the_level_for_every_subject_it_reaches() {
+    let helper_within = |agent: &str| with_agent(SPEC, agent).replace("subject helper { anchor control;", "subject helper { anchor estate;");
+    let sql = emitted(&helper_within("control"));
+    assert_eq!(using(&sql, "passbooks_select"), format!("{AGENT} OR (({STANDS} OR {REACH}) AND ((state = 'open')))"));
+    let why = refusal(&helper_within("estate"));
+    assert!(why.contains("object \"passbook\" permission \"view\": `via grant support` adds nothing here"), "{why}");
+}
+
+#[test]
+fn a_pinned_refusal_names_only_the_grants_the_permission_leaves_unnamed() {
+    let two = SPEC.replacen(
+        "subject helper {",
+        "grant escort at estate via edge escorts(holder_id, estate_id)\nsubject escortee { anchor control; reach via grant escort; identifies escort_id; roles none }\nsubject helper {",
+        1,
+    );
+    let why = refusal(&pinned_under(&two, "(@scoped and in_open_memo) + via grant support"));
+    assert!(why.ends_with("Drop `pinned`, or name the grant in the permission: `+ via grant escort`"), "{why}");
+}
+
+#[test]
+fn on_the_grants_own_table_naming_the_grant_admits_no_subject_v4_did_not() {
+    let own = with_agent(SPEC, "control").replacen(
+        "object memo {",
+        "object approval {\n  table approvals\n  scoped estate\n  permission view = (@scoped and @row(state, \"open\")) + via grant support @rls maps select\n}\n\nobject memo {",
+        1,
+    );
+    assert_eq!(using(&emitted(&own), "approvals_select"), format!("{REACH} OR ({STANDS} AND ((state = 'open')))"));
 }
