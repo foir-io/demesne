@@ -89,7 +89,10 @@ each such role, and `diff` accepts its grants of those functions. It still repor
 role's grant of a revoked function and every default privilege. Run the statements it
 prints for what is left. On a setup that follows this guide it then reports nothing, so
 `demesne diff app.demesne "$DATABASE_URL" --grantee <role> --exit-code` passes in CI.
-`--grantee PUBLIC` is refused, since PUBLIC holds exactly what the SQL grants it.
+`--grantee PUBLIC` is refused, since PUBLIC holds exactly what the SQL grants it, and so
+is `--grantee authenticated`, the role every policy is written for: a grantable function
+answers for any id, so it is never a grantee. Never grant one to `anon` either: Supabase
+runs callers who have not signed in as `anon`, and `diff` reports such a grant as drift.
 
 ### 2. Emit and register the access-token hook
 

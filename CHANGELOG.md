@@ -148,8 +148,9 @@ finding ends with the statement that takes the grant back. A role you grant the
 manifest's `grantable` functions to holds them by design: name it with
 `demesne diff --grantee <role>`, once for each such role, and its grants of
 those functions are not reported. Its grant of a revoked function and every
-default privilege still are, and `--grantee PUBLIC` is refused, since PUBLIC
-holds exactly what the SQL grants it. `demesne_postgres::drift` takes a fourth
+default privilege still are. `--grantee PUBLIC` is refused, since PUBLIC holds
+exactly what the SQL grants it, and so is `--grantee authenticated`, the role
+every policy is written for, since a grantable function answers for any id. `demesne_postgres::drift` takes a fourth
 argument, `&Grantees`, built by `Grantees::new` from the manifest and the role
 names; `Grantees::default()` names none and reports what it did before.
 `demesne_postgres::Error` gains `is_grantee`.

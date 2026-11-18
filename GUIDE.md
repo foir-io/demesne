@@ -154,7 +154,9 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
    role, and `diff` accepts its grants of those functions. Its grant of any
    other function the SQL revokes, and every default privilege, are still
    reported. `--grantee PUBLIC` is refused, since PUBLIC holds exactly what the
-   SQL grants it.
+   SQL grants it, and so is `--grantee authenticated`, the role every policy is
+   written for: a grantable function answers for any id, so it is never a
+   grantee.
 
 ---
 

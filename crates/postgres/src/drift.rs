@@ -1,5 +1,5 @@
 use crate::{Error, query_error};
-use demesne_emit_sql::{Execute, Manifest, Object, granted_to_public, objects, revoked_from_public};
+use demesne_emit_sql::{Execute, Manifest, Object, POLICY_ROLE, granted_to_public, objects, revoked_from_public};
 use demesne_runtime::quote_literal;
 use postgres::{Client, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
@@ -62,15 +62,12 @@ impl Grantees {
     ///
     /// # Errors
     ///
-    /// A role is empty, or is PUBLIC, which holds exactly the functions the SQL grants to PUBLIC; or `manifest` records
-    /// no lists of who may run each function.
+    /// A role is empty; or is PUBLIC, which holds exactly the functions the SQL grants to PUBLIC; or is the role every
+    /// policy is written for, since a grantable function answers for any id; or `manifest` records no lists of who may
+    /// run each function.
     pub fn new(manifest: &Manifest, roles: &[String]) -> Result<Self, Error> {
-        if let Some(role) = roles.iter().find(|r| r.is_empty() || r.eq_ignore_ascii_case("public")) {
-            return Err(Error::grantee(if role.is_empty() {
-                "a grantee names a role, and this one is empty".to_string()
-            } else {
-                format!("{role} is no grantee: PUBLIC holds exactly the functions the SQL grants to PUBLIC, and no grantable one")
-            }));
+        if let Some(why) = roles.iter().find_map(|role| no_grantee(role)) {
+            return Err(Error::grantee(why));
         }
         let Some(lists) = &manifest.execute else {
             return Err(Error::sql("the manifest records no lists of who may run each function, so none is grantable"));
@@ -510,6 +507,21 @@ fn granted_to(tx: &mut Transaction<'_>, oid: u32, accepted: &[String]) -> Result
         )
         .map_err(|e| query_error(&e))?;
     Ok(rows.iter().map(|row| row.get(0)).collect())
+}
+
+fn no_grantee(role: &str) -> Option<String> {
+    if role.is_empty() {
+        return Some("a grantee names a role, and this one is empty".to_string());
+    }
+    if role.eq_ignore_ascii_case("public") {
+        return Some(format!("{role} is no grantee: PUBLIC holds exactly the functions the SQL grants to PUBLIC, and no grantable one"));
+    }
+    if role == POLICY_ROLE {
+        return Some(format!(
+            "{role} is no grantee: it is the role every policy is written for; a grantable function answers for any id, so it is never a grantee"
+        ));
+    }
+    None
 }
 
 fn for_public(said: Execute) -> Execute {

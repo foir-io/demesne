@@ -23,3 +23,12 @@ fn public_is_refused_as_a_grantee_by_name() {
     assert!(empty.is_grantee(), "{empty}");
     Grantees::new(&manifest, &["worker".to_string()]).expect("a worker role is a grantee");
 }
+
+#[test]
+fn the_role_every_policy_is_written_for_is_refused_as_a_grantee() {
+    let s = demesne_syntax::parse(SPEC).expect("the spec parses");
+    let manifest = Sql::new(&s).manifest().expect("a manifest");
+    let e = Grantees::new(&manifest, &["worker".to_string(), demesne_emit_sql::POLICY_ROLE.to_string()]).expect_err("the policy role");
+    assert!(e.is_grantee(), "{e}");
+    assert!(e.to_string().contains("it is the role every policy is written for; a grantable function answers for any id, so it is never a grantee"), "{e}");
+}
