@@ -832,7 +832,9 @@ failed with `relation ... does not exist` where `public` holds no table of
 the same name. Where it holds one, the trigger used that table instead: it
 wrote `public`'s closure table, which a group's trigger empties and refills
 from `public`'s edge table, and the closure in the tables schema missed the
-write. Every release from v1.0.0 has this. Both now search the tables schema,
+write. Until it is refilled, a closure that missed writes still admits
+members removed from the edge or base table since, and refuses members added
+since. Every release from v1.0.0 has this. Both now search the tables schema,
 as a declared closure's trigger already did; a spec whose tables are in
 `public` emits the same SQL. After upgrading, check those tables in `public`
 and refill each closure that missed writes: a group's is rebuilt by the next
