@@ -66,10 +66,12 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   `<index>_affordance(p_resource, p_kind, p_principal)` answers only where
   `p_principal` is the caller's own claim for the subject `p_kind` names. The
   async check now asks it once for each subject the relation names, each with
-  that subject's claim. It passed the owner's claim under the first subject's
-  kind, so a caller of another subject was never asked about, and where the
-  first subject was not the owner, a grant to a principal of that subject
-  whose id equalled the caller's claim answered for the caller.
+  that subject's claim, and, as the policy does, takes a grant to a subject
+  other than the owner only from a caller who carries no owner claim. It
+  passed the owner's claim under the first subject's kind, so a caller of
+  another subject was never asked about, and where the first subject was not
+  the owner, a grant to a principal of that subject whose id equalled the
+  caller's claim answered for the caller.
   `demesne_emit_sql::AsyncIndex` gains `callers`, each principal kind with the
   claim that identifies a caller of that kind. Which argument is the principal
   is decided where the function is generated, not by its name, so a parameter

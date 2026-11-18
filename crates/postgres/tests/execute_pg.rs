@@ -602,8 +602,9 @@ object doc {
     for (why, claims, doc, kind, principal, want) in cases {
         assert_eq!(ask(claims, affordance, &[&doc, &kind, &principal]), want, "the affordance: {why}");
     }
-    let checks: [(&str, &str, &str, bool); 5] = [
+    let checks: [(&str, &str, &str, bool); 6] = [
         ("a customer holding a grant", r#"{"customer_id":"c1"}"#, "d1", true),
+        ("a staff member's grant, to a caller who also carries a customer's claim, as the policy has it", r#"{"customer_id":"c9","sub":"s1"}"#, "d1", false),
         ("a staff member holding a grant", r#"{"sub":"s1"}"#, "d1", true),
         ("a customer whose id a staff grant holds", r#"{"customer_id":"c1"}"#, "d2", false),
         ("a staff member holding a grant under that id", r#"{"sub":"c1"}"#, "d2", true),

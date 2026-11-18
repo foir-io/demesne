@@ -70,21 +70,28 @@ impl Sql<'_> {
 
     fn async_check_sql(&self, o: &Object) -> String {
         let Some(rel) = o.relations.iter().find(|r| relation_is_async(r)) else { return String::new() };
-        if o.scoped.last().and_then(|l| self.s.owner_subject(l)).is_none() {
-            return String::new();
-        }
+        let Some(cust) = o.scoped.last().and_then(|l| self.s.owner_subject(l)) else { return String::new() };
         let affordance = format!("{}_affordance", self.s.async_index_base(&o.table, &rel.name));
-        let asked: Vec<String> = rel
+        let asked: Vec<(Option<String>, String)> = rel
             .types
             .iter()
-            .filter_map(|t| self.s.subject_by_name(t).map(|sub| format!("{affordance}($1, {}, {})", quote_literal(t), self.id_claim(sub.identifies()))))
+            .filter_map(|t| self.s.subject_by_name(t).map(|sub| (t, sub.identifies())))
+            .map(|(t, claim)| {
+                let without_owner = (claim != cust.identifies()).then(|| format!(" AND {} IS NULL", self.claim(cust.identifies())));
+                (without_owner, format!("{affordance}($1, {}, {})", quote_literal(t), self.id_claim(claim)))
+            })
             .collect();
         match asked.as_slice() {
             [] => String::new(),
-            [only] => format!("SELECT allowed, as_of::text FROM {only}"),
+            [(None, call)] => format!("SELECT allowed, as_of::text FROM {call}"),
+            [(Some(without_owner), call)] => format!("SELECT allowed{without_owner} AS allowed, as_of::text FROM {call}"),
             _ => format!(
                 "SELECT COALESCE(bool_or(allowed), false) AS allowed, (array_agg(as_of))[1]::text AS as_of FROM ({}) AS asked",
-                asked.iter().map(|call| format!("SELECT * FROM {call}")).collect::<Vec<_>>().join(" UNION ALL ")
+                asked
+                    .iter()
+                    .map(|(without_owner, call)| format!("SELECT allowed{} AS allowed, as_of FROM {call}", without_owner.as_deref().unwrap_or_default()))
+                    .collect::<Vec<_>>()
+                    .join(" UNION ALL ")
             ),
         }
     }
