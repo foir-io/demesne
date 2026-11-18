@@ -179,9 +179,15 @@ pub(crate) struct Branches {
     pub(crate) top: Vec<String>,
     pub(crate) inject: Inject,
     beside: Vec<String>,
+    claim_only: Vec<String>,
 }
 
 impl Branches {
+    fn claim_only(&mut self, arm: String) {
+        self.claim_only.push(arm.clone());
+        self.top.push(arm);
+    }
+
     fn place(&mut self, reach: GrantReach) {
         match reach {
             GrantReach::Contained { level, predicate } => self.inject.entry(level).or_default().push(predicate),
@@ -430,9 +436,9 @@ impl Sql<'_> {
             if let Some(m) = &sub.membership
                 && virt.contains(sub.anchor())
             {
-                branches.top.push(self.membership_branch(obj, sub, m, obj_leaf, obj_is_global));
+                branches.claim_only(self.membership_branch(obj, sub, m, obj_leaf, obj_is_global));
             } else if self.s.is_platform_role_subject(sub) && (has_staff || (obj_is_global && sub.anchor() == obj_leaf)) {
-                branches.top.push(definer_call(&format!("{schema}.{}", platform_role_fn(sub.anchor())), &[Arg::Fixed(self.id_claim(sub.identifies()))]));
+                branches.claim_only(definer_call(&format!("{schema}.{}", platform_role_fn(sub.anchor())), &[Arg::Fixed(self.id_claim(sub.identifies()))]));
             } else if sub.reach() == "grant"
                 && let Some(reach) = self.grant_reach_for_subject(obj, sub, obj_leaf, obj_is_global, op)
             {
@@ -1514,6 +1520,43 @@ impl Sql<'_> {
             }
         }
         out
+    }
+
+    pub(crate) fn marker_hold(&self, container: &Object, m: &demesne_syntax::Marker) -> R<String> {
+        let virt = self.virtual_levels()?;
+        let at = leaf(container);
+        let level = self.s.level_by_name(container.level()).filter(|l| !l.is_virtual);
+        let callers: Vec<&Object> = self.s.objects.iter().filter(|o| o.table != container.table && contains(&o.scoped, container.level())).collect();
+        let (mut claim_only, mut reach, mut held) = (Vec::new(), Vec::new(), Vec::new());
+        for op in &m.ops {
+            let own = self.rls_subject_branches(container, &virt, at, virt.contains(at), self.s.object_references_staff(container), op);
+            claim_only.extend(own.claim_only.iter().cloned());
+            for o in &callers {
+                claim_only.extend(self.rls_subject_branches(o, &virt, leaf(o), virt.contains(leaf(o)), self.s.object_references_staff(o), op).claim_only);
+            }
+            reach.extend(own.top.iter().filter(|arm| !own.claim_only.contains(arm)).cloned());
+            let above = self.rls_containment_block(container, at, &own.inject, op)?;
+            let mut within: Vec<String> = Vec::new();
+            if !above.is_empty() {
+                within.push(format!("({above})"));
+            }
+            if let Some(l) = level {
+                within.push(self.containment_col_pred(container, l, &own.inject, op));
+            }
+            if !within.is_empty() {
+                held.push(within.join(" AND "));
+            }
+        }
+        let mut arms: Vec<String> = Vec::new();
+        for arm in [claim_only, reach, held].concat() {
+            if !arms.contains(&arm) {
+                arms.push(arm);
+            }
+        }
+        if arms.is_empty() {
+            return Ok("false".into());
+        }
+        Ok(arms.join(" OR "))
     }
 
     pub(crate) fn perm_predicate(&self, obj: &Object, pm: &Perm, cust: Option<&Subject>, virt: &Virtual) -> R<String> {

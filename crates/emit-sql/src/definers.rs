@@ -2141,8 +2141,9 @@ impl Sql<'_> {
                 return Err(format!("object {}: marker {} collides with the generated function {}", quote(&obj.name), quote(&m.col), quote(&name)));
             }
             let (t, pk, col) = (&obj.table, obj.pk(), &m.col);
+            let hold = self.marker_hold(obj, m)?;
             let mut body = format!(
-                "p_claim IS NOT DISTINCT FROM {} AND EXISTS (SELECT 1 FROM {t} m WHERE m.{pk} = p_container AND (m.{col} IS NULL OR m.{col}::text = p_claim))",
+                "p_claim IS NOT DISTINCT FROM {} AND EXISTS (SELECT 1 FROM {t} m WHERE m.{pk} = p_container AND ({hold}) AND (m.{col} IS NULL OR m.{col}::text = p_claim))",
                 self.claim(&m.claim)
             );
             if let Some(c) = m.closure.as_deref().and_then(|c| self.s.closure_by_table(c)) {

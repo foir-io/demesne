@@ -1497,9 +1497,19 @@ restrictive condition for each named operation:
 | The row's level column | The container's marker | The write |
 |---|---|---|
 | NULL | | is asked nothing |
-| names no container | | is refused |
-| names a container | NULL | passes |
-| names a container | set | passes when the session's claim equals it |
+| names no container, or one the caller does not hold | | is refused |
+| names a container the caller holds | NULL | passes |
+| names a container the caller holds | set | passes when the session's claim equals it |
+
+A marker confines its ops to callers whose containment, reach or claim-only
+branch holds the container, for every container, top-level included. The
+caller's containment holds a container when the caller's claims name it and
+each level above it. A reach holds it when one of the caller's grants reaches
+it. A claim-only branch, which asks only the caller's claims, such as an
+operator's membership or a platform role, holds every container. So a row that
+`@self` or `@public` admits, which ask nothing of where the row sits, is still
+refused beneath a marked container the caller does not hold, for each
+operation the marker confines.
 
 No object is edited: the condition joins each object's
 `<table>_<operation>_require` policy, its point checks and any predicate
@@ -1514,7 +1524,10 @@ only to rows the read policy shows, so the compiler refuses a spec in which a
 write could pass where the read is refused.
 
 Each marker compiles to `<table>_<column>_marker_admits(container, claim)`,
-a definer, because the caller may not be able to read the container's row.
+a definer, because the caller may not be able to read the container's row. It
+answers only for a container the caller holds. For any other it is false,
+whether the container is marked or not, so calling it directly tells a caller
+nothing about another tenant's containers.
 
 ---
 
