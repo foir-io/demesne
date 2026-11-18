@@ -556,7 +556,7 @@ is never reached. It compiles to `<column> <= now()`.
 
 `Builtin` gains `Clock`.
 
-### `marker`: a column on a level's row confines writes beneath it
+### `marker`: a column on a level's row confines the operations it names beneath it
 
 ```demesne
 object space {

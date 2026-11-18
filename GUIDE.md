@@ -1494,7 +1494,7 @@ reached)` is true of a row with no closing time.
 permission view = @scoped and @clock(opens_at reached) and not @clock(closes_at reached) @rls maps select
 ```
 
-## Markers: a container that confines writes beneath it
+## Markers: a container that confines the operations it names beneath it
 
 Some containers are owned by one activity while it lasts: a space made by a
 job, a folder made by an import. Rows under such a container should be written
