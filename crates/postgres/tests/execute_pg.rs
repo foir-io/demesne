@@ -184,7 +184,7 @@ fn a_spec_moves_between_the_stores_check_and_a_borrows_and_back_by_migrating() {
         let previous = Sql::new(from).manifest().expect("the previous manifest");
         let migration = Sql::new(to).migration(&previous).expect("the migration compiles");
         db.batch_execute(&migration).unwrap_or_else(|e| panic!("{what}: {e:?}"));
-        let d = demesne_postgres::drift(&mut db, &all(to), &[]).unwrap_or_else(|e| panic!("{what}: diff: {e}"));
+        let d = demesne_postgres::drift(&mut db, &all(to), &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("{what}: diff: {e}"));
         assert_eq!(d.findings, [], "{what}: the database is what the spec emits");
     }
 }
@@ -256,7 +256,7 @@ fn renaming_a_subject_migrates_although_a_parameter_is_named_after_it() {
     assert_eq!(kept, ["notes_select"], "only the policy that calls the renamed check is created again: {was:?} -> {is:?}");
     let mut sql = String::new();
     Sql::new(&after).write_all_sql(&mut sql).expect("the SQL compiles");
-    let d = demesne_postgres::drift(&mut db, &sql, &[]).unwrap_or_else(|e| panic!("diff: {e}"));
+    let d = demesne_postgres::drift(&mut db, &sql, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("diff: {e}"));
     assert_eq!(d.findings, [], "the database is what the renamed spec emits");
     let named: Vec<String> = db
         .query_one("SELECT proargnames::text[] FROM pg_proc WHERE oid = 'demesne_rn_auth.acl_grants(text, text, text)'::regprocedure", &[])
@@ -385,7 +385,7 @@ fn a_policy_that_calls_a_function_whose_argument_types_changed_is_created_again_
     let migration = Sql::new(&s).migration(&previous).expect("the migration compiles");
     assert!(migration.starts_with("DROP POLICY IF EXISTS notes_select ON demesne_rt_rows.notes;\n"), "{migration:.300}");
     db.batch_execute(&format!("BEGIN;\n{migration}COMMIT;")).unwrap_or_else(|e| panic!("the migration applies: {e:?}"));
-    let d = demesne_postgres::drift(&mut db, &sql, &[]).unwrap_or_else(|e| panic!("diff: {e}"));
+    let d = demesne_postgres::drift(&mut db, &sql, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("diff: {e}"));
     assert_eq!(d.findings, [], "the database is what the spec emits");
 }
 

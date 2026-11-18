@@ -83,7 +83,13 @@ demesne diff app.demesne "$DATABASE_URL"
 
 `diff` reports each role other than the owner that may still run a revoked or grantable
 function, and each default privilege that would grant one, as `GRANTED`, with the
-statement that takes it back. Run those statements until it reports none.
+statement that takes it back. A role you granted the `grantable` functions to on purpose,
+such as your worker's, holds them by design: name it with `--grantee <role>`, once for
+each such role, and `diff` accepts its grants of those functions. It still reports that
+role's grant of a revoked function and every default privilege. Run the statements it
+prints for what is left. On a setup that follows this guide it then reports nothing, so
+`demesne diff app.demesne "$DATABASE_URL" --grantee <role> --exit-code` passes in CI.
+`--grantee PUBLIC` is refused, since PUBLIC holds exactly what the SQL grants it.
 
 ### 2. Emit and register the access-token hook
 

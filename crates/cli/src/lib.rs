@@ -32,10 +32,12 @@ USAGE:
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role,
                                                and look for schema traps (owner-rights views, NULL-blind unique
                                                scope indexes, policy comparisons that can't use an index)
-  demesne diff     <spec.demesne> <dsn> [--exit-code] [--allow <file>]
+  demesne diff     <spec.demesne> <dsn> [--exit-code] [--allow <file>] [--grantee <role>]...
                                                generated-vs-live drift, both ways: policies, definers, triggers
                                                and orphans; --exit-code fails (exit 1) on any drift (CI guard);
-                                               --allow lists orphans to leave unreported, one per line
+                                               --allow lists orphans to leave unreported, one per line;
+                                               --grantee names a role you grant the manifest's grantable
+                                               functions to, whose grants of them are not drift
   demesne coverage <spec.demesne> <dsn> [--exit-code]   ungoverned tables (no object → no RLS); --exit-code fails (exit 1) if any (CI guard)
   demesne version                              print the build version
 
@@ -259,6 +261,25 @@ pub fn strip_flag(args: &[String], name: &str, def: &str) -> (String, Vec<String
         i += 1;
     }
     (val, out)
+}
+
+/// Removes every `--<name> <value>` and `--<name>=<value>` from `args`, and returns the values in order with what is left.
+#[must_use]
+pub fn strip_repeated_flag(args: &[String], name: &str) -> (Vec<String>, Vec<String>) {
+    let pfx = format!("--{name}=");
+    let flag = format!("--{name}");
+    let (mut values, mut out) = (Vec::new(), Vec::new());
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        if *a == flag {
+            values.extend(rest.next().cloned());
+        } else if let Some(v) = a.strip_prefix(&pfx) {
+            values.push(v.to_string());
+        } else {
+            out.push(a.clone());
+        }
+    }
+    (values, out)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

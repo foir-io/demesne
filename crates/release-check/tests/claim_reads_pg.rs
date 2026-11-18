@@ -674,14 +674,14 @@ fn upgrade_by_diff(url: &str, name: &str, src: &str) -> usize {
     let current = demesne_emit_sql::Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{name}: {e}"));
     let v4_made = demesne_emit_sql::Manifest::from_sql(&v4).unwrap_or_else(|e| panic!("{name}: {e}")).functions;
     let left: BTreeSet<String> = v4_made.difference(&current.functions).map(|f| f.replace(", ", ",")).collect();
-    let found = demesne_postgres::drift(&mut db, &now, &[]).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    let found = demesne_postgres::drift(&mut db, &now, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
     let orphans: BTreeSet<String> = found.findings.iter().filter_map(|f| f.object.strip_prefix("function ").map(str::to_string)).collect();
     assert_eq!(orphans, left, "{name}: diff names each function v4.0.0 made and v5.0.0 does not: {:#?}", found.findings);
     assert_eq!(found.findings.len(), left.len(), "{name}: diff finds nothing else: {:#?}", found.findings);
     for f in &orphans {
         db.batch_execute(&format!("DROP FUNCTION {f}")).unwrap_or_else(|e| panic!("{name}: drop {f}: {}", why(&e)));
     }
-    let after = demesne_postgres::drift(&mut db, &now, &[]).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    let after = demesne_postgres::drift(&mut db, &now, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
     assert_eq!(after.findings, [], "{name}: diff is clean once the orphans are dropped");
     drop(db);
     let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
@@ -796,7 +796,7 @@ fn upgrade_under_blanket_grants(url: &str, name: &str) -> (Vec<String>, demesne_
     tx.commit().expect("commit the upgrade");
     let lists = demesne_emit_sql::Sql::new(&s).manifest().expect("a manifest").execute.expect("the manifest records who may run each function");
     let revoked: Vec<String> = lists.revoked.iter().chain(&lists.grantable).cloned().collect();
-    let drift = demesne_postgres::drift(&mut db, &now, &[]).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    let drift = demesne_postgres::drift(&mut db, &now, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
     let mut taken_back = String::new();
     for f in drift.findings.iter().filter(|f| f.kind == demesne_postgres::DriftKind::Granted) {
         let statement = f.detail.rsplit(": ").next().expect("a granted finding ends with its statement");
@@ -804,7 +804,7 @@ fn upgrade_under_blanket_grants(url: &str, name: &str) -> (Vec<String>, demesne_
         taken_back.push('\n');
     }
     db.batch_execute(&taken_back).unwrap_or_else(|e| panic!("{name}: the statements diff gives: {e}\n{taken_back}"));
-    let after = demesne_postgres::drift(&mut db, &now, &[]).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    let after = demesne_postgres::drift(&mut db, &now, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
     drop(db);
     let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
     admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");

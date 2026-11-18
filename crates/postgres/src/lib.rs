@@ -9,7 +9,7 @@ mod goerr;
 mod lint;
 
 pub use connect::connect;
-pub use drift::{Drift, DriftKind, Finding, drift};
+pub use drift::{Drift, DriftKind, Finding, Grantees, drift};
 pub use dsn::parse_config_dump;
 pub use error::Error;
 pub use lint::{Severity, Trap, schema_traps};

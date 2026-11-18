@@ -1,5 +1,5 @@
 use demesne_emit_sql::{Sql, file_sql, validate_files};
-use demesne_postgres::drift;
+use demesne_postgres::{Grantees, drift};
 use postgres::{Client, NoTls};
 
 const SCHEMAS: &str = "definers schema \"multi_auth\"\ntables schema \"multi_rows\"\n";
@@ -46,7 +46,7 @@ fn each_file_applied_in_order_leaves_the_database_its_prefix_describes() {
     for k in 0..files.len() {
         let sql = file_sql(&files, k).expect("the file emits");
         db.batch_execute(&sql).unwrap_or_else(|e| panic!("apply {}: {e}\n{sql}", files.names()[k]));
-        let d = drift(&mut db, &all_sql(files.prefix(k)), &[]).expect("diff runs");
+        let d = drift(&mut db, &all_sql(files.prefix(k)), &[], &Grantees::default()).expect("diff runs");
         let found: Vec<String> = d.findings.iter().map(|f| format!("{} {} — {}", f.kind.label(), f.object, f.detail)).collect();
         assert!(found.is_empty(), "after {}, the database differs from its prefix:\n{}", files.names()[k], found.join("\n"));
     }

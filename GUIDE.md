@@ -149,6 +149,13 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
    nothing live is reported as `STALE`, so the list can't outlive what it
    excuses. `--exit-code` fails on any of these.
 
+   A role you grant the manifest's `grantable` functions to, such as a
+   worker's, holds them by design. Pass `--grantee <role>` once for each such
+   role, and `diff` accepts its grants of those functions. Its grant of any
+   other function the SQL revokes, and every default privilege, are still
+   reported. `--grantee PUBLIC` is refused, since PUBLIC holds exactly what the
+   SQL grants it.
+
 ---
 
 ## The CLI
@@ -160,7 +167,7 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 | `demesne introspect <dsn>` | yes | summarise the live schema |
 | `demesne scaffold [-i] <dsn>` | yes | generate a starter spec from the schema (`-i`: interactive — asks for the RLS role + definer/table schemas, lists ungoverned tables as TODO stubs) |
 | `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, verify the RLS role is not `BYPASSRLS`, and look for schema traps |
-| `demesne diff <spec> <dsn>` | yes | generated-vs-live drift both ways: policies, definers, triggers, orphans, and any role or default privilege granted a function the SQL revokes |
+| `demesne diff <spec> <dsn>` | yes | generated-vs-live drift both ways: policies, definers, triggers, orphans, and any role or default privilege granted a function the SQL revokes; `--grantee <role>` accepts that role's grants of the grantable functions |
 | `demesne coverage <spec> <dsn>` | yes | list live tables with NO governing object (ungoverned → no RLS) — the drift/gap check |
 
 `<dsn>` defaults to `$DATABASE_URL`. Every `<spec>` may be several files, given in

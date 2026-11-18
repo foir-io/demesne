@@ -1,5 +1,5 @@
 use demesne_emit_sql::Sql;
-use demesne_postgres::{DriftKind, drift};
+use demesne_postgres::{DriftKind, Grantees, drift};
 use postgres::{Client, NoTls};
 
 const SPEC: &str = r#"
@@ -81,7 +81,7 @@ fn diff_reports_every_way_the_live_database_differs_from_the_spec() {
     let sql = sql();
     install(&mut db, &sql);
 
-    let clean = drift(&mut db, &sql, &[]).expect("diff runs");
+    let clean = drift(&mut db, &sql, &[], &Grantees::default()).expect("diff runs");
     assert_eq!(clean.findings, [], "the database the SQL just built is in sync");
     assert_eq!((clean.policies, clean.functions, clean.triggers), (2, 4, 1));
     assert_eq!(temporaries(&mut db), 0, "diff leaves nothing in the session");
@@ -100,7 +100,7 @@ fn diff_reports_every_way_the_live_database_differs_from_the_spec() {
     )
     .expect("drift");
     let allow = ["function d38_auth.hand_written(text)".to_string(), "function d38_auth.gone(text)".to_string()];
-    let d = drift(&mut db, &sql, &allow).expect("diff runs");
+    let d = drift(&mut db, &sql, &allow, &Grantees::default()).expect("diff runs");
     let got: Vec<(DriftKind, &str)> = d.findings.iter().map(|f| (f.kind, f.object.as_str())).collect();
     assert_eq!(
         got,
@@ -149,7 +149,7 @@ fn diff_reports_a_function_public_may_not_run_that_the_sql_grants_and_applying_i
          REVOKE EXECUTE ON FUNCTION d38g_auth.docs_obj_changelog() FROM PUBLIC;",
     )
     .expect("revoke");
-    let d = drift(&mut db, &sql, &[]).expect("diff runs");
+    let d = drift(&mut db, &sql, &[], &Grantees::default()).expect("diff runs");
     let got: Vec<(DriftKind, &str, &str)> = d.findings.iter().map(|f| (f.kind, f.object.as_str(), f.detail.as_str())).collect();
     let detail = "PUBLIC may not execute it, and the generated SQL grants that (re-apply it)";
     assert_eq!(
@@ -160,7 +160,7 @@ fn diff_reports_a_function_public_may_not_run_that_the_sql_grants_and_applying_i
         ]
     );
     db.batch_execute(&sql).expect("apply again");
-    let again = drift(&mut db, &sql, &[]).expect("diff runs");
+    let again = drift(&mut db, &sql, &[], &Grantees::default()).expect("diff runs");
     assert_eq!(again.findings, [], "applying the SQL again grants what the revoke took");
     assert_eq!(again.functions, 4);
 }
@@ -177,7 +177,7 @@ CREATE POLICY items_select ON d38_path.items FOR SELECT TO public USING (EXISTS 
     )
     .expect("a fresh schema");
     db.batch_execute(sql).expect("apply");
-    let d = drift(&mut db, sql, &[]).expect("diff runs");
+    let d = drift(&mut db, sql, &[], &Grantees::default()).expect("diff runs");
     assert_eq!((d.findings, d.policies), (vec![], 1), "the copy's `items` is the live table, not the shadow beside it");
 }
 
@@ -189,7 +189,7 @@ fn diff_reports_a_governed_table_the_database_lacks() {
     let sql = "ALTER TABLE d38_absent.items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY items_select ON d38_absent.items FOR SELECT TO public USING (true);
 ";
-    let d = drift(&mut db, sql, &[]).expect("diff runs");
+    let d = drift(&mut db, sql, &[], &Grantees::default()).expect("diff runs");
     let got: Vec<(DriftKind, &str, &str)> = d.findings.iter().map(|f| (f.kind, f.object.as_str(), f.detail.as_str())).collect();
     assert_eq!(got, [(DriftKind::Missing, "table d38_absent.items", "the spec governs it, but the database has no such table")]);
 }

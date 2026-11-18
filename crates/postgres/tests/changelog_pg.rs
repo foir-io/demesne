@@ -1,4 +1,4 @@
-use demesne_postgres::{DriftKind, drift};
+use demesne_postgres::{DriftKind, Grantees, drift};
 use postgres::error::SqlState;
 use postgres::{Client, NoTls};
 
@@ -111,11 +111,11 @@ fn diff_reads_a_checked_changelogs_constraint_triggers_and_reports_one_dropped()
     ))
     .expect("fresh schemas and tables");
     db.batch_execute(&sql).unwrap_or_else(|e| panic!("apply: {e}"));
-    let clean = drift(&mut db, &sql, &[]).unwrap_or_else(|e| panic!("diff runs: {e}"));
+    let clean = drift(&mut db, &sql, &[], &Grantees::default()).unwrap_or_else(|e| panic!("diff runs: {e}"));
     assert_eq!(clean.findings, [], "the database the SQL just built is in sync");
     assert_eq!(clean.triggers, 2, "both constraint triggers are compared");
     db.batch_execute(&format!("DROP TRIGGER doc_acl_changelog ON {rows}.doc_acl")).expect("drop one");
-    let d = drift(&mut db, &sql, &[]).unwrap_or_else(|e| panic!("diff runs: {e}"));
+    let d = drift(&mut db, &sql, &[], &Grantees::default()).unwrap_or_else(|e| panic!("diff runs: {e}"));
     let found: Vec<(DriftKind, &str)> = d.findings.iter().map(|f| (f.kind, f.object.as_str())).collect();
     assert_eq!(found, [(DriftKind::Missing, "trigger doc_acl_changelog on demesne_clc_rows.doc_acl")], "{:#?}", d.findings);
     db.batch_execute(&format!("DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");

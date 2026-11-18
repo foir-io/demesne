@@ -144,7 +144,15 @@ well as one PUBLIC may run that the SQL revokes. For a function the SQL
 revokes, it also reports, as `GRANTED`, each role other than the owner that
 may run it live, and each default privilege that grants new functions in a
 definers schema, or in every schema, to a role other than its own. Each
-finding ends with the statement that takes the grant back.
+finding ends with the statement that takes the grant back. A role you grant the
+manifest's `grantable` functions to holds them by design: name it with
+`demesne diff --grantee <role>`, once for each such role, and its grants of
+those functions are not reported. Its grant of a revoked function and every
+default privilege still are, and `--grantee PUBLIC` is refused, since PUBLIC
+holds exactly what the SQL grants it. `demesne_postgres::drift` takes a fourth
+argument, `&Grantees`, built by `Grantees::new` from the manifest and the role
+names; `Grantees::default()` names none and reports what it did before.
+`demesne_postgres::Error` gains `is_grantee`.
 `demesne_emit_sql::granted_to_public` reads the grants as
 `revoked_from_public` reads the revokes; `demesne_emit_sql::POLICY_ROLE` names
 `authenticated`, and `demesne_postgres::DriftKind` gains `Granted`. Every
@@ -180,9 +188,11 @@ What breaks for an adopter:
   upgrading, revoke such a grant from each role you made it to, with the
   matching default privileges (`alter default privileges in schema demesne
   revoke execute on functions from anon, authenticated`), grant what
-  `callable` lists, and run `demesne diff`: it names each grant still left on
-  a revoked or grantable function, and each default privilege that would make
-  one, with the statement that takes it back.
+  `callable` lists, and run `demesne diff`, naming with `--grantee` each role
+  you grant the `grantable` functions to: it names each grant still left on a
+  revoked function, or on a grantable one to a role you did not name, and each
+  default privilege that would make one, with the statement that takes it
+  back.
 - **SQL of your own that called a generated function nothing else calls gets
   `function does not exist`**, since that function is no longer emitted. Read
   the tables in that statement instead, under a role that may.

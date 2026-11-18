@@ -13,6 +13,7 @@ enum Kind {
     Connect,
     Query,
     Sql,
+    Grantee,
 }
 
 impl Error {
@@ -30,6 +31,10 @@ impl Error {
 
     pub(crate) fn sql(message: impl Into<String>) -> Self {
         Error { kind: Kind::Sql, message: message.into() }
+    }
+
+    pub(crate) fn grantee(message: impl Into<String>) -> Self {
+        Error { kind: Kind::Grantee, message: message.into() }
     }
 
     /// Returns whether the connection string does not parse.
@@ -54,6 +59,12 @@ impl Error {
     #[must_use]
     pub fn is_sql(&self) -> bool {
         self.kind == Kind::Sql
+    }
+
+    /// Returns whether a role named as a grantee cannot be one.
+    #[must_use]
+    pub fn is_grantee(&self) -> bool {
+        self.kind == Kind::Grantee
     }
 }
 
