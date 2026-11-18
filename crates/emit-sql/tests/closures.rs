@@ -121,7 +121,7 @@ fn a_declared_depth_adds_the_ordered_path_and_an_identifier_type_carries_through
     assert_eq!(path.body, "  SELECT anc, hops::integer FROM paths WHERE des = p_node ORDER BY hops DESC, anc;");
     assert!(path.strict && path.raw_body);
     assert!(
-        path.create_sql().ends_with("REVOKE EXECUTE ON FUNCTION auth.paths_path(uuid) FROM PUBLIC;"),
+        path.create_sql().ends_with("REVOKE EXECUTE ON FUNCTION auth.paths_path(uuid) FROM PUBLIC, authenticated;"),
         "no rule calls the path, so only a granted role reads it"
     );
     let no_depth = compile(&format!("{HEAD}closure paths(anc, des)\n"));

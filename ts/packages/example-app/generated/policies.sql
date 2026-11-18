@@ -31,7 +31,7 @@ AS $$
   SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text[], NULL::text[]
     FROM notes WHERE note_pk = p_id AND visibility = 'open'
 $$;
-REVOKE EXECUTE ON FUNCTION auth.notes_accessors_conditional(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.notes_accessors_conditional(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.notes_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -52,7 +52,7 @@ BEGIN
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.notes_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.notes_admits(text, jsonb) FROM PUBLIC, authenticated;
 
 
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;

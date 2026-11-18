@@ -16,23 +16,42 @@ pub enum Language {
     Plpgsql,
 }
 
+/// The role every generated policy is written for.
+///
+/// The SQL revokes from it, as from PUBLIC, every function it revokes, so a grant made to it by name or by default
+/// privileges does not outlast applying the SQL.
+pub const POLICY_ROLE: &str = "authenticated";
+
 /// Which roles may execute a definer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Execute {
     /// Every role: the SQL grants execute to PUBLIC, so applying it again restores what a revoke took away.
     #[default]
     Public,
-    /// No role but the definer's owner: execute is revoked from PUBLIC, and only generated functions call it.
+    /// No role but the definer's owner: execute is revoked from PUBLIC and from [`POLICY_ROLE`], and only generated
+    /// functions call it.
     Revoked,
-    /// The roles the adopter grants it to: execute is revoked from PUBLIC, and the function is an interface for such a role.
+    /// The roles the adopter grants it to: execute is revoked from PUBLIC and from [`POLICY_ROLE`], and the function is an
+    /// interface for such a role.
     Grantable,
+}
+
+/// Whose rights a generated function runs with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Security {
+    /// Its owner's, so it reads the tables its check needs whoever calls it.
+    #[default]
+    Definer,
+    /// The caller's. A copy that other generated functions call with an argument they have already checked runs so:
+    /// called from one of them it runs as that function's owner, and run directly it reads only what the caller may.
+    Invoker,
 }
 
 impl Execute {
     pub(crate) fn statement(self, function: &str, arg_types: &str) -> String {
         match self {
             Execute::Public => format!("GRANT EXECUTE ON FUNCTION {function}({arg_types}) TO PUBLIC;"),
-            Execute::Revoked | Execute::Grantable => format!("REVOKE EXECUTE ON FUNCTION {function}({arg_types}) FROM PUBLIC;"),
+            Execute::Revoked | Execute::Grantable => format!("REVOKE EXECUTE ON FUNCTION {function}({arg_types}) FROM PUBLIC, {POLICY_ROLE};"),
         }
     }
 }
@@ -144,6 +163,8 @@ pub struct GenFn {
     pub arms: Vec<DefinerArm>,
     pub language: Language,
     pub execute: Execute,
+    /// Whose rights the function runs with.
+    pub security: Security,
     pub bound: Option<Bound>,
     /// The parameter the generator filled from a principal. A function PUBLIC may run answers only when it is one of the caller's own claims.
     pub principal: Option<String>,
@@ -190,13 +211,17 @@ impl GenFn {
         let mut sql = self.before_sql();
         write!(
             sql,
-            "CREATE OR REPLACE FUNCTION {}.{}({})\nRETURNS {}\nLANGUAGE {}\nSTABLE\n{}SECURITY DEFINER\nSET search_path = {}, pg_temp\nAS $$\n{}\n$$;",
+            "CREATE OR REPLACE FUNCTION {}.{}({})\nRETURNS {}\nLANGUAGE {}\nSTABLE\n{}SECURITY {}\nSET search_path = {}, pg_temp\nAS $$\n{}\n$$;",
             self.schema(),
             self.name,
             self.sig(),
             returns,
             lang,
             strict,
+            match self.security {
+                Security::Definer => "DEFINER",
+                Security::Invoker => "INVOKER",
+            },
             self.table_schema(),
             body
         )

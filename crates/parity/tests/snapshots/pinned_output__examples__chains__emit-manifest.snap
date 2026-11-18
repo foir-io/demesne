@@ -231,7 +231,7 @@ exit: 0
   "digests": [
     {
       "object": "function auth.demesne_instant(text)",
-      "digest": "7d7348f34a078edc0c89336f0d788f0b52274f8ae778ce447ab1cba2703405de"
+      "digest": "60088154c2ffe9f226d297cef7b6334a7d5e48002080858e0c4f80b9067f3e9a"
     },
     {
       "object": "function auth.doc_composition_lent(text, text, text)",
@@ -239,7 +239,7 @@ exit: 0
     },
     {
       "object": "function auth.doc_composition_lent_0(text, text, text)",
-      "digest": "40a23eac16eacf999181d71c9975899768be4c99ca76160daf8d510b7c190ac3"
+      "digest": "a718042edb3e3f90446d36cc3e59b1ca11c0a9773c94b5999cfb033f8e9930c1"
     },
     {
       "object": "function auth.doc_shared_keyed(text, text, text)",
@@ -247,7 +247,7 @@ exit: 0
     },
     {
       "object": "function auth.doc_shared_keyed_inside(text, text, text)",
-      "digest": "3df628f95fdf40c8b123a2e62216ce19378f05bf550ca4fd36430c3f60268437"
+      "digest": "de207e9a842fd9ee4bbdd92c68712549d0aaa637e42e33e5c939f270df9d5a7d"
     },
     {
       "object": "function auth.doc_terms_hold(text, text, jsonb)",
@@ -255,7 +255,7 @@ exit: 0
     },
     {
       "object": "function auth.doc_terms_hold_inside(text, text, jsonb)",
-      "digest": "95e3e408bc37a0220b4628ccf4118d4536e606f6bf540b6dd8bc67e58b4ae7e8"
+      "digest": "0aa362f85db3fbd52ba0bf43691ab6cac1779be323921a108a490218e004d714"
     },
     {
       "object": "function auth.keeper_memberin_space(text, text)",
@@ -263,7 +263,7 @@ exit: 0
     },
     {
       "object": "function auth.live_skin(text)",
-      "digest": "a95072689a83d232a1d723d00ef8ae11934f3d598b6638028730be681c1c5a0c"
+      "digest": "48b2eed595d55def97efeb379366f483a3549edac61a3f09efeaa00649ee925d"
     },
     {
       "object": "function auth.live_skin_own(text)",
@@ -275,7 +275,7 @@ exit: 0
     },
     {
       "object": "function auth.paths_path(text)",
-      "digest": "a916d315b9fdd9aea156957f419d123e0bcda74d80f7c6442a6434cfce97edc9"
+      "digest": "e0b4d6e15990ab09964b55dbc3b4990ab96a2d043187c2907d71fa8a26a95a03"
     },
     {
       "object": "function auth.rule_slots_declared_by_rule(text)",
@@ -283,15 +283,15 @@ exit: 0
     },
     {
       "object": "function auth.spaces_accessors(text)",
-      "digest": "ffe22328d468c8b86b55af44185e45101172bc671bd062a367d3cddabf8bdbaf"
+      "digest": "bc90881f8116090e4a14dc42266024dd5b3f9daffabb259fa661335b35753e0a"
     },
     {
       "object": "function auth.spaces_admits(text, jsonb)",
-      "digest": "33c9d2e8cbf9344a5f4449e51019e6f891a4a235ae72c0c551c93dda007516de"
+      "digest": "fe3b827c02b06de093f3a338af92e0a0da09a94fe692fa226d317975bd628052"
     },
     {
       "object": "function auth.trail_hops_declared_by_trail(text)",
-      "digest": "e459ccaacc1488803c6fc66afceb58734caa55c7b27ebc126892df47238adc51"
+      "digest": "1acb46dca1d8480a29f83535140d8e416667284a4a0566d79f5ac7886e86251b"
     },
     {
       "object": "policy banners_select on public.banners",

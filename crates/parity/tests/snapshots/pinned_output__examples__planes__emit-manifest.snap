@@ -98,7 +98,7 @@ exit: 0
     },
     {
       "object": "function auth.operator_perm_implied_by(text)",
-      "digest": "b4737c7b5bd1b116a9c5ecb9605e95e831802d936a87d6b8fdb8f085a0c2b02a"
+      "digest": "bedf935ee719660ff5fd64791ccb55ee8833da5fa34d7379ce411f67d2ecfffb"
     },
     {
       "object": "function auth.platform_has_perm(text, text)",

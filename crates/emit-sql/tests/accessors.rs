@@ -203,7 +203,7 @@ fn no_listing_of_who_reaches_a_row_is_publics_to_run() {
         let src = std::fs::read_to_string(format!("{}/../../testdata/gaps/{name}.demesne", env!("CARGO_MANIFEST_DIR"))).expect("the fixture reads");
         for listing in definers(&src).iter().filter(|d| d.returns.starts_with("TABLE(source text, principal_kind text")) {
             let sql = listing.create_sql();
-            let revoked = format!("REVOKE EXECUTE ON FUNCTION {}.{}(text) FROM PUBLIC;", listing.schema(), listing.name);
+            let revoked = format!("REVOKE EXECUTE ON FUNCTION {}.{}(text) FROM PUBLIC, authenticated;", listing.schema(), listing.name);
             assert!(sql.ends_with(&revoked), "{name}: {} names the principals of any row it is asked about, so only a granted role runs it", listing.name);
             listings += 1;
         }

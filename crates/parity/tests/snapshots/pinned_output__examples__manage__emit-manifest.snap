@@ -64,7 +64,7 @@ exit: 0
     },
     {
       "object": "function auth.member_perm_implied_by(text)",
-      "digest": "f89121d1550049bb03607b5d1e9fce42e723996fc3558de89c763306783d2467"
+      "digest": "aa97587ae6082d0e5ca98ddc100f3a2bf976444c91c0be159af263495450c0c5"
     },
     {
       "object": "policy records_select on public.records",

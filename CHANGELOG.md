@@ -115,13 +115,25 @@ arbitrary SQL as the caller role can set them with `set_config`, as it always
 could; the guide now says so in as many words.
 
 Every function the SQL creates is now followed by `GRANT EXECUTE … TO PUBLIC`
-or `REVOKE EXECUTE … FROM PUBLIC`. `CREATE OR REPLACE FUNCTION` keeps a
-function's privileges, so without the grant a function that one release
-revoked and a later one made PUBLIC again would have stayed revoked. Applying
-the SQL now leaves PUBLIC exactly the right it states. `demesne diff` reports a
-function PUBLIC may not run that the SQL grants, as well as one PUBLIC may run
-that the SQL revokes. `demesne_emit_sql::granted_to_public` reads the grants as
-`revoked_from_public` reads the revokes. Every spec's SQL gains these lines.
+or `REVOKE EXECUTE … FROM PUBLIC, authenticated`. `CREATE OR REPLACE FUNCTION`
+keeps a function's privileges, so without the grant a function that one
+release revoked and a later one made PUBLIC again would have stayed revoked.
+A revoke also names `authenticated`, the role every policy is written for, so
+a grant made to it by name, by a grant over the whole schema or by default
+privileges does not outlast applying the SQL. Applying the SQL now leaves
+PUBLIC and `authenticated` exactly the right it states. A grant to any other
+role stays.
+
+`demesne diff` reports a function PUBLIC may not run that the SQL grants, as
+well as one PUBLIC may run that the SQL revokes. For a function the SQL
+revokes, it also reports, as `GRANTED`, each role other than the owner that
+may run it live, and each default privilege that grants new functions in a
+definers schema, or in every schema, to a role other than its own. Each
+finding ends with the statement that takes the grant back.
+`demesne_emit_sql::granted_to_public` reads the grants as
+`revoked_from_public` reads the revokes; `demesne_emit_sql::POLICY_ROLE` names
+`authenticated`, and `demesne_postgres::DriftKind` gains `Granted`. Every
+spec's SQL gains these lines.
 
 What breaks for an adopter:
 
@@ -134,10 +146,22 @@ What breaks for an adopter:
   A generated function is the policies' tool: read the tables that statement
   needs instead, under a role that may. Granting `EXECUTE` on a revoked
   function that keeps its binding gives back only what the caller could ask
-  about itself. Grant no `<function>_inside` copy: it has no check. A function
-  the `grantable` list names answers for any id or claims it is given, so
-  grant it only to a server-side role you trust, such as a worker's, never to
-  a role your API's callers run as.
+  about itself. An `<function>_inside` copy has no check of its own, so it
+  runs with its caller's rights (`SECURITY INVOKER`): called from a generated
+  function it runs as that function's owner, and run directly it reads only
+  what the caller may. A function the `grantable` list names answers for any
+  id or claims it is given, so grant it only to a server-side role you trust,
+  such as a worker's, never to a role your API's callers run as.
+- **A grant of every function in the definers schema, or default privileges
+  that grant new functions there, outlive the upgrade for any role but
+  `authenticated`.** Earlier versions of the Supabase guide said to run `grant
+  execute on all functions in schema demesne to authenticated`. After
+  upgrading, revoke such a grant from each role you made it to, with the
+  matching default privileges (`alter default privileges in schema demesne
+  revoke execute on functions from anon, authenticated`), grant what
+  `callable` lists, and run `demesne diff`: it names each grant still left on
+  a revoked or grantable function, and each default privilege that would make
+  one, with the statement that takes it back.
 - **SQL of your own that called a generated function nothing else calls gets
   `function does not exist`**, since that function is no longer emitted. Read
   the tables in that statement instead, under a role that may.
@@ -562,8 +586,10 @@ exact text of the claims setting, in two transaction-local settings named
 whenever the claims text differs. A `via conditions` check does the same on
 every spec. A generated function that already passes the caller's own claim
 calls `<function>_inside`, a copy with no check that PUBLIC cannot run, so a
-hop pays nothing for the binding. `demesne_emit_sql` gains `Bound`, and
-`GenFn` gains `bound`.
+hop pays nothing for the binding. The copy is `SECURITY INVOKER`: it runs as
+the owner of the generated function that calls it, and run directly, under a
+grant made by mistake, it reads only what its caller may. `demesne_emit_sql`
+gains `Bound` and `Security`, and `GenFn` gains `bound` and `security`.
 
 `demesne_syntax` gains `CompPath`; `ViaComposition` gains `path`, `Object` gains
 `nested`, `Builtin` gains `HoldsAt`, and the lexer reads a whole number.

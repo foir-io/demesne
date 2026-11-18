@@ -766,6 +766,88 @@ fn upgrading_from_v4_0_0_by_migrating_leaves_no_function_v5_0_0_does_not_emit() 
     assert!(pruned_example, "examples/example.demesne loses has_org_role, among others");
 }
 
+fn upgrade_under_blanket_grants(url: &str, name: &str) -> (Vec<String>, demesne_postgres::Drift) {
+    let src = std::fs::read_to_string(root().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let ((s, now), (v4, Some(previous))) = (ddl_now(&src).expect("v5.0.0 emits it"), ddl_v4(&src).expect("v4.0.0 emits it")) else {
+        panic!("{name}: v4.0.0 writes its manifest")
+    };
+    let keys = claim_keys(&[&v4, &now]);
+    let pools = Pools::new(s.id_type(), &[&v4, &now], &keys.all);
+    let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
+    let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
+    let (config, scratch) = scratch_database(url, "blanket_grants");
+    let mut db = config.connect(NoTls).expect("connect to the scratch database");
+    db.batch_execute(
+        "DO $$ BEGIN BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END;
+         BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END $$",
+    )
+    .expect("the roles");
+    install(&mut db, &mut setup, &pools, &now).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let schema = ident(s.definer_schema());
+    let mut tx = db.transaction().expect("a transaction");
+    create(&mut tx, &setup, &pools).unwrap_or_else(|e| panic!("{name}: the tables: {}", why(&e)));
+    tx.batch_execute(&v4).unwrap_or_else(|e| panic!("{name}: v4.0.0's SQL: {}", why(&e)));
+    tx.batch_execute(&format!(
+        "GRANT USAGE ON SCHEMA {schema} TO authenticated, anon;
+         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {schema} TO authenticated, anon;
+         ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} GRANT EXECUTE ON FUNCTIONS TO authenticated, anon;"
+    ))
+    .unwrap_or_else(|e| panic!("{name}: the blanket grants: {}", why(&e)));
+    let migration = demesne_emit_sql::Sql::new(&s).migration(&previous).unwrap_or_else(|e| panic!("{name}: {e}"));
+    tx.batch_execute(&migration).unwrap_or_else(|e| panic!("{name}: the migration: {}", why(&e)));
+    tx.commit().expect("commit the upgrade");
+    let lists = demesne_emit_sql::Sql::new(&s).manifest().expect("a manifest").execute.expect("the manifest records who may run each function");
+    let revoked: Vec<String> = lists.revoked.iter().chain(&lists.grantable).cloned().collect();
+    let drift = demesne_postgres::drift(&mut db, &now, &[]).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    let mut taken_back = String::new();
+    for f in drift.findings.iter().filter(|f| f.kind == demesne_postgres::DriftKind::Granted) {
+        let statement = f.detail.rsplit(": ").next().expect("a granted finding ends with its statement");
+        taken_back.push_str(statement);
+        taken_back.push('\n');
+    }
+    db.batch_execute(&taken_back).unwrap_or_else(|e| panic!("{name}: the statements diff gives: {e}\n{taken_back}"));
+    let after = demesne_postgres::drift(&mut db, &now, &[]).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    drop(db);
+    let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
+    admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");
+    let left: Vec<String> =
+        after.findings.iter().filter(|f| f.kind == demesne_postgres::DriftKind::Granted).map(|f| format!("{} {}", f.object, f.detail)).collect();
+    assert!(left.is_empty(), "{name}: diff still names grants after its own statements ran: {left:#?}");
+    (revoked, drift)
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn after_upgrading_under_the_old_blanket_grant_diff_names_every_grant_of_a_revoked_function_and_how_to_take_it_back() {
+    let url = require_env("DEMESNE_PG_URL");
+    let mut named = 0;
+    for name in ["examples/example.demesne", "examples/manage.demesne"] {
+        let (revoked, drift) = upgrade_under_blanket_grants(&url, name);
+        assert!(!revoked.is_empty(), "{name}: v5.0.0 revokes a function, so there is a grant to find");
+        let granted: Vec<(&str, &str)> =
+            drift.findings.iter().filter(|f| f.kind == demesne_postgres::DriftKind::Granted).map(|f| (f.object.as_str(), f.detail.as_str())).collect();
+        for f in &revoked {
+            let object = format!("function {f}");
+            let to_anon = format!("REVOKE EXECUTE ON FUNCTION {f} FROM anon;");
+            assert!(granted.iter().any(|(o, d)| *o == object && d.ends_with(&to_anon)), "{name}: diff does not name anon's grant of {f}: {granted:#?}");
+            assert!(
+                !granted.iter().any(|(o, d)| *o == object && d.contains("FROM authenticated;")),
+                "{name}: applying v5.0.0 leaves the policies' role its grant of {f}: {granted:#?}"
+            );
+            named += 1;
+        }
+        let schema = "auth";
+        for role in ["anon", "authenticated"] {
+            let statement = format!("ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA {schema} REVOKE EXECUTE ON FUNCTIONS FROM {role};");
+            assert!(granted.iter().any(|(_, d)| d.ends_with(&statement)), "{name}: diff does not name the default privilege for {role}: {granted:#?}");
+        }
+        let unrevoked: Vec<&(&str, &str)> =
+            granted.iter().filter(|(o, _)| o.starts_with("function ") && !revoked.iter().any(|f| *o == format!("function {f}"))).collect();
+        assert!(unrevoked.is_empty(), "{name}: diff names a grant of a function PUBLIC may run: {unrevoked:#?}");
+    }
+    assert!(named >= 5, "{named} revoked functions checked");
+}
+
 #[test]
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn specs_with_integer_and_uuid_ids_apply_and_answer_through_every_generator_taking_an_id() {
@@ -1134,7 +1216,7 @@ fn without_affordance_guards(sql: &str) -> String {
 }
 
 fn answering_any_caller(sql: &str, before: &str) -> String {
-    let sql = &without_affordance_guards(&without_leading_guards(sql));
+    let sql = &without_affordance_guards(&without_leading_guards(&sql.replace(" FROM PUBLIC, authenticated;", " FROM PUBLIC;")));
     let stated_since = |line: &&str| {
         (line.starts_with("REVOKE EXECUTE ON FUNCTION ") || line.starts_with("GRANT EXECUTE ON FUNCTION ")) && !before.lines().any(|kept| kept == *line)
     };

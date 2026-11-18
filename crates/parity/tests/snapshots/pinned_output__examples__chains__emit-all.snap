@@ -26,7 +26,7 @@ AS $$
     FROM spaces e JOIN role_grants ra ON ra.principal_kind = 'keeper' AND ra.revoked_at IS NULL AND ra.space_id = e.id
     WHERE e.id = p_id
 $$;
-REVOKE EXECUTE ON FUNCTION auth.spaces_accessors(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.spaces_accessors(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.spaces_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -47,7 +47,7 @@ BEGIN
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.spaces_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.spaces_admits(text, jsonb) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.paths_path(p_node text)
 RETURNS TABLE(node text, depth integer)
@@ -59,7 +59,7 @@ SET search_path = public, pg_temp
 AS $$
   SELECT ancestor_id, depth::integer FROM paths WHERE descendant_id = p_node ORDER BY depth DESC, ancestor_id;
 $$;
-REVOKE EXECUTE ON FUNCTION auth.paths_path(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.paths_path(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.doc_shared_keyed(p_principal text, p_object text, p_key text)
 RETURNS boolean
@@ -110,7 +110,7 @@ BEGIN
   RETURN QUERY SELECT trail_hops.doc_id::text, trail_hops.field::text, trail_hops.kind::text, trail_hops.rule::text FROM trail_hops WHERE trail_hops.trail = p_key;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.trail_hops_declared_by_trail(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.trail_hops_declared_by_trail(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.demesne_instant(p_text text)
 RETURNS timestamptz
@@ -129,7 +129,7 @@ EXCEPTION WHEN others THEN
   RETURN NULL;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.demesne_instant(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.demesne_instant(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.doc_terms_hold(p_object text, p_key text, p_values jsonb)
 RETURNS boolean
@@ -216,7 +216,7 @@ AS $$
     SELECT t.id, NULL FROM skins t WHERE t.folder_id IS NULL AND t.id IS NOT NULL AND t.status = 'live' AND t.space_id = (SELECT s.space_id FROM paths s WHERE s.ancestor_id = p_node AND s.descendant_id = p_node)
   ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;
 $$;
-REVOKE EXECUTE ON FUNCTION auth.live_skin(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.live_skin(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.live_skin_own(p_node text)
 RETURNS text
@@ -235,7 +235,7 @@ RETURNS boolean
 LANGUAGE plpgsql
 STABLE
 STRICT
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
@@ -243,13 +243,13 @@ BEGIN
   RETURN p_principal = p_principal AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.doc_shared_keyed_inside(text, text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.doc_shared_keyed_inside(text, text, text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.doc_terms_hold_inside(p_object text, p_key text, p_values jsonb)
 RETURNS boolean
 LANGUAGE plpgsql
 STABLE
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
@@ -308,7 +308,7 @@ BEGIN
   RETURN CASE WHEN undecided THEN NULL ELSE true END;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.doc_terms_hold_inside(text, text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.doc_terms_hold_inside(text, text, jsonb) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.doc_composition_lent_0(p_doc_id text, p_access text, p_slot text)
 RETURNS boolean
@@ -326,7 +326,7 @@ BEGIN
   RETURN false;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.doc_composition_lent_0(text, text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.doc_composition_lent_0(text, text, text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.doc_composition_lent(p_doc_id text, p_access text, p_slot text)
 RETURNS boolean

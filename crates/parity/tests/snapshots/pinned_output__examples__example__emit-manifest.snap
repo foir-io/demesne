@@ -185,11 +185,11 @@ exit: 0
     },
     {
       "object": "function auth.docs_accessors_conditional(text)",
-      "digest": "0de786ede305bdb5fa3033b14412f928f8cf366bcf563ed553f892a6d45e2dc1"
+      "digest": "f8da868289e786bb52fed46b13ca49170d170fb8ff33a1df48c1bddfafd6a0aa"
     },
     {
       "object": "function auth.docs_admits(text, jsonb)",
-      "digest": "f2b322933cd38edf0547ead6c3ef32c800c87ae243448ba0513589b7800021df"
+      "digest": "d29b12999b17a634194a9ad1768ead169fcbb7e34afb2d686b2196f7a7b3c5b8"
     },
     {
       "object": "function auth.is_root(text)",
@@ -209,11 +209,11 @@ exit: 0
     },
     {
       "object": "function auth.workspaces_accessors(text)",
-      "digest": "2739a1c025859c0a21c03435d40e23b88fecead29beda573fc7364c77fb6a393"
+      "digest": "b2e54773389a84ed0a7dc439372dc0e024c075791f56f91b015c94c020259c3e"
     },
     {
       "object": "function auth.workspaces_admits(text, jsonb)",
-      "digest": "77ae93e0e2ea33d48155bbac6a4784fdeac9940098d4471dbd0c9f0f6549da31"
+      "digest": "1e95558f1fc5f429a7a68ce57229e0c3aabd2ca4eabb90e1b557bfc03ab170ad"
     },
     {
       "object": "policy docs_delete on public.docs",

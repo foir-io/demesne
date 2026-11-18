@@ -1,6 +1,6 @@
 use crate::definers::Definers;
 use crate::genfn::Param;
-use crate::genfn::{Bound, DefinerArm, Execute, GenFn, Language};
+use crate::genfn::{Bound, DefinerArm, Execute, GenFn, Language, Security};
 use crate::rls::{Virtual, leaf};
 use crate::{Binds, Sql};
 use demesne_gocompat::quote;
@@ -138,6 +138,7 @@ fn called_inside(mut fns: Vec<GenFn>, inside: &[bool]) -> Vec<GenFn> {
                 body: bound.inside,
                 bound: None,
                 execute: Execute::Revoked,
+                security: Security::Invoker,
                 language: Language::Plpgsql,
                 raw_body: true,
                 ..fns[i].clone()

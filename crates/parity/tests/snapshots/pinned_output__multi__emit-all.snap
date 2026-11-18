@@ -53,7 +53,7 @@ AS $$
   SELECT 'grant'::text, principal_kind, principal_id, access
     FROM acl WHERE resource_id = p_id AND resource_type = 'doc'
 $$;
-REVOKE EXECUTE ON FUNCTION auth.docs_accessors(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.docs_accessors(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.docs_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -74,7 +74,7 @@ BEGIN
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.docs_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.docs_admits(text, jsonb) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.notes_accessors(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
@@ -94,7 +94,7 @@ AS $$
     JOIN LATERAL auth.docs_accessors(t.doc_id) a ON true
     WHERE t.id = p_id
 $$;
-REVOKE EXECUTE ON FUNCTION auth.notes_accessors(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.notes_accessors(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.doc_can_view(p_doc_id text)
 RETURNS boolean
@@ -127,7 +127,7 @@ BEGIN
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.notes_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.notes_admits(text, jsonb) FROM PUBLIC, authenticated;
 
 DO $demesne$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('auth.doc_can_edit(text)') AND proargnames IS DISTINCT FROM ARRAY['p_doc_id']::text[]) THEN
@@ -144,7 +144,7 @@ SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_doc_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
 $$;
-REVOKE EXECUTE ON FUNCTION auth.doc_can_edit(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.doc_can_edit(text) FROM PUBLIC, authenticated;
 
 DO $demesne$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('auth.note_can_edit(text)') AND proargnames IS DISTINCT FROM ARRAY['p_note_id']::text[]) THEN
@@ -161,7 +161,7 @@ SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM notes WHERE notes.id = p_note_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_note((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), notes.id, 'write')))));
 $$;
-REVOKE EXECUTE ON FUNCTION auth.note_can_edit(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.note_can_edit(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.acl_manage(p_type text, p_id text)
 RETURNS boolean

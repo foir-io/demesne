@@ -116,11 +116,11 @@ exit: 0
     },
     {
       "object": "function auth.notes_accessors_conditional(text)",
-      "digest": "743937f7106202d802747f83b1f91d57946e8766b5bfe273c2bf2fd38229c201"
+      "digest": "bbafdeaf1e1c8c03a76e5c4bf71baf81c5fc5b3bee305b0c2b83551e6cf76f91"
     },
     {
       "object": "function auth.notes_admits(text, jsonb)",
-      "digest": "2348f08fae39b6c3ff8d4fd5d06db9cf7dcbee7733d0e809133798c16e3ac498"
+      "digest": "d26e7200ef203e255859820d93783c1bdf57f0c91f558b849dc8dcc74cb5ce30"
     },
     {
       "object": "function auth.notes_obj_changelog()",

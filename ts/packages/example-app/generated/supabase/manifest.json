@@ -58,11 +58,11 @@
     },
     {
       "object": "function demesne.notes_accessors_conditional(text)",
-      "digest": "ae6aafccc60bbf04071d013d4c4feb19c95ca520b679c447193a7606cc90dd41"
+      "digest": "9fe3421273475668302c0d4cd2b2b66eb9e0d57a62839515e601a6e36542ed04"
     },
     {
       "object": "function demesne.notes_admits(text, jsonb)",
-      "digest": "353797bf4256c76bde236e562d77c03d281767a01c84b223d97f1604a0861954"
+      "digest": "897e67e3515fc7b1f34f3add6640d5c4365b1f0f572b14009d996f2be241d083"
     },
     {
       "object": "policy notes_select on public.notes",

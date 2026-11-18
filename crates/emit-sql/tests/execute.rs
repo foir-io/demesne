@@ -84,7 +84,7 @@ fn a_later_file_that_lets_public_run_a_function_grants_it_again() {
     let (borrows, writes) = (note("replace ", "doc"), note("replace ", "author"));
     let files = parse_files([("a.demesne", opening.as_bytes()), ("b.demesne", borrows.as_bytes()), ("c.demesne", writes.as_bytes())]).expect("the files parse");
     validate_files(&files).expect("the files validate");
-    let revoke = "REVOKE EXECUTE ON FUNCTION auth.doc_can_edit(text) FROM PUBLIC;";
+    let revoke = "REVOKE EXECUTE ON FUNCTION auth.doc_can_edit(text) FROM PUBLIC, authenticated;";
     let grant = "GRANT EXECUTE ON FUNCTION auth.doc_can_edit(text) TO PUBLIC;";
     let first = file_sql(&files, 0).expect("the first file emits");
     assert!(first.contains(revoke), "only the store's dispatch calls it, as its owner:\n{first}");

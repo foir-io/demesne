@@ -185,5 +185,21 @@ fn a_remembered_claim_does_not_outlive_the_claims_it_was_verified_against() {
         let may: bool = db.query_one(&format!("SELECT has_function_privilege('{CALLER}', '{AUTH}.{copy}', 'EXECUTE')"), &[]).expect("the privilege").get(0);
         assert!(!may, "{copy} answers for any principal, so the caller may not run it");
     }
+    let copies = [
+        ("doc_shared_keyed_inside(text, text, text)", "doc_shared_keyed_inside('bob', 'd_own', 'read.share')"),
+        ("doc_terms_hold_inside(text, text, jsonb)", "doc_terms_hold_inside('d_terms', 'read.share', '{\"team\":\"red\"}'::jsonb)"),
+    ];
+    for (copy, call) in copies {
+        db.batch_execute(&format!("GRANT EXECUTE ON FUNCTION {AUTH}.{copy} TO {CALLER}")).expect("a grant made by mistake");
+        let mut tx = db.transaction().expect("a transaction");
+        tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+        tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&ANN]).expect("the claims");
+        let refused = tx.query_one(&format!("SELECT {AUTH}.{call}"), &[]).err().and_then(|e| e.code().cloned());
+        assert_eq!(
+            refused,
+            Some(postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+            "{copy}, granted to the caller by mistake, runs with the caller's rights and reads no table the caller may not"
+        );
+    }
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
 }

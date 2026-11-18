@@ -13,7 +13,7 @@ SET search_path = public, pg_temp
 AS $$
   SELECT COALESCE((SELECT m.impliers FROM (VALUES ('platform:manage', ARRAY['platform:manage']::text[]), ('tenant:manage', ARRAY['platform:manage', 'tenant:manage']::text[]), ('project:manage', ARRAY['platform:manage', 'project:manage', 'tenant:manage']::text[]), ('billing:read', ARRAY['billing:read', 'platform:manage', 'tenant:manage']::text[]), ('billing:write', ARRAY['billing:write', 'platform:manage', 'tenant:manage']::text[]), ('invitations:read', ARRAY['invitations:read', 'platform:manage', 'tenant:manage']::text[]), ('invitations:write', ARRAY['invitations:write', 'platform:manage', 'tenant:manage']::text[]), ('records:read', ARRAY['platform:manage', 'project:manage', 'records:read', 'tenant:manage']::text[]), ('records:write', ARRAY['platform:manage', 'project:manage', 'records:write', 'tenant:manage']::text[]), ('content:read', ARRAY['content:read', 'platform:manage', 'project:manage', 'tenant:manage']::text[]), ('content:publish', ARRAY['content:publish', 'platform:manage', 'project:manage', 'tenant:manage']::text[])) AS m(perm, impliers) WHERE m.perm = p_perm), ARRAY[p_perm]::text[]);
 $$;
-REVOKE EXECUTE ON FUNCTION auth.member_perm_implied_by(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.member_perm_implied_by(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.member_has_perm(user_id text, check_tenant_id text, check_project_id text, p_perm text)
 RETURNS boolean

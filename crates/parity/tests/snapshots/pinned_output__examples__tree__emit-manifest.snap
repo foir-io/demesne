@@ -350,7 +350,7 @@ exit: 0
     },
     {
       "object": "function auth.live_skin(text)",
-      "digest": "a95072689a83d232a1d723d00ef8ae11934f3d598b6638028730be681c1c5a0c"
+      "digest": "48b2eed595d55def97efeb379366f483a3549edac61a3f09efeaa00649ee925d"
     },
     {
       "object": "function auth.live_skin_own(text)",
@@ -370,7 +370,7 @@ exit: 0
     },
     {
       "object": "function auth.paths_path(text)",
-      "digest": "a916d315b9fdd9aea156957f419d123e0bcda74d80f7c6442a6434cfce97edc9"
+      "digest": "e0b4d6e15990ab09964b55dbc3b4990ab96a2d043187c2907d71fa8a26a95a03"
     },
     {
       "object": "function auth.paths_reach_set(text)",
@@ -402,7 +402,7 @@ exit: 0
     },
     {
       "object": "function auth.theme_color(text)",
-      "digest": "ab5238ea9f022585fe4a39d2a87e679b5809d8dc2f866e499fe92b5be2deaf03"
+      "digest": "3f4210e93e030306738dbb75223ee92d00a31904a2a733694caea2d812c7b41d"
     },
     {
       "object": "policy atlases_select on public.atlases",

@@ -62,7 +62,7 @@ SET search_path = public, pg_temp
 AS $$
   SELECT ancestor_id, depth::integer FROM paths WHERE descendant_id = p_node ORDER BY depth DESC, ancestor_id;
 $$;
-REVOKE EXECUTE ON FUNCTION auth.paths_path(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.paths_path(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.space_can_view(p_space_id text)
 RETURNS boolean
@@ -125,7 +125,7 @@ AS $$
     SELECT t.color, NULL FROM themes t WHERE t.folder_id IS NULL AND t.color IS NOT NULL AND t.space_id = (SELECT s.space_id FROM paths s WHERE s.ancestor_id = p_node AND s.descendant_id = p_node)
   ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;
 $$;
-REVOKE EXECUTE ON FUNCTION auth.theme_color(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.theme_color(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.live_skin(p_node text)
 RETURNS text
@@ -141,7 +141,7 @@ AS $$
     SELECT t.id, NULL FROM skins t WHERE t.folder_id IS NULL AND t.id IS NOT NULL AND t.status = 'live' AND t.space_id = (SELECT s.space_id FROM paths s WHERE s.ancestor_id = p_node AND s.descendant_id = p_node)
   ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;
 $$;
-REVOKE EXECUTE ON FUNCTION auth.live_skin(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.live_skin(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.live_skin_own(p_node text)
 RETURNS text

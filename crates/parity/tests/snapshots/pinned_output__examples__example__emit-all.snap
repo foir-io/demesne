@@ -83,7 +83,7 @@ AS $$
   SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text[], NULL::text[]
     FROM docs WHERE id = p_id AND visibility = 'public_world'
 $$;
-REVOKE EXECUTE ON FUNCTION auth.docs_accessors_conditional(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.docs_accessors_conditional(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.docs_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -104,7 +104,7 @@ BEGIN
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.docs_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.docs_admits(text, jsonb) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.workspaces_accessors(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
@@ -121,7 +121,7 @@ AS $$
     FROM workspaces e JOIN role_grants ra ON ra.grantee_kind = 'staff' AND ra.revoked_at IS NULL AND ra.tenant_id = e.tenant_id AND ra.workspace_id = e.id JOIN roles rr ON rr.id = ra.role_id AND rr.key IN ('ws_editor', 'ws_viewer')
     WHERE e.id = p_id
 $$;
-REVOKE EXECUTE ON FUNCTION auth.workspaces_accessors(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.workspaces_accessors(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.workspaces_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -142,7 +142,7 @@ BEGIN
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.workspaces_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.workspaces_admits(text, jsonb) FROM PUBLIC, authenticated;
 
 
 ALTER TABLE public.docs ENABLE ROW LEVEL SECURITY;

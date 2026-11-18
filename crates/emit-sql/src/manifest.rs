@@ -402,9 +402,18 @@ pub fn objects(sql: &str) -> Result<Vec<(Object, String)>, ManifestError> {
 }
 
 /// Returns the signature of each function `sql` revokes `EXECUTE` on from PUBLIC, such as `auth.notes_admits(text, jsonb)`, in script order.
+///
+/// A revoke from PUBLIC and [`crate::POLICY_ROLE`] together counts, as this release writes it, and so does one from PUBLIC alone.
 #[must_use]
 pub fn revoked_from_public(sql: &str) -> Vec<String> {
-    statements(sql).iter().filter_map(|stmt| stmt.strip_prefix("REVOKE EXECUTE ON FUNCTION ")?.strip_suffix(" FROM PUBLIC").map(str::to_string)).collect()
+    let both = format!(" FROM PUBLIC, {}", crate::POLICY_ROLE);
+    statements(sql)
+        .iter()
+        .filter_map(|stmt| {
+            let rest = stmt.strip_prefix("REVOKE EXECUTE ON FUNCTION ")?;
+            rest.strip_suffix(both.as_str()).or_else(|| rest.strip_suffix(" FROM PUBLIC")).map(str::to_string)
+        })
+        .collect()
 }
 
 /// Returns the signature of each function `sql` grants `EXECUTE` on to PUBLIC, such as `auth.notes_can_view(text)`, in script order.
@@ -573,7 +582,7 @@ impl Sql<'_> {
         if !res.unsupported.is_empty() {
             return Err(Error::unplaced(format!("spec has uncompilable @rls permissions: {}", res.unsupported.join("; "))));
         }
-        b.push_str(&res.policy_sql("authenticated"));
+        b.push_str(&res.policy_sql(crate::POLICY_ROLE));
         for part in [self.triggers_sql(), self.changelog_sql(), self.async_sql()] {
             if !part.is_empty() {
                 b.push('\n');

@@ -86,7 +86,13 @@ fn every_listing_has_an_admits_that_runs_each_select_policy_of_its_table() {
                 assert!(admits.body.contains(&p.using), "{} {}: admits doesn't run {}:\n{}\n{}", path.display(), o.name, p.name, admits.body, p.using);
                 checked += 1;
             }
-            assert!(admits.create_sql().ends_with(" FROM PUBLIC;"), "{} {}: admits is executable by PUBLIC:\n{}", path.display(), o.name, admits.create_sql());
+            assert!(
+                admits.create_sql().ends_with(" FROM PUBLIC, authenticated;"),
+                "{} {}: admits is executable by PUBLIC:\n{}",
+                path.display(),
+                o.name,
+                admits.create_sql()
+            );
         }
     }
     assert!(listings > 100 && checked > listings, "only {listings} listings and {checked} select policies were checked");

@@ -244,7 +244,7 @@ exit: 0
     },
     {
       "object": "function auth.doc_can_edit(text)",
-      "digest": "7398b05000b61f0c5350534b6c97db66c3939c78f2de48edb94bf1888da51cbe"
+      "digest": "6e874a15b952e18a103ca192e46792a1d37b8b06622f5a839db7eee4236e735f"
     },
     {
       "object": "function auth.doc_can_view(text)",
@@ -256,23 +256,23 @@ exit: 0
     },
     {
       "object": "function auth.docs_accessors(text)",
-      "digest": "c323f7d9c7520f22a959f5640138f7ef0317b6812fcc152ae5a53d306d61e615"
+      "digest": "ed01a176cef44747d922a16c5dab17c4dea7e418f733f0b68e92960f19e0cec0"
     },
     {
       "object": "function auth.docs_admits(text, jsonb)",
-      "digest": "33e02c39af19a96f3ce9b7fc1eb1a2a4465734f75d62823ed8b741d9097322ec"
+      "digest": "05400048ed6f0a81cc61148f168693cc307675a13ab6fac34bf695e06a434676"
     },
     {
       "object": "function auth.note_can_edit(text)",
-      "digest": "d00b574965919da18ee9625ada1d92b81b1d8c78c404f843d867a822762d6b46"
+      "digest": "1cf6638287809c4a7ef7503ac8e589e60166e539e7397e01525fa18ebf3dd215"
     },
     {
       "object": "function auth.notes_accessors(text)",
-      "digest": "fa7114be6c97eac0e25124fe281e82f21bfaec58f536f21bab59728ac57e66fb"
+      "digest": "8e6894e0018a3f56cbd26d1af39be1056311fa4ad6be388dd2e698283ab342b2"
     },
     {
       "object": "function auth.notes_admits(text, jsonb)",
-      "digest": "71c085f5954c225738db74729d73084999f80195711c1a23b444698afd1e5353"
+      "digest": "b14f1fa0a560ab0c18b6be956f36ed8b354b6a2a82771bdf71c245220759a2b0"
     },
     {
       "object": "function auth.support_grants_reach_set(text)",

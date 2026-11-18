@@ -64,11 +64,11 @@ exit: 0
     },
     {
       "object": "function auth.notes_accessors_conditional(text)",
-      "digest": "8bec52d2ddc305de339a40cd59ed2e6995b301721af24cf0ccbea957c434213f"
+      "digest": "c5a0598b038c5b9faec7a945a07a25701bbeefd44b508cdc01f8a224099b2182"
     },
     {
       "object": "function auth.notes_admits(text, jsonb)",
-      "digest": "e4a737f9ce410798eb5ad539fb027d3bfe44864d930081f1e743534f60bf69c9"
+      "digest": "3b659d92173891508d03659b6c9cd5e2b2ba54884296e394d8f078148f36136a"
     },
     {
       "object": "policy notes_select on public.notes",

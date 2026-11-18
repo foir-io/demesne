@@ -160,7 +160,7 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
 | `demesne introspect <dsn>` | yes | summarise the live schema |
 | `demesne scaffold [-i] <dsn>` | yes | generate a starter spec from the schema (`-i`: interactive — asks for the RLS role + definer/table schemas, lists ungoverned tables as TODO stubs) |
 | `demesne check <spec> <dsn>` | yes | validate, bind to the live schema, verify the RLS role is not `BYPASSRLS`, and look for schema traps |
-| `demesne diff <spec> <dsn>` | yes | generated-vs-live drift both ways: policies, definers, triggers, orphans |
+| `demesne diff <spec> <dsn>` | yes | generated-vs-live drift both ways: policies, definers, triggers, orphans, and any role or default privilege granted a function the SQL revokes |
 | `demesne coverage <spec> <dsn>` | yes | list live tables with NO governing object (ungoverned → no RLS) — the drift/gap check |
 
 `<dsn>` defaults to `$DATABASE_URL`. Every `<spec>` may be several files, given in
@@ -1349,8 +1349,11 @@ check costs a directly admitted row a few percent, and more as the claims
 grow, since their text is still read on each call.
 
 A generated function that already passes the caller's own claim calls a copy
-of the helper with no check, `<function>_inside`, which PUBLIC cannot run.
-Hops therefore pay nothing for the binding.
+of the helper with no check, `<function>_inside`, which neither PUBLIC nor
+`authenticated` can run. The copy is `SECURITY INVOKER`, so it runs as the
+owner of the generated function that calls it, and a grant of it made by
+mistake reads only what the caller may. Hops therefore pay nothing for the
+binding.
 
 A write permission that repeats the read rule, `edit = <write terms> and <the
 read rule>`, follows the read rule's compositions for writing. The compiler

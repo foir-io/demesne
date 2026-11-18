@@ -54,11 +54,36 @@ demesne emit app.demesne manifest > authz.manifest.json
 #   grant execute on function demesne.<name>(<argument types>) to authenticated;
 ```
 
-Never `grant execute on all functions in schema demesne`. That hands the request role the
-functions the SQL revokes from PUBLIC (the manifest's `revoked` list), which answer about
-principals other than the caller. The functions the policies run are executable by PUBLIC
-already and need no grant, so a spec whose `callable` list is empty needs only the schema
-grant.
+Never `grant execute on all functions in schema demesne`, and never set default privileges
+that grant `EXECUTE` on the schema's functions to `anon` or `authenticated`. Either hands
+a request role the functions the SQL revokes from PUBLIC: the manifest's `revoked` list,
+which only the generated functions call (its `_inside` copies have no check of their own),
+and its `grantable` list, which answer for any id they are given. Grant a `grantable`
+function only to a server-side role you trust, such as a worker's. The functions the
+policies run are executable by PUBLIC already and need no grant, so a spec whose
+`callable` list is empty needs only the schema grant. The SQL revokes each revoked
+function from `authenticated` as well as from PUBLIC, but a grant to another role, `anon`
+among them, stays until you revoke it.
+
+#### Upgrading from a version before 5.0.0
+
+Earlier versions of this guide said to grant `EXECUTE` on every function in the schema.
+After upgrading, take that grant and any matching default privileges back, then let
+`demesne diff` confirm nothing is left:
+
+```sql
+revoke execute on all functions in schema demesne from anon, authenticated;
+alter default privileges in schema demesne revoke execute on functions from anon, authenticated;
+-- then grant what the manifest lists under "callable", one grant per entry, as above
+```
+
+```sh
+demesne diff app.demesne "$DATABASE_URL"
+```
+
+`diff` reports each role other than the owner that may still run a revoked or grantable
+function, and each default privilege that would grant one, as `GRANTED`, with the
+statement that takes it back. Run those statements until it reports none.
 
 ### 2. Emit and register the access-token hook
 

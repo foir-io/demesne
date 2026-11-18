@@ -212,9 +212,13 @@ fn only_the_functions_something_calls_are_emitted_and_those_a_chain_calls_keep_t
     let copy = named(&defs, "doc_shared_keyed_inside").create_sql();
     assert!(
         copy.ends_with(
-            "AS $$\n#variable_conflict use_column\nBEGIN\n  RETURN p_principal = p_principal AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));\nEND\n$$;\nREVOKE EXECUTE ON FUNCTION auth.doc_shared_keyed_inside(text, text, text) FROM PUBLIC;"
+            "AS $$\n#variable_conflict use_column\nBEGIN\n  RETURN p_principal = p_principal AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));\nEND\n$$;\nREVOKE EXECUTE ON FUNCTION auth.doc_shared_keyed_inside(text, text, text) FROM PUBLIC, authenticated;"
         ),
         "{copy}"
+    );
+    assert!(
+        copy.contains("\nSECURITY INVOKER\n") && edge.contains("\nSECURITY DEFINER\n"),
+        "the copy runs with its caller's rights, the bound function with its owner's:\n{copy}\n{edge}"
     );
     let rows = named(&defs, "rule_slots_declared_by_rule").create_sql();
     assert!(
