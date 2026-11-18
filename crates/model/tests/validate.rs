@@ -209,6 +209,7 @@ fn a_construct_that_asks_the_admin_identity_needs_a_subject_that_declares_it() {
             "permission edit = owner @rls maps update\n  require edit = @self(owner_id)",
             "object \"doc\" require \"edit\" term `@self(owner_id)`",
         ),
+        ("an admit arm", "", "admit select = @self(owner_id)", "object \"doc\" admit term `@self(owner_id)`"),
     ];
     for (name, relations, permission, construct) in cases {
         let found = asking(UNDECLARED, relations, permission);

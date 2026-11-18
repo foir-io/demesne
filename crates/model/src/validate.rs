@@ -336,6 +336,11 @@ fn check_admin_identity(s: &Spec) -> Vec<Finding> {
                 errs.push(refuse(rq.pos.line, format!("object {} require {} term `{}`", quote(&o.name), quote(&rq.verb), t.display())));
             }
         }
+        for a in &o.admits {
+            for t in a.tree.leaves_deep().into_iter().filter(asks) {
+                errs.push(refuse(a.pos.line, format!("object {} admit term `{}`", quote(&o.name), t.display())));
+            }
+        }
     }
     errs
 }

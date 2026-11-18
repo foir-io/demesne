@@ -419,8 +419,10 @@ is identified by `sub`, such a rule asked about a claim nothing declares. It
 refused every caller whose credential lacks `sub`, and asked about whatever
 `sub` held for a caller whose credential carries one.
 
-Validation now refuses each of those constructs in such a spec, naming the
-construct and the remedy: add `binds admin` to the subject it asks about. A
+Validation now refuses each of those constructs in such a spec, wherever it
+appears: in a permission, a requirement, an `admit` arm or a relation's path.
+The refusal names the construct and the remedy: add `binds admin` to the
+subject it asks about. A
 spec with a subject that binds admin, or one identified by `sub`, compiles as
 before and emits the same policies. A `@holds` in a permission only the
 decision point answers reads no such claim and is not refused. A validation
