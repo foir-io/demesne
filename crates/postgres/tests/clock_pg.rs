@@ -18,7 +18,7 @@ fn a_row_is_read_inside_its_window_and_an_unset_bound_is_no_bound() {
     let rls = demesne_emit_sql::Sql::new(&s).emit_rls().expect("the policies compile");
     db.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS {ROWS} CASCADE; DROP SCHEMA IF EXISTS {AUTH} CASCADE; CREATE SCHEMA {ROWS}; CREATE SCHEMA {AUTH};
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{CALLER}') THEN CREATE ROLE {CALLER} NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE {CALLER} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          SET search_path = {ROWS};
          CREATE TABLE docs (id text PRIMARY KEY, estate_id text, opens_at timestamptz, closes_at timestamptz);
          INSERT INTO docs VALUES

@@ -38,7 +38,7 @@ object doc {
 
 const SCHEMA: &str = "
 DROP VIEW IF EXISTS d16cli_open; DROP TABLE IF EXISTS d16cli_docs, d16cli_grants, d16cli_roles;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
 CREATE TABLE d16cli_docs (id text PRIMARY KEY, tenant_id text NOT NULL, ws_id text, owner_id text, title text);
 CREATE TABLE d16cli_roles (id text PRIMARY KEY, key text, permissions text[]);
 CREATE TABLE d16cli_grants (grantee_kind text, grantee_id text, tenant_id text NOT NULL, ws_id text, role_id text, revoked_at timestamptz);

@@ -3,7 +3,7 @@ use postgres::{Client, NoTls};
 
 const SCHEMA: &str = r#"
 DROP SCHEMA IF EXISTS d16 CASCADE; CREATE SCHEMA d16;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'd16_reader') THEN CREATE ROLE d16_reader NOLOGIN; END IF; END $$;
+DO $$ BEGIN CREATE ROLE d16_reader NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
 CREATE TABLE d16.docs (id uuid PRIMARY KEY, tenant text NOT NULL, ws text, owner text, title text, meta jsonb);
 CREATE TABLE d16.other (id text, "odd{ name)" text);
 ALTER TABLE d16.docs ENABLE ROW LEVEL SECURITY;

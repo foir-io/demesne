@@ -55,7 +55,7 @@ fn applying_a_specs_sql_leaves_public_the_right_to_run_each_function_that_the_sq
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_ex_rows CASCADE; DROP SCHEMA IF EXISTS demesne_ex_auth CASCADE;
          CREATE SCHEMA demesne_ex_rows; CREATE SCHEMA demesne_ex_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_ex_rows.support_grants (holder_id text, tenant_id text);
          CREATE TABLE demesne_ex_rows.acl (id text PRIMARY KEY, tenant_id text, workspace_id text, resource_type text, resource_id text, principal_kind text, principal_id text, access text);
          CREATE TABLE demesne_ex_rows.docs (id text PRIMARY KEY, tenant_id text, workspace_id text, owner_id text);
@@ -79,7 +79,7 @@ fn public_may_run_no_function_the_manifest_lists_for_a_role_you_grant() {
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_gr_rows CASCADE; DROP SCHEMA IF EXISTS demesne_gr_auth CASCADE;
          CREATE SCHEMA demesne_gr_rows; CREATE SCHEMA demesne_gr_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_gr_rows.docs (id text PRIMARY KEY, tenant_id text, project_id text, team_id text);
          CREATE TABLE demesne_gr_rows.dacl (resource_id text, principal_kind text, principal_id text, access text);
          CREATE TABLE demesne_gr_rows.tc (grp text, mem text);
@@ -159,7 +159,7 @@ fn a_spec_moves_between_the_stores_check_and_a_borrows_and_back_by_migrating() {
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_mv_rows CASCADE; DROP SCHEMA IF EXISTS demesne_mv_auth CASCADE;
          CREATE SCHEMA demesne_mv_rows; CREATE SCHEMA demesne_mv_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_mv_rows.support_grants (holder_id text, tenant_id text);
          CREATE TABLE demesne_mv_rows.acl (id text PRIMARY KEY, tenant_id text, workspace_id text, resource_type text, resource_id text, principal_kind text, principal_id text, access text);
          CREATE TABLE demesne_mv_rows.docs (id text PRIMARY KEY, tenant_id text, workspace_id text, owner_id text);
@@ -222,7 +222,7 @@ fn renaming_a_subject_migrates_although_a_parameter_is_named_after_it() {
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_rn_rows CASCADE; DROP SCHEMA IF EXISTS demesne_rn_auth CASCADE;
          CREATE SCHEMA demesne_rn_rows; CREATE SCHEMA demesne_rn_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_rn_rows.docs (id text PRIMARY KEY, tenant_id text, owner_id text);
          CREATE TABLE demesne_rn_rows.notes (id text PRIMARY KEY, tenant_id text, owner_id text);
          CREATE TABLE demesne_rn_rows.acl (doc_id text, principal_kind text, principal_id text, access text);",
@@ -304,8 +304,8 @@ fn a_reader_never_sees_a_table_without_its_require_while_a_migration_renames_wha
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_tx_rows CASCADE; DROP SCHEMA IF EXISTS demesne_tx_auth CASCADE;
          CREATE SCHEMA demesne_tx_rows; CREATE SCHEMA demesne_tx_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
-           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'demesne_tx_reader') THEN CREATE ROLE demesne_tx_reader NOLOGIN; END IF; END $$;
+         DO $$ BEGIN BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END;
+           BEGIN CREATE ROLE demesne_tx_reader NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END $$;
          GRANT authenticated TO demesne_tx_reader;
          CREATE TABLE demesne_tx_rows.docs (id text PRIMARY KEY, tenant_id text, owner_id text);
          CREATE TABLE demesne_tx_rows.acl (doc_id text, principal_kind text, principal_id text, access text);
@@ -342,7 +342,7 @@ fn a_policy_that_calls_a_function_whose_argument_types_changed_is_created_again_
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_rt_rows CASCADE; DROP SCHEMA IF EXISTS demesne_rt_auth CASCADE;
          CREATE SCHEMA demesne_rt_rows; CREATE SCHEMA demesne_rt_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_rt_rows.docs (id bigint PRIMARY KEY, tenant_id bigint, owner_id bigint);
          CREATE TABLE demesne_rt_rows.notes (id bigint PRIMARY KEY, tenant_id bigint, doc_id integer);",
     )
@@ -396,7 +396,7 @@ fn a_function_answers_only_for_its_own_subjects_identity_though_another_subject_
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_id_rows CASCADE; DROP SCHEMA IF EXISTS demesne_id_auth CASCADE;
          CREATE SCHEMA demesne_id_rows; CREATE SCHEMA demesne_id_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_id_rows.docs (id text PRIMARY KEY, tenant_id text, owner_id text);
          CREATE TABLE demesne_id_rows.acl (doc_id text, principal_kind text, principal_id text, access text);
          INSERT INTO demesne_id_rows.acl VALUES ('10', 'member', '1', 'read');
@@ -427,7 +427,7 @@ fn a_relation_of_another_subject_than_the_owner_admits_that_subject_by_its_own_c
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_gp_rows CASCADE; DROP SCHEMA IF EXISTS demesne_gp_auth CASCADE;
          CREATE SCHEMA demesne_gp_rows; CREATE SCHEMA demesne_gp_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_gp_rows.docs (id text PRIMARY KEY, tenant_id text, project_id text, owner_id text, team_id text);
          CREATE TABLE demesne_gp_rows.notes (id text PRIMARY KEY, tenant_id text, project_id text, circle_id text);
          CREATE TABLE demesne_gp_rows.boards (id text PRIMARY KEY, tenant_id text, project_id text, crew_id text);
@@ -497,7 +497,7 @@ fn an_operator_identified_as_the_staff_are_holds_every_role_where_it_presents_a_
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_op_rows CASCADE; DROP SCHEMA IF EXISTS demesne_op_auth CASCADE;
          CREATE SCHEMA demesne_op_rows; CREATE SCHEMA demesne_op_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_op_rows.resources (id text PRIMARY KEY, tenant_id text, project_id text);
          CREATE TABLE demesne_op_rows.roles (id text PRIMARY KEY, key text);
          CREATE TABLE demesne_op_rows.role_grants (grantee_kind text, grantee_id text, tenant_id text, project_id text, role_id text, revoked_at timestamptz);
@@ -548,7 +548,7 @@ fn an_affordance_answers_only_for_the_callers_own_principal_of_the_kind_it_is_as
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_af_rows CASCADE; DROP SCHEMA IF EXISTS demesne_af_auth CASCADE;
          CREATE SCHEMA demesne_af_rows; CREATE SCHEMA demesne_af_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_af_rows.docs (id text PRIMARY KEY, tenant_id text, project_id text);
          CREATE TABLE demesne_af_rows.dacl (resource_id text, principal_kind text, principal_id text, access text);
          INSERT INTO demesne_af_rows.dacl VALUES ('d1', 'customer', 'c1', 'read'), ('d1', 'staff', 's1', 'read'), ('d2', 'staff', 'c1', 'read');",

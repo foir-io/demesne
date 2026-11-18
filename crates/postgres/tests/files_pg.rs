@@ -39,7 +39,7 @@ fn each_file_applied_in_order_leaves_the_database_its_prefix_describes() {
     let mut db = connect();
     db.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS multi_rows CASCADE; DROP SCHEMA IF EXISTS multi_auth CASCADE; CREATE SCHEMA multi_rows; CREATE SCHEMA multi_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          SET search_path = multi_rows; {TABLES} RESET search_path;"
     ))
     .expect("fresh schemas");

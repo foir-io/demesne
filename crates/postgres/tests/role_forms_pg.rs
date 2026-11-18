@@ -71,7 +71,7 @@ fn install(db: &mut Client) {
     assert_eq!(rls.unsupported, [] as [String; 0]);
     db.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS {ROWS} CASCADE; DROP SCHEMA IF EXISTS {AUTH} CASCADE; CREATE SCHEMA {ROWS}; CREATE SCHEMA {AUTH};
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{CALLER}') THEN CREATE ROLE {CALLER} NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE {CALLER} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          SET search_path = {ROWS};
          CREATE TABLE roles (id text PRIMARY KEY, key text, estate_id text, permissions text[], live_permissions text[], disabled_at timestamptz);
          CREATE TABLE role_grants (grantee_id text, estate_id text, space_id text, role_id text);

@@ -63,7 +63,7 @@ fn install(db: &mut Client, sql: &str) {
 fn install_in(db: &mut Client, prefix: &str, sql: &str) {
     db.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS {prefix}_rows CASCADE; DROP SCHEMA IF EXISTS {prefix}_auth CASCADE; CREATE SCHEMA {prefix}_rows; CREATE SCHEMA {prefix}_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          SET search_path = {prefix}_rows; {TABLES} RESET search_path;"
     ))
     .expect("fresh schemas");

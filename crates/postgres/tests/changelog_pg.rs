@@ -105,7 +105,7 @@ fn diff_reads_a_checked_changelogs_constraint_triggers_and_reports_one_dropped()
     demesne_emit_sql::Sql::new(&s).write_all_sql(&mut sql).expect("the SQL compiles");
     db.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS {rows} CASCADE; DROP SCHEMA IF EXISTS {auth} CASCADE; CREATE SCHEMA {rows}; CREATE SCHEMA {auth};
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE {rows}.docs (id text PRIMARY KEY, estate_id text, space_id text, owner_id text, owner_kind text, visibility text);
          CREATE TABLE {rows}.doc_acl (doc_id text, principal_kind text, principal_id text, access text);"
     ))

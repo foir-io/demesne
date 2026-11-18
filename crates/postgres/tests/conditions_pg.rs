@@ -213,7 +213,7 @@ fn install(db: &mut Client, schema: &str, extension: &str) -> usize {
     let (defs, rls) = (sql.emit_definers().expect("the definers compile"), sql.emit_rls().expect("the policies compile"));
     let mut setup = format!(
         "DROP SCHEMA IF EXISTS {rows} CASCADE; DROP SCHEMA IF EXISTS {auth} CASCADE; CREATE SCHEMA {rows}; CREATE SCHEMA {auth};
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{CALLER}') THEN CREATE ROLE {CALLER} NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE {CALLER} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          SET search_path = {rows}, public;
          CREATE TABLE docs (id text PRIMARY KEY, estate_id text, owner_id text, rules_live text[]);
          CREATE TABLE doc_edges (principal_id text, object_id text, rule_id text);
@@ -374,7 +374,7 @@ fn an_exception_whose_condition_cannot_be_decided_bars() {
     let (defs, rls) = (sql.emit_definers().expect("the definers compile"), sql.emit_rls().expect("the policies compile"));
     db.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS {rows} CASCADE; DROP SCHEMA IF EXISTS {auth} CASCADE; CREATE SCHEMA {rows}; CREATE SCHEMA {auth};
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{CALLER}') THEN CREATE ROLE {CALLER} NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE {CALLER} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          SET search_path = {rows};
          CREATE TABLE docs (id text PRIMARY KEY, estate_id text, owner_id text, rules_live text[]);
          CREATE TABLE doc_edges (principal_id text, object_id text, rule_id text);

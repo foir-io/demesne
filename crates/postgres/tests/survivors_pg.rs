@@ -18,7 +18,7 @@ fn a_migration_that_drops_a_policy_and_no_function_applies() {
     db.batch_execute(
         "DROP SCHEMA IF EXISTS demesne_sv_rows CASCADE; DROP SCHEMA IF EXISTS demesne_sv_auth CASCADE;
          CREATE SCHEMA demesne_sv_rows; CREATE SCHEMA demesne_sv_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          CREATE TABLE demesne_sv_rows.docs (id text PRIMARY KEY, tenant_id text, owner_id text);",
     )
     .expect("fresh schemas");

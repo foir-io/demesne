@@ -102,7 +102,7 @@ fn install(db: &mut Client) {
     assert_eq!(rls.unsupported, [] as [String; 0]);
     db.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS {ROWS} CASCADE; DROP SCHEMA IF EXISTS {AUTH} CASCADE; CREATE SCHEMA {ROWS}; CREATE SCHEMA {AUTH};
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{CALLER}') THEN CREATE ROLE {CALLER} NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE {CALLER} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          SET search_path = {ROWS};
          CREATE TABLE spaces (id text PRIMARY KEY, estate_id text, parent_id text, made_by bigint, held_for text, sealed_by text);
          CREATE TABLE paths (anc text, des text, PRIMARY KEY (anc, des));

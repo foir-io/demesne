@@ -179,7 +179,7 @@ impl World {
         let (rows, auth) = (&self.rows, &self.auth);
         db.batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {rows} CASCADE; DROP SCHEMA IF EXISTS {auth} CASCADE; CREATE SCHEMA {rows}; CREATE SCHEMA {auth}; SET search_path = {rows};
-             DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+             DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
              {} RESET search_path;",
             self.fill(TABLES)
         ))

@@ -145,8 +145,8 @@ fn install(db: &mut Client) {
         "DROP SCHEMA IF EXISTS ad_rows CASCADE; DROP SCHEMA IF EXISTS ad_auth CASCADE;
          CREATE SCHEMA ad_rows; CREATE SCHEMA ad_auth;
          DO $$ BEGIN
-           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ad_caller') THEN CREATE ROLE ad_caller NOLOGIN; END IF;
-           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ad_stranger') THEN CREATE ROLE ad_stranger NOLOGIN; END IF;
+           BEGIN CREATE ROLE ad_caller NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END;
+           BEGIN CREATE ROLE ad_stranger NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END;
          END $$;
          CREATE FUNCTION ad_auth.tier_allows(p_status text, p_tier text) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT p_status = 'open' AND p_tier = 'gold' $$;",
     )
