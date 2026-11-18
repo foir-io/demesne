@@ -1350,8 +1350,8 @@ stored row and answers what the policy does.
 policy's statement. A row reached through a chain is judged behind a function,
 because the caller cannot read the closure, and the ancestor's whole rule is
 set up and run again for each such row. On Postgres 17, on a loaded
-development machine, a row admitted directly cost about 17 µs, a row admitted
-through one hop about 100 µs, and each further hop judged live about 40 µs
+development machine, a row admitted directly cost about 18 µs, a row admitted
+through one hop about 86 µs, and each further hop judged live 35 to 52 µs
 more. No answer is kept between rows or statements, so a change at any hop
 counts in the same transaction. Each hop is judged inside the chain
 function's own statement, and the helper functions a chain calls are
@@ -1370,9 +1370,12 @@ nothing. If the claims text differs in any byte, the call verifies against
 the claims again, so a remembered value never answers for other claims. An
 empty claims setting is never taken as the one remembered: a setting made for
 one transaction reads as empty, not unset, in the session's later
-transactions, so a call made with no claims set always verifies. The
-check costs a directly admitted row a few percent, and more as the claims
-grow, since their text is still read on each call.
+transactions, so a call made with no claims set always verifies. With 291
+bytes of claims, the check makes a directly admitted row cost 9.5 to 15
+percent more than it did without it, 1.8 to 4.5 µs; with 8 KB of claims, 37
+to 48 percent more, since their text is still read on each call. The first
+read in a transaction parses the claims and stores the two settings, which
+adds about 22 µs once.
 
 A generated function that already passes the caller's own claim calls a copy
 of the helper with no check, `<function>_inside`, which neither PUBLIC nor
