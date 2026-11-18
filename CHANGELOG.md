@@ -6,10 +6,12 @@ The crates are 5.0.0 because public types of `demesne-syntax`,
 `demesne-model` and `demesne-emit-sql` gain fields and variants, named under
 each change, and `demesne_emit_sql::Sql` gains private fields, so it is built
 with `Sql::new`. A spec that uses none of the constructs below emits the
-policies v4.0.0 did, with five exceptions: the first two under "Fixed"; a
-permission whose terms a grant's holder used to pass (the second "Breaking"
-entry); a call to a generated function whose arguments are the same for every
-row, which now runs once per statement; and a group or closure relation of a
+policies v4.0.0 did, with six exceptions: the first two under "Fixed"; a
+`via memberin` relation that takes both its principal and its scope from the
+row, which is refused (the first "Breaking" entry); a permission whose terms a
+grant's holder used to pass (the second "Breaking" entry); a call to a
+generated function whose arguments are the same for every row, which now runs
+once per statement; and a group or closure relation of a
 subject other than the owner, or an `@session` over a relation judged by
 several calls, which is refused until the spec says what it admits (the third
 "Breaking" entry). Its generated functions change: see "Breaking" first. The
