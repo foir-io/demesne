@@ -733,9 +733,7 @@ fn upgrading_from_v4_0_0_by_migrating_leaves_no_function_v5_0_0_does_not_emit() 
     config
         .connect(NoTls)
         .expect("connect to the scratch database")
-        .batch_execute(
-            "DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$",
-        )
+        .batch_execute("DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$")
         .expect("the role");
     let (mut specs, mut dropped, mut kept) = (0, 0, 0);
     let mut pruned_example = false;
@@ -861,10 +859,8 @@ fn specs_with_integer_and_uuid_ids_apply_and_answer_through_every_generator_taki
         let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
         let (config, scratch) = scratch_database(&url, "ids");
         let mut db = config.connect(NoTls).expect("connect to the scratch database");
-        db.batch_execute(
-            "DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$",
-        )
-        .expect("the role");
+        db.batch_execute("DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$")
+            .expect("the role");
         install(&mut db, &mut setup, &pools, &now).unwrap_or_else(|e| panic!("{name}: the SQL applies on tables of its id type: {e}"));
         let governed: Vec<String> = s.objects.iter().map(|o| o.table.clone()).collect();
         let claims = claim_sets(&keys, &pools, &setup.tables, &governed);
@@ -932,11 +928,8 @@ fn compare_spec(config: &Config, name: &str, src: &str, tally: &mut Tally) {
     let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: role.clone() };
     let governed: Vec<String> = s.objects.iter().map(|o| o.table.clone()).collect();
     let mut db = config.connect(NoTls).expect("connect to the scratch database");
-    db.batch_execute(&format!(
-        "DO $$ BEGIN CREATE ROLE {} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$",
-        ident(&role)
-    ))
-    .expect("the policies' role");
+    db.batch_execute(&format!("DO $$ BEGIN CREATE ROLE {} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$", ident(&role)))
+        .expect("the policies' role");
     if let Err(e) = install(&mut db, &mut setup, &pools, &now).and_then(|()| install(&mut db, &mut setup, &pools, &before)) {
         tally.uninstallable.push(format!("{name}: {e}"));
         return;
