@@ -1,7 +1,7 @@
 use crate::Sql;
 use crate::error::Error;
 use crate::genfn::{Arg, Before, Bound, Execute, GenFn, Language, Param, binds_every, definer_call, grant_edge_exists, order_by_calls, render};
-use crate::rls::{Virtual, declared_fn, held_fn, keyed_edge_fn, membership_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
+use crate::rls::{Virtual, along_fn, declared_fn, held_fn, keyed_edge_fn, membership_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -1220,7 +1220,7 @@ impl Sql<'_> {
     }
 
     fn def_emit_declared(&self, defs: &mut Definers) {
-        let mut read: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+        let mut read: BTreeMap<(String, String, String), BTreeSet<String>> = BTreeMap::new();
         for obj in &self.s.objects {
             let rels = rels_of(obj);
             let trees = obj.perms.iter().map(|pm| &pm.tree).chain(obj.requires.iter().map(|rq| &rq.tree)).chain(obj.admits.iter().map(|a| &a.tree));
@@ -1228,15 +1228,18 @@ impl Sql<'_> {
                 Repr::Composition(vc) => vc.path.as_ref().map(|path| &path.along),
                 _ => None,
             });
-            for scope in trees.chain(paths).flat_map(PermNode::leaves_deep).filter_map(Term::declared_scope) {
-                read.entry((scope.table.clone(), scope.key_col.clone())).or_default().extend(declared_columns(scope, &rels));
+            let policies =
+                trees.flat_map(PermNode::leaves_deep).filter_map(Term::declared_scope).map(|scope| (declared_fn(&scope.table, &scope.key_col), scope));
+            let chains = paths.flat_map(PermNode::leaves_deep).filter_map(Term::declared_scope).map(|scope| (along_fn(&scope.table, &scope.key_col), scope));
+            for (name, scope) in policies.chain(chains) {
+                read.entry((scope.table.clone(), scope.key_col.clone(), name)).or_default().extend(declared_columns(scope, &rels));
             }
         }
-        for ((table, key_col), cols) in read {
+        for ((table, key_col, name), cols) in read {
             let returned: Vec<String> = cols.iter().map(|c| format!("{c} text")).collect();
             let selected: Vec<String> = cols.iter().map(|c| format!("{table}.{c}::text")).collect();
             defs.add_once(GenFn {
-                name: declared_fn(&table, &key_col),
+                name,
                 params: vec![Param::typed("p_key", "text")],
                 strict: true,
                 returns: format!("TABLE({})", returned.join(", ")),

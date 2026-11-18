@@ -103,9 +103,13 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   list through it, or `<object>_<operation>_holds_at` (below). A migration
   drops each one. `Sql::unused_definers()` names the functions a spec's
   generators make and this rule leaves out.
-- **Left as it was.** `<table>_declared_by_<key>` returns the rows a rule table
-  declares for a key. A policy calls it with a row's value, and what it returns
-  is the rule vocabulary, not a tenant's rows.
+- **Left as it was.** `<table>_declared_by_<key>` returns the rows a table
+  declares for a key, with the columns permissions read. A policy calls it with
+  a row's value, so it answers any caller for any key: keep nothing in a table
+  a permission declares that a caller of any tenant should not learn. A `path`
+  reads its rows through `<table>_along_<key>`, with the columns paths read.
+  Only the chain calls it, so it is revoked, even where a permission reads the
+  same table by the same key.
 
 Every policy passed the caller's claim but one shape's:
 `via memberin <level>(<column>, <column>)` takes both the principal and the
@@ -426,9 +430,10 @@ Inside a `some`,
 when the brackets hold for every row the table has for the bound element, and
 `none …` when they hold for no row. `@slot(<column>, "<value>")` tests the
 declared row, and `slot <column> [from <declared column>]` on a keyed edge or a
-`via composition` matches one of its columns against the declared row's. The
-declared rows are read through one generated function per table and key,
-`<table>_declared_by_<key>`, which returns only the columns the spec reads.
+`via composition` matches one of its columns against the declared row's. A
+permission reads the declared rows through one generated function per table
+and key, `<table>_declared_by_<key>`, which returns only the columns
+permissions read.
 
 `none` bars when a row's brackets cannot be decided, and `every` fails on one.
 A plain `not` keeps its meaning.
@@ -561,7 +566,9 @@ object doc {
 - `path <column> along ( … )` on `via composition`: a closure row counts only
   when the brackets hold of the rows declared for its path key. One column
   serves every operation, or name one each:
-  `path select seen, update changed, delete dropped along ( … )`.
+  `path select seen, update changed, delete dropped along ( … )`. The chain
+  reads those rows through `<table>_along_<key>`, which returns only the
+  columns paths read and which no caller may run.
 - `@holds_at(<record column>, <element column> [slot <column>] [for <operation>])`:
   the element the hop names holds at the row it names, for this caller, **with
   the composition the path is on taken as followed there**. A slot-bound

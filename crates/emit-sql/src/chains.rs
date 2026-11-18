@@ -1,7 +1,7 @@
 use crate::definers::Definers;
 use crate::genfn::Param;
 use crate::genfn::{Bound, DefinerArm, Execute, GenFn, Language, Security};
-use crate::rls::{Virtual, leaf};
+use crate::rls::{Virtual, along_fn, leaf};
 use crate::{Binds, Sql};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
@@ -252,7 +252,7 @@ impl<'a> Sql<'a> {
                 };
                 let judge = if scope.quantifier == Quantifier::None { self.flipped() } else { *self };
                 let body = judge.hop_node(on, &scope.body, at, virt)?;
-                Ok(self.declared_rows_sql(scope, key, &body))
+                Ok(self.declared_rows_sql(&along_fn(&scope.table, &scope.key_col), scope, key, &body))
             }
             PermNode::Not(k) => Ok(format!("({}) IS NOT TRUE", self.flipped().path_node(on, k, key, at, virt)?)),
             PermNode::And(kids) => each(kids, " AND "),

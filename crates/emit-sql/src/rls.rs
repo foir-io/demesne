@@ -879,10 +879,10 @@ impl Sql<'_> {
         if body.is_empty() {
             return Err(format!("`{}` on {}: its brackets compile to no predicate", t.display(), quote(&obj.name)));
         }
-        Ok(vec![self.declared_rows_sql(scope, ELEMENT, &body.join(" OR "))])
+        Ok(vec![self.declared_rows_sql(&declared_fn(&scope.table, &scope.key_col), scope, ELEMENT, &body.join(" OR "))])
     }
 
-    pub(crate) fn declared_rows_sql(&self, scope: &demesne_syntax::DeclaredScope, key: &str, body: &str) -> String {
+    pub(crate) fn declared_rows_sql(&self, rows: &str, scope: &demesne_syntax::DeclaredScope, key: &str, body: &str) -> String {
         let mut conds = Vec::new();
         if let Some((col, val)) = &scope.filter {
             conds.push(format!("{SLOT}.{col} = {}", quote_literal(val)));
@@ -894,12 +894,7 @@ impl Sql<'_> {
             (Quantifier::None, true) => "IS TRUE",
         };
         conds.push(format!("({body}) {fails}"));
-        format!(
-            "NOT EXISTS (SELECT 1 FROM {}.{}({key}) AS {SLOT} WHERE {})",
-            self.s.definer_schema(),
-            declared_fn(&scope.table, &scope.key_col),
-            conds.join(" AND ")
-        )
+        format!("NOT EXISTS (SELECT 1 FROM {}.{rows}({key}) AS {SLOT} WHERE {})", self.s.definer_schema(), conds.join(" AND "))
     }
 
     pub(crate) fn flipped(&self) -> Self {
@@ -1570,6 +1565,10 @@ pub(crate) fn nearest_own_fn(lookup: &str) -> String {
 
 pub(crate) fn declared_fn(table: &str, key_col: &str) -> String {
     format!("{table}_declared_by_{key_col}")
+}
+
+pub(crate) fn along_fn(table: &str, key_col: &str) -> String {
+    format!("{table}_along_{key_col}")
 }
 
 pub(crate) fn keyed_edge_fn(obj: &Object, r: &Relation) -> String {

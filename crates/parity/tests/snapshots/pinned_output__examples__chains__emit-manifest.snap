@@ -22,7 +22,7 @@ exit: 0
     "auth.rule_slots_declared_by_rule(text)",
     "auth.spaces_accessors(text)",
     "auth.spaces_admits(text, jsonb)",
-    "auth.trail_hops_declared_by_trail(text)"
+    "auth.trail_hops_along_trail(text)"
   ],
   "callable": [],
   "grantable": [
@@ -45,7 +45,7 @@ exit: 0
     "auth.doc_composition_lent_0(text, text, text)",
     "auth.doc_shared_keyed_inside(text, text, text)",
     "auth.doc_terms_hold_inside(text, text, jsonb)",
-    "auth.trail_hops_declared_by_trail(text)"
+    "auth.trail_hops_along_trail(text)"
   ],
   "policies": [
     {
@@ -222,7 +222,7 @@ exit: 0
       "policies": []
     },
     {
-      "function": "auth.trail_hops_declared_by_trail(text)",
+      "function": "auth.trail_hops_along_trail(text)",
       "parameters": "p_key text",
       "returns": "TABLE(doc_id text, field text, kind text, rule text)",
       "policies": []
@@ -235,11 +235,11 @@ exit: 0
     },
     {
       "object": "function auth.doc_composition_lent(text, text, text)",
-      "digest": "90a02ca9eb32022173df404d7035afaa56bae979467633fe17147ef3bd3e1c3c"
+      "digest": "392806bce765db4e6e0a0c12a9a16ecd870abd0ade719b38186ca725cba19939"
     },
     {
       "object": "function auth.doc_composition_lent_0(text, text, text)",
-      "digest": "a718042edb3e3f90446d36cc3e59b1ca11c0a9773c94b5999cfb033f8e9930c1"
+      "digest": "b60925fd255a1f133bd4345c6b890133633326bef48c079e337d89fc978a546d"
     },
     {
       "object": "function auth.doc_shared_keyed(text, text, text)",
@@ -290,8 +290,8 @@ exit: 0
       "digest": "fe3b827c02b06de093f3a338af92e0a0da09a94fe692fa226d317975bd628052"
     },
     {
-      "object": "function auth.trail_hops_declared_by_trail(text)",
-      "digest": "1acb46dca1d8480a29f83535140d8e416667284a4a0566d79f5ac7886e86251b"
+      "object": "function auth.trail_hops_along_trail(text)",
+      "digest": "c3b9f724fdb55313219a68dd5eb4141a40003feb2f7dce50afd15898531773fe"
     },
     {
       "object": "policy banners_select on public.banners",

@@ -1,4 +1,4 @@
-use demesne_emit_sql::{GenFn, Language, Sql};
+use demesne_emit_sql::{Execute, GenFn, Language, Sql};
 
 const HEAD: &str = "topology { level estate }\nsubject member { anchor estate; reach self; identifies sub; roles none }\n";
 const HOPS: &str = "(every h in doc_trail_hops(trail) ((@slot(kind, \"claim\") and @slot(rule held rules_held)) + (@slot(kind, \"live\") and @holds_at(doc_id, rule slot field))))";
@@ -86,7 +86,7 @@ fn the_policy_follows_a_composition_that_widens_by_its_lower_bound_and_one_that_
     );
 }
 
-const ALONG: &str = " THEN (NOT EXISTS (SELECT 1 FROM auth.doc_trail_hops_declared_by_trail(";
+const ALONG: &str = " THEN (NOT EXISTS (SELECT 1 FROM auth.doc_trail_hops_along_trail(";
 const HOP: &str = "(SELECT CASE WHEN demesne_hop.record IS NULL OR demesne_hop.element IS NULL";
 
 fn own_and_hop<'a>(defs: &'a [GenFn], name: &str) -> (&'a str, &'a str) {
@@ -119,10 +119,25 @@ fn a_hop_counts_only_when_every_row_declared_for_its_path_key_holds() {
     let tree = &named(&defs, "doc_composition_under").arms[0].body;
     holds(
         tree,
-        &["doc_trail_hops_declared_by_trail(e.seen::text)", " END FROM (SELECT demesne_slot.doc_id AS record, demesne_slot.rule AS element) AS demesne_hop)"],
+        &["doc_trail_hops_along_trail(e.seen::text)", " END FROM (SELECT demesne_slot.doc_id AS record, demesne_slot.rule AS element) AS demesne_hop)"],
     );
-    let rows = named(&defs, "doc_trail_hops_declared_by_trail");
+    let rows = named(&defs, "doc_trail_hops_along_trail");
     assert_eq!(rows.returns, "TABLE(doc_id text, field text, kind text, rule text)");
+}
+
+#[test]
+fn a_path_reads_its_rows_through_a_function_no_caller_may_run_where_a_policy_reads_the_same_table_by_the_same_key() {
+    let view = "some r in rules_live held rules_held (every s in doc_trail_hops(trail) ((@slot(kind, \"edge\") and shared) + (@slot(kind, \"lend\") and lent) + (@slot(kind, \"tree\") and under)))";
+    let src = spec("  nested 1", &path(), view);
+    let (using, defs) = compiled(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    holds(&using, &["auth.doc_trail_hops_declared_by_trail(demesne_element.v) AS demesne_slot"]);
+    lacks(&using, &["doc_trail_hops_along_trail"]);
+    let read = |name: &str| {
+        let f = named(&defs, name);
+        (f.returns.clone(), f.execute)
+    };
+    assert_eq!(read("doc_trail_hops_declared_by_trail"), ("TABLE(kind text, param text)".to_string(), Execute::Public));
+    assert_eq!(read("doc_trail_hops_along_trail"), ("TABLE(doc_id text, field text, kind text, rule text)".to_string(), Execute::Revoked));
 }
 
 #[test]

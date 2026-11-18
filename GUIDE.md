@@ -1210,12 +1210,13 @@ JSON array. A keyed edge or a `via composition` with `slot <column> [from
 one. A plain `not` keeps its meaning: it is true of what is not known to be
 true.
 
-The declared rows come through one generated function per table and key,
-`<table>_declared_by_<key>`, which returns the columns the spec reads and no
-others. It takes the key as an argument and answers for any key: a policy
-calls it with a row's own element, so it cannot be bound to a claim. What it
-returns is the rule vocabulary, not a tenant's rows. Keep nothing in a declared
-table that a caller of any tenant should not learn.
+A permission's declared rows come through one generated function per table
+and key, `<table>_declared_by_<key>`, which returns the columns permissions
+read and no others. It takes the key as an argument and answers for any key: a
+policy calls it with a row's own element, so it cannot be bound to a claim,
+and any caller can run it. Keep nothing in a table a permission declares that
+a caller of any tenant should not learn. A `path` reads its rows through a
+function of its own (below), which no caller may run.
 
 ### `via conditions`: comparisons stored as rows
 
@@ -1284,7 +1285,10 @@ object doc {
 the table in the brackets holds one row for each hop the path passes through
 that needs checking. The closure row counts only when the brackets hold. A
 relation followed for several operations may keep a path for each: `path
-select seen, update changed, delete dropped along ( … )`.
+select seen, update changed, delete dropped along ( … )`. The chain reads those
+rows through `<table>_along_<key>`, which returns only the columns paths read.
+Only the chain calls it, so no caller may run it, and a table of hops may hold
+a tenant's rows.
 
 **A hop the claim decides.** `@slot(rule held rules_held)` is one array test,
 with no lookup.
