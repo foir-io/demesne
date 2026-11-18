@@ -107,10 +107,14 @@ only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
   declares for a key. A policy calls it with a row's value, and what it returns
   is the rule vocabulary, not a tenant's rows.
 
-Policies always passed the caller's claim, so the binding changes no policy,
-and no rule admits or refuses anyone it did not before because of it. Other
-entries do change what some specs admit or whether they compile: the grant
-and relation Breaking entries below, and the first two under "Fixed".
+Every policy passed the caller's claim but one shape's:
+`via memberin <level>(<column>, <column>)` takes both the principal and the
+scope from the row, so bound to the caller it would admit only a caller who is
+the row's own principal. Validation now refuses that shape (below). The binding
+changes no other policy, and no rule that still compiles admits or refuses
+anyone it did not before because of it. Other entries do change what some
+specs admit or whether they compile: the grant and relation Breaking entries
+below, and the first two under "Fixed".
 
 The binding assumes only your API sets the claims. A caller who can run
 arbitrary SQL as the caller role can set them with `set_config`, as it always
@@ -142,6 +146,12 @@ What breaks for an adopter:
 - **SQL of your own that calls a bound function with another principal's id,
   or another node, now gets false or nothing.** So does a call made with no
   claims set. Read the tables in that statement instead, under a role that may.
+- **A `via memberin <level>(<column>, <column>)` rule no longer compiles.**
+  Validation refuses a `memberin` that takes both its principal and its scope
+  from the row, with `reachedby` or without: its function answers only about
+  the caller, so the rule would admit no one but the row's own principal. A
+  `memberin` with a claim on either side, such as
+  `memberin tenant(id, @tenant_id)`, compiles as before.
 - **SQL of your own that runs as the caller role and calls a generated
   function no policy calls now gets `permission denied`.** That includes a role
   helper, a grant's reach function and a closure function you called directly.

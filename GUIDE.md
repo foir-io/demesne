@@ -687,7 +687,10 @@ One function has a second side. A rule on the admin table itself may pass a
 row's column as the principal and a claim as the scope
 (`via memberin tenant(id, @tenant_id)`), so `<admin>_memberin_<level>` then
 also answers for the scope that claim names, and for no other scope. A spec
-with no such rule gets the principal binding alone.
+with no such rule gets the principal binding alone. A `memberin` that takes
+both sides from the row, `via memberin <level>(<column>, <column>)`, is
+refused: it passes no claim, so it would admit no one but the row's own
+principal.
 
 A select `admit` arm adds a conditional row to the listing, with the `admit`
 source and the claims and row conditions the arm states. A conjunct no row can

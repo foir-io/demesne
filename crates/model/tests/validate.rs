@@ -128,17 +128,6 @@ fn rules_on_objects_levels_and_terms() {
             false,
         ),
         (
-            "a memberin relation at an unknown level",
-            with(|b| {
-                b.replace(
-                    "  relation owner:   member via owner_id\n",
-                    "  relation owner:   member via owner_id\n  relation crew: member via memberin galaxy(id, @galaxy_id) reachedby member\n",
-                )
-            }),
-            "via memberin references unknown level \"galaxy\"",
-            true,
-        ),
-        (
             "an app scope that excludes a grant relation",
             with(|b| {
                 b.replace(
@@ -149,6 +138,27 @@ fn rules_on_objects_levels_and_terms() {
             "@app_scope(exclude \"grantee\") must exclude an owner column relation",
             true,
         ),
+    ]);
+}
+
+fn crew(memberin: &str) -> Vec<String> {
+    with(|b| {
+        b.replace(
+            "  relation owner:   member via owner_id\n",
+            &format!("  relation owner:   member via owner_id\n  relation crew: member via memberin {memberin}\n"),
+        )
+    })
+}
+
+#[test]
+fn rules_on_memberin_relations() {
+    let both = "via memberin takes both its principal (owner_id) and its scope (tenant_id) from the row";
+    check(vec![
+        ("a memberin relation at an unknown level", crew("galaxy(id, @galaxy_id) reachedby member"), "via memberin references unknown level \"galaxy\"", true),
+        ("a memberin taking its principal and its scope from the row", crew("tenant(owner_id, tenant_id)"), both, true),
+        ("a memberin taking both sides from the row and reached by a member", crew("tenant(owner_id, tenant_id) reachedby member"), both, true),
+        ("a memberin whose scope is a claim", crew("tenant(owner_id, @tenant_id)"), "via memberin takes both", false),
+        ("a memberin whose principal is a claim", crew("tenant(@member_id, tenant_id)"), "via memberin takes both", false),
     ]);
 }
 

@@ -11,8 +11,8 @@ use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_syntax::{
-    Finding, Grant, GrantUse, Level, Marker, Object, Perm, PermNode, PermissionExport, PointCheck, ProbeAnswer, Relation, Repr, Require, Spec, Subject, Term,
-    ViaClosure, ViaComposition, ViaGrant, ViaObject, Vocabulary,
+    ArgSrc, Finding, Grant, GrantUse, Level, Marker, Object, Perm, PermNode, PermissionExport, PointCheck, ProbeAnswer, Relation, Repr, Require, Spec, Subject,
+    Term, ViaClosure, ViaComposition, ViaGrant, ViaMemberIn, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -503,6 +503,14 @@ fn check_object_relations<'a>(s: &Spec, o: &'a Object) -> (Rels<'a>, Vec<Finding
             Repr::MemberIn(mi) if s.level_by_name(&mi.level).is_none() => errs.push(Finding::at(
                 r.pos.line,
                 format!("object {} relation {} via memberin references unknown level {}", quote(&o.name), quote(&r.name), quote(&mi.level)),
+            )),
+            Repr::MemberIn(ViaMemberIn { level, principal: ArgSrc::Col(principal), scope: ArgSrc::Col(scope), .. }) => errs.push(Finding::at(
+                r.pos.line,
+                format!(
+                    "object {} relation {} via memberin takes both its principal ({principal}) and its scope ({scope}) from the row, but its function answers only about the caller, so it would admit no one but the row's own principal; name a claim on one side, as in `memberin {level}(@<claim>, {scope})` or `memberin {level}({principal}, @<claim>)`",
+                    quote(&o.name),
+                    quote(&r.name)
+                ),
             )),
             Repr::Closure(c) => errs.extend(check_closure_relation(s, o, r, c)),
             Repr::Object(vo) => errs.extend(validate_borrow_operation(s, r, vo)),
