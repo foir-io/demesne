@@ -259,6 +259,16 @@ impl Sql<'_> {
         format!("(SELECT (NULLIF(current_setting({}, true), '')::{cast} -> {})::jsonb)", quote_literal(setting), quote_literal(key))
     }
 
+    pub(crate) fn session_claim_object_inline(&self, key: &str) -> String {
+        let (setting, cast) = self.claims_setting();
+        format!("(NULLIF(current_setting({}, true), '')::{cast} -> {})::jsonb", quote_literal(setting), quote_literal(key))
+    }
+
+    pub(crate) fn session_claim_inline(&self, key: &str) -> String {
+        let (setting, cast) = self.claims_setting();
+        format!("(NULLIF(current_setting({}, true), '')::{cast} ->> {})", quote_literal(setting), quote_literal(key)) + &self.s.id_cast()
+    }
+
     #[must_use]
     pub fn id_claim(&self, key: &str) -> String {
         self.claim(key) + &self.s.id_cast()

@@ -109,6 +109,16 @@ fn caller_parameter(f: &GenFn) -> Option<(String, String)> {
     Some((principal.to_string(), found.get(1..)?.join(" ")))
 }
 
+fn keys_once<'k>(keys: impl Iterator<Item = &'k str>) -> Vec<&'k str> {
+    let mut once: Vec<&str> = Vec::new();
+    for key in keys.filter(|key| !key.is_empty()) {
+        if !once.contains(&key) {
+            once.push(key);
+        }
+    }
+    once
+}
+
 fn is_the_callers(arg: &str, callers: &[String]) -> String {
     match callers {
         [] => "false".to_string(),
@@ -585,19 +595,20 @@ impl Sql<'_> {
         }
         for f in fns.iter_mut().filter(|f| f.execute == Execute::Public && f.returns.is_empty() && !f.raw_body && f.arms.is_empty()) {
             let Some((parameter, ty)) = caller_parameter(f) else { continue };
-            let identities = self.claims_once(f.principal_claims.iter().map(String::as_str));
-            let as_text: Vec<String> = identities.iter().map(|identity| format!("{identity}::text")).collect();
+            let keys = keys_once(f.principal_claims.iter().map(String::as_str));
+            let cast = if ty == id_t { "" } else { "::text" };
+            let read = |claim: fn(&Self, &str) -> String| -> Vec<String> { keys.iter().map(|key| format!("{}{cast}", claim(self, key))).collect() };
             let membership = f.name.strip_prefix(&format!("{}_memberin_", self.s.admin_name())).map(|level| self.membership_callers(level));
             let asked_by_scope = membership.is_some();
-            let own = membership.unwrap_or_else(|| is_the_callers(&parameter, if ty == id_t { &identities } else { &as_text }));
+            let own = membership.unwrap_or_else(|| is_the_callers(&parameter, &read(Self::session_claim)));
             if !asked_by_scope {
-                f.bound = self.bound_on(f, &parameter, &own);
+                f.bound = self.bound_on(f, &parameter, &own, &is_the_callers(&parameter, &read(Self::session_claim_inline)));
             }
             f.body = format!("{own} AND ({})", f.body);
         }
     }
 
-    fn bound_on(&self, f: &GenFn, parameter: &str, own: &str) -> Option<Bound> {
+    fn bound_on(&self, f: &GenFn, parameter: &str, own: &str, own_inline: &str) -> Option<Bound> {
         let argument = f.params.iter().position(|p| p.name == parameter)?;
         let mut claims = Vec::new();
         for key in f.principal_claims.iter().filter(|key| !key.is_empty()) {
@@ -609,7 +620,7 @@ impl Sql<'_> {
         let remembered = self.remembered(&f.name).map(|kept| {
             let as_text = format!("{parameter}::text");
             format!(
-                "#variable_conflict use_column\nBEGIN\n  IF {} THEN\n    RETURN {given};\n  END IF;\n  IF {own} THEN\n    {}\n  END IF;\n  RETURN {own} AND ({});\nEND",
+                "#variable_conflict use_column\nBEGIN\n  IF {} THEN\n    RETURN {given};\n  END IF;\n  IF {own_inline} THEN\n    {}\n    RETURN {given};\n  END IF;\n  RETURN {own} AND ({});\nEND",
                 kept.holds_for(&as_text),
                 kept.keep(&as_text),
                 f.body
@@ -1176,13 +1187,7 @@ impl Sql<'_> {
     }
 
     fn claims_once<'k>(&self, keys: impl Iterator<Item = &'k str>) -> Vec<String> {
-        let mut once: Vec<&str> = Vec::new();
-        for key in keys.filter(|key| !key.is_empty()) {
-            if !once.contains(&key) {
-                once.push(key);
-            }
-        }
-        once.into_iter().map(|key| self.session_claim(key)).collect()
+        keys_once(keys).into_iter().map(|key| self.session_claim(key)).collect()
     }
 
     fn closure_set_definers(&self, c: &Closure, callers: &[String]) -> Vec<GenFn> {

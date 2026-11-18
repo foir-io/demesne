@@ -114,12 +114,13 @@ impl Sql<'_> {
         .concat();
         let name = conditions_fn(obj, r);
         let own = self.session_claim_object(&c.claim);
+        let own_inline = self.session_claim_object_inline(&c.claim);
         let unasked = "  IF p_object IS NULL THEN\n    RETURN NULL;\n  END IF;\n";
         let asked = match self.remembered(&name) {
             Some(kept) => {
                 let values = "coalesce(p_values::text, '')";
                 format!(
-                    "{unasked}  IF ({}) IS NOT TRUE THEN\n    IF NOT (p_values IS NOT DISTINCT FROM {own}) THEN\n      RETURN NULL;\n    END IF;\n    {}\n  END IF;\n",
+                    "{unasked}  IF ({}) IS NOT TRUE THEN\n    IF NOT (p_values IS NOT DISTINCT FROM {own_inline}) THEN\n      RETURN NULL;\n    END IF;\n    {}\n  END IF;\n",
                     kept.holds_for(values),
                     kept.keep(values)
                 )

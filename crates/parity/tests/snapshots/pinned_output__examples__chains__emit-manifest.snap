@@ -243,7 +243,7 @@ exit: 0
     },
     {
       "object": "function auth.doc_shared_keyed(text, text, text)",
-      "digest": "b2c62aa756f2f2d47e73a126fa9ec3d5fb17abd3155c004d89b6726b594f67c5"
+      "digest": "d0593a8d79834638e2af258f31777600dfb007fc3651ab0e2d998ffd8ac868a2"
     },
     {
       "object": "function auth.doc_shared_keyed_inside(text, text, text)",
@@ -251,7 +251,7 @@ exit: 0
     },
     {
       "object": "function auth.doc_terms_hold(text, text, jsonb)",
-      "digest": "deba096e8f0180cd4e0f853693c46e7463350074a01e202856f3b0c12d71cdc1"
+      "digest": "aa1fc4932cd430dea36bea46ec52ac0bc77bd987ea7b8c6da6ded0f51207bb8b"
     },
     {
       "object": "function auth.doc_terms_hold_inside(text, text, jsonb)",

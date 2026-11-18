@@ -74,8 +74,9 @@ BEGIN
   IF current_setting('request.jwt.claims', true) <> '' AND current_setting('demesne.auth.doc_shared_keyed.seen', true) = current_setting('request.jwt.claims', true) AND current_setting('demesne.auth.doc_shared_keyed.own', true) = p_principal::text THEN
     RETURN p_principal = p_principal AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));
   END IF;
-  IF p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') THEN
+  IF p_principal = (NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') THEN
     PERFORM set_config('demesne.auth.doc_shared_keyed.own', p_principal::text, true), set_config('demesne.auth.doc_shared_keyed.seen', coalesce(current_setting('request.jwt.claims', true), ''), true);
+    RETURN p_principal = p_principal AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));
   END IF;
   RETURN p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));
 END
@@ -154,7 +155,7 @@ BEGIN
     RETURN NULL;
   END IF;
   IF (current_setting('request.jwt.claims', true) <> '' AND current_setting('demesne.auth.doc_terms_hold.seen', true) = current_setting('request.jwt.claims', true) AND current_setting('demesne.auth.doc_terms_hold.own', true) = coalesce(p_values::text, '')) IS NOT TRUE THEN
-    IF NOT (p_values IS NOT DISTINCT FROM (SELECT (NULLIF(current_setting('request.jwt.claims', true), '')::json -> 'facts')::jsonb)) THEN
+    IF NOT (p_values IS NOT DISTINCT FROM (NULLIF(current_setting('request.jwt.claims', true), '')::json -> 'facts')::jsonb) THEN
       RETURN NULL;
     END IF;
     PERFORM set_config('demesne.auth.doc_terms_hold.own', coalesce(p_values::text, ''), true), set_config('demesne.auth.doc_terms_hold.seen', coalesce(current_setting('request.jwt.claims', true), ''), true);
