@@ -1516,10 +1516,11 @@ branch holds the container, for every container, top-level included. The
 caller's containment holds a container when the caller's claims name it and
 each level above it. A reach holds it when one of the caller's grants reaches
 it. A claim-only branch, which asks only the caller's claims, such as an
-operator's membership or a platform role, holds every container. So a row that
-`@self` or `@public` admits, which ask nothing of where the row sits, is still
-refused beneath a marked container the caller does not hold, for each
-operation the marker confines.
+operator's membership or a platform role, holds every container. Declaring a
+marker for an operation makes that operation holder-only, so a `@public` or
+`@self` permission for it admits only callers who hold the row's container.
+Those terms ask nothing of where the row sits, yet the row is refused beneath
+any container the caller does not hold, whatever its marker column holds.
 
 No object is edited: the condition joins each object's
 `<table>_<operation>_require` policy, its point checks and any predicate
@@ -1536,8 +1537,8 @@ write could pass where the read is refused.
 Each marker compiles to `<table>_<column>_marker_admits(container, claim)`,
 a definer, because the caller may not be able to read the container's row. It
 answers only for a container the caller holds. For any other it is false,
-whether the container is marked or not, so calling it directly tells a caller
-nothing about another tenant's containers.
+whatever the container's marker column holds, so calling it directly tells a
+caller nothing about another tenant's containers.
 
 ---
 

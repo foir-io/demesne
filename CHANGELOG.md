@@ -572,17 +572,18 @@ Every other object scoped at the level gains, for each named operation, a
 restrictive condition: the caller holds the row's container, and the container
 is unmarked or its marker equals the session's claim. A marker confines its
 ops to callers whose containment, reach or claim-only branch holds the
-container, for every container, top-level included. A row that `@self` or
-`@public` admits is therefore refused beneath a marked container the caller
-does not hold. A level value that names no container refuses, and a row whose
-level column is NULL is asked nothing. With `through closure <table>`
-every marked container above the row's own confines too. Several markers on
-one level all apply. The container's own row keeps its own rule. Each marker
-compiles to `<table>_<column>_marker_admits(container, claim)`, and the
-condition joins the object's `<table>_<operation>_require` policy, its point
+container, for every container, top-level included: declaring a marker for an
+operation makes that operation holder-only. A row that `@self` or `@public`
+admits is therefore refused beneath any container the caller does not hold,
+whatever its marker column holds. A level value that names no container
+refuses, and a row whose level column is NULL is asked nothing. With `through
+closure <table>` every marked container above the row's own confines too.
+Several markers on one level all apply. The container's own row keeps its own
+rule. Each marker compiles to `<table>_<column>_marker_admits(container,
+claim)`, and the condition joins the object's `<table>_<operation>_require` policy, its point
 checks and any predicate another object borrows. The function is false for a
-container the caller does not hold, marked or not, so calling it directly
-tells a caller nothing about another tenant's containers.
+container the caller does not hold, whatever its marker column holds, so
+calling it directly tells a caller nothing about another tenant's containers.
 
 A marker that confines `select` must confine `update` and `delete` too, or the
 spec is refused: Postgres applies a write only to rows the read policy shows.
