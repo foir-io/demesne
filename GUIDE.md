@@ -622,10 +622,11 @@ node, reads the tables itself (the closure, the grant table, the role store)
 under a role that may. Only the functions listed below are yours to call.
 
 **A generated function is PUBLIC only where something must run it as the
-caller.** Each is `SECURITY DEFINER`. A policy runs as the caller, and so do
-the generated application checks (a `@check` permission's point check, the
-edit check and the async check), so a function either calls must be one the
-caller may run. So must a function a spec line makes yours to call:
+caller.** Each but the `_inside` copies (below) is `SECURITY DEFINER`. A
+policy runs as the caller, and so do the generated application checks (a
+`@check` permission's point check, the edit check and the async check), so a
+function either calls must be one the caller may run. So must a function a
+spec line makes yours to call:
 
 - `export <verb> as <name>(…)`: the permission, judged for the caller at the
   values you pass;
@@ -653,14 +654,19 @@ not meant for a role you grant, is not emitted at all: a grant's `_reach` or
 reads, or a role check, membership, borrow or grant check that no permission
 uses.
 
-**The SQL states PUBLIC's right to every function it creates.** Each
-`CREATE OR REPLACE FUNCTION` is followed by `GRANT EXECUTE … TO PUBLIC` or
-`REVOKE EXECUTE … FROM PUBLIC`. `CREATE OR REPLACE` keeps the privileges a
-function already has, so without the statement a function an earlier release
-revoked would stay revoked after a release that makes it PUBLIC. Applying the
-SQL leaves PUBLIC exactly the right it states, and undoes a revoke or a grant
-to PUBLIC made by hand. `demesne diff` reports a function whose live right
-differs, in either direction. A grant to a role of your own is left alone.
+**The SQL states the right of PUBLIC and of `authenticated` to every
+function it creates.** Each `CREATE OR REPLACE FUNCTION` is followed by
+`GRANT EXECUTE … TO PUBLIC` or `REVOKE EXECUTE … FROM PUBLIC, authenticated`.
+`CREATE OR REPLACE` keeps the privileges a function already has, so without
+the statement a function an earlier release revoked would stay revoked after a
+release that makes it PUBLIC. A revoke also names `authenticated`, the role
+every policy is written for, so a grant made to it by name, by a grant over
+the whole schema or by default privileges does not outlast applying the SQL.
+Applying the SQL leaves PUBLIC and `authenticated` exactly the right it
+states, and undoes a revoke or a grant to PUBLIC made by hand. A grant to any
+other role stays. `demesne diff` reports a function whose right for PUBLIC
+differs live, in either direction, and, as `GRANTED`, each other role that may
+run a function the SQL revokes (see `diff` above).
 
 **The manifest says who may run each function.** `demesne emit … manifest`
 puts every function the SQL creates in exactly one of four lists:
@@ -670,8 +676,11 @@ puts every function the SQL creates in exactly one of four lists:
   your own. These are the listings of accessors, `<table>_admits`,
   `<closure>_path`, a `nearest` lookup for any node, and the maintenance a
   worker runs: the async tier's `<index>_apply()`, `_rebuild()` and
-  `_watermark()`, and a materialized group's `<flat>_reconcile()`. Each is an
-  interface, and a release changes one only as it changes a `callable` one;
+  `_watermark()`, and a materialized group's `<flat>_reconcile()`. They answer
+  for any id they are given, so grant them only to a server-side role you
+  trust, such as a worker's, never to a role your API's callers run as. Each
+  is an interface, and a release changes one only as it changes a `callable`
+  one;
 - `internal`: PUBLIC may run it, and no spec line makes it yours to call. Each
   is one a policy or a generated check calls as the caller, or a trigger's
   function, whose `EXECUTE` Postgres checks when the trigger is created, not
@@ -690,9 +699,8 @@ claims, and returns false for any other. Which argument is the principal is
 decided where the function is generated, not by its name, so a parameter of an
 export or a probe is never taken for one. A policy always passes the claim, so
 nothing a rule decides depends on this; it stops a caller running the function
-directly to ask about someone
-else. A statement of your own that must ask about another principal reads the
-tables itself, under a role that may.
+directly to ask about someone else. A statement of your own that must ask
+about another principal reads the tables itself, under a role that may.
 
 All of this rests on the claims setting being the door's alone to set. A
 caller who can run arbitrary SQL as the caller role can call `set_config` and

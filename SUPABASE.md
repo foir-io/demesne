@@ -168,6 +168,7 @@ SUPABASE_DB_URL="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase
   pnpm --filter @foir/demesne-example-app exec vitest run supabase
 ```
 
-It checks three things: the hook lifts the contract keys, the RLS returns exactly the rows
-the subject may see (owner plus open records, scoped by containment), and `service_role`
-reads past the policy.
+It checks four things: the hook lifts the contract keys, the RLS returns exactly the rows
+the subject may see (owner plus open records, scoped by containment), every function the
+manifest lists as `revoked` or `grantable` refuses `authenticated` with `permission denied`,
+and `service_role` reads past the policy.

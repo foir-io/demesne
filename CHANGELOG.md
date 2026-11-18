@@ -17,8 +17,7 @@ several calls, which is refused until the spec says what it admits (the third
 "Breaking" entry); and a rule that asks about the admin in a spec where no
 subject binds admin and none is identified by `sub`, which is refused (the
 fourth "Breaking" entry). Its generated functions change: see "Breaking"
-first. The
-Go module's API doesn't change, so it is `go/v1.6.0`.
+first. The Go module's API doesn't change, so it is `go/v1.6.0`.
 
 ### Security: a temporary table could stand in for a table a generated function reads
 
@@ -49,8 +48,9 @@ answered for any value. A caller could run one directly and ask about someone
 else: list another node's subtree, read which levels another principal is
 granted, or learn whether another principal holds a role.
 
-From this release one rule holds for every generated function. **It answers
-only about the caller's own claims, or `EXECUTE` is revoked from PUBLIC.**
+From this release one rule holds for every generated function but
+`<table>_declared_by_<key>` (below). **It answers only about the caller's own
+claims, or `EXECUTE` is revoked from PUBLIC.**
 
 - **Bound to the caller.** A function that takes a principal (`user_id`,
   `p_principal`, `p_member`, the first argument of
@@ -150,11 +150,11 @@ manifest's `grantable` functions to holds them by design: name it with
 those functions are not reported. Its grant of a revoked function and every
 default privilege still are. `--grantee PUBLIC` is refused, since PUBLIC holds
 exactly what the SQL grants it, and so is `--grantee authenticated`, the role
-every policy is written for, since a grantable function answers for any id. `demesne_postgres::drift` takes a fourth
-argument, `&Grantees`, built by `Grantees::new` from the manifest and the role
-names; `Grantees::default()` names none and reports what it did before.
-`demesne_postgres::Error` gains `is_grantee`.
-`demesne_emit_sql::granted_to_public` reads the grants as
+every policy is written for, since a grantable function answers for any id.
+`demesne_postgres::drift` takes a fourth argument, `&Grantees`, built by
+`Grantees::new` from the manifest and the role names; `Grantees::default()`
+names none and reports what it did before. `demesne_postgres::Error` gains
+`is_grantee`. `demesne_emit_sql::granted_to_public` reads the grants as
 `revoked_from_public` reads the revokes; `demesne_emit_sql::POLICY_ROLE` names
 `authenticated`, and `demesne_postgres::DriftKind` gains `Granted`. Every
 spec's SQL gains these lines.
@@ -362,9 +362,8 @@ What breaks for an adopter, and how to keep a pass that was meant:
   validation.** On an object with a level below the grant's, or where every
   subject reaching by the grant is anchored at the grant's level,
   `+ via grant <name>` was silently dropped: the SQL was the same with it and
-  without. The message
-  names the level and says to remove the term. Removing it changes no SQL. No
-  spec admits more after this release than before it.
+  without. The message names the level and says to remove the term. Removing
+  it changes no SQL. No spec admits more after this release than before it.
 - **A `pinned` borrow on an object whose terms now bind a grant's callers is
   refused.** Drop `pinned` there, or name the grant in the permission
   (`+ via grant <name>`): its holders then pass by the grant, and the pinned
@@ -433,12 +432,11 @@ refused every caller whose credential lacks `sub`, and asked about whatever
 Validation now refuses each of those constructs in such a spec, wherever it
 appears: in a permission, a requirement, an `admit` arm or a relation's path.
 The refusal names the construct and the remedy: add `binds admin` to the
-subject it asks about. A
-spec with a subject that binds admin, or one identified by `sub`, compiles as
-before and emits the same policies. A `@holds` in a permission only the
-decision point answers reads no such claim and is not refused. A validation
-test refuses each construct in such a spec, and accepts each once a subject
-binds admin or is identified by `sub`.
+subject it asks about. A spec with a subject that binds admin, or one
+identified by `sub`, compiles as before and emits the same policies. A
+`@holds` in a permission only the decision point answers reads no such claim
+and is not refused. A validation test refuses each construct in such a spec,
+and accepts each once a subject binds admin or is identified by `sub`.
 
 ### `some`: one element of an array column, and what must hold for it
 
@@ -581,10 +579,11 @@ refuses, and a row whose level column is NULL is asked nothing. With `through
 closure <table>` every marked container above the row's own confines too.
 Several markers on one level all apply. The container's own row keeps its own
 rule. Each marker compiles to `<table>_<column>_marker_admits(container,
-claim)`, and the condition joins the object's `<table>_<operation>_require` policy, its point
-checks and any predicate another object borrows. The function is false for a
-container the caller does not hold, whatever its marker column holds, so
-calling it directly tells a caller nothing about another tenant's containers.
+claim)`, and the condition joins the object's `<table>_<operation>_require`
+policy, its point checks and any predicate another object borrows. The
+function is false for a container the caller does not hold, whatever its
+marker column holds, so calling it directly tells a caller nothing about
+another tenant's containers.
 
 A marker that confines `select` must confine `update` and `delete` too, or the
 spec is refused: Postgres applies a write only to rows the read policy shows.
@@ -623,7 +622,7 @@ object doc {
   row's column and passes `prefix` and `held`, and the brackets hold.
   A hop inlines it where it is followed. Nothing calls it as a function of its
   own, so none is emitted: to ask whether the caller passes a permission on one
-  row, declare a `check` (below), which reads the stored row.
+  row, declare a `check` (above), which reads the stored row.
 - `nested <n>` on the object says how many further compositions deep a hop is
   judged. A hop's own composition costs nothing. Another composition in the
   hop's rule is followed through one level less, and at the last level it is
@@ -703,14 +702,15 @@ every generated parameter that names an id to the spec's identifier type, and
 `testdata/ids` holds an integer and a uuid spec that a live test applies and
 judges.
 
-A generated function's parameters are now typed values, `demesne_emit_sql::Param`
-with a `ParamKind`, and `GenFn::params` replaces the `sig` string, which
-`GenFn::sig()` renders. A parameter that holds an id is `ParamKind::Id`, and
-takes the spec's identifier type when the SQL is written, so no generator can
-give one another type. The corpus test reads each function's declared
-parameters, checks every id against the SQL, and refuses a parameter whose
-name says id that its generator declared otherwise. SQL of your own that names the dispatch copy's argument (`p_id => …`)
-names `p_<object>_id` instead.
+A generated function's parameters are now typed values,
+`demesne_emit_sql::Param` with a `ParamKind`, and `GenFn::params` replaces the
+`sig` string, which `GenFn::sig()` renders. A parameter that holds an id is
+`ParamKind::Id`, and takes the spec's identifier type when the SQL is written,
+so no generator can give one another type. The corpus test reads each
+function's declared parameters, checks every id against the SQL, and refuses
+a parameter whose name says id that its generator declared otherwise. SQL of
+your own that names the dispatch copy's argument (`p_id => …`) names
+`p_<object>_id` instead.
 
 ### A generated function called with the same arguments for every row runs once per statement
 
@@ -725,7 +725,8 @@ subquery, as v1.2.0 did for each claim read:
 Such arguments are claims, literals and the calling function's own
 parameters. Postgres evaluates the subquery once per statement. The emitter
 wraps only calls to the functions it declares `STABLE`, which answer the same
-within a statement, and never a call to a `VOLATILE` function. A call that reads a column of the row stays as it was.
+within a statement, and never a call to a `VOLATILE` function. A call that
+reads a column of the row stays as it was.
 
 In a policy this changes how often the function runs. These calls ran once
 for each row the policy looked at:
