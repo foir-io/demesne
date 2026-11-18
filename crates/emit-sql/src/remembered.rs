@@ -24,7 +24,7 @@ impl Sql<'_> {
 
 impl Remembered {
     pub(crate) fn holds_for(&self, argument: &str) -> String {
-        format!("current_setting({}, true) = {} AND current_setting({}, true) = {argument}", self.seen, self.claims, self.own)
+        format!("{} <> '' AND current_setting({}, true) = {} AND current_setting({}, true) = {argument}", self.claims, self.seen, self.claims, self.own)
     }
 
     pub(crate) fn keep(&self, argument: &str) -> String {

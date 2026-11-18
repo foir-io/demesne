@@ -1351,7 +1351,10 @@ exact text of the claims setting in two transaction-local settings named
 `demesne.<definers schema>.<function>.own` and `.seen`. A later call compares
 its argument and the claims setting's current text with those, and parses
 nothing. If the claims text differs in any byte, the call verifies against
-the claims again, so a remembered value never answers for other claims. The
+the claims again, so a remembered value never answers for other claims. An
+empty claims setting is never taken as the one remembered: a setting made for
+one transaction reads as empty, not unset, in the session's later
+transactions, so a call made with no claims set always verifies. The
 check costs a directly admitted row a few percent, and more as the claims
 grow, since their text is still read on each call.
 

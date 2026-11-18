@@ -491,9 +491,9 @@ fn inside_a_chain_a_bound_function_remembers_the_claim_only_while_the_claims_kee
     let own = "p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub')";
     let keyed = defs.iter().find(|d| d.name == "doc_shared_keyed").expect("the keyed edge").create_sql();
     let remembered = format!(
-        "  IF current_setting('demesne.auth.doc_shared_keyed.seen', true) = {claims} AND current_setting('demesne.auth.doc_shared_keyed.own', true) = p_principal::text THEN\n    RETURN p_principal = p_principal AND (EXISTS ("
+        "  IF {claims} <> '' AND current_setting('demesne.auth.doc_shared_keyed.seen', true) = {claims} AND current_setting('demesne.auth.doc_shared_keyed.own', true) = p_principal::text THEN\n    RETURN p_principal = p_principal AND (EXISTS ("
     );
-    assert!(keyed.contains(&remembered), "the remembered value counts only for the same claims text and the same argument:\n{keyed}");
+    assert!(keyed.contains(&remembered), "the remembered value counts only for claims that are set, with the same text, and the same argument:\n{keyed}");
     let kept = format!(
         "  IF {own} THEN\n    PERFORM set_config('demesne.auth.doc_shared_keyed.own', p_principal::text, true), set_config('demesne.auth.doc_shared_keyed.seen', coalesce({claims}, ''), true);\n  END IF;\n  RETURN {own} AND (EXISTS ("
     );
@@ -501,7 +501,7 @@ fn inside_a_chain_a_bound_function_remembers_the_claim_only_while_the_claims_kee
 
     let terms = defs.iter().find(|d| d.name == "doc_terms_hold").expect("the conditions check").create_sql();
     let verified = format!(
-        "  IF (current_setting('demesne.auth.doc_terms_hold.seen', true) = {claims} AND current_setting('demesne.auth.doc_terms_hold.own', true) = coalesce(p_values::text, '')) IS NOT TRUE THEN\n    IF NOT (p_values IS NOT DISTINCT FROM (SELECT (NULLIF({claims}, '')::json -> 'facts')::jsonb)) THEN\n      RETURN NULL;\n    END IF;\n    PERFORM set_config("
+        "  IF ({claims} <> '' AND current_setting('demesne.auth.doc_terms_hold.seen', true) = {claims} AND current_setting('demesne.auth.doc_terms_hold.own', true) = coalesce(p_values::text, '')) IS NOT TRUE THEN\n    IF NOT (p_values IS NOT DISTINCT FROM (SELECT (NULLIF({claims}, '')::json -> 'facts')::jsonb)) THEN\n      RETURN NULL;\n    END IF;\n    PERFORM set_config("
     );
     assert!(terms.contains(&verified), "{terms}");
 }

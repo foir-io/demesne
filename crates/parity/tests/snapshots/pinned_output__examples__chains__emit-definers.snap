@@ -71,7 +71,7 @@ SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 BEGIN
-  IF current_setting('demesne.auth.doc_shared_keyed.seen', true) = current_setting('request.jwt.claims', true) AND current_setting('demesne.auth.doc_shared_keyed.own', true) = p_principal::text THEN
+  IF current_setting('request.jwt.claims', true) <> '' AND current_setting('demesne.auth.doc_shared_keyed.seen', true) = current_setting('request.jwt.claims', true) AND current_setting('demesne.auth.doc_shared_keyed.own', true) = p_principal::text THEN
     RETURN p_principal = p_principal AND (EXISTS (SELECT 1 FROM doc_shares WHERE member_id = p_principal AND doc_id = p_object AND rule = p_key));
   END IF;
   IF p_principal = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') THEN
@@ -153,7 +153,7 @@ BEGIN
   IF p_object IS NULL THEN
     RETURN NULL;
   END IF;
-  IF (current_setting('demesne.auth.doc_terms_hold.seen', true) = current_setting('request.jwt.claims', true) AND current_setting('demesne.auth.doc_terms_hold.own', true) = coalesce(p_values::text, '')) IS NOT TRUE THEN
+  IF (current_setting('request.jwt.claims', true) <> '' AND current_setting('demesne.auth.doc_terms_hold.seen', true) = current_setting('request.jwt.claims', true) AND current_setting('demesne.auth.doc_terms_hold.own', true) = coalesce(p_values::text, '')) IS NOT TRUE THEN
     IF NOT (p_values IS NOT DISTINCT FROM (SELECT (NULLIF(current_setting('request.jwt.claims', true), '')::json -> 'facts')::jsonb)) THEN
       RETURN NULL;
     END IF;

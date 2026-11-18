@@ -602,7 +602,9 @@ On a spec with a chain, a helper bound to the caller (see "Breaking") does not
 parse the claims on every call. It remembers the argument it verified and the
 exact text of the claims setting, in two transaction-local settings named
 `demesne.<definers schema>.<function>.own` and `.seen`, and verifies again
-whenever the claims text differs. A `via conditions` check does the same on
+whenever the claims text differs or is empty. A transaction-local setting reads
+as empty in the session's later transactions, so an empty claims text is never
+taken as the one remembered. A `via conditions` check does the same on
 every spec. A generated function that already passes the caller's own claim
 calls `<function>_inside`, a copy with no check that PUBLIC cannot run, so a
 hop pays nothing for the binding. The copy is `SECURITY INVOKER`: it runs as

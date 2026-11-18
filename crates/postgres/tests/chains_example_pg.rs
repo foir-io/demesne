@@ -203,3 +203,31 @@ fn a_remembered_claim_does_not_outlive_the_claims_it_was_verified_against() {
     }
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
 }
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_remembered_claim_does_not_carry_into_a_later_transaction_of_the_same_session() {
+    let mut db = connect();
+    let _installed = install(&mut db);
+    db.batch_execute("INSERT INTO doc_shares VALUES ('', 'd_own', 'read.share')").expect("a share held by an empty principal");
+    let mut tx = db.transaction().expect("the first transaction");
+    tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    assert_eq!(asked(&mut tx, ANN, "doc_shared_keyed('ann', 'd_own', 'read.share')"), Some(true), "ann asks about herself, and her claim is remembered");
+    tx.commit().expect("commit");
+
+    let mut tx = db.transaction().expect("a later transaction on the same connection");
+    tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
+    let settings = ["request.jwt.claims".to_string(), format!("demesne.{AUTH}.doc_shared_keyed.seen"), format!("demesne.{AUTH}.doc_shared_keyed.own")];
+    for name in &settings {
+        let length: Option<i32> = tx.query_one("SELECT length(current_setting($1, true))", &[name]).expect("the setting").get(0);
+        assert_eq!(length, Some(0), "{name} was set only for the first transaction, so it now reads as empty");
+    }
+    let unclaimed = tx
+        .query_one(&format!("SELECT {AUTH}.doc_shared_keyed('', 'd_own', 'read.share')"), &[])
+        .map(|r| r.get::<_, Option<bool>>(0))
+        .map_err(|e| e.code().cloned());
+    assert_eq!(unclaimed, Ok(None), "with no claims set, the empty settings left behind are not a remembered caller, so the empty principal is not admitted");
+    assert_eq!(asked(&mut tx, ANN, "doc_shared_keyed('ann', 'd_own', 'read.share')"), Some(true), "and ann, claimed again, is judged afresh");
+    tx.rollback().expect("rollback");
+    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
+}
