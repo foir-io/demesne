@@ -6,15 +6,18 @@ The crates are 5.0.0 because public types of `demesne-syntax`,
 `demesne-model` and `demesne-emit-sql` gain fields and variants, named under
 each change, and `demesne_emit_sql::Sql` gains private fields, so it is built
 with `Sql::new`. A spec that uses none of the constructs below emits the
-policies v4.0.0 did, with six exceptions: the first two under "Fixed"; a
+policies v4.0.0 did, with seven exceptions: the first two under "Fixed"; a
 `via memberin` relation that takes both its principal and its scope from the
 row, which is refused (the first "Breaking" entry); a permission whose terms a
 grant's holder used to pass (the second "Breaking" entry); a call to a
 generated function whose arguments are the same for every row, which now runs
-once per statement; and a group or closure relation of a
+once per statement; a group or closure relation of a
 subject other than the owner, or an `@session` over a relation judged by
 several calls, which is refused until the spec says what it admits (the third
-"Breaking" entry). Its generated functions change: see "Breaking" first. The
+"Breaking" entry); and a rule that asks about the admin in a spec where no
+subject binds admin and none is identified by `sub`, which is refused (the
+fourth "Breaking" entry). Its generated functions change: see "Breaking"
+first. The
 Go module's API doesn't change, so it is `go/v1.6.0`.
 
 ### Security: a temporary table could stand in for a table a generated function reads
@@ -404,6 +407,25 @@ at the bound parameter, a claim that function binds. A live test admits staff
 through a team, a materialized crew and a closure that say `from claim sub` on
 a customer's objects, admits a customer through a group whose closure a staff
 relation shares, and refuses staff whose credential also carries a customer.
+
+### Breaking: a rule that asks about the admin needs a subject that declares the admin's claim
+
+A role relation (`via role`), a role walk (`tenant->owner`), `@holds`,
+`@session` over a role relation, a `memberin … reachedby`, `@self` and
+`selfcheck` ask about the admin: they pass the claim of the subject that
+`binds admin`. With no such subject they passed `sub`, whether or not any
+subject is identified by it. In a spec where no subject binds admin and none
+is identified by `sub`, such a rule asked about a claim nothing declares. It
+refused every caller whose credential lacks `sub`, and asked about whatever
+`sub` held for a caller whose credential carries one.
+
+Validation now refuses each of those constructs in such a spec, naming the
+construct and the remedy: add `binds admin` to the subject it asks about. A
+spec with a subject that binds admin, or one identified by `sub`, compiles as
+before and emits the same policies. A `@holds` in a permission only the
+decision point answers reads no such claim and is not refused. A validation
+test refuses each construct in such a spec, and accepts each once a subject
+binds admin or is identified by `sub`.
 
 ### `some`: one element of an array column, and what must hold for it
 

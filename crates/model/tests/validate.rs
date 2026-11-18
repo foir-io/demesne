@@ -162,6 +162,68 @@ fn rules_on_memberin_relations() {
     ]);
 }
 
+const UNDECLARED: &str = "identifies staff_id; roles configurable app";
+
+fn asking(admin: &str, relations: &str, permission: &str) -> Vec<String> {
+    with(|b| {
+        b.replace(
+            "subject admin  { anchor tenant; reach descendants; identifies sub; roles configurable app; binds admin }",
+            &format!("subject admin  {{ anchor tenant; reach descendants; {admin} }}"),
+        )
+        .replace("vocabulary app { permission docs:read }", "vocabulary app {\n  permission docs:read\n  preset reader @ project = docs:read\n}")
+        .replace("  rolejoin    role_id roles id key\n", "  rolejoin    role_id roles id key\n  permissions permissions\n")
+        .replace("  relation owner:   member via owner_id\n", &format!("  relation owner:   member via owner_id\n{relations}"))
+        .replace(
+            "  permission view = owner + grantee:read @rls maps select\n",
+            &format!("  permission view = owner + grantee:read @rls maps select\n  {permission}\n"),
+        ) + "\nobject project {\n  table projects\n  pk    id\n  level project\n  scoped tenant > project\n}\n"
+    })
+}
+
+#[test]
+fn a_construct_that_asks_the_admin_identity_needs_a_subject_that_declares_it() {
+    let refusal = "asks about the admin's identity, but no subject binds admin and none is identified by sub, so it would read the claim sub, which no subject declares; add `binds admin` to the subject it asks about";
+    let staff = "  relation staff: admin via role\n";
+    let cases = [
+        ("a role relation", staff, "permission edit = staff @rls maps update", "permission doc.edit term `staff`"),
+        ("a role relation through @session", staff, "permission edit = owner + @session(staff) @rls maps update", "permission doc.edit term `@session(staff)`"),
+        (
+            "a role walk",
+            "  relation tenant: tenant via tenant_id\n",
+            "permission edit = tenant->owner @rls maps update",
+            "permission doc.edit term `tenant->owner`",
+        ),
+        ("@holds", "", "permission edit = @holds(docs:read) @rls maps update", "permission doc.edit term `@holds("),
+        ("@holds every", "", "permission edit = @holds(docs:read every project_ids at project) @rls maps update", "permission doc.edit term `@holds("),
+        ("@self", "", "permission edit = @self(owner_id) @rls maps update", "permission doc.edit term `@self(owner_id)`"),
+        ("a self check", "", "permission create = owner @rls maps insert selfcheck owner_id", "permission doc.create `selfcheck owner_id`"),
+        (
+            "a memberin reached by a member",
+            "  relation crew: member via memberin tenant(@member_id, tenant_id) reachedby member\n",
+            "permission edit = crew @rls maps update",
+            "permission doc.edit term `crew`",
+        ),
+        (
+            "a requirement",
+            "",
+            "permission edit = owner @rls maps update\n  require edit = @self(owner_id)",
+            "object \"doc\" require \"edit\" term `@self(owner_id)`",
+        ),
+    ];
+    for (name, relations, permission, construct) in cases {
+        let found = asking(UNDECLARED, relations, permission);
+        assert!(found.iter().any(|m| m.contains(construct) && m.contains(refusal)), "{name}: expected {construct:?} refused: {found:#?}");
+        for (admin, why) in [
+            ("identifies staff_id; roles configurable app; binds admin", "a subject binds admin"),
+            ("identifies sub; roles configurable app", "a subject is identified by sub"),
+        ] {
+            assert_eq!(asking(admin, relations, permission), [] as [String; 0], "{name}, where {why}");
+        }
+    }
+    let unasked = asking(UNDECLARED, "", "permission publish = @holds(docs:read) @pdp");
+    assert!(!has(&unasked, "asks about the admin's identity"), "a decision-point check and an owner's rule read no claim for the admin: {unasked:#?}");
+}
+
 #[test]
 fn rules_on_requirements_and_admit_arms() {
     check(vec![

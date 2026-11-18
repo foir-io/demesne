@@ -14,7 +14,7 @@ subject member {
   reach  self
   identifies member_ref
   roles  none
-  binds  owner
+  binds  admin
 }
 ";
 

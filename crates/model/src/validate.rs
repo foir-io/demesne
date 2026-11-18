@@ -70,6 +70,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
         errs.extend(validate_subject(s, sub, &level_names, &vocab_names));
     }
     errs.extend(check_plane_bindings(s));
+    errs.extend(check_admin_identity(s));
     errs.extend(check_role_store_planes(s, &chain));
     if let Err(e) = s.claims_contract() {
         errs.extend(e.into_findings());
@@ -293,6 +294,66 @@ fn check_plane_bindings(s: &Spec) -> Vec<Finding> {
         }
     }
     errs
+}
+
+fn check_admin_identity(s: &Spec) -> Vec<Finding> {
+    if s.subjects.iter().any(|sub| sub.binds() == "admin" || sub.identifies() == "sub") {
+        return Vec::new();
+    }
+    let refuse = |line: usize, what: String| {
+        Finding::at(
+            line,
+            format!(
+                "{what} asks about the admin's identity, but no subject binds admin and none is identified by sub, so it would read the claim sub, which no subject declares; add `binds admin` to the subject it asks about"
+            ),
+        )
+    };
+    let mut errs = Vec::new();
+    for o in &s.objects {
+        let asks = |t: &&Term| asks_admin_identity(o, t);
+        let paths = o.relations.iter().filter_map(|r| match &r.repr {
+            Repr::Composition(ViaComposition { path: Some(p), .. }) => Some((r, p)),
+            _ => None,
+        });
+        for (r, p) in paths {
+            for t in p.along.leaves_deep().into_iter().filter(asks) {
+                errs.push(refuse(r.pos.line, format!("object {} relation {} path term `{}`", quote(&o.name), quote(&r.name), t.display())));
+            }
+        }
+        for pm in &o.perms {
+            if let Some(col) = &pm.self_check {
+                errs.push(refuse(pm.pos.line, format!("permission {}.{} `selfcheck {col}`", o.name, pm.verb)));
+            }
+            if !(pm.has_layer("rls") || pm.has_layer("check")) {
+                continue;
+            }
+            for t in pm.tree.leaves_deep().into_iter().filter(asks) {
+                errs.push(refuse(pm.pos.line, format!("permission {}.{} term `{}`", o.name, pm.verb, t.display())));
+            }
+        }
+        for rq in &o.requires {
+            for t in rq.tree.leaves_deep().into_iter().filter(asks) {
+                errs.push(refuse(rq.pos.line, format!("object {} require {} term `{}`", quote(&o.name), quote(&rq.verb), t.display())));
+            }
+        }
+    }
+    errs
+}
+
+fn asks_admin_identity(o: &Object, t: &Term) -> bool {
+    if !t.walk_verb().is_empty() || t.holds_every().is_some() || matches!(t.builtin(), "holds" | "holds_every" | "self") {
+        return true;
+    }
+    let name = match t.builtin() {
+        "session" => t.session_rel(),
+        "" => t.ident(),
+        _ => return false,
+    };
+    o.relations.iter().find(|r| r.name == name).is_some_and(|r| match &r.repr {
+        Repr::Role => true,
+        Repr::MemberIn(mi) => mi.reached_by,
+        _ => false,
+    })
 }
 
 fn check_role_store_planes(s: &Spec, chain: &[&Level]) -> Vec<Finding> {

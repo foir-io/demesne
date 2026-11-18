@@ -234,6 +234,14 @@ object record {
 }
 ```
 
+The subject that `binds admin` is the one a rule asks about when it checks a
+role. A role relation (`via role`), a role walk (`tenant->owner`), `@holds`,
+`@session` over a role relation, a `memberin … reachedby`, `@self` and
+`selfcheck` all pass that subject's claim. Validation refuses them in a spec
+where no subject binds admin and none is identified by `sub`, since they would
+read `sub`, a claim nothing declares. Add `binds admin` to the subject they ask
+about.
+
 Permission expressions are a boolean algebra over the grant terms: union (`a + b`
 / `a or b`), intersection (`a and b`), exclusion/negation (`a and not b`), and
 parentheses, with precedence union < intersection < `not`. So `viewer and member`,
