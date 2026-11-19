@@ -11,6 +11,15 @@ exit: 0
     "auth.notes_accessors_conditional(text)",
     "auth.notes_admits(text, jsonb)"
   ],
+  "callable": [],
+  "grantable": [
+    "auth.notes_accessors_conditional(text)",
+    "auth.notes_admits(text, jsonb)"
+  ],
+  "internal": [
+    "auth.note_acl_grants(text, text, text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.notes",
@@ -22,6 +31,53 @@ exit: 0
   "tables": [],
   "rls": [
     "public.notes"
+  ],
+  "heads": [
+    {
+      "function": "auth.note_acl_grants(text, text, text)",
+      "parameters": "p_member_id text, p_note_id text, p_access text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.notes",
+          "name": "notes_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.notes_accessors_conditional(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])",
+      "policies": []
+    },
+    {
+      "function": "auth.notes_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.note_acl_grants(text, text, text)",
+      "digest": "71b069ffddc8b22219e43195110fc0ad7dff11a038824b17dbd10de1604deec5"
+    },
+    {
+      "object": "function auth.notes_accessors_conditional(text)",
+      "digest": "c5a0598b038c5b9faec7a945a07a25701bbeefd44b508cdc01f8a224099b2182"
+    },
+    {
+      "object": "function auth.notes_admits(text, jsonb)",
+      "digest": "3b659d92173891508d03659b6c9cd5e2b2ba54884296e394d8f078148f36136a"
+    },
+    {
+      "object": "policy notes_select on public.notes",
+      "digest": "aa441e474f5c7b017d14b5d9a002a7ff4f293788e500e9aa93f55983b8ce083c"
+    },
+    {
+      "object": "rls public.notes",
+      "digest": "d8dc01b58dded4571bda73f3e8f14aa31923cbe1c2a9c67feabd8b8edb197340"
+    }
   ]
 }
 

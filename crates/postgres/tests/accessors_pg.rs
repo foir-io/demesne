@@ -186,7 +186,7 @@ fn install(db: &mut Client) {
     db.batch_execute(
         "DROP SCHEMA IF EXISTS d36_rows CASCADE; DROP SCHEMA IF EXISTS d36_auth CASCADE;
          CREATE SCHEMA d36_rows; CREATE SCHEMA d36_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'd36_caller') THEN CREATE ROLE d36_caller NOLOGIN; END IF; END $$;",
+         DO $$ BEGIN CREATE ROLE d36_caller NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;",
     )
     .expect("fresh schemas");
     db.batch_execute(&format!("SET search_path = d36_rows; {TABLES} RESET search_path;")).expect("tables and rows");
@@ -195,8 +195,7 @@ fn install(db: &mut Client) {
     }
     db.batch_execute(
         "GRANT USAGE ON SCHEMA d36_rows, d36_auth TO d36_caller;
-         GRANT SELECT ON ALL TABLES IN SCHEMA d36_rows TO d36_caller;
-         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA d36_auth TO d36_caller;",
+         GRANT SELECT ON ALL TABLES IN SCHEMA d36_rows TO d36_caller;",
     )
     .expect("grants");
 }

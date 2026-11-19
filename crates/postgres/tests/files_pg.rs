@@ -1,5 +1,5 @@
 use demesne_emit_sql::{Sql, file_sql, validate_files};
-use demesne_postgres::drift;
+use demesne_postgres::{Grantees, drift};
 use postgres::{Client, NoTls};
 
 const SCHEMAS: &str = "definers schema \"multi_auth\"\ntables schema \"multi_rows\"\n";
@@ -39,19 +39,19 @@ fn each_file_applied_in_order_leaves_the_database_its_prefix_describes() {
     let mut db = connect();
     db.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS multi_rows CASCADE; DROP SCHEMA IF EXISTS multi_auth CASCADE; CREATE SCHEMA multi_rows; CREATE SCHEMA multi_auth;
-         DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$;
+         DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
          SET search_path = multi_rows; {TABLES} RESET search_path;"
     ))
     .expect("fresh schemas");
     for k in 0..files.len() {
         let sql = file_sql(&files, k).expect("the file emits");
         db.batch_execute(&sql).unwrap_or_else(|e| panic!("apply {}: {e}\n{sql}", files.names()[k]));
-        let d = drift(&mut db, &all_sql(files.prefix(k)), &[]).expect("diff runs");
+        let d = drift(&mut db, &all_sql(files.prefix(k)), &[], &Grantees::default()).expect("diff runs");
         let found: Vec<String> = d.findings.iter().map(|f| format!("{} {} — {}", f.kind.label(), f.object, f.detail)).collect();
         assert!(found.is_empty(), "after {}, the database differs from its prefix:\n{}", files.names()[k], found.join("\n"));
     }
     let manage: String = db.query_one("SELECT pg_get_functiondef('multi_auth.acl_manage(text, text)'::regprocedure)", &[]).expect("the function exists").get(0);
-    assert!(manage.contains("WHEN 'note' THEN multi_auth.note_can_edit(p_id)"), "{manage}");
+    assert!(manage.contains("WHEN 'note' THEN (SELECT multi_auth.note_can_edit(p_id))"), "{manage}");
     let gone: Option<String> = db.query_one("SELECT to_regproc('multi_auth.doc_readable')::text", &[]).expect("the lookup runs").get(0);
     assert_eq!(gone, None);
 }

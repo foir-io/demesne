@@ -93,7 +93,20 @@ fn replay(state: &mut BTreeMap<Object, String>, sql: &str) {
     }
 }
 
+fn without_guards(sql: &str) -> String {
+    let mut out = String::new();
+    let mut rest = sql;
+    while let Some(at) = rest.find("DO $demesne$ BEGIN") {
+        out.push_str(&rest[..at]);
+        let end = rest[at..].find("END $demesne$;").map_or(rest.len(), |e| at + e + "END $demesne$;".len());
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn called_before_created(sql: &str) -> Vec<String> {
+    let sql = &without_guards(sql);
     let mut early = Vec::new();
     for (o, _) in objects(sql).expect("the SQL has a manifest") {
         let Object::Function(sig) = o else { continue };

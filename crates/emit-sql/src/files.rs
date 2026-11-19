@@ -57,8 +57,10 @@ pub fn file_sql(files: &SpecFiles, k: usize) -> Result<String, Error> {
     let current = all_sql(files.prefix(k))?;
     let Some(before) = k.checked_sub(1) else { return Ok(current) };
     let previous = all_sql(files.prefix(before))?;
-    let mut b = changed_units(&current, &previous)?;
-    b.push_str(&manifest_of(&current)?.drops_since(&manifest_of(&previous)?));
+    let (now, then) = (manifest_of(&current)?, manifest_of(&previous)?);
+    let mut b = now.renamed_since(&then);
+    b.push_str(&changed_units(&current, &previous)?);
+    b.push_str(&now.drops_since(&then));
     Ok(b)
 }
 
@@ -78,8 +80,10 @@ pub fn file_migration(files: &SpecFiles, k: usize, previous: &Manifest) -> Resul
     let Some(before) = k.checked_sub(1) else { return Sql::new(files.prefix(0)).migration(previous) };
     let current = all_sql(files.prefix(k))?;
     let earlier = all_sql(files.prefix(before))?;
-    let mut b = changed_units(&current, &earlier)?;
-    b.push_str(&manifest_of(&current)?.drops_since(&previous.clone().union(&manifest_of(&earlier)?)));
+    let (now, then) = (manifest_of(&current)?, previous.clone().union(&manifest_of(&earlier)?));
+    let mut b = now.renamed_since(&then);
+    b.push_str(&changed_units(&current, &earlier)?);
+    b.push_str(&now.drops_since(&then));
     Ok(b)
 }
 

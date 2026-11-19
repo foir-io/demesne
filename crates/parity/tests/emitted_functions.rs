@@ -1,0 +1,299 @@
+use demesne_emit_sql::{ExecuteLists, Object, Sql, objects};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+fn specs(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            specs(&path, out);
+        } else if path.extension().is_some_and(|x| x == "demesne") {
+            out.push(path);
+        }
+    }
+}
+
+fn body(stmt: &str) -> &str {
+    stmt.find("AS $").map_or(stmt, |at| &stmt[at..])
+}
+
+fn kept_because(o: &Object, sig: &str, stmts: &[(Object, String)], lists: &ExecuteLists, surface: &str) -> Option<&'static str> {
+    if lists.callable.contains(sig) {
+        return Some("callable");
+    }
+    if lists.grantable.contains(sig) {
+        return Some("grantable");
+    }
+    let call = format!("{}(", sig.split('(').next().unwrap_or_default());
+    let by = |kind: fn(&Object) -> bool| stmts.iter().any(|(other, text)| kind(other) && other != o && body(text).contains(&call));
+    if by(|x| matches!(x, Object::Policy { .. })) {
+        Some("a policy")
+    } else if by(|x| matches!(x, Object::Trigger { .. })) {
+        Some("a trigger")
+    } else if by(|x| matches!(x, Object::Function(_))) {
+        Some("a function")
+    } else {
+        surface.contains(&call).then_some("a generated check")
+    }
+}
+
+#[test]
+fn every_emitted_function_is_callable_grantable_or_called_by_what_the_spec_emits() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut paths = Vec::new();
+    specs(&root.join("examples"), &mut paths);
+    specs(&root.join("testdata"), &mut paths);
+    paths.sort();
+    let (mut wrong, mut reasons, mut specs_read) = (Vec::new(), BTreeMap::<&str, usize>::new(), 0);
+    for path in &paths {
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        let Ok(s) = demesne_syntax::parse(&src) else { continue };
+        if demesne_emit_sql::validate(&s).is_err() {
+            continue;
+        }
+        let sql = Sql::new(&s);
+        let mut b = String::new();
+        if sql.write_all_sql(&mut b).is_err() {
+            continue;
+        }
+        specs_read += 1;
+        let at = path.display();
+        let lists = sql.manifest().unwrap_or_else(|e| panic!("{at}: {e}")).execute.expect("the manifest records who may run each function");
+        let stmts = objects(&b).unwrap_or_else(|e| panic!("{at}: {e}"));
+        let surface = [demesne_emit_ts::emit_framework_ts(&s), demesne_emit_ts::emit_ts(&s)].map(Result::unwrap_or_default).concat();
+        for (o, _) in &stmts {
+            let Object::Function(sig) = o else { continue };
+            match kept_because(o, sig, &stmts, &lists, &surface) {
+                Some(reason) => *reasons.entry(reason).or_default() += 1,
+                None => wrong.push(format!("{at}: {sig} is not callable or grantable, and nothing the spec emits calls it")),
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{} functions:\n{}", wrong.len(), wrong.join("\n"));
+    assert!(specs_read > 150, "only {specs_read} specs emitted");
+    for reason in ["callable", "grantable", "a policy", "a trigger", "a function", "a generated check"] {
+        assert!(reasons.get(reason).copied().unwrap_or_default() > 0, "no function is kept as {reason}: {reasons:?}");
+    }
+}
+
+fn head(stmt: &str) -> Option<(String, String, String)> {
+    let rest = stmt.strip_prefix("CREATE OR REPLACE FUNCTION ")?;
+    let open = rest.find('(')?;
+    let close = rest.find(")\nRETURNS ")?;
+    let params: Vec<(&str, &str)> = rest[open + 1..close].split(", ").filter(|p| !p.is_empty()).map(|p| p.split_once(' ').unwrap_or((p, ""))).collect();
+    let types: Vec<&str> = params.iter().map(|(_, t)| *t).collect();
+    let shape: Vec<String> = params.iter().map(|(name, t)| format!("{} {t}", from_the_spec(name))).collect();
+    let returns = rest[close + ")\nRETURNS ".len()..].lines().next()?.to_string();
+    Some((format!("{}({})", &rest[..open], types.join(", ")), shape.join(", "), returns))
+}
+
+fn from_the_spec(name: &str) -> String {
+    for (start, end) in [("p_", "_id"), ("check_", "_id")] {
+        if name.len() > start.len() + end.len() && name.starts_with(start) && name.ends_with(end) {
+            return format!("{start}<name>{end}");
+        }
+    }
+    name.to_string()
+}
+
+#[test]
+fn a_function_the_corpus_names_twice_has_parameters_of_one_shape_and_one_return_type() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut paths = Vec::new();
+    specs(&root.join("examples"), &mut paths);
+    specs(&root.join("testdata"), &mut paths);
+    paths.sort();
+    let mut seen: BTreeMap<String, BTreeMap<(String, String), String>> = BTreeMap::new();
+    for path in &paths {
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        let Ok(s) = demesne_syntax::parse(&src) else { continue };
+        if demesne_emit_sql::validate(&s).is_err() {
+            continue;
+        }
+        let mut b = String::new();
+        if Sql::new(&s).write_all_sql(&mut b).is_err() {
+            continue;
+        }
+        for (o, stmt) in objects(&b).unwrap_or_else(|e| panic!("{}: {e}", path.display())) {
+            let (Object::Function(_), Some((identity, params, returns))) = (&o, head(&stmt)) else { continue };
+            seen.entry(format!("{identity} on {} ids", s.id_type())).or_default().entry((params, returns)).or_insert_with(|| path.display().to_string());
+        }
+    }
+    let clashes: Vec<String> = seen
+        .iter()
+        .filter(|(_, forms)| forms.len() > 1)
+        .map(|(identity, forms)| format!("{identity}: {}", forms.iter().map(|((p, r), at)| format!("({p}) -> {r} [{at}]")).collect::<Vec<_>>().join(" | ")))
+        .collect();
+    assert!(seen.len() > 150, "only {} functions", seen.len());
+    assert!(clashes.is_empty(), "two generators make one function with parameters of different shapes:\n{}", clashes.join("\n"));
+}
+
+fn looks_like_an_id(param: &str) -> bool {
+    ["user_id", "p_principal", "p_object", "p_node", "p_resource", "p_group", "p_member", "p_ancestor", "p_descendant", "p_record", "p_container"]
+        .contains(&param)
+        || (param.ends_with("_id") && (param.starts_with("p_") || param.starts_with("check_")))
+}
+
+fn header(stmt: &str) -> Option<Vec<(&str, &str)>> {
+    let open = stmt.find('(')?;
+    let close = stmt.find(")\nRETURNS ")?;
+    Some(stmt[open + 1..close].split(", ").filter_map(|p| p.split_once(' ')).collect())
+}
+
+#[test]
+fn every_id_a_generator_declares_takes_the_specs_type_and_no_other_parameter_names_an_id() {
+    use demesne_emit_sql::ParamKind;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut paths = Vec::new();
+    specs(&root.join("examples"), &mut paths);
+    specs(&root.join("testdata"), &mut paths);
+    paths.sort();
+    let (mut wrong, mut declared_ids, mut typed) = (BTreeMap::<String, String>::new(), 0, 0);
+    for path in &paths {
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        let Ok(s) = demesne_syntax::parse(&src) else { continue };
+        if demesne_emit_sql::validate(&s).is_err() {
+            continue;
+        }
+        let sql = Sql::new(&s);
+        let mut b = String::new();
+        let (Ok(()), Ok(defs)) = (sql.write_all_sql(&mut b), sql.emit_definers()) else { continue };
+        let id_type = s.id_type().to_string();
+        let kinds: BTreeMap<String, &[demesne_emit_sql::Param]> = defs.iter().map(|f| (format!("{}.{}", f.schema(), f.name), f.params.as_slice())).collect();
+        let spec_lines: std::collections::BTreeSet<&str> = s
+            .objects
+            .iter()
+            .flat_map(|o| {
+                o.exports
+                    .iter()
+                    .map(|e| e.name.as_str())
+                    .chain(o.probes.iter().map(|p| p.name.as_str()))
+                    .chain(o.projections.iter().map(|p| p.name.as_str()))
+                    .chain(o.point_checks.iter().map(|c| c.name.as_str()))
+            })
+            .collect();
+        let at = path.display();
+        for (o, stmt) in objects(&b).unwrap_or_else(|e| panic!("{at}: {e}")) {
+            let (Object::Function(sig), Some(params)) = (&o, header(&stmt)) else { continue };
+            let function = sig.split('(').next().unwrap_or_default();
+            if spec_lines.contains(function.rsplit('.').next().unwrap_or_default()) {
+                continue;
+            }
+            let declared = kinds.get(function);
+            for (name, ty) in params {
+                let kind = declared.and_then(|ps| ps.iter().find(|p| p.name == name)).map(|p| &p.kind);
+                let id = matches!(kind, Some(ParamKind::Id | ParamKind::Ids));
+                declared_ids += usize::from(id);
+                typed += usize::from(id && id_type != "text");
+                let want = match kind {
+                    Some(ParamKind::Ids) => Some(format!("{id_type}[]")),
+                    Some(ParamKind::Id) => Some(id_type.clone()),
+                    None if looks_like_an_id(name) => Some(id_type.clone()),
+                    _ => None,
+                };
+                let mistyped = want.filter(|want| ty != want).map(|want| format!("is {ty}, wants {want} [{at}]"));
+                let undeclared = (declared.is_some() && looks_like_an_id(name) && !id).then(|| format!("names an id and is declared {kind:?} [{at}]"));
+                wrong.extend(mistyped.or(undeclared).map(|issue| (format!("{function}({name})"), issue)));
+            }
+        }
+    }
+    assert!(declared_ids > 500 && typed > 20, "{declared_ids} ids declared, {typed} on a spec whose identifiers are not text");
+    assert!(wrong.is_empty(), "{} parameters:\n{}", wrong.len(), wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"));
+}
+
+#[test]
+fn every_emitted_function_searches_pg_temp_last() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut paths = Vec::new();
+    specs(&root.join("examples"), &mut paths);
+    specs(&root.join("testdata"), &mut paths);
+    paths.sort();
+    let (mut checked, mut wrong) = (0, BTreeMap::<String, String>::new());
+    for path in &paths {
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        let Ok(s) = demesne_syntax::parse(&src) else { continue };
+        if demesne_emit_sql::validate(&s).is_err() {
+            continue;
+        }
+        let mut b = String::new();
+        if Sql::new(&s).write_all_sql(&mut b).is_err() {
+            continue;
+        }
+        let at = path.display();
+        for (o, stmt) in objects(&b).unwrap_or_else(|e| panic!("{at}: {e}")) {
+            let Object::Function(sig) = &o else { continue };
+            checked += 1;
+            let paths: Vec<&str> = stmt.lines().filter_map(|line| line.split_once("SET search_path = ").map(|(_, path)| path.trim())).collect();
+            let entries: Vec<&str> = paths.first().map(|p| p.split(", ").collect()).unwrap_or_default();
+            if paths.len() != 1 || entries.last() != Some(&"pg_temp") || entries.iter().filter(|e| **e == "pg_temp").count() != 1 {
+                wrong.entry(sig.clone()).or_insert_with(|| format!("sets {paths:?} [{at}]"));
+            }
+        }
+    }
+    assert!(checked > 600, "{checked} functions checked");
+    assert!(wrong.is_empty(), "{} functions:\n{}", wrong.len(), wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"));
+}
+
+fn claim_key(arg: &str) -> Option<&str> {
+    arg.split_once("->> '").and_then(|(_, rest)| rest.split_once('\'')).map(|(key, _)| key)
+}
+
+fn calls<'a>(sql: &'a str, function: &str) -> Vec<Vec<&'a str>> {
+    let mut out = Vec::new();
+    for (at, _) in sql.match_indices(&format!("{function}(")) {
+        let rest = &sql[at + function.len() + 1..];
+        let (mut depth, mut start, mut args) = (0usize, 0usize, Vec::new());
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' if depth == 0 => {
+                    args.push(rest[start..i].trim());
+                    break;
+                }
+                ')' => depth -= 1,
+                ',' if depth == 0 => {
+                    args.push(rest[start..i].trim());
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        out.push(args);
+    }
+    out
+}
+
+#[test]
+fn every_call_passes_a_caller_bound_function_a_claim_it_binds() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut paths = Vec::new();
+    specs(&root.join("examples"), &mut paths);
+    specs(&root.join("testdata"), &mut paths);
+    paths.sort();
+    let (mut checked, mut wrong) = (0, BTreeMap::<String, String>::new());
+    for path in &paths {
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        let Ok(s) = demesne_syntax::parse(&src) else { continue };
+        if demesne_emit_sql::validate(&s).is_err() {
+            continue;
+        }
+        let sql = Sql::new(&s);
+        let mut b = String::new();
+        let (Ok(()), Ok(defs)) = (sql.write_all_sql(&mut b), sql.emit_definers()) else { continue };
+        let at = path.display();
+        for f in defs.iter().filter(|f| !f.principal_claims.is_empty()) {
+            let Some(bound) = f.params.iter().position(|p| f.principal.as_deref() == Some(p.name.as_str())) else { continue };
+            let function = format!("{}.{}", f.schema(), f.name);
+            let passed: Vec<&str> = calls(&b, &function).iter().filter_map(|args| args.get(bound).and_then(|arg| claim_key(arg))).collect();
+            checked += passed.len();
+            let strays = passed.into_iter().filter(|key| !f.principal_claims.iter().any(|claim| claim == key));
+            for key in strays {
+                wrong
+                    .entry(format!("{function}({})", f.params[bound].name))
+                    .or_insert_with(|| format!("passed claim {key}, binds {:?} [{at}]", f.principal_claims));
+            }
+        }
+    }
+    assert!(checked > 300, "{checked} calls checked");
+    assert!(wrong.is_empty(), "{} functions:\n{}", wrong.len(), wrong.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"));
+}

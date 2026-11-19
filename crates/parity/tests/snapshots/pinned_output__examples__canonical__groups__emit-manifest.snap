@@ -10,6 +10,13 @@ exit: 0
     "auth.group_closure_member(text, text)",
     "auth.group_closure_rebuild()"
   ],
+  "callable": [],
+  "grantable": [],
+  "internal": [
+    "auth.group_closure_member(text, text)",
+    "auth.group_closure_rebuild()"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.docs",
@@ -26,6 +33,47 @@ exit: 0
   "tables": [],
   "rls": [
     "public.docs"
+  ],
+  "heads": [
+    {
+      "function": "auth.group_closure_member(text, text)",
+      "parameters": "p_group text, p_member text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.group_closure_rebuild()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.group_closure_member(text, text)",
+      "digest": "7fa564d5e898caf7a46a9b0159c046359567d8f3ff331a5545592f291f46ca13"
+    },
+    {
+      "object": "function auth.group_closure_rebuild()",
+      "digest": "f6624b9bac62ba162622a98442ae0916978a40fe51a220158191977a8cafc224"
+    },
+    {
+      "object": "policy docs_select on public.docs",
+      "digest": "c90cbe85213d9885063500bcfd0c3be26d531d0d1b7136b30ebbeb154606a4f0"
+    },
+    {
+      "object": "rls public.docs",
+      "digest": "7cb507caa91f74539002e69c1d224ad6fcf0947645ce4bdefc4a76512ff741ce"
+    },
+    {
+      "object": "trigger group_closure_rebuild on public.group_memberships",
+      "digest": "582a4385242c8b3a5976de71a171e5d3e7fd5a28f1c532d8d27e2c43f712ddce"
+    }
   ]
 }
 

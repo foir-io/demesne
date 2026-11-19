@@ -46,11 +46,53 @@ where the request roles already have access.
 
 ```sh
 demesne emit app.demesne all > authz.sql
+demesne emit app.demesne manifest > authz.manifest.json
 # apply authz.sql via a migration (definers in your `demesne` schema + ENABLE/FORCE RLS
-# + the policies). Grant the request role what it needs:
+# + the policies). Grant the request role the schema, and EXECUTE on only the functions
+# the manifest lists under "callable", one grant per entry:
 #   grant usage on schema demesne to authenticated;
-#   grant execute on all functions in schema demesne to authenticated;
+#   grant execute on function demesne.<name>(<argument types>) to authenticated;
 ```
+
+Never `grant execute on all functions in schema demesne`, and never set default privileges
+that grant `EXECUTE` on the schema's functions to `anon` or `authenticated`. Either hands
+a request role the functions the SQL revokes from PUBLIC: the manifest's `revoked` list,
+which only the generated functions call (its `_inside` copies have no check of their own),
+and its `grantable` list, which answer for any id they are given. Grant a `grantable`
+function only to a server-side role you trust, such as a worker's. The functions the
+policies run are executable by PUBLIC already and need no grant, so a spec whose
+`callable` list is empty needs only the schema grant. The SQL revokes each revoked
+function from `authenticated` as well as from PUBLIC, but a grant to another role, `anon`
+among them, stays until you revoke it.
+
+#### Upgrading from a version before 5.0.0
+
+Earlier versions of this guide said to grant `EXECUTE` on every function in the schema.
+After upgrading, take that grant and any matching default privileges back, then let
+`demesne diff` confirm nothing is left:
+
+```sql
+revoke execute on all functions in schema demesne from anon, authenticated;
+alter default privileges in schema demesne revoke execute on functions from anon, authenticated;
+-- then grant what the manifest lists under "callable", one grant per entry, as above
+```
+
+```sh
+demesne diff app.demesne "$DATABASE_URL"
+```
+
+`diff` reports each role other than the owner that may still run a revoked or grantable
+function, and each default privilege that would grant one, as `GRANTED`, with the
+statement that takes it back. A role you granted the `grantable` functions to on purpose,
+such as your worker's, holds them by design: name it with `--grantee <role>`, once for
+each such role, and `diff` accepts its grants of those functions. It still reports that
+role's grant of a revoked function and every default privilege. Run the statements it
+prints for what is left. On a setup that follows this guide it then reports nothing, so
+`demesne diff app.demesne "$DATABASE_URL" --grantee <role> --exit-code` passes in CI.
+`--grantee PUBLIC` is refused, since PUBLIC holds exactly what the SQL grants it, and so
+is `--grantee authenticated`, the role every policy is written for: a grantable function
+answers for any id, so it is never a grantee. Never grant one to `anon` either: Supabase
+runs callers who have not signed in as `anon`, and `diff` reports such a grant as drift.
 
 ### 2. Emit and register the access-token hook
 
@@ -126,6 +168,7 @@ SUPABASE_DB_URL="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase
   pnpm --filter @foir/demesne-example-app exec vitest run supabase
 ```
 
-It checks three things: the hook lifts the contract keys, the RLS returns exactly the rows
-the subject may see (owner plus open records, scoped by containment), and `service_role`
-reads past the policy.
+It checks four things: the hook lifts the contract keys, the RLS returns exactly the rows
+the subject may see (owner plus open records, scoped by containment), every function the
+manifest lists as `revoked` or `grantable` refuses `authenticated` with `permission denied`,
+and `service_role` reads past the policy.

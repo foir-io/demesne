@@ -1,4 +1,5 @@
-use crate::Sql;
+use crate::genfn::{Param, render, sig_types};
+use crate::{Execute, Sql};
 use demesne_model::SpecExt;
 use demesne_runtime::quote_literal;
 use demesne_syntax::Repr;
@@ -17,6 +18,9 @@ pub struct AsyncIndex {
     pub discrim_col: String,
     pub discrim_val: String,
     pub id_type: String,
+    /// Each principal kind the relation names, with the expression that reads the claim identifying a caller of that
+    /// kind. The affordance answers only for a principal that is the caller's own claim for the kind it is asked about.
+    pub callers: Vec<(String, String)>,
 }
 
 impl AsyncIndex {
@@ -51,12 +55,17 @@ impl AsyncIndex {
         format!("{}_{suffix}", self.base)
     }
 
+    pub(crate) fn grantable_functions(&self) -> [String; 3] {
+        ["apply", "rebuild", "watermark"].map(|suffix| self.fn_name(suffix))
+    }
+
     #[must_use]
     pub fn apply_fn_sql(&self) -> String {
-        format!(
+        let f = self.fn_name("apply");
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS xid8
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
   h xid8 := pg_snapshot_xmin(pg_current_snapshot());
@@ -85,22 +94,23 @@ BEGIN
   RETURN h;
 END;
 $$;",
-            f = self.fn_name("apply"),
             cur = self.cursor,
             key = quote_literal(self.index_key()),
             cl = self.changelog,
             rel = quote_literal(self.rel_const()),
             b = self.base
-        )
+        );
+        format!("{create}\n{}", Execute::Grantable.statement(&f, ""))
     }
 
     #[must_use]
     pub fn rebuild_fn_sql(&self) -> String {
         let where_ = if self.discrim_col.is_empty() { String::new() } else { format!(" WHERE {} = {}", self.discrim_col, quote_literal(&self.discrim_val)) };
-        format!(
+        let f = self.fn_name("rebuild");
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS xid8
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE h xid8 := pg_snapshot_xmin(pg_current_snapshot());
 BEGIN
@@ -115,7 +125,6 @@ BEGIN
   RETURN h;
 END;
 $$;",
-            f = self.fn_name("rebuild"),
             cur = self.cursor,
             key = quote_literal(self.index_key()),
             b = self.base,
@@ -125,35 +134,49 @@ $$;",
             ts = self.table_schema(),
             gt = self.grant_table,
             w = where_
-        )
+        );
+        format!("{create}\n{}", Execute::Grantable.statement(&f, ""))
+    }
+
+    fn the_callers_own(&self) -> String {
+        let each: Vec<String> = self.callers.iter().map(|(kind, claim)| format!("(p_kind = {} AND p_principal = {claim})", quote_literal(kind))).collect();
+        match each.as_slice() {
+            [] => "false".to_string(),
+            [only] => only.clone(),
+            _ => format!("({})", each.join(" OR ")),
+        }
     }
 
     #[must_use]
     pub fn affordance_fn_sql(&self) -> String {
-        format!(
-            r"CREATE OR REPLACE FUNCTION {f}(p_resource {t}, p_kind text, p_principal {t})
+        let f = self.fn_name("affordance");
+        let params = [Param::id("p_resource"), Param::typed("p_kind", "text"), Param::id("p_principal")];
+        let sig = render(&params, self.id_type());
+        let create = format!(
+            r"CREATE OR REPLACE FUNCTION {f}({sig})
 RETURNS TABLE(allowed boolean, as_of xid8)
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 AS $$
-  SELECT EXISTS(SELECT 1 FROM {b} WHERE resource_id = p_resource AND principal_kind = p_kind AND principal_id = p_principal),
+  SELECT COALESCE({own}, false) AND EXISTS(SELECT 1 FROM {b} WHERE resource_id = p_resource AND principal_kind = p_kind AND principal_id = p_principal),
          COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8);
 $$;",
-            f = self.fn_name("affordance"),
+            own = self.the_callers_own(),
             b = self.base,
             cur = self.cursor,
             key = quote_literal(self.index_key()),
-            t = self.id_type()
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, &sig_types(&sig)))
     }
 
     #[must_use]
     pub fn watermark_fn_sql(&self) -> String {
-        format!(
-            "CREATE OR REPLACE FUNCTION {f}()\nRETURNS xid8\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public\nAS $$ SELECT COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8); $$;",
-            f = self.fn_name("watermark"),
+        let f = self.fn_name("watermark");
+        let create = format!(
+            "CREATE OR REPLACE FUNCTION {f}()\nRETURNS xid8\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp\nAS $$ SELECT COALESCE((SELECT applied_horizon FROM {cur} WHERE index_name = {key}), '0'::xid8); $$;",
             cur = self.cursor,
             key = quote_literal(self.index_key())
-        )
+        );
+        format!("{create}\n{}", Execute::Grantable.statement(&f, ""))
     }
 }
 
@@ -191,6 +214,7 @@ impl Sql<'_> {
                 discrim_col: g.discrim_col.clone().unwrap_or_default(),
                 discrim_val: g.discrim_val.clone().unwrap_or_default(),
                 id_type: self.s.id_type().into(),
+                callers: r.types.iter().filter_map(|t| self.s.subject_by_name(t).map(|sub| (t.clone(), self.id_claim(sub.identifies())))).collect(),
             });
         }
         out.sort_by(|a, b| {

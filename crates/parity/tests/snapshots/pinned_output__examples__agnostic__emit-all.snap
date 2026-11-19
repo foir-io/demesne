@@ -10,40 +10,44 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM ops_users WHERE user_ref = user_id AND is_ops AND state = 'ON');
+  SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM ops_users WHERE user_ref = user_id AND is_ops AND state = 'ON'));
 $$;
+GRANT EXECUTE ON FUNCTION auth.is_ops(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.is_tenant_crew(user_id text, check_tenant_id text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT auth.is_ops(user_id) OR EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref IS NULL AND ra.killed_at IS NULL AND r.slug IN ('boss'));
+  SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND ((SELECT auth.is_ops(user_id)) OR EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref IS NULL AND ra.killed_at IS NULL AND r.slug IN ('boss')));
 $$;
+GRANT EXECUTE ON FUNCTION auth.is_tenant_crew(text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.crew_has_space_role(user_id text, check_tenant_id text, check_space_id text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref = check_space_id AND ra.killed_at IS NULL AND r.slug IN ('editor', 'viewer'));
+  SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM crew_grants ra JOIN crew_roles r ON r.row_id = ra.role_ref WHERE ra.member_kind = 'crew' AND ra.member_ref = user_id AND ra.tenant_ref = check_tenant_id AND ra.space_ref = check_space_id AND ra.killed_at IS NULL AND r.slug IN ('editor', 'viewer')));
 $$;
+GRANT EXECUTE ON FUNCTION auth.crew_has_space_role(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.member_can_access_asset(p_member_id text, p_asset_id text, p_access text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM assets r WHERE r.asset_pk = p_asset_id AND r.holder_ref = p_member_id);
+  SELECT p_member_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref') AND (EXISTS (SELECT 1 FROM assets r WHERE r.asset_pk = p_asset_id AND r.holder_ref = p_member_id));
 $$;
+GRANT EXECUTE ON FUNCTION auth.member_can_access_asset(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.asset_acl_grants(p_member_id text, p_asset_id text, p_access text)
 RETURNS boolean
@@ -51,17 +55,18 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM asset_acl WHERE asset_ref = p_asset_id AND grantee_kind = 'member' AND grantee_ref = p_member_id AND perm = p_access);
+  SELECT p_member_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_ref') AND (EXISTS (SELECT 1 FROM asset_acl WHERE asset_ref = p_asset_id AND grantee_kind = 'member' AND grantee_ref = p_member_id AND perm = p_access));
 $$;
+GRANT EXECUTE ON FUNCTION auth.asset_acl_grants(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.assets_accessors_conditional(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text[] AS via_claim_keys, NULL::text[] AS via_claim_values
     FROM (
@@ -75,6 +80,7 @@ AS $$
   SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text[], NULL::text[]
     FROM assets WHERE asset_pk = p_id AND share = 'open'
 $$;
+REVOKE EXECUTE ON FUNCTION auth.assets_accessors_conditional(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.assets_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -82,7 +88,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -90,19 +96,19 @@ DECLARE
   admitted boolean;
 BEGIN
   PERFORM set_config('request.jwt.claims', p_claims::text, true);
-  admitted := EXISTS (SELECT 1 FROM assets WHERE asset_pk = p_id AND ((auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR share = 'open' OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'read') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'delete')))));
+  admitted := EXISTS (SELECT 1 FROM assets WHERE asset_pk = p_id AND (((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR share = 'open' OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'read') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'delete')))));
   PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.assets_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.assets_admits(text, jsonb) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.spaces_accessors(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT 'role'::text AS source, 'crew'::text AS principal_kind, ra.member_ref AS principal_id, 'read'::text AS access
     FROM spaces e JOIN crew_grants ra ON ra.member_kind = 'crew' AND ra.killed_at IS NULL AND ra.tenant_ref = e.tenant_ref AND ra.space_ref IS NULL JOIN crew_roles rr ON rr.row_id = ra.role_ref AND rr.slug IN ('boss')
@@ -112,6 +118,7 @@ AS $$
     FROM spaces e JOIN crew_grants ra ON ra.member_kind = 'crew' AND ra.killed_at IS NULL AND ra.tenant_ref = e.tenant_ref AND ra.space_ref = e.space_pk JOIN crew_roles rr ON rr.row_id = ra.role_ref AND rr.slug IN ('editor', 'viewer')
     WHERE e.space_pk = p_id
 $$;
+REVOKE EXECUTE ON FUNCTION auth.spaces_accessors(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.spaces_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -119,7 +126,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -127,12 +134,12 @@ DECLARE
   admitted boolean;
 BEGIN
   PERFORM set_config('request.jwt.claims', p_claims::text, true);
-  admitted := EXISTS (SELECT 1 FROM spaces WHERE space_pk = p_id AND (auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc')))));
+  admitted := EXISTS (SELECT 1 FROM spaces WHERE space_pk = p_id AND ((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc')))));
   PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.spaces_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.spaces_admits(text, jsonb) FROM PUBLIC, authenticated;
 
 
 ALTER TABLE public.assets ENABLE ROW LEVEL SECURITY;
@@ -142,29 +149,29 @@ ALTER TABLE public.spaces FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS assets_delete ON public.assets;
 CREATE POLICY assets_delete ON public.assets FOR DELETE TO authenticated
-    USING ((auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'delete'))));
+    USING (((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'delete'))));
 
 DROP POLICY IF EXISTS assets_insert ON public.assets;
 CREATE POLICY assets_insert ON public.assets FOR INSERT TO authenticated
-    WITH CHECK ((auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'))));
+    WITH CHECK (((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'))));
 
 DROP POLICY IF EXISTS assets_select ON public.assets;
 CREATE POLICY assets_select ON public.assets FOR SELECT TO authenticated
-    USING ((auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR share = 'open' OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'read') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'delete'))));
+    USING (((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR share = 'open' OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'read') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'delete'))));
 
 DROP POLICY IF EXISTS assets_update ON public.assets;
 CREATE POLICY assets_update ON public.assets FOR UPDATE TO authenticated
-    USING ((auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write'))))
-    WITH CHECK ((auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write'))));
+    USING (((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write'))))
+    WITH CHECK (((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) AND (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') IS NULL) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND space_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND (holder_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref') OR auth.asset_acl_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_ref'), assets.asset_pk, 'write'))));
 
 DROP POLICY IF EXISTS spaces_select ON public.spaces;
 CREATE POLICY spaces_select ON public.spaces FOR SELECT TO authenticated
-    USING (auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc'))));
+    USING ((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc'))));
 
 DROP POLICY IF EXISTS spaces_update ON public.spaces;
 CREATE POLICY spaces_update ON public.spaces FOR UPDATE TO authenticated
-    USING (auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk))))
-    WITH CHECK (auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk))));
+    USING ((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk))))
+    WITH CHECK ((SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'))) OR (tenant_ref = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tnt') AND (auth.is_tenant_crew((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref) OR space_pk = (SELECT current_setting('request.jwt.claims', true)::json ->> 'spc') AND auth.crew_has_space_role((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), tenant_ref, space_pk))));
 
 
 --- stderr ---

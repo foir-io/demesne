@@ -9,10 +9,11 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM group_closure WHERE grp = p_group AND mem = p_member);
+  SELECT p_member = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id') AND (EXISTS (SELECT 1 FROM group_closure WHERE grp = p_group AND mem = p_member));
 $$;
+GRANT EXECUTE ON FUNCTION auth.group_closure_member(text, text) TO PUBLIC;
 
 
 --- stderr ---

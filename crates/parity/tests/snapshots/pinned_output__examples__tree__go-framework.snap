@@ -66,6 +66,8 @@ type Surface struct {
 	Notice   NoticeAccess
 	Draft    DraftAccess
 	Ledger   LedgerAccess
+	Skin     SkinAccess
+	Banner   BannerAccess
 }
 
 func New(r *demesne.Runtime) *Surface {
@@ -80,6 +82,8 @@ func New(r *demesne.Runtime) *Surface {
 	s.Notice = NoticeAccess{r}
 	s.Draft = DraftAccess{r}
 	s.Ledger = LedgerAccess{r}
+	s.Skin = SkinAccess{r}
+	s.Banner = BannerAccess{r}
 	return s
 }
 
@@ -320,6 +324,42 @@ func (LedgerAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []stri
 	return demesne.QueryIDs(ctx, q, "SELECT id FROM ledgers WHERE id = ANY($1)", ids)
 }
 
+type SkinAccess struct{ r *demesne.Runtime }
+
+func (a SkinAccess) CanView(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
+	var ok bool
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM skins WHERE id = $1)", id).Scan(&ok); err != nil {
+		return Deny, err
+	}
+	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
+}
+
+func (SkinAccess) ListResources(ctx context.Context, q demesne.Querier, after *string, limit int) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM skins WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", after, limit)
+}
+
+func (SkinAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []string) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM skins WHERE id = ANY($1)", ids)
+}
+
+type BannerAccess struct{ r *demesne.Runtime }
+
+func (a BannerAccess) CanView(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
+	var ok bool
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM banners WHERE id = $1)", id).Scan(&ok); err != nil {
+		return Deny, err
+	}
+	return a.r.ComposeCan(ctx, true, ok, NotGoverned)
+}
+
+func (BannerAccess) ListResources(ctx context.Context, q demesne.Querier, after *string, limit int) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM banners WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", after, limit)
+}
+
+func (BannerAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []string) ([]string, error) {
+	return demesne.QueryIDs(ctx, q, "SELECT id FROM banners WHERE id = ANY($1)", ids)
+}
+
 func (s *Surface) Check(ctx context.Context, q demesne.Querier, object, verb, id string) (Decision, error) {
 	switch object + "." + verb {
 	case "folder.view":
@@ -352,6 +392,10 @@ func (s *Surface) Check(ctx context.Context, q demesne.Querier, object, verb, id
 		return s.Ledger.CanView(ctx, q, id)
 	case "ledger.edit":
 		return s.Ledger.CanEdit(ctx, q, id)
+	case "skin.view":
+		return s.Skin.CanView(ctx, q, id)
+	case "banner.view":
+		return s.Banner.CanView(ctx, q, id)
 	default:
 		return NotGoverned, nil
 	}

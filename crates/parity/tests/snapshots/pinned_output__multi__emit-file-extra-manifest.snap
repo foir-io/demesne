@@ -18,8 +18,27 @@ exit: 0
     "auth.note_can_edit(text)",
     "auth.notes_accessors(text)",
     "auth.notes_admits(text, jsonb)",
-    "auth.support_grants_reach(text, text)",
     "auth.support_grants_reach_set(text)"
+  ],
+  "callable": [
+    "auth.doc_readable(text, text, text, text)"
+  ],
+  "grantable": [
+    "auth.docs_accessors(text)",
+    "auth.docs_admits(text, jsonb)",
+    "auth.notes_accessors(text)",
+    "auth.notes_admits(text, jsonb)"
+  ],
+  "internal": [
+    "auth.acl_grants_doc(text, text, text)",
+    "auth.acl_grants_note(text, text, text)",
+    "auth.acl_manage(text, text)",
+    "auth.doc_can_view(text)",
+    "auth.support_grants_reach_set(text)"
+  ],
+  "revoked": [
+    "auth.doc_can_edit(text)",
+    "auth.note_can_edit(text)"
   ],
   "policies": [
     {
@@ -62,6 +81,247 @@ exit: 0
     "public.acl",
     "public.docs",
     "public.notes"
+  ],
+  "heads": [
+    {
+      "function": "auth.acl_grants_doc(text, text, text)",
+      "parameters": "p_member_id text, p_doc_id text, p_access text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        },
+        {
+          "table": "public.docs",
+          "name": "docs_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.acl_grants_note(text, text, text)",
+      "parameters": "p_member_id text, p_note_id text, p_access text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.notes",
+          "name": "notes_select"
+        },
+        {
+          "table": "public.notes",
+          "name": "notes_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.acl_manage(text, text)",
+      "parameters": "p_type text, p_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.acl",
+          "name": "acl_delete"
+        },
+        {
+          "table": "public.acl",
+          "name": "acl_insert"
+        },
+        {
+          "table": "public.acl",
+          "name": "acl_select"
+        },
+        {
+          "table": "public.acl",
+          "name": "acl_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.doc_can_edit(text)",
+      "parameters": "p_doc_id text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.doc_can_view(text)",
+      "parameters": "p_doc_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.notes",
+          "name": "notes_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.doc_readable(text, text, text, text)",
+      "parameters": "check_doc_id text, row_tenant_id text, row_workspace_id text, row_owner_id text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.docs_accessors(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text)",
+      "policies": []
+    },
+    {
+      "function": "auth.docs_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.note_can_edit(text)",
+      "parameters": "p_note_id text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.notes_accessors(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text)",
+      "policies": []
+    },
+    {
+      "function": "auth.notes_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.support_grants_reach_set(text)",
+      "parameters": "user_id text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.acl",
+          "name": "acl_delete"
+        },
+        {
+          "table": "public.acl",
+          "name": "acl_insert"
+        },
+        {
+          "table": "public.acl",
+          "name": "acl_select"
+        },
+        {
+          "table": "public.acl",
+          "name": "acl_update"
+        },
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        },
+        {
+          "table": "public.docs",
+          "name": "docs_update"
+        },
+        {
+          "table": "public.notes",
+          "name": "notes_select"
+        },
+        {
+          "table": "public.notes",
+          "name": "notes_update"
+        }
+      ]
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.acl_grants_doc(text, text, text)",
+      "digest": "c1cbe032c0eb57653518dd915989b8cb71873ce3fb0ff99bdf7a5d2f75f259b7"
+    },
+    {
+      "object": "function auth.acl_grants_note(text, text, text)",
+      "digest": "7567de4cde07c20e1fe95d8761ce4d2f4783dff3d099c6a90f17293e3c1bde40"
+    },
+    {
+      "object": "function auth.acl_manage(text, text)",
+      "digest": "1098a9e2c2f0ec6c5a4090f1244469756465819a72be669edba1569e0bd8fdcc"
+    },
+    {
+      "object": "function auth.doc_can_edit(text)",
+      "digest": "6e874a15b952e18a103ca192e46792a1d37b8b06622f5a839db7eee4236e735f"
+    },
+    {
+      "object": "function auth.doc_can_view(text)",
+      "digest": "c73ad69242948e4363cc7293640903732bd76af4701c01986ba69948e9a55e19"
+    },
+    {
+      "object": "function auth.doc_readable(text, text, text, text)",
+      "digest": "8dfca93b25e4d9ac30303c017b525e997cf2d3f34577f0ca1ac3804d9b7801b7"
+    },
+    {
+      "object": "function auth.docs_accessors(text)",
+      "digest": "ed01a176cef44747d922a16c5dab17c4dea7e418f733f0b68e92960f19e0cec0"
+    },
+    {
+      "object": "function auth.docs_admits(text, jsonb)",
+      "digest": "05400048ed6f0a81cc61148f168693cc307675a13ab6fac34bf695e06a434676"
+    },
+    {
+      "object": "function auth.note_can_edit(text)",
+      "digest": "1cf6638287809c4a7ef7503ac8e589e60166e539e7397e01525fa18ebf3dd215"
+    },
+    {
+      "object": "function auth.notes_accessors(text)",
+      "digest": "8e6894e0018a3f56cbd26d1af39be1056311fa4ad6be388dd2e698283ab342b2"
+    },
+    {
+      "object": "function auth.notes_admits(text, jsonb)",
+      "digest": "b14f1fa0a560ab0c18b6be956f36ed8b354b6a2a82771bdf71c245220759a2b0"
+    },
+    {
+      "object": "function auth.support_grants_reach_set(text)",
+      "digest": "10fa24d2f87eec7dd005fc604784b35b303a2d7ce793724483e8df428200d843"
+    },
+    {
+      "object": "policy acl_delete on public.acl",
+      "digest": "f37e372e51ff811287a967ad05b9fdde4420fca2c35be2816dfebdc30e172d95"
+    },
+    {
+      "object": "policy acl_insert on public.acl",
+      "digest": "3fbcf912df8eb6ecd0b92b588d84d8eeb131381c73148b1a1aedc13df6b5e887"
+    },
+    {
+      "object": "policy acl_select on public.acl",
+      "digest": "70e62475624efe40f0a315c8f5dd74525efac2e9b6017cb7eaa63fade6b2859e"
+    },
+    {
+      "object": "policy acl_update on public.acl",
+      "digest": "620a88392407156f27a3ab348014071b733b786caaede93da5c3484ca848e198"
+    },
+    {
+      "object": "policy docs_select on public.docs",
+      "digest": "419a3bee7649eb75f011090e08f5a27ce9a175ec6ae7cb2160784d55aaea013e"
+    },
+    {
+      "object": "policy docs_update on public.docs",
+      "digest": "f247b87c8d00eaf94f20406e27d64dfb789749de9f67578af5b45b016fe221d1"
+    },
+    {
+      "object": "policy notes_select on public.notes",
+      "digest": "a696d8550d6e54ac73c5085f2f9aaf1b0c1684925248401ce2c5679d1a812dcf"
+    },
+    {
+      "object": "policy notes_update on public.notes",
+      "digest": "6a17f2802716551c2b28bb403be6dabdd6e6ebfdb913fead6682e9683b17bf26"
+    },
+    {
+      "object": "rls public.acl",
+      "digest": "2dae82a541588d2bb1623f435de8ca050955d1a1006cf121413704f809597ce6"
+    },
+    {
+      "object": "rls public.docs",
+      "digest": "7cb507caa91f74539002e69c1d224ad6fcf0947645ce4bdefc4a76512ff741ce"
+    },
+    {
+      "object": "rls public.notes",
+      "digest": "d8dc01b58dded4571bda73f3e8f14aa31923cbe1c2a9c67feabd8b8edb197340"
+    }
   ]
 }
 

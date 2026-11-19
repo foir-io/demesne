@@ -1,5 +1,5 @@
 use crate::{Error, query_error};
-use demesne_emit_sql::{Object, objects, revoked_from_public};
+use demesne_emit_sql::{Execute, Manifest, Object, POLICY_ROLE, granted_to_public, objects, revoked_from_public};
 use demesne_runtime::quote_literal;
 use postgres::{Client, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,6 +18,9 @@ pub enum DriftKind {
     Orphan,
     /// An allow-list entry that no live orphan matches.
     Stale,
+    /// A role other than the owner may execute a function the SQL revokes from PUBLIC, or default privileges grant new
+    /// functions to one. The detail gives the statement that takes it back.
+    Granted,
 }
 
 impl DriftKind {
@@ -30,6 +33,7 @@ impl DriftKind {
             Self::Invalid => "INVALID",
             Self::Orphan => "ORPHAN",
             Self::Stale => "STALE",
+            Self::Granted => "GRANTED",
         }
     }
 }
@@ -43,6 +47,36 @@ pub struct Finding {
     pub object: String,
     /// What differs, or what to do about it.
     pub detail: String,
+}
+
+/// The roles a deployment grants the manifest's `grantable` functions to, which [`drift`] accepts as holding them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Grantees {
+    roles: Vec<String>,
+    grantable: BTreeSet<String>,
+}
+
+impl Grantees {
+    /// Accepts each of `roles`, a role's name as Postgres stores it, holding `EXECUTE` on a function `manifest` lists as
+    /// grantable. Its grant of any other function the SQL revokes, and every default privilege, are still reported.
+    ///
+    /// # Errors
+    ///
+    /// A role is empty; or is PUBLIC, which holds exactly the functions the SQL grants to PUBLIC; or is the role every
+    /// policy is written for, since a grantable function answers for any id; or `manifest` records no lists of who may
+    /// run each function.
+    pub fn new(manifest: &Manifest, roles: &[String]) -> Result<Self, Error> {
+        if let Some(why) = roles.iter().find_map(|role| no_grantee(role)) {
+            return Err(Error::grantee(why));
+        }
+        let Some(lists) = &manifest.execute else {
+            return Err(Error::sql("the manifest records no lists of who may run each function, so none is grantable"));
+        };
+        let mut roles = roles.to_vec();
+        roles.sort();
+        roles.dedup();
+        Ok(Grantees { roles, grantable: lists.grantable.clone() })
+    }
 }
 
 /// Every difference between the live database and the spec's SQL, and how many objects match.
@@ -60,26 +94,37 @@ pub struct Drift {
 
 /// Compares the live database with `sql`, the spec's whole SQL, in both directions.
 ///
-/// Policies are compared by command, roles, permissive, `USING` and `WITH CHECK`, and functions and triggers by their whole definition. A function the SQL revokes `EXECUTE` on from PUBLIC is also changed when PUBLIC may execute it live. Orphans are the policies on a governed table, and the functions in a definer schema or triggers calling them, that the SQL does not create.
+/// Policies are compared by command, roles, permissive, `USING` and `WITH CHECK`, and functions and triggers by their whole definition. A function is also changed when PUBLIC may execute it live and the SQL revokes that, or may not and the SQL grants it. Where the SQL revokes a function from PUBLIC, each other role but its owner that may execute it live is reported as granted, unless the function is grantable and the role is one of `grantees`, and so is each default privilege that grants new functions in a definer schema, or in every schema, to a role other than the one whose functions it covers. Orphans are the policies on a governed table, and the functions in a definer schema or triggers calling them, that the SQL does not create.
 ///
 /// Each generated object is created as a temporary copy and read back, so both sides are compared as Postgres deparses them. Nothing outside the session's temporary schema is created, and the transaction is rolled back. An `allow` entry is an orphan's object text, such as `function auth.f(text)`, to leave unreported; an entry that matches no orphan is reported as stale.
 ///
 /// # Errors
 ///
 /// The SQL creates an object the manifest does not record, or a catalog query fails.
-pub fn drift(client: &mut Client, sql: &str, allow: &[String]) -> Result<Drift, Error> {
+pub fn drift(client: &mut Client, sql: &str, allow: &[String], grantees: &Grantees) -> Result<Drift, Error> {
     let objs = objects(sql).map_err(|e| Error::sql(e.to_string()))?;
-    let revoked = revoked_from_public(sql).into_iter().collect();
-    compare(client, &objs, &revoked, allow).map_err(Error::query)
+    let revoked = revoked_from_public(sql).into_iter().map(|f| {
+        let said = if grantees.grantable.contains(&f) { Execute::Grantable } else { Execute::Revoked };
+        (f, said)
+    });
+    let execute = revoked.chain(granted_to_public(sql).into_iter().map(|f| (f, Execute::Public))).collect();
+    compare(client, &objs, &execute, allow, &grantees.roles).map_err(Error::query)
 }
 
-fn compare(client: &mut Client, objs: &[(Object, String)], revoked: &BTreeSet<String>, allow: &[String]) -> Result<Drift, String> {
+fn compare(
+    client: &mut Client,
+    objs: &[(Object, String)],
+    execute: &BTreeMap<String, Execute>,
+    allow: &[String],
+    grantees: &[String],
+) -> Result<Drift, String> {
     let mut tx = client.transaction().map_err(|e| query_error(&e))?;
     tx.batch_execute("SET LOCAL check_function_bodies = off; SELECT set_config('search_path', current_setting('search_path') || ', pg_temp', true)")
         .map_err(|e| query_error(&e))?;
     let mut c = Comparison {
         objs,
-        revoked,
+        execute,
+        grantees,
         live: BTreeMap::new(),
         shadow: BTreeMap::new(),
         governed: BTreeSet::new(),
@@ -94,6 +139,7 @@ fn compare(client: &mut Client, objs: &[(Object, String)], revoked: &BTreeSet<St
     tx.batch_execute("SET LOCAL search_path = ''").map_err(|e| query_error(&e))?;
     c.policies(&mut tx)?;
     c.functions(&mut tx)?;
+    c.default_privileges(&mut tx)?;
     c.triggers(&mut tx)?;
     tx.rollback().map_err(|e| query_error(&e))?;
     Ok(c.finish(allow))
@@ -110,7 +156,8 @@ struct PolicyDef {
 
 struct Comparison<'a> {
     objs: &'a [(Object, String)],
-    revoked: &'a BTreeSet<String>,
+    execute: &'a BTreeMap<String, Execute>,
+    grantees: &'a [String],
     live: BTreeMap<String, u32>,
     shadow: BTreeMap<String, (String, u32)>,
     governed: BTreeSet<String>,
@@ -256,10 +303,22 @@ impl Comparison<'_> {
                 self.found(DriftKind::Missing, object, "generated but not live (apply it)".into());
                 continue;
             };
-            let open = self.revoked.contains(sig)
-                && tx.query_one("SELECT has_function_privilege('public', $1::oid, 'EXECUTE')", &[&live_oid]).map_err(|e| query_error(&e))?.get::<_, bool>(0);
-            if open {
-                self.found(DriftKind::Changed, object.clone(), "PUBLIC may execute it, and the generated SQL revokes that (re-apply it)".into());
+            let said = self.execute.get(sig).copied();
+            let mut off = match said {
+                Some(said) if public_right(tx, live_oid)? != for_public(said) => Some(said),
+                _ => None,
+            };
+            if let Some(said) = off {
+                let detail = match said {
+                    Execute::Public => "PUBLIC may not execute it, and the generated SQL grants that (re-apply it)".to_string(),
+                    Execute::Revoked | Execute::Grantable => "PUBLIC may execute it, and the generated SQL revokes that (re-apply it)".to_string(),
+                };
+                self.found(DriftKind::Changed, object.clone(), detail);
+            }
+            if let Some(said @ (Execute::Revoked | Execute::Grantable)) = said
+                && self.grants_of_a_revoked_function(tx, sig, &object, live_oid, said)?
+            {
+                off = off.or(Some(said));
             }
             let scratch = self.scratch.get(o).cloned().unwrap_or_default();
             let defs = tx
@@ -270,7 +329,7 @@ impl Comparison<'_> {
                 Some((l, g)) => {
                     self.found(DriftKind::Changed, object, format!("its live definition is not the generated one (re-apply it): live `{l}`, generated `{g}`"));
                 }
-                None if !open => self.out.functions += 1,
+                None if off.is_none() => self.out.functions += 1,
                 None => {}
             }
         }
@@ -287,6 +346,48 @@ impl Comparison<'_> {
                 object: format!("function {}", row.get::<_, String>(0)),
                 detail: "live in a definer schema but not generated (drop it, or allow it)".into(),
             });
+        }
+        Ok(())
+    }
+
+    fn grants_of_a_revoked_function(&mut self, tx: &mut Transaction<'_>, sig: &str, object: &str, oid: u32, said: Execute) -> Result<bool, String> {
+        let accepted = if said == Execute::Grantable { self.grantees } else { &[] };
+        let roles = granted_to(tx, oid, accepted)?;
+        for role in &roles {
+            let why = match said {
+                Execute::Grantable => "the manifest lists it as grantable, and no grantee is that role",
+                Execute::Revoked | Execute::Public => "the generated SQL revokes it from PUBLIC",
+            };
+            let detail = format!("{role} may execute it, and {why}: REVOKE EXECUTE ON FUNCTION {sig} FROM {role};");
+            self.found(DriftKind::Granted, object.to_string(), detail);
+        }
+        Ok(!roles.is_empty())
+    }
+
+    fn default_privileges(&mut self, tx: &mut Transaction<'_>) -> Result<(), String> {
+        if !self.execute.values().any(|e| matches!(e, Execute::Revoked | Execute::Grantable)) {
+            return Ok(());
+        }
+        let rows = tx
+            .query(
+                "SELECT quote_ident(pg_get_userbyid(d.defaclrole)), COALESCE(quote_ident(n.nspname), ''), quote_ident(pg_get_userbyid(a.grantee)) \
+                 FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace, aclexplode(d.defaclacl) a \
+                 WHERE d.defaclobjtype = 'f' AND a.privilege_type = 'EXECUTE' AND a.grantee <> 0 AND a.grantee <> d.defaclrole \
+                 AND (d.defaclnamespace = 0 OR d.defaclnamespace = ANY($1::oid[])) ORDER BY 1, 2, 3",
+                &[&self.schemas],
+            )
+            .map_err(|e| query_error(&e))?;
+        for row in rows {
+            let (owner, schema, grantee): (String, String, String) = (row.get(0), row.get(1), row.get(2));
+            let (object, scope) = if schema.is_empty() {
+                (format!("default privileges for role {owner}"), String::new())
+            } else {
+                (format!("default privileges for role {owner} in schema {schema}"), format!(" IN SCHEMA {schema}"))
+            };
+            let detail = format!(
+                "the functions {owner} creates are granted EXECUTE to {grantee}, those the SQL revokes from PUBLIC included: ALTER DEFAULT PRIVILEGES FOR ROLE {owner}{scope} REVOKE EXECUTE ON FUNCTIONS FROM {grantee};"
+            );
+            self.found(DriftKind::Granted, object, detail);
         }
         Ok(())
     }
@@ -394,6 +495,45 @@ fn policy_change(live: &PolicyDef, generated: &PolicyDef) -> String {
         parts.push(format!("WITH CHECK: live `{}`, generated `{}`", live.check, generated.check));
     }
     parts.join("; ")
+}
+
+fn granted_to(tx: &mut Transaction<'_>, oid: u32, accepted: &[String]) -> Result<Vec<String>, String> {
+    let rows = tx
+        .query(
+            "SELECT quote_ident(pg_get_userbyid(a.grantee)) FROM pg_proc p, aclexplode(p.proacl) a \
+             WHERE p.oid = $1::oid AND a.privilege_type = 'EXECUTE' AND a.grantee <> 0 AND a.grantee <> p.proowner \
+             AND NOT (pg_get_userbyid(a.grantee) = ANY($2::text[])) ORDER BY 1",
+            &[&oid, &accepted],
+        )
+        .map_err(|e| query_error(&e))?;
+    Ok(rows.iter().map(|row| row.get(0)).collect())
+}
+
+fn no_grantee(role: &str) -> Option<String> {
+    if role.is_empty() {
+        return Some("a grantee names a role, and this one is empty".to_string());
+    }
+    if role.eq_ignore_ascii_case("public") {
+        return Some(format!("{role} is no grantee: PUBLIC holds exactly the functions the SQL grants to PUBLIC, and no grantable one"));
+    }
+    if role == POLICY_ROLE {
+        return Some(format!(
+            "{role} is no grantee: it is the role every policy is written for; a grantable function answers for any id, so it is never a grantee"
+        ));
+    }
+    None
+}
+
+fn for_public(said: Execute) -> Execute {
+    match said {
+        Execute::Grantable => Execute::Revoked,
+        Execute::Revoked | Execute::Public => said,
+    }
+}
+
+fn public_right(tx: &mut Transaction<'_>, oid: u32) -> Result<Execute, String> {
+    let public = tx.query_one("SELECT has_function_privilege('public', $1::oid, 'EXECUTE')", &[&oid]).map_err(|e| query_error(&e))?.get::<_, bool>(0);
+    Ok(if public { Execute::Public } else { Execute::Revoked })
 }
 
 fn schema_of(sig: &str) -> String {

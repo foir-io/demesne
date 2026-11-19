@@ -10,6 +10,13 @@ exit: 0
     "auth.folder_closure_maintain()",
     "auth.folder_closure_reachable(text, text)"
   ],
+  "callable": [],
+  "grantable": [],
+  "internal": [
+    "auth.folder_closure_maintain()",
+    "auth.folder_closure_reachable(text, text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.documents",
@@ -34,6 +41,55 @@ exit: 0
   "tables": [],
   "rls": [
     "public.documents"
+  ],
+  "heads": [
+    {
+      "function": "auth.folder_closure_maintain()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    },
+    {
+      "function": "auth.folder_closure_reachable(text, text)",
+      "parameters": "p_ancestor text, p_descendant text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.documents",
+          "name": "documents_select"
+        }
+      ]
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.folder_closure_maintain()",
+      "digest": "50df046896fb76ecd1f5d0b7b36d8a964c34f8a2c6c80bf5306966f218318522"
+    },
+    {
+      "object": "function auth.folder_closure_reachable(text, text)",
+      "digest": "35aeb15a5393816a599cd006e9401725f3697720b64c231c1def2cacbe5dac40"
+    },
+    {
+      "object": "policy documents_select on public.documents",
+      "digest": "2a62f7fe1aee04cd40566d79890fa2bc4c910af040c1e1b5330df2f07499a740"
+    },
+    {
+      "object": "rls public.documents",
+      "digest": "f51b9d67743ab7ca18c5d4317607c086dde6ff505432316ecfcc99cdea6204c6"
+    },
+    {
+      "object": "trigger folder_closure_maintain_del on public.folders",
+      "digest": "68938b398179d81fec20c94d5d0ef661f7bbaa0088679b3d37839b0f87a7060b"
+    },
+    {
+      "object": "trigger folder_closure_maintain_ins on public.folders",
+      "digest": "c0a4122682d3095b199b565eee114573fc337bada1cc24d4cd868c09ff669ad7"
+    },
+    {
+      "object": "trigger folder_closure_maintain_upd on public.folders",
+      "digest": "8291749eb08d0f2f403c0c23a8a5a8789dc3d6b6be637d41f8769afee3d719a3"
+    }
   ]
 }
 

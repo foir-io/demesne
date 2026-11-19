@@ -1,0 +1,170 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.note_grants_changelog()",
+    "auth.note_grants_grants(text, text, text)",
+    "auth.notes_accessors_conditional(text)",
+    "auth.notes_admits(text, jsonb)",
+    "auth.notes_obj_changelog()"
+  ],
+  "callable": [],
+  "grantable": [
+    "auth.notes_accessors_conditional(text)",
+    "auth.notes_admits(text, jsonb)"
+  ],
+  "internal": [
+    "auth.note_grants_changelog()",
+    "auth.note_grants_grants(text, text, text)",
+    "auth.notes_obj_changelog()"
+  ],
+  "revoked": [],
+  "policies": [
+    {
+      "table": "public.notes",
+      "name": "notes_select"
+    },
+    {
+      "table": "public.notes",
+      "name": "notes_update"
+    }
+  ],
+  "triggers": [
+    {
+      "table": "public.note_grants",
+      "name": "note_grants_changelog"
+    },
+    {
+      "table": "public.notes",
+      "name": "notes_obj_changelog"
+    }
+  ],
+  "indexes": [
+    {
+      "table": "auth._authz_changelog",
+      "name": "_authz_changelog_principal_idx"
+    },
+    {
+      "table": "auth._authz_changelog",
+      "name": "_authz_changelog_rel_txid_idx"
+    },
+    {
+      "table": "auth._authz_changelog",
+      "name": "_authz_changelog_seq_idx"
+    }
+  ],
+  "tables": [
+    "auth._authz_changelog"
+  ],
+  "rls": [
+    "public.notes"
+  ],
+  "heads": [
+    {
+      "function": "auth.note_grants_changelog()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    },
+    {
+      "function": "auth.note_grants_grants(text, text, text)",
+      "parameters": "p_member_id text, p_note_id text, p_access text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.notes",
+          "name": "notes_select"
+        },
+        {
+          "table": "public.notes",
+          "name": "notes_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.notes_accessors_conditional(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])",
+      "policies": []
+    },
+    {
+      "function": "auth.notes_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.notes_obj_changelog()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.note_grants_changelog()",
+      "digest": "427c4884613253add8ec8d5f1f3d6ba3ca96eaa3f314cf100aa3ab3b6db74cb1"
+    },
+    {
+      "object": "function auth.note_grants_grants(text, text, text)",
+      "digest": "c7327db31ce322a1caa0ad6160f86e3a398c5cf9dcd5f67448b1197e103f8c7a"
+    },
+    {
+      "object": "function auth.notes_accessors_conditional(text)",
+      "digest": "bbafdeaf1e1c8c03a76e5c4bf71baf81c5fc5b3bee305b0c2b83551e6cf76f91"
+    },
+    {
+      "object": "function auth.notes_admits(text, jsonb)",
+      "digest": "d26e7200ef203e255859820d93783c1bdf57f0c91f558b849dc8dcc74cb5ce30"
+    },
+    {
+      "object": "function auth.notes_obj_changelog()",
+      "digest": "02f39b09fb3d495a9eeace6a7b90babaaa217120063480bd04a9ae9235d38c4e"
+    },
+    {
+      "object": "index _authz_changelog_principal_idx on auth._authz_changelog",
+      "digest": "c78de3ceb34bc4ebbe50fc3a57940b2f64529336105a72709624950d83e501a1"
+    },
+    {
+      "object": "index _authz_changelog_rel_txid_idx on auth._authz_changelog",
+      "digest": "ddb6dc3489a10ea381391be2bf8afd3a817e0afadb5e16e64ba1d2d95265e2db"
+    },
+    {
+      "object": "index _authz_changelog_seq_idx on auth._authz_changelog",
+      "digest": "4e26f73063f2b8e022ef90835d5030963ba05f91ef07157c49ee2d53fb43f6a6"
+    },
+    {
+      "object": "policy notes_select on public.notes",
+      "digest": "4d04cf33f57832bb7207f6ba3e654eaa6797aa1b0dc84b94ec2aa000052be2ff"
+    },
+    {
+      "object": "policy notes_update on public.notes",
+      "digest": "4f65947a6efc5bdaa1779f673490714d63256c290c826969e92c2f58c0d18fe6"
+    },
+    {
+      "object": "rls public.notes",
+      "digest": "d8dc01b58dded4571bda73f3e8f14aa31923cbe1c2a9c67feabd8b8edb197340"
+    },
+    {
+      "object": "table auth._authz_changelog",
+      "digest": "5f45b87c41772dfa2cf15c34319c4da9dd4ac02de604305d3572962aa5fb0de3"
+    },
+    {
+      "object": "trigger note_grants_changelog on public.note_grants",
+      "digest": "e51ac17b4705caf3da40206427b1d048a25b56a300b1f0f92d03a9cddfd4f20c"
+    },
+    {
+      "object": "trigger notes_obj_changelog on public.notes",
+      "digest": "d6524759a088db6f6e2540f86e55427f3c239c9cad707c356f80df8d2ccdafc8"
+    }
+  ]
+}
+
+--- stderr ---
+
+--- end ---

@@ -188,6 +188,7 @@ fn repr(r: &Repr) -> Value {
     match r {
         Repr::Column(v) => obj(vec![("Column", s(&v.column)), ("DiscrimCol", o(v.discrim_col.as_deref())), ("DiscrimVal", o(v.discrim_val.as_deref()))]),
         Repr::Edge(v) => obj(vec![("Table", s(&v.table)), ("Cols", strs(&v.cols))]),
+        Repr::Conditions(v) => obj(vec![("Table", s(&v.table))]),
         Repr::Role => obj(vec![]),
         Repr::Composition(v) => obj(vec![
             ("Table", s(&v.table)),

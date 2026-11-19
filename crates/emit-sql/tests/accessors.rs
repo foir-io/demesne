@@ -177,9 +177,11 @@ object doc {
 }
 ";
     let names = |src: &str| definers(src).into_iter().map(|d| d.name).filter(|n| n.starts_with("docs_team_flat")).collect::<Vec<_>>();
-    assert_eq!(names(src), ["docs_team_flat_member", "docs_team_flat_resources"]);
+    assert_eq!(names(src), ["docs_team_flat_member"], "the select has another term, so its resources are not the adopter's to list");
+    let alone = swap(src, &[("grantee:read + team @rls", "team @rls")]);
+    assert_eq!(names(&alone), ["docs_team_flat_member", "docs_team_flat_resources"]);
     let unowned = swap(src, &[(" binds owner", ""), ("grantee:read + team @rls", "grantee:read @rls")]);
-    assert_eq!(names(&unowned), ["docs_team_flat_member"]);
+    assert_eq!(names(&unowned), Vec::<String>::new(), "no permission names the group, so nothing of it is emitted");
 }
 
 #[test]
@@ -192,4 +194,19 @@ fn a_session_on_a_role_relation_lists_that_roles_holders() {
     let session = role_rows("permission view = owner + @session(editor) + grantee:read @rls maps select");
     assert!(session.contains("rr.key IN ('viewer')"), "{session}");
     assert_eq!(session, role_rows("permission view = owner + editor + grantee:read @rls maps select"));
+}
+
+#[test]
+fn no_listing_of_who_reaches_a_row_is_publics_to_run() {
+    let mut listings = 0;
+    for name in ["accessors-holds", "accessors-session", "accessors-kind", "accessors-role", "accessors-tree-holds"] {
+        let src = std::fs::read_to_string(format!("{}/../../testdata/gaps/{name}.demesne", env!("CARGO_MANIFEST_DIR"))).expect("the fixture reads");
+        for listing in definers(&src).iter().filter(|d| d.returns.starts_with("TABLE(source text, principal_kind text")) {
+            let sql = listing.create_sql();
+            let revoked = format!("REVOKE EXECUTE ON FUNCTION {}.{}(text) FROM PUBLIC, authenticated;", listing.schema(), listing.name);
+            assert!(sql.ends_with(&revoked), "{name}: {} names the principals of any row it is asked about, so only a granted role runs it", listing.name);
+            listings += 1;
+        }
+    }
+    assert!(listings >= 5, "{listings} listings checked");
 }

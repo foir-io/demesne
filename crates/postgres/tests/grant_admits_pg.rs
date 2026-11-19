@@ -80,7 +80,7 @@ fn install(db: &mut Client) {
         "DROP SCHEMA IF EXISTS ga_rows CASCADE; DROP SCHEMA IF EXISTS ga_auth CASCADE;
          CREATE SCHEMA ga_rows; CREATE SCHEMA ga_auth;
          DO $$ BEGIN
-           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ga_caller') THEN CREATE ROLE ga_caller NOLOGIN; END IF;
+           BEGIN CREATE ROLE ga_caller NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END;
          END $$;",
     )
     .expect("fresh schemas");
@@ -90,8 +90,7 @@ fn install(db: &mut Client) {
     }
     db.batch_execute(
         "GRANT USAGE ON SCHEMA ga_rows, ga_auth TO ga_caller;
-         GRANT SELECT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ga_rows TO ga_caller;
-         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ga_auth TO ga_caller;",
+         GRANT SELECT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ga_rows TO ga_caller;",
     )
     .expect("grants");
 }

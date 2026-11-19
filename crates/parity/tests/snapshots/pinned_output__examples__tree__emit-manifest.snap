@@ -8,14 +8,13 @@ exit: 0
   "manifest": 1,
   "functions": [
     "auth.folder_path()",
+    "auth.live_skin(text)",
+    "auth.live_skin_own(text)",
     "auth.paths_ancestors(text)",
     "auth.paths_descendants(text)",
     "auth.paths_maintain()",
     "auth.paths_path(text)",
-    "auth.paths_reach(text, text)",
     "auth.paths_reach_set(text)",
-    "auth.paths_reachable(text, text)",
-    "auth.paths_up_reach(text, text)",
     "auth.paths_up_reach_set(text)",
     "auth.space_by_name(text)",
     "auth.space_can_view(text)",
@@ -24,6 +23,28 @@ exit: 0
     "auth.spaces_in_estate()",
     "auth.theme_color(text)"
   ],
+  "callable": [
+    "auth.folder_path()",
+    "auth.space_by_name(text)",
+    "auth.space_cards()",
+    "auth.space_named(text)",
+    "auth.spaces_in_estate()"
+  ],
+  "grantable": [
+    "auth.live_skin(text)",
+    "auth.paths_path(text)",
+    "auth.theme_color(text)"
+  ],
+  "internal": [
+    "auth.live_skin_own(text)",
+    "auth.paths_ancestors(text)",
+    "auth.paths_descendants(text)",
+    "auth.paths_maintain()",
+    "auth.paths_reach_set(text)",
+    "auth.paths_up_reach_set(text)",
+    "auth.space_can_view(text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.atlases",
@@ -32,6 +53,14 @@ exit: 0
     {
       "table": "public.atlases",
       "name": "atlases_update"
+    },
+    {
+      "table": "public.banners",
+      "name": "banners_select"
+    },
+    {
+      "table": "public.banners",
+      "name": "banners_select_require"
     },
     {
       "table": "public.drafts",
@@ -94,6 +123,10 @@ exit: 0
       "name": "sheets_select"
     },
     {
+      "table": "public.skins",
+      "name": "skins_select"
+    },
+    {
       "table": "public.spaces",
       "name": "spaces_select"
     },
@@ -140,15 +173,405 @@ exit: 0
   "tables": [],
   "rls": [
     "public.atlases",
+    "public.banners",
     "public.drafts",
     "public.folders",
     "public.ledgers",
     "public.notices",
     "public.pages",
     "public.sheets",
+    "public.skins",
     "public.spaces",
     "public.templates",
     "public.themes"
+  ],
+  "heads": [
+    {
+      "function": "auth.folder_path()",
+      "parameters": "",
+      "returns": "TABLE(id text, title text)",
+      "policies": []
+    },
+    {
+      "function": "auth.live_skin(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": []
+    },
+    {
+      "function": "auth.live_skin_own(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": [
+        {
+          "table": "public.banners",
+          "name": "banners_select_require"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_ancestors(text)",
+      "parameters": "p_node text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.folders",
+          "name": "folders_select"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_select_require"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_descendants(text)",
+      "parameters": "p_node text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.folders",
+          "name": "folders_delete"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_insert"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_select"
+        },
+        {
+          "table": "public.folders",
+          "name": "folders_update"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_delete"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_insert"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_select_require"
+        },
+        {
+          "table": "public.templates",
+          "name": "templates_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_maintain()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    },
+    {
+      "function": "auth.paths_path(text)",
+      "parameters": "p_node text",
+      "returns": "TABLE(node text, depth integer)",
+      "policies": []
+    },
+    {
+      "function": "auth.paths_reach_set(text)",
+      "parameters": "user_id text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.atlases",
+          "name": "atlases_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_up_reach_set(text)",
+      "parameters": "user_id text",
+      "returns": "SETOF text",
+      "policies": [
+        {
+          "table": "public.atlases",
+          "name": "atlases_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.space_by_name(text)",
+      "parameters": "wanted text",
+      "returns": "text",
+      "policies": []
+    },
+    {
+      "function": "auth.space_can_view(text)",
+      "parameters": "p_space_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.pages",
+          "name": "pages_select"
+        },
+        {
+          "table": "public.sheets",
+          "name": "sheets_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.space_cards()",
+      "parameters": "",
+      "returns": "TABLE(id text, title text)",
+      "policies": []
+    },
+    {
+      "function": "auth.space_named(text)",
+      "parameters": "p_name text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.spaces_in_estate()",
+      "parameters": "",
+      "returns": "bigint",
+      "policies": []
+    },
+    {
+      "function": "auth.theme_color(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": []
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.folder_path()",
+      "digest": "778e1b9d31973842ba88a095f5116de2fffb283f2404160a1dfac0b2862f6fe7"
+    },
+    {
+      "object": "function auth.live_skin(text)",
+      "digest": "48b2eed595d55def97efeb379366f483a3549edac61a3f09efeaa00649ee925d"
+    },
+    {
+      "object": "function auth.live_skin_own(text)",
+      "digest": "9a2d1456b83bcbab36cc4a1d895f1bfc5d029ac1c03b09b9d5958f0db3f79a61"
+    },
+    {
+      "object": "function auth.paths_ancestors(text)",
+      "digest": "1bc65f9d1b59ffd934685f43261bdc516cc3445028eb4d554e0558320a06b45f"
+    },
+    {
+      "object": "function auth.paths_descendants(text)",
+      "digest": "2ef9f904430ca402cfc3352019bfaa95b9ed68077a8960db6f7cfcaedbdfcf58"
+    },
+    {
+      "object": "function auth.paths_maintain()",
+      "digest": "5ff3ccaafa91b96c668ed5852ce10c648aff1576cd9f388d03d2353dce3f60ce"
+    },
+    {
+      "object": "function auth.paths_path(text)",
+      "digest": "e0b4d6e15990ab09964b55dbc3b4990ab96a2d043187c2907d71fa8a26a95a03"
+    },
+    {
+      "object": "function auth.paths_reach_set(text)",
+      "digest": "adfa6ec4fe090900b04c7d10df5c2a37fcb13550fc8d14db9da012783844df48"
+    },
+    {
+      "object": "function auth.paths_up_reach_set(text)",
+      "digest": "5a13d3b5a9bc80cfae3c7770c610a39ea9381e26c9ae67f2cbe5c1fe149cb1b2"
+    },
+    {
+      "object": "function auth.space_by_name(text)",
+      "digest": "553da8fc19055932ece5dfbd280a288a8b0b2bea1d5c58a8d54b9873be33310b"
+    },
+    {
+      "object": "function auth.space_can_view(text)",
+      "digest": "d1a9417dc4d0967cab73e307f05bfbdd657bab5af74aad79206d620f681017d2"
+    },
+    {
+      "object": "function auth.space_cards()",
+      "digest": "82a54413d5aa6cab9d0a2113b5f58d97be795ecfb36736cb768f6e9fe5c49ca6"
+    },
+    {
+      "object": "function auth.space_named(text)",
+      "digest": "33e02239e6c2b82eaf86b2ac553116d5b4c016de5879980f2c53378cb4f85269"
+    },
+    {
+      "object": "function auth.spaces_in_estate()",
+      "digest": "a29a487e3dbb81b31735c96468f348d387f4bd92a41b3e07d0775de01f3e2587"
+    },
+    {
+      "object": "function auth.theme_color(text)",
+      "digest": "3f4210e93e030306738dbb75223ee92d00a31904a2a733694caea2d812c7b41d"
+    },
+    {
+      "object": "policy atlases_select on public.atlases",
+      "digest": "6a505deb6043ef53c029fd9360ea4a3d1d31f121919c60ecddaaf671fe9a5053"
+    },
+    {
+      "object": "policy atlases_update on public.atlases",
+      "digest": "7d88a753fd3bd813d4dff9a77cc55c697072d5889462133216432be362b37d2e"
+    },
+    {
+      "object": "policy banners_select on public.banners",
+      "digest": "4fc0e5b9cae9fdf93183d9d30e55461c703f610ce33480008ce34c5c385f3e37"
+    },
+    {
+      "object": "policy banners_select_require on public.banners",
+      "digest": "52a31ea9cc1ef0b9ae17f395af6c7ac29cedc4ecee3fad3eacf38193faf5a4d9"
+    },
+    {
+      "object": "policy drafts_select on public.drafts",
+      "digest": "618ca86fa2db3ace0f76d6f7fa1e6c10ef9a1c38d47f3e23ccfadf40f284128c"
+    },
+    {
+      "object": "policy drafts_select_require on public.drafts",
+      "digest": "0a662cee919d5a61bac31db9f4cc2b1c3359a8ba7b05e5120bbdb82ca1b42d7b"
+    },
+    {
+      "object": "policy folders_delete on public.folders",
+      "digest": "2548d8b3b5e22891af4aad1a805c0516e3e4345b94cf8f18e6f606e5d08d704d"
+    },
+    {
+      "object": "policy folders_insert on public.folders",
+      "digest": "7e0708e258c59bef3e7c9232ee5116bbb6c5353dae30cf4c182980f6f091eb1d"
+    },
+    {
+      "object": "policy folders_select on public.folders",
+      "digest": "8e0a3f9dd6e687dcec919431df3b474524c9c572b2f38b2e618146dbce11e6c5"
+    },
+    {
+      "object": "policy folders_update on public.folders",
+      "digest": "cdcd4e0840e44ed57b4422414d8e44bf92e86a8288b9e4c36786468d19bf28ed"
+    },
+    {
+      "object": "policy ledgers_select on public.ledgers",
+      "digest": "c918e87cee40bcb4257e11f3c451d322707adcc29b5eebc8ac0a96fb9974af7f"
+    },
+    {
+      "object": "policy ledgers_update on public.ledgers",
+      "digest": "c0fcee16dc205d0909fe3e81d276df8b561d466736e87e7eb0ec6ad1bd114c3b"
+    },
+    {
+      "object": "policy ledgers_update_require on public.ledgers",
+      "digest": "330e164804ec501ea18727b5ef5da7cec5bb783f31fb59c00947e01fbe7a488f"
+    },
+    {
+      "object": "policy notices_delete on public.notices",
+      "digest": "e1fc363505cb89dc48d8b550b9f9f8930a2c041aa0b49ab8fe57f9c502a6ae5e"
+    },
+    {
+      "object": "policy notices_insert on public.notices",
+      "digest": "492c8064d21f5b071e1c71257b68750a526ad8cc04052e17c48c02875c4b7de6"
+    },
+    {
+      "object": "policy notices_select on public.notices",
+      "digest": "9dad7f701cf68b176deb8a7c1fc68eb114d603e402b432fb346aa3f581a2c93e"
+    },
+    {
+      "object": "policy notices_update on public.notices",
+      "digest": "2d50cf827cc77dca65f581cb540450e7c41329d1bf71dd1bcbba6c08c3ce4c4b"
+    },
+    {
+      "object": "policy pages_select on public.pages",
+      "digest": "da1da33da9d908b271e65ebcf0c88f74c3a83878f9043641006df2e6898e2c24"
+    },
+    {
+      "object": "policy sheets_select on public.sheets",
+      "digest": "fd0eeb7e95842c32a3b0e2f43f89e7ff9d6ae45a7c516b7dec48e5fd2a6180a7"
+    },
+    {
+      "object": "policy skins_select on public.skins",
+      "digest": "f2b371e6d0f161e4c5f30039ad09c1fcb64a75e26f4cc1d88902a3f075a179aa"
+    },
+    {
+      "object": "policy spaces_select on public.spaces",
+      "digest": "2d776683b4d058313e9702169e3203423d59b95b5c21de4256c3b65576ffddf9"
+    },
+    {
+      "object": "policy templates_delete on public.templates",
+      "digest": "fede59d9a99197da9e55b61b8e6da3a92f2b6eee748a119bf63ac6f528e85592"
+    },
+    {
+      "object": "policy templates_insert on public.templates",
+      "digest": "003e8f243d081ae50aa9bc8d7861dfb1c84b1e6fcc6a5624cc90ed6ed31241b8"
+    },
+    {
+      "object": "policy templates_select on public.templates",
+      "digest": "0410f358ad73061468063d85e9cd8ad53fe8c6a7cd8bc01aeda5a562a38a7504"
+    },
+    {
+      "object": "policy templates_select_require on public.templates",
+      "digest": "f63c39c2133a6cf43802ea854a798d0627441ec7e43db5fe06fe30079d3a51d9"
+    },
+    {
+      "object": "policy templates_update on public.templates",
+      "digest": "d996aacdd42f79bd0b4aaab73c88b197a35610465e384c246b1055bb1b48bab3"
+    },
+    {
+      "object": "policy themes_select on public.themes",
+      "digest": "336f905d9c69eaf7803c8ae48e181b465b5f3802f1ff213a76c2c60edd460126"
+    },
+    {
+      "object": "rls public.atlases",
+      "digest": "823449b7202762013cb72bd8b477a274755a957640e198b767f0d8cb187ca8ed"
+    },
+    {
+      "object": "rls public.banners",
+      "digest": "fa424da85a98b0d4b5e411a8707822282dabd25c4367dfb8e273f988090bb880"
+    },
+    {
+      "object": "rls public.drafts",
+      "digest": "8f1939cab8970f8a6866025668e8b3213c13fda77af5f38659c14e2037a85e46"
+    },
+    {
+      "object": "rls public.folders",
+      "digest": "9e9dfef4402bd6a626e475d31129cdaefdb00cefe89338738dd9889ab572b65f"
+    },
+    {
+      "object": "rls public.ledgers",
+      "digest": "b24302801f71f712415f87f5057eba516cbf82f327d17b2f5f90742798d357f7"
+    },
+    {
+      "object": "rls public.notices",
+      "digest": "25713236e1b893b43373757ca8d0446b5ced45836b3d004862d370e43f98375c"
+    },
+    {
+      "object": "rls public.pages",
+      "digest": "3fd58784f233586ffb3500ca40bb97819e33d41ff1fa67a0db01f3a10ac7ac38"
+    },
+    {
+      "object": "rls public.sheets",
+      "digest": "83978468b4811a335588f0583ce5411c881566b7195724973e56f43260819829"
+    },
+    {
+      "object": "rls public.skins",
+      "digest": "e0f88da6a82c39cc0465a91fc869b25d5b3aac00f5fa0985b962a80c382f1d5b"
+    },
+    {
+      "object": "rls public.spaces",
+      "digest": "89f17b4a0549b894a19e4cdb70693bec78bcd00f72035b3f2bcce3c4e59bdcc4"
+    },
+    {
+      "object": "rls public.templates",
+      "digest": "55d4398fa939dab79df2bee34014900358a56249646a4760e2d384f6dbd16532"
+    },
+    {
+      "object": "rls public.themes",
+      "digest": "9852c9de39b5c857268aaf2e9e79a903402c7f4532a5108953d1a5c82c5e3726"
+    },
+    {
+      "object": "trigger paths_maintain_del on public.folders",
+      "digest": "fc6732aec350ea0dbf33d15db13a7716a52252d03bcd6b4c5b1bb79a1d43662a"
+    },
+    {
+      "object": "trigger paths_maintain_ins on public.folders",
+      "digest": "7d9aee57241c411e9f910ff61bd5de4d5136a565ecdc993c158b717c8150ab99"
+    },
+    {
+      "object": "trigger paths_maintain_upd on public.folders",
+      "digest": "1d2ed274074ab1285b17fc81b9eac1b3f4ac1a1b6479e025c2f1d4a62062cbec"
+    }
   ]
 }
 

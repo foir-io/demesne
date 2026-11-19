@@ -164,6 +164,7 @@ fn run_reach_patterns(t: &T, url: &str, spec: &demesne_syntax::Spec, tree: Reach
     seed_reach_rows(&mut Db { t, tx: &mut tx }, &tree);
 
     t.run("scope ladder decides from the session", |t| check_ladder(&mut Db { t, tx: &mut tx }, &tree));
+    t.run("each level's check agrees with the set it shares a body with", |t| check_in_levels_against_the_set(&mut Db { t, tx: &mut tx }, &tree));
     t.run("selections", |t| check_selections(&mut Db { t, tx: &mut tx }, &tree));
     t.run("edge direction per object", |t| check_direction(&mut Db { t, tx: &mut tx }, &tree));
     t.run("claim lifts reads only", |t| check_claim_lift(&mut Db { t, tx: &mut tx }, &tree));
@@ -203,7 +204,12 @@ fn install_reach_schema(d: &mut Db, spec: &demesne_syntax::Spec) {
     d.exec(&rls.policy_sql(REACH_CALLER), &[]);
     d.exec(&format!("GRANT USAGE ON SCHEMA {REACH_ROWS}, {REACH_AUTH} TO {REACH_CALLER}"), &[]);
     d.exec(&format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {REACH_ROWS} TO {REACH_CALLER}"), &[]);
-    d.exec(&format!("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {REACH_AUTH} TO {REACH_CALLER}"), &[]);
+    d.exec(
+        &format!(
+            "GRANT EXECUTE ON FUNCTION {REACH_AUTH}.approvals_reach_in_space(text, text, text), {REACH_AUTH}.approvals_reach_in_folder(text, text, text, text) TO {REACH_CALLER}"
+        ),
+        &[],
+    );
 }
 
 fn seed_reach_rows(d: &mut Db, tr: &ReachTree) {
@@ -255,25 +261,13 @@ fn check_ladder(d: &mut Db, tr: &ReachTree) {
     let v = d.visible(&claims(&[("sub", "h_ended"), ("space_id", "s1"), ("folder_id", tr.root)]), "assets");
     want_ids(t, "ended approval", &v, &[]);
 
-    let probe = format!("SELECT {REACH_AUTH}.approvals_reach($1, 'e1')");
-    for (name, c, holder, want) in [
-        ("space rung refuses a missing space claim", claims(&[("folder_id", tr.root)]), "h_space", false),
-        ("space rung admits its space", claims(&[("space_id", "s1")]), "h_space", true),
-        ("folder rung admits a missing folder claim", claims(&[("space_id", "s1")]), "h_folder", true),
-        ("folder rung refuses a sibling folder", claims(&[("space_id", "s1"), ("folder_id", tr.other)]), "h_folder", false),
-        ("unpinned approval needs no claims", claims(&[]), "h_estate", true),
-    ] {
-        let got = d.truth(&c, &probe, &[&holder]);
-        if got != want {
-            t.errorf(format!("{name}: approvals_reach({holder}) = {got}, want {want}"));
-        }
-    }
+    let probe = format!("SELECT {REACH_AUTH}.approvals_reach_in_space($1, 'e1', '')");
     d.exec("SAVEPOINT empty_claims", &[]);
     d.exec("SELECT set_config('request.jwt.claims', '', true)", &[]);
-    match d.tx.query_one(&probe, &[&"h_estate"]).and_then(|r| r.try_get::<_, bool>(0)) {
-        Ok(true) => {}
-        Ok(false) => t.errorf("a direct call with an empty claims setting must answer rather than raise: false <nil>"),
-        Err(e) => t.errorf(format!("a direct call with an empty claims setting must answer rather than raise: false {e}")),
+    match d.tx.query_one(&probe, &[&"h_space"]).and_then(|r| r.try_get::<_, Option<bool>>(0)) {
+        Ok(None | Some(false)) => {}
+        Ok(Some(true)) => t.errorf("a direct call with an empty claims setting is nobody's own, so it must not answer true"),
+        Err(e) => t.errorf(format!("a direct call with an empty claims setting must answer rather than raise: {e}")),
     }
     d.exec("ROLLBACK TO SAVEPOINT empty_claims", &[]);
 
@@ -288,10 +282,53 @@ fn check_ladder(d: &mut Db, tr: &ReachTree) {
         (&in_folder, vec!["h_folder", "s1", tr.root], true),
         (&in_space, vec!["h_folder", "s2"], false),
     ] {
-        let got = d.truth(&claims(&[]), sql, &args(&a));
+        let got = d.truth(&claims(&[("sub", a[0])]), sql, &args(&a));
         if got != want {
             t.errorf(format!("{sql} {a:?} = {got}, want {want}"));
         }
+        if d.truth(&claims(&[("sub", "h_ended")]), sql, &args(&a)) || d.truth(&claims(&[]), sql, &args(&a)) {
+            t.errorf(format!("{sql} {a:?} answered a caller who is not {}", a[0]));
+        }
+    }
+}
+
+fn check_in_levels_against_the_set(d: &mut Db, tr: &ReachTree) {
+    let t = d.t;
+    let set = format!("SELECT $1 IN (SELECT {REACH_AUTH}.approvals_reach_set($2))");
+    let in_space = format!("SELECT {REACH_AUTH}.approvals_reach_in_space($2, $1, $3)");
+    let in_folder = format!("SELECT {REACH_AUTH}.approvals_reach_in_folder($2, $1, $3, $4)");
+    let people = ["h_estate", "h_space", "h_folder", "h_ended", "h_none"];
+    let folders = [None, Some(tr.root), Some(tr.child), Some(tr.other), Some(tr.far)];
+    let cases = people
+        .iter()
+        .flat_map(|&caller| people.iter().map(move |&holder| (caller, holder)))
+        .flat_map(|(caller, holder)| ["e1", "e2"].into_iter().map(move |estate| (caller, holder, estate)))
+        .flat_map(|(caller, holder, estate)| ["s1", "s2"].into_iter().map(move |space| (caller, holder, estate, space)))
+        .flat_map(|(caller, holder, estate, space)| folders.into_iter().map(move |folder| (caller, holder, estate, space, folder)));
+    let mut outcomes = [0usize; 2];
+    for (caller, holder, estate, space, folder) in cases {
+        let (by_level, by_set) = match folder {
+            None => (
+                d.truth(&claims(&[("sub", caller)]), &in_space, &args(&[estate, holder, space])),
+                d.truth(&claims(&[("sub", caller), ("space_id", space)]), &set, &args(&[estate, holder])),
+            ),
+            Some(f) => (
+                d.truth(&claims(&[("sub", caller)]), &in_folder, &args(&[estate, holder, space, f])),
+                d.truth(&claims(&[("sub", caller), ("space_id", space), ("folder_id", f)]), &set, &args(&[estate, holder])),
+            ),
+        };
+        if by_level != by_set {
+            t.errorf(format!("{caller} asks about {holder} at {estate}/{space}/{folder:?}: the level's check says {by_level}, the set says {by_set}"));
+        }
+        outcomes[usize::from(by_level)] += 1;
+    }
+    if outcomes[0] == 0 || outcomes[1] == 0 {
+        t.errorf(format!("the grid must both admit and refuse: {outcomes:?}"));
+    }
+    let empty_level = d.truth(&claims(&[("sub", "h_space")]), &in_space, &args(&["e1", "h_space", ""]));
+    let empty_set = d.truth(&claims(&[("sub", "h_space")]), &set, &args(&["e1", "h_space"]));
+    if !empty_level || empty_set {
+        t.errorf(format!("an empty selection admits a pinned approval in the level's check ({empty_level}) and not in the set ({empty_set})"));
     }
 }
 

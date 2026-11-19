@@ -46,13 +46,16 @@ impl Tables {
 }
 
 fn leaves(tree: &PermNode) -> Vec<&Term> {
-    tree.leaves()
+    tree.leaves_deep()
 }
 
 fn term_cols(t: &mut Tables, s: &Spec, o: &Object, term: &Term) {
     let table = o.table.as_str();
     if let Some(m) = term.mode_col() {
         t.col(table, m, Kind::Text);
+    }
+    if let Some(scope) = term.some_scope() {
+        t.col(table, &scope.col, Kind::Perms);
     }
     t.col(table, term.self_col(), Kind::Id);
     t.col(table, term.row_col(), Kind::Text);
@@ -83,6 +86,9 @@ fn relation_cols(t: &mut Tables, o: &Object, repr: &Repr) {
             t.table(&e.table);
             for c in &e.cols {
                 t.col(&e.table, c, Kind::Id);
+            }
+            for c in [e.key.as_deref(), e.filter.as_ref().map(|f| f.0.as_str()), e.slot.as_ref().map(|f| f.0.as_str())].into_iter().flatten() {
+                t.col(&e.table, c, Kind::Text);
             }
         }
         Repr::Composition(c) => {
@@ -134,7 +140,7 @@ fn relation_cols(t: &mut Tables, o: &Object, repr: &Repr) {
             t.col(table, mi.principal.col(), Kind::Id);
             t.col(table, mi.scope.col(), Kind::Id);
         }
-        Repr::Role => {}
+        Repr::Role | Repr::Conditions(_) => {}
     }
 }
 
@@ -373,7 +379,7 @@ type Outcome = Result<Vec<i32>, String>;
 struct Judged {
     rules: BTreeMap<String, Vec<Outcome>>,
     visible: BTreeMap<String, Vec<Outcome>>,
-    checks: BTreeMap<String, Vec<Result<Vec<String>, String>>>,
+    checks: BTreeMap<String, Vec<Answers>>,
 }
 
 fn why(e: &postgres::Error) -> String {
@@ -518,7 +524,7 @@ fn judge(db: &mut Client, setup: &Setup<'_>, pools: &Pools, ddl: &str, claims: &
     tx.batch_execute(ddl).map_err(|e| why(&e))?;
     let schema = s.table_schema();
     tx.batch_execute(&format!(
-        "GRANT USAGE ON SCHEMA {schema}, {defs} TO {role}; GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {role}; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {defs} TO {role};",
+        "GRANT USAGE ON SCHEMA {schema}, {defs} TO {role}; GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {role};",
         schema = ident(schema),
         defs = ident(s.definer_schema()),
         role = ident(&setup.role)
@@ -557,7 +563,50 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-const SPECS_V1_1_0_CANNOT_PARSE: [&str; 1] = ["examples/tree.demesne"];
+const SPECS_V1_1_0_CANNOT_PARSE: [&str; 3] = ["examples/chains.demesne", "examples/changelog.demesne", "examples/tree.demesne"];
+
+const SPECS_WHERE_TERMS_NOW_BIND_A_GRANTS_REACH: [&str; 8] = [
+    "testdata/corpus/fixtures/1f18a238f968d83f.demesne",
+    "testdata/corpus/fixtures/26584f0e4c9ae6a1.demesne",
+    "testdata/corpus/fixtures/26ecf6f96c07e480.demesne",
+    "testdata/corpus/fixtures/38d02b53bac27607.demesne",
+    "testdata/corpus/fixtures/66e5cc6fd058fb60.demesne",
+    "testdata/corpus/fixtures/7b734f125d1f2f8a.demesne",
+    "testdata/corpus/fixtures/9f89b69b6515b612.demesne",
+    "testdata/corpus/fixtures/fdf0cc61cbd9ee98.demesne",
+];
+
+fn terms_now_bind_a_reach(name: &str) -> bool {
+    SPECS_WHERE_TERMS_NOW_BIND_A_GRANTS_REACH.contains(&name)
+}
+
+fn admits_no_row_more(before: &[Outcome], now: &[Outcome]) -> bool {
+    before.len() == now.len()
+        && before.iter().zip(now).all(|(b, n)| match (b, n) {
+            (Ok(b), Ok(n)) => n.iter().all(|row| b.contains(row)),
+            (b, n) => b == n,
+        })
+}
+
+type Answers = Result<Vec<String>, String>;
+
+fn answers_true_nowhere_more(before: &[Answers], now: &[Answers]) -> bool {
+    before.len() == now.len()
+        && before.iter().zip(now).all(|(b, n)| match (b, n) {
+            (Ok(b), Ok(n)) => b.len() == n.len() && b.iter().zip(n).all(|(b, n)| n != "true" || b == "true"),
+            (b, n) => b == n,
+        })
+}
+
+#[test]
+fn a_point_check_counts_as_narrowed_only_where_it_answers_true_nowhere_it_did_not() {
+    let answers = |all: &[&[&str]]| -> Vec<Answers> { all.iter().map(|one| Ok(one.iter().map(|a| (*a).to_string()).collect())).collect() };
+    let before = answers(&[&["true", "false"], &["true", "true"]]);
+    assert!(answers_true_nowhere_more(&before, &answers(&[&["false", "false"], &["true", "false"]])), "answering false where it answered true narrows");
+    assert!(!answers_true_nowhere_more(&before, &answers(&[&["true", "true"], &["true", "true"]])), "answering true where it answered false widens");
+    assert!(!answers_true_nowhere_more(&before, &answers(&[&["true", "false"]])), "a claim set gone is not narrower");
+    assert!(!answers_true_nowhere_more(&before, &[Ok(vec!["true".into(), "false".into()]), Err("42883".into())]), "an error is no narrowing");
+}
 
 fn specs() -> Vec<(String, String)> {
     every_spec().into_iter().filter(|(name, _)| !SPECS_V1_1_0_CANNOT_PARSE.contains(&name.as_str())).collect()
@@ -598,13 +647,242 @@ fn ddl_before(src: &str) -> Option<String> {
     Some(ddl)
 }
 
+fn ddl_v4(src: &str) -> Option<(String, Option<demesne_emit_sql::Manifest>)> {
+    let s = demesne_syntax_v4::parse(src).ok()?;
+    demesne_emit_sql_v4::validate(&s).ok()?;
+    let sql = demesne_emit_sql_v4::Sql::new(&s);
+    let mut ddl = String::new();
+    sql.write_all_sql(&mut ddl).ok()?;
+    let manifest = sql.manifest().ok().map(|m| demesne_emit_sql::Manifest::from_json(&m.to_json()).expect("v5.0.0 reads v4.0.0's manifest"));
+    Some((ddl, manifest))
+}
+
+fn upgrade_by_diff(url: &str, name: &str, src: &str) -> usize {
+    let ((s, now), (v4, _)) = (ddl_now(src).expect("v5.0.0 emits it"), ddl_v4(src).expect("v4.0.0 emits it"));
+    let keys = claim_keys(&[&v4, &now]);
+    let pools = Pools::new(s.id_type(), &[&v4, &now], &keys.all);
+    let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
+    let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
+    let (config, scratch) = scratch_database(url, "upgrade_by_diff");
+    let mut db = config.connect(NoTls).expect("connect to the scratch database");
+    install(&mut db, &mut setup, &pools, &format!("{v4}\n{now}")).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let mut tx = db.transaction().expect("a transaction");
+    create(&mut tx, &setup, &pools).unwrap_or_else(|e| panic!("{name}: the tables: {}", why(&e)));
+    tx.commit().expect("the tables");
+    db.batch_execute(&v4).unwrap_or_else(|e| panic!("{name}: v4.0.0's SQL: {}", why(&e)));
+    db.batch_execute(&now).unwrap_or_else(|e| panic!("{name}: v5.0.0's SQL: {}", why(&e)));
+    let current = demesne_emit_sql::Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{name}: {e}"));
+    let v4_made = demesne_emit_sql::Manifest::from_sql(&v4).unwrap_or_else(|e| panic!("{name}: {e}")).functions;
+    let left: BTreeSet<String> = v4_made.difference(&current.functions).map(|f| f.replace(", ", ",")).collect();
+    let found = demesne_postgres::drift(&mut db, &now, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    let orphans: BTreeSet<String> = found.findings.iter().filter_map(|f| f.object.strip_prefix("function ").map(str::to_string)).collect();
+    assert_eq!(orphans, left, "{name}: diff names each function v4.0.0 made and v5.0.0 does not: {:#?}", found.findings);
+    assert_eq!(found.findings.len(), left.len(), "{name}: diff finds nothing else: {:#?}", found.findings);
+    for f in &orphans {
+        db.batch_execute(&format!("DROP FUNCTION {f}")).unwrap_or_else(|e| panic!("{name}: drop {f}: {}", why(&e)));
+    }
+    let after = demesne_postgres::drift(&mut db, &now, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    assert_eq!(after.findings, [], "{name}: diff is clean once the orphans are dropped");
+    drop(db);
+    let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
+    admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");
+    left.len()
+}
+
+fn upgrade_from_v4(config: &Config, name: &str, src: &str) -> Option<(usize, usize)> {
+    let ((s, now), (v4, Some(previous))) = (ddl_now(src)?, ddl_v4(src)?) else { return None };
+    let keys = claim_keys(&[&v4, &now]);
+    let pools = Pools::new(s.id_type(), &[&v4, &now], &keys.all);
+    let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
+    let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
+    let mut db = config.connect(NoTls).expect("connect to the scratch database");
+    install(&mut db, &mut setup, &pools, &now).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let current = demesne_emit_sql::Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{name}: {e}"));
+    let migration = demesne_emit_sql::Sql::new(&s).migration(&previous).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let mut tx = db.transaction().expect("a transaction");
+    create(&mut tx, &setup, &pools).unwrap_or_else(|e| panic!("{name}: the tables: {}", why(&e)));
+    tx.batch_execute(&v4).unwrap_or_else(|e| panic!("{name}: v4.0.0's SQL: {}", why(&e)));
+    tx.batch_execute(&migration).unwrap_or_else(|e| panic!("{name}: the migration: {}", why(&e)));
+    let live = |tx: &mut Transaction<'_>, f: &str| -> bool { tx.query_one("SELECT to_regprocedure($1) IS NOT NULL", &[&f]).expect("the lookup").get(0) };
+    let gone: Vec<&String> = previous.functions.iter().filter(|f| !current.functions.contains(*f)).collect();
+    for f in &gone {
+        assert!(!live(&mut tx, f), "{name}: {f}, which v5.0.0 does not emit, is left after the migration");
+    }
+    for f in &current.functions {
+        assert!(live(&mut tx, f), "{name}: {f} is missing after the migration");
+    }
+    let searches_pg_temp_last = |tx: &mut Transaction<'_>, f: &str| -> bool {
+        tx.query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_proc p, unnest(p.proconfig) c WHERE p.oid = to_regprocedure($1) AND c LIKE 'search_path=%, pg_temp')",
+            &[&f],
+        )
+        .expect("the search path")
+        .get(0)
+    };
+    let unsafe_path: Vec<&String> = current.functions.iter().filter(|f| !searches_pg_temp_last(&mut tx, f)).collect();
+    assert!(unsafe_path.is_empty(), "{name}: after the migration every function searches pg_temp last: {unsafe_path:?}");
+    tx.rollback().expect("rollback");
+    Some((gone.len(), current.functions.len()))
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn upgrading_from_v4_0_0_by_migrating_leaves_no_function_v5_0_0_does_not_emit() {
+    let url = require_env("DEMESNE_PG_URL");
+    let (config, scratch) = scratch_database(&url, "upgrade_by_migrating");
+    config
+        .connect(NoTls)
+        .expect("connect to the scratch database")
+        .batch_execute("DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$")
+        .expect("the role");
+    let (mut specs, mut dropped, mut kept) = (0, 0, 0);
+    let mut pruned_example = false;
+    let mut by_diff = Vec::new();
+    for (name, src) in every_spec().into_iter().filter(|(name, _)| !UUID_SPECS_WHOSE_DEFINERS_TAKE_TEXT.contains(&name.as_str())) {
+        if ddl_now(&src).is_some() && matches!(ddl_v4(&src), Some((_, None))) {
+            by_diff.push((name, src));
+            continue;
+        }
+        let Some((gone, now)) = upgrade_from_v4(&config, &name, &src) else { continue };
+        specs += 1;
+        dropped += gone;
+        kept += now;
+        pruned_example |= name == "examples/example.demesne" && gone > 0;
+    }
+    eprintln!("v4.0.0 to v5.0.0 by migrating: {specs} specs, {dropped} functions dropped, {kept} kept");
+    let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
+    admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");
+    let names: Vec<&str> = by_diff.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["examples/changelog.demesne"], "v4.0.0 writes no manifest for a spec that declares `changelog checked`, and only for that");
+    for (name, src) in &by_diff {
+        let spare = format!("{src}\nclosure spare_paths(ancestor_id, descendant_id)\n");
+        let (orphans, with_spare) = (upgrade_by_diff(&url, name, src), upgrade_by_diff(&url, name, &spare));
+        eprintln!("{name}: v4.0.0 to v5.0.0 by diff, {orphans} orphans dropped, {with_spare} with a closure no relation reads");
+        assert!(with_spare > 0, "{name}: the functions of a closure no relation reads are orphans diff names");
+    }
+    assert!(specs > 150 && dropped > 50 && kept > 400, "{specs} specs, {dropped} dropped, {kept} kept");
+    assert!(pruned_example, "examples/example.demesne loses has_org_role, among others");
+}
+
+fn upgrade_under_blanket_grants(url: &str, name: &str) -> (Vec<String>, demesne_postgres::Drift) {
+    let src = std::fs::read_to_string(root().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let ((s, now), (v4, Some(previous))) = (ddl_now(&src).expect("v5.0.0 emits it"), ddl_v4(&src).expect("v4.0.0 emits it")) else {
+        panic!("{name}: v4.0.0 writes its manifest")
+    };
+    let keys = claim_keys(&[&v4, &now]);
+    let pools = Pools::new(s.id_type(), &[&v4, &now], &keys.all);
+    let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
+    let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
+    let (config, scratch) = scratch_database(url, "blanket_grants");
+    let mut db = config.connect(NoTls).expect("connect to the scratch database");
+    db.batch_execute(
+        "DO $$ BEGIN BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END;
+         BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END $$",
+    )
+    .expect("the roles");
+    install(&mut db, &mut setup, &pools, &now).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let schema = ident(s.definer_schema());
+    let mut tx = db.transaction().expect("a transaction");
+    create(&mut tx, &setup, &pools).unwrap_or_else(|e| panic!("{name}: the tables: {}", why(&e)));
+    tx.batch_execute(&v4).unwrap_or_else(|e| panic!("{name}: v4.0.0's SQL: {}", why(&e)));
+    tx.batch_execute(&format!(
+        "GRANT USAGE ON SCHEMA {schema} TO authenticated, anon;
+         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {schema} TO authenticated, anon;
+         ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} GRANT EXECUTE ON FUNCTIONS TO authenticated, anon;"
+    ))
+    .unwrap_or_else(|e| panic!("{name}: the blanket grants: {}", why(&e)));
+    let migration = demesne_emit_sql::Sql::new(&s).migration(&previous).unwrap_or_else(|e| panic!("{name}: {e}"));
+    tx.batch_execute(&migration).unwrap_or_else(|e| panic!("{name}: the migration: {}", why(&e)));
+    tx.commit().expect("commit the upgrade");
+    let lists = demesne_emit_sql::Sql::new(&s).manifest().expect("a manifest").execute.expect("the manifest records who may run each function");
+    let revoked: Vec<String> = lists.revoked.iter().chain(&lists.grantable).cloned().collect();
+    let drift = demesne_postgres::drift(&mut db, &now, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    let mut taken_back = String::new();
+    for f in drift.findings.iter().filter(|f| f.kind == demesne_postgres::DriftKind::Granted) {
+        let statement = f.detail.rsplit(": ").next().expect("a granted finding ends with its statement");
+        taken_back.push_str(statement);
+        taken_back.push('\n');
+    }
+    db.batch_execute(&taken_back).unwrap_or_else(|e| panic!("{name}: the statements diff gives: {e}\n{taken_back}"));
+    let after = demesne_postgres::drift(&mut db, &now, &[], &demesne_postgres::Grantees::default()).unwrap_or_else(|e| panic!("{name}: diff: {e}"));
+    drop(db);
+    let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
+    admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");
+    let left: Vec<String> =
+        after.findings.iter().filter(|f| f.kind == demesne_postgres::DriftKind::Granted).map(|f| format!("{} {}", f.object, f.detail)).collect();
+    assert!(left.is_empty(), "{name}: diff still names grants after its own statements ran: {left:#?}");
+    (revoked, drift)
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn after_upgrading_under_the_old_blanket_grant_diff_names_every_grant_of_a_revoked_function_and_how_to_take_it_back() {
+    let url = require_env("DEMESNE_PG_URL");
+    let mut named = 0;
+    for name in ["examples/example.demesne", "examples/manage.demesne"] {
+        let (revoked, drift) = upgrade_under_blanket_grants(&url, name);
+        assert!(!revoked.is_empty(), "{name}: v5.0.0 revokes a function, so there is a grant to find");
+        let granted: Vec<(&str, &str)> =
+            drift.findings.iter().filter(|f| f.kind == demesne_postgres::DriftKind::Granted).map(|f| (f.object.as_str(), f.detail.as_str())).collect();
+        for f in &revoked {
+            let object = format!("function {f}");
+            let to_anon = format!("REVOKE EXECUTE ON FUNCTION {f} FROM anon;");
+            assert!(granted.iter().any(|(o, d)| *o == object && d.ends_with(&to_anon)), "{name}: diff does not name anon's grant of {f}: {granted:#?}");
+            assert!(
+                !granted.iter().any(|(o, d)| *o == object && d.contains("FROM authenticated;")),
+                "{name}: applying v5.0.0 leaves the policies' role its grant of {f}: {granted:#?}"
+            );
+            named += 1;
+        }
+        let schema = "auth";
+        for role in ["anon", "authenticated"] {
+            let statement = format!("ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA {schema} REVOKE EXECUTE ON FUNCTIONS FROM {role};");
+            assert!(granted.iter().any(|(_, d)| d.ends_with(&statement)), "{name}: diff does not name the default privilege for {role}: {granted:#?}");
+        }
+        let unrevoked: Vec<&(&str, &str)> =
+            granted.iter().filter(|(o, _)| o.starts_with("function ") && !revoked.iter().any(|f| *o == format!("function {f}"))).collect();
+        assert!(unrevoked.is_empty(), "{name}: diff names a grant of a function PUBLIC may run: {unrevoked:#?}");
+    }
+    assert!(named >= 5, "{named} revoked functions checked");
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn specs_with_integer_and_uuid_ids_apply_and_answer_through_every_generator_taking_an_id() {
+    let url = require_env("DEMESNE_PG_URL");
+    for name in ["testdata/ids/integer.demesne", "testdata/ids/uuid.demesne"] {
+        let src = std::fs::read_to_string(root().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let (s, now) = ddl_now(&src).unwrap_or_else(|| panic!("{name}: the spec emits"));
+        let keys = claim_keys(&[&now]);
+        let pools = Pools::new(s.id_type(), &[&now], &keys.all);
+        let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
+        let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: "authenticated".to_string() };
+        let (config, scratch) = scratch_database(&url, "ids");
+        let mut db = config.connect(NoTls).expect("connect to the scratch database");
+        db.batch_execute("DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$")
+            .expect("the role");
+        install(&mut db, &mut setup, &pools, &now).unwrap_or_else(|e| panic!("{name}: the SQL applies on tables of its id type: {e}"));
+        let governed: Vec<String> = s.objects.iter().map(|o| o.table.clone()).collect();
+        let claims = claim_sets(&keys, &pools, &setup.tables, &governed);
+        let judged = judge(&mut db, &setup, &pools, &now, &claims).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let outcomes: Vec<&Outcome> = judged.rules.values().chain(judged.visible.values()).flatten().collect();
+        let errors: Vec<&String> = outcomes.iter().filter_map(|o| o.as_ref().err()).collect();
+        assert!(errors.is_empty(), "{name}: every policy answers: {errors:?}");
+        let admitted = outcomes.iter().filter(|o| o.as_ref().is_ok_and(|rows| !rows.is_empty())).count();
+        assert!(admitted > 0 && admitted < outcomes.len(), "{name}: the policies both admit and refuse: {admitted} of {}", outcomes.len());
+        drop(db);
+        let mut admin: Client = url.parse::<Config>().expect("$DEMESNE_PG_URL parses").connect(NoTls).expect("connect");
+        admin.batch_execute(&format!("DROP DATABASE IF EXISTS {}", ident(&scratch))).expect("drop the scratch database");
+    }
+}
+
 fn require_env(var: &str) -> String {
     std::env::var(var).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| panic!("set ${var} to run the claim-read checks against a live Postgres"))
 }
 
-fn scratch_database(url: &str) -> (Config, String) {
+fn scratch_database(url: &str, what: &str) -> (Config, String) {
     let mut config: Config = url.parse().expect("$DEMESNE_PG_URL parses");
-    let name = format!("{}_claim_reads_{}", config.get_dbname().unwrap_or("demesne"), std::process::id());
+    let name = format!("{}_{what}_{}", config.get_dbname().unwrap_or("demesne"), std::process::id());
     let mut admin = config.connect(NoTls).expect("connect to $DEMESNE_PG_URL");
     let powers: bool = admin.query_one("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user", &[]).expect("the role reads").get(0);
     assert!(powers, "the claim-read checks judge each rule past row security, so $DEMESNE_PG_URL must name a superuser or a BYPASSRLS role");
@@ -619,12 +897,14 @@ struct Tally {
     specs: usize,
     compared: usize,
     invalid: Vec<String>,
+    newly_accepted: Vec<String>,
     uninstallable: Vec<String>,
     rules: usize,
     both_ways: usize,
     checks: usize,
     one_way: BTreeMap<String, Vec<String>>,
     differing: Vec<String>,
+    narrowed: Vec<String>,
 }
 
 fn varies(outcomes: &[Outcome]) -> bool {
@@ -638,19 +918,18 @@ fn compare_spec(config: &Config, name: &str, src: &str, tally: &mut Tally) {
         return;
     };
     let role = "authenticated".to_string();
-    let before = ddl_before(src).unwrap_or_else(|| panic!("{name}: the current release emits it, so the earlier one must too"));
+    let Some(before) = ddl_before(src) else {
+        tally.newly_accepted.push(name.to_string());
+        return;
+    };
     let keys = claim_keys(&[&before, &now]);
     let pools = Pools::new(s.id_type(), &[&before, &now], &keys.all);
     let setting = s.claims.as_ref().map_or_else(|| "request.jwt.claims".to_string(), |c| c.setting.clone());
     let mut setup = Setup { spec: &s, tables: tables_of(&s), setting, role: role.clone() };
     let governed: Vec<String> = s.objects.iter().map(|o| o.table.clone()).collect();
     let mut db = config.connect(NoTls).expect("connect to the scratch database");
-    db.batch_execute(&format!(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {}) THEN CREATE ROLE {} NOLOGIN; END IF; END $$",
-        literal(&role),
-        ident(&role)
-    ))
-    .expect("the policies' role");
+    db.batch_execute(&format!("DO $$ BEGIN CREATE ROLE {} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$", ident(&role)))
+        .expect("the policies' role");
     if let Err(e) = install(&mut db, &mut setup, &pools, &now).and_then(|()| install(&mut db, &mut setup, &pools, &before)) {
         tally.uninstallable.push(format!("{name}: {e}"));
         return;
@@ -680,32 +959,297 @@ fn compare_spec(config: &Config, name: &str, src: &str, tally: &mut Tally) {
         tally.one_way.entry(how.to_string()).or_default().push(format!("{name} {rule}"));
     }
     tally.checks += new.checks.len();
+    weigh_differences(name, &claims, old, new, tally);
+}
+
+fn weigh_differences(name: &str, claims: &[Option<String>], old: &Judged, new: &Judged, tally: &mut Tally) {
     assert_eq!(old.rules.keys().collect::<Vec<_>>(), new.rules.keys().collect::<Vec<_>>(), "{name}: the same rules on both sides");
+    let bound = terms_now_bind_a_reach(name);
     for (rule, outcomes) in &old.rules {
         if new.rules.get(rule) != Some(outcomes) {
             let at = outcomes.iter().zip(&new.rules[rule]).position(|(a, b)| a != b).unwrap_or(0);
-            tally.differing.push(format!("{name}: rule {rule} under claims {:?}: before {:?}, now {:?}", claims[at], outcomes[at], new.rules[rule][at]));
+            let what = format!("{name}: rule {rule} under claims {:?}: before {:?}, now {:?}", claims[at], outcomes[at], new.rules[rule][at]);
+            if bound && admits_no_row_more(outcomes, &new.rules[rule]) {
+                tally.narrowed.push(what);
+            } else {
+                tally.differing.push(what);
+            }
         }
     }
     if old.visible != new.visible {
-        tally.differing.push(format!("{name}: the rows the role sees differ"));
+        let narrower = old.visible.len() == new.visible.len()
+            && old.visible.iter().all(|(table, before)| new.visible.get(table).is_some_and(|now| admits_no_row_more(before, now)));
+        if bound && narrower {
+            tally.narrowed.push(format!("{name}: the role sees fewer rows"));
+        } else {
+            tally.differing.push(format!("{name}: the rows the role sees differ"));
+        }
     }
     if old.checks != new.checks {
-        tally.differing.push(format!("{name}: a point check answers differently"));
+        let narrower = old.checks.len() == new.checks.len()
+            && old.checks.iter().all(|(check, before)| new.checks.get(check).is_some_and(|now| answers_true_nowhere_more(before, now)));
+        if bound && narrower {
+            tally.narrowed.push(format!("{name}: a point check answers differently"));
+        } else {
+            tally.differing.push(format!("{name}: a point check answers differently"));
+        }
     }
+}
+
+fn without_functions_the_prune_rule_drops(before: &str, dropped: &BTreeSet<String>) -> String {
+    let name = |sig: &str| sig.split('(').next().unwrap_or_default().to_string();
+    let mut out = before.to_string();
+    for (object, stmt) in demesne_emit_sql::objects(before).expect("v1.1.0's SQL splits into its objects") {
+        if let demesne_emit_sql::Object::Function(sig) = &object
+            && dropped.contains(&name(sig))
+        {
+            let whole = [format!("{stmt};\n\n"), format!("{stmt};\n")]
+                .into_iter()
+                .find(|whole| out.contains(whole.as_str()))
+                .expect("a function's statement is in the SQL it came from");
+            out = out.replacen(&whole, "", 1);
+        }
+    }
+    out
+}
+
+fn with_triggers_searching_the_tables_schema(before: &str, tables: &str) -> String {
+    let mut out = before.to_string();
+    for (object, stmt) in demesne_emit_sql::objects(before).expect("v1.1.0's SQL splits into its objects") {
+        let demesne_emit_sql::Object::Function(sig) = &object else { continue };
+        let fixed = (sig.ends_with("_rebuild()") && !sig.ends_with("_flat_rebuild()")) || sig.ends_with("_maintain()");
+        if fixed && tables != "public" {
+            out = out.replacen(&stmt, &stmt.replace("SET search_path = pg_catalog, public\n", &format!("SET search_path = pg_catalog, {tables}\n")), 1);
+        }
+    }
+    out
+}
+
+fn parameters(stmt: &str) -> Option<(&str, Vec<(&str, &str)>)> {
+    let rest = stmt.strip_prefix("CREATE OR REPLACE FUNCTION ")?;
+    let open = rest.find('(')?;
+    let close = rest.find(")\nRETURNS ")?;
+    let list = &rest[open + 1..close];
+    Some((&rest[..open], list.split(", ").filter(|p| !p.is_empty()).filter_map(|p| p.split_once(' ')).collect()))
+}
+
+fn guarded(now: &str, function: &str) -> bool {
+    now.split("DO $demesne$ BEGIN")
+        .skip(1)
+        .any(|block| block.split("END $demesne$;").next().is_some_and(|guard| guard.contains(&format!("to_regprocedure('{function}("))))
+}
+
+fn without_store_copy_guards(sql: &str) -> String {
+    let mut out = sql.to_string();
+    let mut from = 0;
+    while let Some(at) = out[from..].find("DO $demesne$ BEGIN").map(|at| from + at) {
+        let end = out[at..].find("END $demesne$;\n").map(|e| at + e + "END $demesne$;\n".len()).expect("a guard ends");
+        if out[at..end].contains("_can_") {
+            out.replace_range(at..end, "");
+        } else {
+            from = end;
+        }
+    }
+    out
+}
+
+fn kinds_declared(s: &Spec) -> BTreeMap<String, Vec<demesne_emit_sql::ParamKind>> {
+    demesne_emit_sql::Sql::new(s)
+        .emit_definers()
+        .expect("a spec that emits its SQL emits its definers")
+        .into_iter()
+        .map(|f| (format!("{}.{}({})", f.schema(), f.name, f.sig()), f.params.into_iter().map(|p| p.kind).collect()))
+        .collect()
+}
+
+const NAMED_IDS: [&str; 10] =
+    ["p_principal", "p_node", "p_resource", "p_object", "p_member", "p_group", "p_record", "p_ancestor", "p_descendant", "p_container"];
+
+fn names_an_id(s: &Spec, name: &str) -> bool {
+    name.ends_with("_id")
+        || name.ends_with("_ids")
+        || NAMED_IDS.contains(&name)
+        || s.topology.iter().flat_map(|t| &t.levels).any(|l| name == format!("p_{}", l.name))
+}
+
+fn declared_as_v1_1_0(now: &str, before: &str, s: &Spec) -> String {
+    let id_type = s.id_type();
+    let kinds = kinds_declared(s);
+    let declared = demesne_emit_sql::objects(before).expect("v1.1.0's SQL splits into its objects");
+    let theirs: BTreeMap<&str, Vec<(&str, &str)>> = declared.iter().filter_map(|(_, stmt)| parameters(stmt)).collect();
+    let listed = |ps: &[(&str, &str)]| ps.iter().map(|(n, t)| format!("{n} {t}")).collect::<Vec<_>>().join(", ");
+    let mut out = without_store_copy_guards(now);
+    for (_, stmt) in demesne_emit_sql::objects(now).expect("this release's SQL splits into its objects") {
+        let Some((function, mine)) = parameters(&stmt) else { continue };
+        let Some(was) = theirs.get(function) else { continue };
+        let declared = kinds.get(&format!("{function}({})", listed(&mine)));
+        let retyped = |at: usize, name: &str, t: &str, u: &str| {
+            t == u
+                || names_an_id(s, name)
+                    && match declared.and_then(|k| k.get(at)) {
+                        Some(demesne_emit_sql::ParamKind::Id) => t == id_type && u == "text",
+                        Some(demesne_emit_sql::ParamKind::Ids) => t == format!("{id_type}[]") && u == "text[]",
+                        _ => false,
+                    }
+        };
+        let store_copy = function.contains("_can_") && guarded(now, function);
+        let renamed = |m: &str, w: &str| m == w || (store_copy && w == "p_id" && m.starts_with("p_") && m.ends_with("_id"));
+        if mine.len() != was.len() || !mine.iter().zip(was).enumerate().all(|(at, ((m, t), (w, u)))| retyped(at, m, t, u) && renamed(m, w)) {
+            continue;
+        }
+        let mut fixed = stmt.replacen(&format!("({})", listed(&mine)), &format!("({})", listed(was)), 1);
+        for ((m, _), (w, _)) in mine.iter().zip(was) {
+            if m != w {
+                fixed = fixed.replace(m, w);
+            }
+        }
+        out = out.replacen(&stmt, &fixed, 1);
+    }
+    out
+}
+
+fn searching_its_own_schemas(sql: &str) -> String {
+    sql.split_inclusive('\n')
+        .map(|line| match line.strip_suffix(", pg_temp\n") {
+            Some(path) if path.contains("SET search_path = ") => format!("{path}\n"),
+            _ => line.to_string(),
+        })
+        .collect()
 }
 
 fn read_per_row(sql: &str) -> String {
     sql.replace("(SELECT current_setting(", "(current_setting(").replace("(SELECT NULLIF(current_setting(", "(NULLIF(current_setting(")
 }
 
+fn calls_per_row(sql: &str) -> String {
+    const WRAP: &str = "(SELECT ";
+    let mut out = sql.to_string();
+    let mut from = 0;
+    while let Some(found) = out[from..].find(WRAP) {
+        let open = from + found;
+        let call = open + WRAP.len();
+        from = call;
+        let name = out[call..].find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.')).unwrap_or(0);
+        if !out[call..call + name].contains('.') || !out[call + name..].starts_with('(') {
+            continue;
+        }
+        let end = call + name + bound_ends(&out[call + name..]);
+        if !out[end..].starts_with(')') {
+            continue;
+        }
+        out.replace_range(end..=end, "");
+        out.replace_range(open..call, "");
+        from = open;
+    }
+    out
+}
+
+const OWN: [&str; 5] = [" AND user_id = ", " AND user_id IN ", " AND p_node = ", " AND p_node IN ", " AND (p_ancestor "];
+
+fn bound_ends(rest: &str) -> usize {
+    let mut depth = 0_usize;
+    let mut end = rest.len();
+    for (at, ch) in rest.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth == 1 => {
+                end = at + 1;
+                break;
+            }
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    while let Some(cast) = rest[end..].strip_prefix("::") {
+        end += 2 + cast.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(cast.len());
+    }
+    end
+}
+
+fn guard_start(text: &str, read: usize) -> Option<usize> {
+    let head = text[..read].strip_suffix(" = ").or_else(|| text[..read].strip_suffix(" IN ("))?;
+    let name = head.len() - head.chars().rev().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').count();
+    (name < head.len()).then_some(name)
+}
+
+fn without_leading_guards(sql: &str) -> String {
+    const READ: &str = "(NULLIF(current_setting(";
+    let mut out = sql.to_string();
+    let mut from = 0;
+    while let Some(found) = out[from..].find(READ) {
+        let read = from + found;
+        from = read + READ.len();
+        let Some(name) = guard_start(&out, read) else { continue };
+        let either_side = out[..name].ends_with('(') && out[name - 1 + bound_ends(&out[name - 1..])..].starts_with(" AND (");
+        let (start, group) = if either_side { (name - 1, name - 1) } else { (name, if out[..read].ends_with('(') { read - 1 } else { read }) };
+        let guarded = group + bound_ends(&out[group..]);
+        if !out[guarded..].starts_with(" AND (") {
+            continue;
+        }
+        let open = guarded + " AND ".len();
+        let close = open + bound_ends(&out[open..]) - 1;
+        out.replace_range(close..=close, "");
+        out.replace_range(start..=open, "");
+        from = start;
+    }
+    out
+}
+
+fn without_affordance_guards(sql: &str) -> String {
+    const GUARD: &str = "SELECT COALESCE((p_kind = ";
+    let mut out = sql.to_string();
+    while let Some(at) = out.find(GUARD) {
+        let call = at + "SELECT ".len();
+        let args = call + "COALESCE".len();
+        let end = args + bound_ends(&out[args..]);
+        assert!(out[end..].starts_with(" AND EXISTS("), "an affordance's guard precedes its lookup:\n{}", &out[at..]);
+        out.replace_range(call..end + " AND ".len(), "");
+    }
+    out
+}
+
+fn answering_any_caller(sql: &str, before: &str) -> String {
+    let sql = &without_affordance_guards(&without_leading_guards(&sql.replace(" FROM PUBLIC, authenticated;", " FROM PUBLIC;")));
+    let stated_since = |line: &&str| {
+        (line.starts_with("REVOKE EXECUTE ON FUNCTION ") || line.starts_with("GRANT EXECUTE ON FUNCTION ")) && !before.lines().any(|kept| kept == *line)
+    };
+    let mut out = sql.replace(" AND false", "");
+    for line in sql.lines().filter(stated_since) {
+        out = out.replace(&format!("\n{line}"), "");
+    }
+    for prefix in OWN {
+        while let Some(at) = out.find(prefix) {
+            let from = at + prefix.rfind('(').unwrap_or(prefix.len());
+            let end = from + bound_ends(&out[from..]);
+            out.replace_range(at..end, "");
+        }
+    }
+    out
+}
+
 #[test]
-fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads() {
-    let (mut compared, mut refused, mut reads) = (0, 0, 0);
+fn the_sql_differs_from_v1_1_0_only_in_the_ways_this_release_states() {
+    let (mut compared, mut refused, mut reads, mut bound) = (0, 0, 0, 0);
     for (name, src) in specs() {
         match (ddl_now(&src), ddl_before(&src)) {
-            (Some((_, now)), Some(before)) => {
-                assert_eq!(read_per_row(&now), before, "{name}: the SQL changed beyond its claim reads");
+            (Some((s, now)), Some(before)) => {
+                let before = with_triggers_searching_the_tables_schema(&before, s.table_schema());
+                let dropped: BTreeSet<String> =
+                    demesne_emit_sql::Sql::new(&s).unused_definers().unwrap_or_else(|e| panic!("{name}: {e}")).into_iter().collect();
+                if terms_now_bind_a_reach(&name) {
+                    assert_ne!(
+                        calls_per_row(&answering_any_caller(&read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, &s)), &before)),
+                        calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
+                        "{name}: no term binds a grant's reach here any more"
+                    );
+                    bound += 1;
+                } else {
+                    assert_eq!(
+                        calls_per_row(&answering_any_caller(&read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, &s)), &before)),
+                        calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
+                        "{name}: the SQL changed beyond its claim reads, the callers its sets answer, pg_temp last, the triggers' tables schema, the functions since pruned, the parameters declared and named as ids retyped to the spec's ids, and the store copy's renamed parameter"
+                    );
+                }
                 compared += 1;
                 reads += now.matches("(SELECT current_setting(").count() + now.matches("(SELECT NULLIF(current_setting(").count();
             }
@@ -714,7 +1258,26 @@ fn the_sql_differs_from_v1_1_0_only_in_its_claim_reads() {
         }
     }
     assert_eq!((compared, refused), (158, 188), "the specs both releases emit, and those both refuse");
+    assert_eq!(bound, SPECS_WHERE_TERMS_NOW_BIND_A_GRANTS_REACH.len(), "every spec listed as changed is in the corpus");
     assert!(reads > compared, "{reads} claim reads over {compared} specs");
+}
+
+#[test]
+fn a_grant_named_where_it_already_widens_a_level_added_nothing_in_v1_1_0_and_is_refused_now() {
+    let name = "testdata/corpus/fixtures/9f89b69b6515b612.demesne";
+    let all = every_spec();
+    let (_, src) = all.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name} is not in the corpus"));
+    assert!(!src.contains("+ via grant orgreach"), "{name} no longer names the grant in a permission");
+    let plain = "permission view   = owner @rls maps select";
+    let at = src.rfind(plain).unwrap_or_else(|| panic!("{name} has the permission the grant was named in"));
+    let mut named = src.clone();
+    named.replace_range(at..at + plain.len(), "permission view   = owner + via grant orgreach @rls maps select");
+    assert_eq!(named.matches("+ via grant orgreach").count(), 1, "the grant is named in one permission");
+    assert_eq!(ddl_before(&named), ddl_before(src), "v1.1.0 emitted the same SQL with the grant named and without");
+    assert!(ddl_before(src).is_some());
+    let s = demesne_syntax::parse(&named).expect("the spec parses");
+    let refused = demesne_emit_sql::validate(&s).expect_err("naming the grant there is refused").to_string();
+    assert!(refused.contains("`via grant orgreach` adds nothing here") && refused.contains("level \"org\""), "{refused}");
 }
 
 #[test]
@@ -731,7 +1294,7 @@ fn a_spec_left_out_of_the_comparison_is_one_only_this_release_reads() {
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn every_rule_admits_the_rows_v1_1_0_admitted() {
     let url = require_env("DEMESNE_PG_URL");
-    let (config, name) = scratch_database(&url);
+    let (config, name) = scratch_database(&url, "claim_reads");
     let mut tally = Tally::default();
     for (spec, src) in specs() {
         compare_spec(&config, &spec, &src, &mut tally);
@@ -744,9 +1307,21 @@ fn every_rule_admits_the_rows_v1_1_0_admitted() {
         .expect("drop the scratch database");
     let mut summary = String::new();
     writeln!(summary, "{tally:#?}").expect("fmt::Write for String never fails");
+    eprintln!(
+        "v1.1.0 differential: {} specs, {} compared, {} rules, {} both admitted and refused a row, {} checks, {} differing, {} narrowed where terms now bind a grant's reach",
+        tally.specs,
+        tally.compared,
+        tally.rules,
+        tally.both_ways,
+        tally.checks,
+        tally.differing.len(),
+        tally.narrowed.len()
+    );
+    assert!(!tally.narrowed.is_empty(), "no rule narrowed, so nothing shows the terms binding a reach:\n{summary}");
     assert!(tally.differing.is_empty(), "rules admit different rows:\n{summary}");
     let stuck: Vec<&str> = tally.uninstallable.iter().map(|u| u.split(": ").next().unwrap_or(u)).collect();
     assert_eq!(stuck, UUID_SPECS_WHOSE_DEFINERS_TAKE_TEXT, "the specs whose SQL no schema can hold:\n{summary}");
-    assert_eq!(tally.compared + stuck.len(), tally.specs - tally.invalid.len(), "every spec that compiles is compared:\n{summary}");
+    assert!(tally.newly_accepted.is_empty(), "no spec v1.1.0 refused compiles now: {:?}\n{summary}", tally.newly_accepted);
+    assert_eq!(tally.compared + stuck.len(), tally.specs - tally.invalid.len() - tally.newly_accepted.len(), "every spec both compile is compared:\n{summary}");
     assert!(tally.both_ways * 100 >= tally.rules * 85, "too few rules both admitted and refused a row to prove anything:\n{summary}");
 }

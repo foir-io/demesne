@@ -234,6 +234,19 @@ fn holds_matrix_sql_agrees_with_the_oracle() {
     });
 }
 
+fn asked_as(conn: &mut postgres::Client, s: &demesne_syntax::Spec, who: &str, query: &str, params: &[Arg]) -> Vec<postgres::Row> {
+    let identities: BTreeSet<&str> = s.subjects.iter().map(demesne_syntax::Subject::identifies).filter(|key| !key.is_empty()).collect();
+    let claims = format!("{{{}}}", identities.iter().map(|key| format!("\"{key}\":\"{who}\"")).collect::<Vec<_>>().join(","));
+    conn.execute("select set_config('request.jwt.claims', $1, false)", &[&claims]).unwrap_or_else(|e| panic!("claims {claims}: {e}"));
+    conn.query(query, params).unwrap_or_else(|e| panic!("query as {claims}: {e}"))
+}
+
+fn asked_by_its_subject_alone(conn: &mut postgres::Client, s: &demesne_syntax::Spec, query: &str, params: &[Arg]) -> Vec<postgres::Row> {
+    let to_another = asked_as(conn, s, "u2", query, params);
+    assert!(!to_another.iter().any(|row| row.get::<_, Option<bool>>(1) == Some(true)), "{query} answered about u1 to a caller who is u2");
+    asked_as(conn, s, "u1", query, params)
+}
+
 fn run_holds_matrix(t: &T, url: &str, tgt: &MatrixTarget) {
     let mut conn = demesne_postgres::connect(url).unwrap_or_else(|e| panic!("connect: {e}"));
 
@@ -254,8 +267,8 @@ fn run_holds_matrix(t: &T, url: &str, tgt: &MatrixTarget) {
             continue;
         }
         found = true;
-        let got = d.sig.matches(',').count() + 1;
-        assert!(got == scope_args + 2, "{} takes {got} arguments, want {} (subject + {scope_args} scope + perm): {:?}", d.name, scope_args + 2, d.sig);
+        let got = d.sig().matches(',').count() + 1;
+        assert!(got == scope_args + 2, "{} takes {got} arguments, want {} (subject + {scope_args} scope + perm): {:?}", d.name, scope_args + 2, d.sig());
     }
     assert!(found, "spec emits no definer {:?}", tgt.definer);
 
@@ -303,7 +316,7 @@ fn run_holds_matrix(t: &T, url: &str, tgt: &MatrixTarget) {
         params.extend(scope_vals.iter().map(|v| v as Arg));
         params.push(&probe);
 
-        let rows = conn.query(&query, &params).unwrap_or_else(|e| panic!("case {i} query: {e}"));
+        let rows = asked_by_its_subject_alone(&mut conn, &s, &query, &params);
         let mut got: BTreeMap<String, bool> = BTreeMap::new();
         for row in &rows {
             let perm: String = row.try_get(0).unwrap_or_else(|e| panic!("case {i} scan: {e}"));

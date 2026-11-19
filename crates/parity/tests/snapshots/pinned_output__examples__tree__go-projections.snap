@@ -155,6 +155,22 @@ var AppSurface = demesne.MustDecode[[]demesne.AppObjectSurface](`[
     "flatListFn": "",
     "asyncCheckSQL": "",
     "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM ledgers WHERE id = $1 AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id'))) AND (space_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id'))))"
+  },
+  {
+    "object": "skin",
+    "table": "skins",
+    "pk": "id",
+    "flatListFn": "",
+    "asyncCheckSQL": "",
+    "editCheckSQL": ""
+  },
+  {
+    "object": "banner",
+    "table": "banners",
+    "pk": "id",
+    "flatListFn": "",
+    "asyncCheckSQL": "",
+    "editCheckSQL": ""
   }
 ]`)
 

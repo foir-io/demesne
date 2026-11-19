@@ -11,14 +11,35 @@ use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_syntax::{
-    Finding, Grant, GrantUse, Level, Object, Perm, PermNode, PermissionExport, ProbeAnswer, Relation, Repr, Require, Spec, Subject, Term, ViaClosure, ViaGrant,
-    ViaObject, Vocabulary,
+    ArgSrc, Finding, Grant, GrantUse, Level, Marker, Object, Perm, PermNode, PermissionExport, PointCheck, ProbeAnswer, Relation, Repr, Require, Spec, Subject,
+    Term, ViaClosure, ViaComposition, ViaGrant, ViaMemberIn, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 const KNOWN_LAYERS: [&str; 4] = ["rls", "pdp", "kernel", "check"];
-const KNOWN_BUILTINS: [&str; 13] =
-    ["app_scope", "scoped", "session", "open", "store_manage", "public", "kind", "self", "within", "holds", "holds_every", "claim", "row"];
+const KNOWN_BUILTINS: [&str; 21] = [
+    "nearest",
+    "clock",
+    "app_scope",
+    "scoped",
+    "session",
+    "open",
+    "store_manage",
+    "public",
+    "kind",
+    "self",
+    "within",
+    "holds",
+    "holds_every",
+    "claim",
+    "row",
+    "some",
+    "element",
+    "declared",
+    "slot",
+    "slot_held",
+    "holds_at",
+];
 const EXPORT_PARAMETER_TYPES: [&str; 12] =
     ["text", "uuid", "smallint", "integer", "bigint", "boolean", "json", "jsonb", "numeric", "timestamptz", "timestamp", "date"];
 
@@ -49,6 +70,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
         errs.extend(validate_subject(s, sub, &level_names, &vocab_names));
     }
     errs.extend(check_plane_bindings(s));
+    errs.extend(check_admin_identity(s));
     errs.extend(check_role_store_planes(s, &chain));
     if let Err(e) = s.claims_contract() {
         errs.extend(e.into_findings());
@@ -64,6 +86,10 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_probes(s));
     errs.extend(validate_nearests(s));
     errs.extend(validate_projections(s));
+    errs.extend(validate_point_checks(s));
+    errs.extend(validate_markers(s));
+    errs.extend(validate_chains(s));
+    errs.extend(validate_role_forms(s));
     errs.extend(validate_grant_stores(s));
     errs.extend(validate_store_manage(s));
     errs.extend(check_emit_sites(s, &vocab_names));
@@ -270,6 +296,71 @@ fn check_plane_bindings(s: &Spec) -> Vec<Finding> {
     errs
 }
 
+fn check_admin_identity(s: &Spec) -> Vec<Finding> {
+    if s.subjects.iter().any(|sub| sub.binds() == "admin" || sub.identifies() == "sub") {
+        return Vec::new();
+    }
+    let refuse = |line: usize, what: String| {
+        Finding::at(
+            line,
+            format!(
+                "{what} asks about the admin's identity, but no subject binds admin and none is identified by sub, so it would read the claim sub, which no subject declares; add `binds admin` to the subject it asks about"
+            ),
+        )
+    };
+    let mut errs = Vec::new();
+    for o in &s.objects {
+        let asks = |t: &&Term| asks_admin_identity(o, t);
+        let paths = o.relations.iter().filter_map(|r| match &r.repr {
+            Repr::Composition(ViaComposition { path: Some(p), .. }) => Some((r, p)),
+            _ => None,
+        });
+        for (r, p) in paths {
+            for t in p.along.leaves_deep().into_iter().filter(asks) {
+                errs.push(refuse(r.pos.line, format!("object {} relation {} path term `{}`", quote(&o.name), quote(&r.name), t.display())));
+            }
+        }
+        for pm in &o.perms {
+            if let Some(col) = &pm.self_check {
+                errs.push(refuse(pm.pos.line, format!("permission {}.{} `selfcheck {col}`", o.name, pm.verb)));
+            }
+            if !(pm.has_layer("rls") || pm.has_layer("check")) {
+                continue;
+            }
+            for t in pm.tree.leaves_deep().into_iter().filter(asks) {
+                errs.push(refuse(pm.pos.line, format!("permission {}.{} term `{}`", o.name, pm.verb, t.display())));
+            }
+        }
+        for rq in &o.requires {
+            for t in rq.tree.leaves_deep().into_iter().filter(asks) {
+                errs.push(refuse(rq.pos.line, format!("object {} require {} term `{}`", quote(&o.name), quote(&rq.verb), t.display())));
+            }
+        }
+        for a in &o.admits {
+            for t in a.tree.leaves_deep().into_iter().filter(asks) {
+                errs.push(refuse(a.pos.line, format!("object {} admit term `{}`", quote(&o.name), t.display())));
+            }
+        }
+    }
+    errs
+}
+
+fn asks_admin_identity(o: &Object, t: &Term) -> bool {
+    if !t.walk_verb().is_empty() || t.holds_every().is_some() || matches!(t.builtin(), "holds" | "holds_every" | "self") {
+        return true;
+    }
+    let name = match t.builtin() {
+        "session" => t.session_rel(),
+        "" => t.ident(),
+        _ => return false,
+    };
+    o.relations.iter().find(|r| r.name == name).is_some_and(|r| match &r.repr {
+        Repr::Role => true,
+        Repr::MemberIn(mi) => mi.reached_by,
+        _ => false,
+    })
+}
+
 fn check_role_store_planes(s: &Spec, chain: &[&Level]) -> Vec<Finding> {
     let mut errs = Vec::new();
     let non_virtual = chain.iter().filter(|l| !l.is_virtual).count();
@@ -323,6 +414,7 @@ fn validate_predicate_only_referenced(s: &Spec) -> Vec<Finding> {
                 referenced.insert(format!("{}.{}", vo.object, vo.verb));
             }
         }
+        referenced.extend(obj.point_checks.iter().map(|c| format!("{}.{}", obj.name, c.verb)));
     }
     let mut errs = Vec::new();
     for obj in &s.objects {
@@ -477,6 +569,14 @@ fn check_object_relations<'a>(s: &Spec, o: &'a Object) -> (Rels<'a>, Vec<Finding
             Repr::MemberIn(mi) if s.level_by_name(&mi.level).is_none() => errs.push(Finding::at(
                 r.pos.line,
                 format!("object {} relation {} via memberin references unknown level {}", quote(&o.name), quote(&r.name), quote(&mi.level)),
+            )),
+            Repr::MemberIn(ViaMemberIn { level, principal: ArgSrc::Col(principal), scope: ArgSrc::Col(scope), .. }) => errs.push(Finding::at(
+                r.pos.line,
+                format!(
+                    "object {} relation {} via memberin takes both its principal ({principal}) and its scope ({scope}) from the row, but its function answers only about the caller, so it would admit no one but the row's own principal; name a claim on one side, as in `memberin {level}(@<claim>, {scope})` or `memberin {level}({principal}, @<claim>)`",
+                    quote(&o.name),
+                    quote(&r.name)
+                ),
             )),
             Repr::Closure(c) => errs.extend(check_closure_relation(s, o, r, c)),
             Repr::Object(vo) => errs.extend(validate_borrow_operation(s, r, vo)),
@@ -760,6 +860,93 @@ fn perm_positive(n: &PermNode) -> bool {
     }
 }
 
+fn keyed_relation(rels: &Rels, t: &Term) -> bool {
+    rels.get(t.ident()).is_some_and(|r| match &r.repr {
+        Repr::Edge(e) => e.key.is_some(),
+        Repr::Conditions(c) => c.key.is_some(),
+        _ => false,
+    })
+}
+
+fn slot_bound_relation(rels: &Rels, t: &Term) -> bool {
+    rels.get(t.ident()).is_some_and(|r| match &r.repr {
+        Repr::Edge(e) => e.slot.is_some(),
+        Repr::Composition(c) => c.slot.is_some(),
+        _ => false,
+    })
+}
+
+fn check_brackets(what: &str, body: &PermNode, rels: &Rels) -> Vec<String> {
+    let mut errs = Vec::new();
+    if let Some(t) = conditions_admitting(body, rels) {
+        errs.push(format!("uses `{what}` in which {} would admit a caller by itself — {CONDITIONS_NARROW}", t.display()));
+    }
+    if body.is_nil() || !perm_positive(body) {
+        errs.push(format!("uses `{what}` whose brackets hold no positive term — a `not` inside them must be combined with `and` with a positive term"));
+    }
+    if let Some(row) = row_term_admitting(body) {
+        errs.push(format!(
+            "uses `{what}` in which {} would admit a caller by itself — a test of the row, the element or the declared row only narrows another term",
+            row.display()
+        ));
+    }
+    for inner in body.leaves() {
+        if !inner.grant_ref().is_empty() || matches!(inner.builtin(), "scoped" | "public" | "open" | "self") {
+            errs.push(format!("uses {} inside `{what}` — a term that is placed outside the object's containment cannot be bound there", inner.display()));
+        }
+    }
+    errs
+}
+
+fn check_declared_scope(some: &str, t: &Term, rels: &Rels) -> Vec<String> {
+    let Some(scope) = t.declared_scope() else { return Vec::new() };
+    let what = format!("{} {}", if scope.quantifier == demesne_syntax::Quantifier::Every { "every" } else { "none" }, scope.var);
+    let mut errs = check_brackets(&what, &scope.body, rels);
+    for inner in scope.body.leaves() {
+        if matches!(inner.builtin(), "some" | "declared") {
+            errs.push(format!("nests {} inside `{what}` in `some {some}` — one element and one declared row are bound at a time", inner.display()));
+        } else if inner.builtin() == "holds_at" {
+            errs.push(format!("uses {} outside a composition's `path` — it judges an element at a row the path declares", inner.display()));
+        } else if slot_bound_relation(rels, inner) && !keyed_relation(rels, inner) && rels.get(inner.ident()).is_some_and(|r| matches!(r.repr, Repr::Edge(_))) {
+            errs.push(format!("uses relation {}, which binds a slot without a key", quote(inner.ident())));
+        }
+    }
+    errs
+}
+
+fn check_some_scopes(tree: &PermNode, rels: &Rels) -> Vec<String> {
+    let mut errs = Vec::new();
+    for t in tree.leaves() {
+        if t.builtin() == "element" {
+            errs.push(format!("uses {} outside a `some` — it tests the element a `some` has bound", t.display()));
+        } else if t.builtin() == "holds_at" {
+            errs.push(format!("uses {} outside a composition's `path` — it judges an element at a row the path declares", t.display()));
+        } else if matches!(t.builtin(), "declared" | "slot" | "slot_held") {
+            errs.push(format!("uses {} outside a `some` — `every`, `none` and `@slot` read the rows declared for the element a `some` has bound", t.display()));
+        } else if keyed_relation(rels, t) {
+            errs.push(format!("uses keyed relation {} outside a `some` — its `key` column is matched against the element a `some` binds", quote(t.ident())));
+        }
+        let Some(scope) = t.some_scope() else { continue };
+        errs.extend(check_brackets(&format!("some {}", scope.var), &scope.body, rels));
+        for inner in scope.body.leaves() {
+            if inner.builtin() == "some" {
+                errs.push(format!("nests a `some` inside `some {}` — one element is bound at a time", scope.var));
+            } else if inner.builtin() == "holds_at" {
+                errs.push(format!("uses {} outside a composition's `path` — it judges an element at a row the path declares", inner.display()));
+            } else if matches!(inner.builtin(), "slot" | "slot_held") {
+                errs.push(format!("uses {} outside an `every` or `none` — it tests the declared row one of them has bound", inner.display()));
+            } else if slot_bound_relation(rels, inner) {
+                errs.push(format!(
+                    "uses slot-bound relation {} outside an `every` or `none` — its `slot` column is matched against the declared row one of them binds",
+                    quote(inner.ident())
+                ));
+            }
+            errs.extend(check_declared_scope(&scope.var, inner, rels));
+        }
+    }
+    errs
+}
+
 fn check_holds_every(s: &Spec, o: &Object, t: &Term) -> Vec<String> {
     let Some((_, _, level)) = t.holds_every() else { return Vec::new() };
     let Some(lvl) = s.level_by_name(level).filter(|l| !l.is_virtual) else {
@@ -792,11 +979,15 @@ fn require_positive(n: &PermNode) -> bool {
     }
 }
 
+fn narrows_only(n: &PermNode) -> bool {
+    is_row_leaf(n) || matches!(n, PermNode::Leaf(t) if t.builtin() == "slot_held")
+}
+
 fn row_term_admitting(n: &PermNode) -> Option<&Term> {
     match n {
-        PermNode::Leaf(t) => is_row_leaf(n).then_some(t),
+        PermNode::Leaf(t) => narrows_only(n).then_some(t),
         PermNode::Not(k) => {
-            if is_row_leaf(k) {
+            if narrows_only(k) {
                 return k.term();
             }
             row_term_admitting(k)
@@ -811,8 +1002,8 @@ fn row_term_admitting_conjunction(kids: &[PermNode]) -> Option<&Term> {
     let mut grants = false;
     for k in kids {
         let row_leaf = match k {
-            PermNode::Not(inner) if is_row_leaf(inner) => Some(inner.as_ref()),
-            _ if is_row_leaf(k) => Some(k),
+            PermNode::Not(inner) if narrows_only(inner) => Some(inner.as_ref()),
+            _ if narrows_only(k) => Some(k),
             _ => None,
         };
         if let Some(leaf) = row_leaf {
@@ -827,6 +1018,42 @@ fn row_term_admitting_conjunction(kids: &[PermNode]) -> Option<&Term> {
     if row_term.is_some() && !grants { row_term } else { None }
 }
 
+fn conditions_leaf<'a>(n: &'a PermNode, rels: &Rels) -> Option<&'a Term> {
+    let leaf = match n {
+        PermNode::Not(inner) => inner.as_ref(),
+        other => other,
+    };
+    leaf.term().filter(|t| rels.get(t.ident()).is_some_and(|r| matches!(r.repr, Repr::Conditions(_))))
+}
+
+fn conditions_admitting<'a>(n: &'a PermNode, rels: &Rels) -> Option<&'a Term> {
+    if let Some(t) = conditions_leaf(n, rels) {
+        return Some(t);
+    }
+    match n {
+        PermNode::Leaf(_) => None,
+        PermNode::Not(k) => conditions_admitting(k, rels),
+        PermNode::Or(kids) => kids.iter().find_map(|k| conditions_admitting(k, rels)),
+        PermNode::And(kids) => {
+            let mut narrowing = None;
+            let mut grants = false;
+            for k in kids {
+                if let Some(t) = conditions_leaf(k, rels) {
+                    narrowing = Some(t);
+                } else if let Some(t) = conditions_admitting(k, rels) {
+                    return Some(t);
+                } else {
+                    grants |= perm_positive(k) && !is_row_leaf(k);
+                }
+            }
+            narrowing.filter(|_| !grants)
+        }
+    }
+}
+
+const CONDITIONS_NARROW: &str =
+    "stored conditions hold for a row that stores none, so they only narrow another term: write the relation inside an `and`, beside a term that grants";
+
 fn check_perm_polarity(o: &Object, pm: &Perm) -> Option<Finding> {
     if !pm.tree.is_nil() && !perm_positive(&pm.tree) {
         return Some(Finding::at(
@@ -835,6 +1062,12 @@ fn check_perm_polarity(o: &Object, pm: &Perm) -> Option<Finding> {
                 "permission {}.{} is not positively gated — a `not` (exclusion) must be combined with `and` with a positive grant, never used alone or as a union (`+`/`or`) branch",
                 o.name, pm.verb
             ),
+        ));
+    }
+    if let Some(t) = conditions_admitting(&pm.tree, &crate::analysis::rels_of(o)) {
+        return Some(Finding::at(
+            pm.pos.line,
+            format!("permission {}.{} uses {} where it would admit a caller by itself — {CONDITIONS_NARROW}", o.name, pm.verb, t.display()),
         ));
     }
     if let Some(t) = row_term_admitting(&pm.tree) {
@@ -1023,7 +1256,11 @@ fn check_perm_terms(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<Finding
     let mut errs = Vec::new();
     let has_pred = has_rls || has_check;
     let at = |what: &str| Finding::at(pm.pos.line, format!("permission {}.{} {what}", o.name, pm.verb));
-    for t in pm.tree.leaves() {
+    errs.extend(check_some_scopes(&pm.tree, rels).iter().map(|e| at(e)));
+    for t in pm.tree.leaves_deep() {
+        if matches!(t.builtin(), "some" | "element" | "declared" | "slot" | "slot_held" | "holds_at") {
+            continue;
+        }
         if !t.grant_ref().is_empty() {
             match s.grant_by_name(t.grant_ref()) {
                 None => errs.push(at(&format!("references unknown grant {} (via grant)", quote(t.grant_ref())))),
@@ -1074,16 +1311,24 @@ fn check_perm_terms(s: &Spec, o: &Object, pm: &Perm, rels: &Rels) -> Vec<Finding
     errs
 }
 
+fn require_only(t: &Term) -> Option<String> {
+    match t.builtin() {
+        "external" => Some(format!(
+            "uses @external({}) — an adopter-supplied predicate may appear only in a `require` clause, so it can subtract authority and never add it (V14)",
+            t.external_fn()
+        )),
+        "nearest" => Some(format!("uses {} — a comparison with a nearest value names nobody, so it may appear only in a `require` clause", t.display())),
+        _ => None,
+    }
+}
+
 #[expect(clippy::many_single_char_names, reason = "s, o, t, g and u name the spec, object, term, grant and grant use throughout this crate")]
 fn check_builtin_term(s: &Spec, o: &Object, pm: &Perm, t: &Term, rels: &Rels, has_rls: bool, has_pdp: bool) -> Vec<Finding> {
     let mut errs = Vec::new();
     let at = |what: &str| Finding::at(pm.pos.line, format!("permission {}.{} {what}", o.name, pm.verb));
     let b = t.builtin();
-    if b == "external" {
-        errs.push(at(&format!(
-            "uses @external({}) — an adopter-supplied predicate may appear only in a `require` clause, so it can subtract authority and never add it (V14)",
-            t.external_fn()
-        )));
+    if let Some(refusal) = require_only(t) {
+        errs.push(at(&refusal));
     } else if !KNOWN_BUILTINS.contains(&b) {
         errs.push(at(&format!("uses unknown builtin @{b} (app_scope|scoped|session|open|store_manage|public|kind|self|within|holds)")));
     }
@@ -1254,11 +1499,20 @@ fn check_require_terms(s: &Spec, o: &Object, rq: &Require, rels: &Rels) -> Vec<F
     if !rq.tree.is_nil() && !require_positive(&rq.tree) {
         errs.push(at("is not positively gated — a `not` must be combined with `and` with a positive term".into()));
     }
-    for t in rq.tree.leaves() {
+    errs.extend(check_some_scopes(&rq.tree, rels).into_iter().map(&at));
+    for t in rq.tree.leaves_deep() {
         let b = t.builtin();
+        if matches!(b, "some" | "element" | "declared" | "slot" | "slot_held" | "holds_at") {
+            continue;
+        }
         errs.extend(check_holds_every(s, o, t).into_iter().map(&at));
         if b == "within" && s.level_by_name(t.within_level()).is_none() {
             errs.push(at(format!("uses @within({}) which is not a topology level", quote(t.within_level()))));
+        }
+        if let Some((lookup, _, _)) = t.nearest()
+            && !s.objects.iter().flat_map(|other| &other.nearests).any(|n| n.name == lookup)
+        {
+            errs.push(at(format!("uses {}, which names no `nearest {lookup}(…)` lookup of the spec", t.display())));
         }
         if b == "external" {
             let f = t.external_fn();
@@ -1770,6 +2024,238 @@ fn validate_projections(s: &Spec) -> Vec<Finding> {
         errs.extend(check_perm_terms(s, obj, &pm, &crate::analysis::rels_of(obj)));
     }
     errs
+}
+
+fn validate_point_checks(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    let taken = |o: &'_ Object| -> Vec<String> {
+        let named = o.exports.iter().map(|e| e.name.clone()).chain(o.probes.iter().map(|p| p.name.clone()));
+        named.chain(o.nearests.iter().map(|n| n.name.clone())).chain(o.projections.iter().map(|p| p.name.clone())).collect()
+    };
+    let mut names: HashSet<String> = s.objects.iter().flat_map(taken).collect();
+    for (obj, c) in s.objects.iter().flat_map(|o| o.point_checks.iter().map(move |c| (o, c))) {
+        let at = |msg: String| Finding::at(c.pos.line, format!("check {}{msg}", quote(&c.name)));
+        if !names.insert(c.name.clone()) {
+            errs.push(at(" shares its name with another generated function of the spec".into()));
+        }
+        match obj.perms.iter().find(|pm| pm.verb == c.verb) {
+            None => errs.push(at(format!(": object {} has no permission {}", quote(&obj.name), quote(&c.verb)))),
+            Some(pm) if pm.predicate_only => {}
+            Some(pm) if !pm.maps().is_empty() => errs.push(at(format!(
+                ": permission {} maps {}, and a check answers a predicate-only permission; an export answers a mapped one",
+                quote(&c.verb),
+                pm.maps()
+            ))),
+            Some(_) => errs.push(at(format!(": permission {} is not predicate-only, and a check answers a permission lent with `predicate`", quote(&c.verb)))),
+        }
+        if let Some(op) = c.op.as_deref().filter(|op| !table_op(op)) {
+            errs.push(at(format!(" is for unknown operation {}", quote(op))));
+        }
+        errs.extend(check_point_check_key(obj, c).map(at));
+    }
+    errs
+}
+
+fn check_point_check_key(obj: &Object, c: &PointCheck) -> Option<String> {
+    if !obj.point_checkable() {
+        return Some(format!(" is on object {}, which has a composite key", quote(&obj.name)));
+    }
+    let [key] = c.params.as_slice() else {
+        return Some(format!(" takes one argument, the key {}", quote(obj.pk())));
+    };
+    if key.column != obj.pk() {
+        return Some(format!(" takes the key {}, not {}", quote(obj.pk()), quote(&key.column)));
+    }
+    if !EXPORT_PARAMETER_TYPES.contains(&key.ty.as_str()) {
+        return Some(format!(" argument {} has unsupported type {}", quote(&key.name()), quote(&key.ty)));
+    }
+    None
+}
+
+fn validate_role_forms(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    for rs in &s.role_stores {
+        let at = |msg: String| Finding::at(rs.pos.line, format!("rolestore {} {msg}", quote(&rs.name)));
+        if rs.roles_table.is_none() && !(rs.forms.is_empty() && rs.unversioned.is_empty() && rs.active.is_empty()) {
+            errs.push(at("declares `form`, `unversioned` or `active` but no `rolejoin` naming the roles they read".into()));
+        }
+        let Some(first) = rs.forms.first() else {
+            if !rs.unversioned.is_empty() {
+                errs.push(at("declares `unversioned` but no `form` for a role to have more than one of".into()));
+            }
+            if rs.absent_form.is_some() {
+                errs.push(at("declares `absent claim reads` but no `form` to read".into()));
+            }
+            continue;
+        };
+        if rs.perms_col.is_none() {
+            errs.push(at("declares a `form` but no `permissions` column for the base form".into()));
+        }
+        if rs.forms.iter().any(|f| f.claim != first.claim) {
+            errs.push(at("reads its forms from two claims — every `form` line names one claim".into()));
+        }
+        let mut values: HashSet<&str> = HashSet::new();
+        for form in &rs.forms {
+            if !values.insert(&form.value) {
+                errs.push(at(format!("names form {} twice", quote(&form.value))));
+            }
+        }
+        match &rs.absent_form {
+            None => errs.push(at(format!(
+                "names no form for a session with no {} claim — write `absent claim reads \"<value>\"`, so no session is left to a default",
+                quote(&first.claim)
+            ))),
+            Some(value) if !values.contains(value.as_str()) => errs.push(at(format!("reads {} for an absent claim, which no `form` line names", quote(value)))),
+            Some(_) => {}
+        }
+    }
+    errs
+}
+
+const CHAIN_OPS: [&str; 3] = ["select", "update", "delete"];
+
+fn judges_elements(o: &Object, op: &str) -> bool {
+    fn widens(n: &PermNode) -> bool {
+        match n {
+            PermNode::Leaf(t) => t.some_scope().is_some(),
+            PermNode::Not(_) => false,
+            PermNode::And(kids) | PermNode::Or(kids) => kids.iter().any(widens),
+        }
+    }
+    o.perms.iter().any(|pm| pm.has_layer("rls") && pm.maps() == op && widens(&pm.tree))
+}
+
+fn validate_chains(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    for o in &s.objects {
+        let paths: Vec<(&Relation, &ViaComposition)> = o
+            .relations
+            .iter()
+            .filter_map(|r| match &r.repr {
+                Repr::Composition(vc) => vc.path.as_ref().map(|_| (r, vc)),
+                _ => None,
+            })
+            .collect();
+        if o.nested.is_some() && !CHAIN_OPS.iter().any(|op| judges_elements(o, op)) {
+            errs.push(Finding::at(
+                o.pos.line,
+                format!("object {} declares `nested`, but no permission of it holds a `some` whose elements could be judged at another row", quote(&o.name)),
+            ));
+        }
+        for (r, vc) in paths {
+            let at = |msg: String| Finding::at(r.pos.line, format!("object {}: relation {} {msg}", quote(&o.name), quote(&r.name)));
+            if o.nested.is_none() {
+                errs.push(at("declares a `path`, but the object declares no `nested <n>` to say how many compositions deep a hop is judged".into()));
+            }
+            errs.extend(path_faults(o, vc).into_iter().map(at));
+        }
+    }
+    errs
+}
+
+fn path_faults(o: &Object, vc: &ViaComposition) -> Vec<String> {
+    let mut faults = Vec::new();
+    let Some(path) = &vc.path else { return faults };
+    let mut ops: HashSet<&str> = HashSet::new();
+    for (op, col) in &path.cols {
+        if op.is_empty() {
+            continue;
+        }
+        if !CHAIN_OPS.contains(&op.as_str()) {
+            faults.push(format!("names path column {} for {}, which is not select, update or delete", quote(col), quote(op)));
+        } else if !ops.insert(op) {
+            faults.push(format!("names two path columns for {}", quote(op)));
+        }
+    }
+    for op in CHAIN_OPS {
+        if path.col_for(op).is_none() && o.perms.iter().any(|pm| pm.has_layer("rls") && pm.maps() == op) {
+            faults.push(format!("names no path column for {op}, which a permission of the object maps"));
+        }
+    }
+    if path.along.is_nil() {
+        faults.push("declares a `path` whose brackets are empty".into());
+    }
+    for t in path.along.leaves() {
+        let Some(scope) = t.declared_scope() else {
+            faults.push(format!("uses {} in its `path` — a path holds `every` and `none` terms over the rows declared for its key", t.display()));
+            continue;
+        };
+        if scope.body.is_nil() {
+            faults.push(format!("uses {} whose brackets are empty", t.display()));
+        }
+        faults.extend(scope.body.leaves().into_iter().filter_map(|hop| hop_fault(o, vc, hop)));
+    }
+    faults
+}
+
+fn hop_fault(o: &Object, vc: &ViaComposition, hop: &Term) -> Option<String> {
+    if matches!(hop.builtin(), "slot" | "slot_held") {
+        return None;
+    }
+    let Some((_, _, op)) = hop.holds_at() else {
+        return Some(format!("uses {} in its `path` — a hop is tested with `@slot` and `@holds_at`", hop.display()));
+    };
+    match (&vc.slot, hop.holds_at_slot()) {
+        (Some((col, _)), None) => {
+            return Some(format!(
+                "uses {} without `slot <column>` — the composition binds slot {}, so a hop says which slot it follows",
+                hop.display(),
+                quote(col)
+            ));
+        }
+        (None, Some(_)) => return Some(format!("uses {}, but the composition binds no slot for a hop to name", hop.display())),
+        _ => {}
+    }
+    match op {
+        Some(op) if !CHAIN_OPS.contains(&op) => Some(format!("uses {}, but {} is not select, update or delete", hop.display(), quote(op))),
+        Some(op) if !judges_elements(o, op) => Some(format!("uses {}, but no permission that maps {op} holds a `some` to judge the element by", hop.display())),
+        Some(_) => None,
+        None => CHAIN_OPS.iter().find(|op| o.perms.iter().any(|pm| pm.has_layer("rls") && pm.maps() == **op) && !judges_elements(o, op)).map(|op| {
+            format!(
+                "uses {}, but the permission that maps {op} holds no `some` to judge the element by — write `for <operation>` to judge every hop by one",
+                hop.display()
+            )
+        }),
+    }
+}
+
+fn validate_markers(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    for o in &s.objects {
+        let mut cols: HashSet<&str> = HashSet::new();
+        for m in &o.markers {
+            let at = |msg: String| Finding::at(m.pos.line, format!("object {}: marker {} {msg}", quote(&o.name), quote(&m.col)));
+            if !o.is_level_entity() {
+                errs.push(at("is on an object that declares no `level`, so no other object's rows sit beneath its rows".into()));
+            }
+            if !cols.insert(&m.col) {
+                errs.push(at("is declared twice".into()));
+            }
+            errs.extend(marker_faults(s, o, m).into_iter().map(at));
+        }
+    }
+    errs
+}
+
+fn marker_faults(s: &Spec, o: &Object, m: &Marker) -> Vec<String> {
+    let mut faults = Vec::new();
+    let mut ops: HashSet<&str> = HashSet::new();
+    for op in &m.ops {
+        if !ORDERED_TABLE_OPS.contains(&op.as_str()) {
+            faults.push(format!("confines {}, which is no table operation", quote(op)));
+        } else if !ops.insert(op) {
+            faults.push(format!("confines {} twice", quote(op)));
+        }
+    }
+    let Some(name) = &m.closure else { return faults };
+    match s.closure_by_table(name) {
+        None => faults.push(format!("reads closure {}, which the spec does not declare", quote(name))),
+        Some(c) if c.base.as_ref().is_none_or(|b| b.table != o.table) => {
+            faults.push(format!("reads closure {}, whose base is not table {}", quote(name), quote(&o.table)));
+        }
+        Some(_) => {}
+    }
+    faults
 }
 
 fn validate_nearests(s: &Spec) -> Vec<Finding> {

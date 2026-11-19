@@ -58,7 +58,7 @@ jobs:
           -c 'CREATE DATABASE demesne_supabase'
           -c 'CREATE ROLE anon NOLOGIN'
           -c 'CREATE ROLE authenticated NOLOGIN'
-          -c 'CREATE ROLE service_role NOLOGIN'
+          -c 'CREATE ROLE service_role NOLOGIN BYPASSRLS'
       - name: the change under test
         run: git diff "origin/${{ github.base_ref }}...HEAD" -- crates/emit-sql/src crates/model/src crates/runtime/src > mutants.diff
       - name: mutants

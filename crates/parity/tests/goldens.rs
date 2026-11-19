@@ -51,6 +51,7 @@ fn rust_regenerates_every_committed_golden() {
         (format!("{dir}/supabase/projection.ts"), demesne_emit_ts::emit_ts(&supabase).unwrap()),
         (format!("{dir}/supabase/policies.sql"), roundtrip_ddl(&supabase, "supabase.demesne")),
         (format!("{dir}/supabase/hook.sql"), hook),
+        (format!("{dir}/supabase/manifest.json"), Sql::new(&supabase).manifest().unwrap().to_json()),
         (format!("{dir}/require/projection.ts"), demesne_emit_ts::emit_ts(&require).unwrap()),
         (format!("{dir}/require/policies.sql"), roundtrip_ddl(&require, "require.demesne")),
         (format!("{dir}/framework.ts"), demesne_emit_ts::emit_framework_ts(&roundtrip).unwrap()),
@@ -71,6 +72,6 @@ fn rust_regenerates_every_committed_golden() {
             stale.push(path.as_str());
         }
     }
-    assert_eq!(goldens.len(), 12);
+    assert_eq!(goldens.len(), 13);
     assert!(stale.is_empty(), "goldens differ: {stale:?}");
 }

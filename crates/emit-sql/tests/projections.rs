@@ -21,7 +21,7 @@ fn a_projection_returns_its_columns_for_the_rows_its_expression_admits_inside_co
     let s = demesne_syntax::parse(&src).expect("parses");
     let sql = Sql::new(&s);
     let f = definers(&src).expect("compiles").into_iter().find(|d| d.name == "card_faces").expect("the projection");
-    assert_eq!((f.sig.as_str(), f.returns.as_str(), f.strict), ("", "TABLE(id text, title text, rank integer)", false));
+    assert_eq!((f.sig().as_str(), f.returns.as_str(), f.strict), ("", "TABLE(id text, title text, rank integer)", false));
     assert_eq!(
         f.body,
         format!(

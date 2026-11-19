@@ -243,6 +243,40 @@ export const ledger = {
   },
 };
 
+export const skin = {
+  async canView(q: Querier, id: string): Promise<Decision> {
+    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM skins WHERE id = $1)", [id]);
+    return composeCan(true, Boolean(rows[0]?.exists), Decision.NotGoverned);
+  },
+
+  async listResources(q: Querier, after: string | null, limit: number): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM skins WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", [after, limit]);
+    return rows.map((r) => r["id"] as string);
+  },
+
+  async checkMany(q: Querier, ids: string[]): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM skins WHERE id = ANY($1)", [ids]);
+    return rows.map((r) => r["id"] as string);
+  },
+};
+
+export const banner = {
+  async canView(q: Querier, id: string): Promise<Decision> {
+    const { rows } = await q.query("SELECT EXISTS (SELECT 1 FROM banners WHERE id = $1)", [id]);
+    return composeCan(true, Boolean(rows[0]?.exists), Decision.NotGoverned);
+  },
+
+  async listResources(q: Querier, after: string | null, limit: number): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM banners WHERE ($1::text IS NULL OR id::text > $1::text) ORDER BY id::text LIMIT $2", [after, limit]);
+    return rows.map((r) => r["id"] as string);
+  },
+
+  async checkMany(q: Querier, ids: string[]): Promise<string[]> {
+    const { rows } = await q.query("SELECT id FROM banners WHERE id = ANY($1)", [ids]);
+    return rows.map((r) => r["id"] as string);
+  },
+};
+
 export async function check(q: Querier, object: string, verb: string, id: string): Promise<Decision> {
   switch (object + "." + verb) {
     case "folder.view":
@@ -275,6 +309,10 @@ export async function check(q: Querier, object: string, verb: string, id: string
       return ledger.canView(q, id);
     case "ledger.edit":
       return ledger.canEdit(q, id);
+    case "skin.view":
+      return skin.canView(q, id);
+    case "banner.view":
+      return banner.canView(q, id);
     default:
       return Decision.NotGoverned;
   }

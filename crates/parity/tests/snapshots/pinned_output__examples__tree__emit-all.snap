@@ -4,38 +4,17 @@ expression: "record(&repo, &spec, args)"
 ---
 exit: 0
 --- stdout ---
-CREATE OR REPLACE FUNCTION auth.paths_reach(user_id text, check_folder_id text)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-STRICT
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = user_id AND descendant_id = check_folder_id);
-$$;
-
 CREATE OR REPLACE FUNCTION auth.paths_reach_set(user_id text)
 RETURNS SETOF text
 LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT descendant_id FROM paths WHERE ancestor_id = user_id;
+  SELECT descendant_id FROM paths WHERE ancestor_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
-
-CREATE OR REPLACE FUNCTION auth.paths_up_reach(user_id text, check_folder_id text)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-STRICT
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (SELECT 1 FROM paths WHERE descendant_id = user_id AND ancestor_id = check_folder_id);
-$$;
+GRANT EXECUTE ON FUNCTION auth.paths_reach_set(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_up_reach_set(user_id text)
 RETURNS SETOF text
@@ -43,21 +22,11 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT ancestor_id FROM paths WHERE descendant_id = user_id;
+  SELECT ancestor_id FROM paths WHERE descendant_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
-
-CREATE OR REPLACE FUNCTION auth.paths_reachable(p_ancestor text, p_descendant text)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-STRICT
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (SELECT 1 FROM paths WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant);
-$$;
+GRANT EXECUTE ON FUNCTION auth.paths_up_reach_set(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_descendants(p_node text)
 RETURNS SETOF text
@@ -65,10 +34,11 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT descendant_id FROM paths WHERE ancestor_id = p_node;
+  SELECT descendant_id FROM paths WHERE ancestor_id = p_node AND p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
+GRANT EXECUTE ON FUNCTION auth.paths_descendants(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_ancestors(p_node text)
 RETURNS SETOF text
@@ -76,10 +46,11 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT ancestor_id FROM paths WHERE descendant_id = p_node;
+  SELECT ancestor_id FROM paths WHERE descendant_id = p_node AND p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
 $$;
+GRANT EXECUTE ON FUNCTION auth.paths_ancestors(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.paths_path(p_node text)
 RETURNS TABLE(node text, depth integer)
@@ -87,10 +58,11 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT ancestor_id, depth::integer FROM paths WHERE descendant_id = p_node ORDER BY depth DESC, ancestor_id;
 $$;
+REVOKE EXECUTE ON FUNCTION auth.paths_path(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.space_can_view(p_space_id text)
 RETURNS boolean
@@ -98,10 +70,11 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM spaces WHERE spaces.id = p_space_id AND ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((status = 'open')))));
 $$;
+GRANT EXECUTE ON FUNCTION auth.space_can_view(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.space_named(p_name text)
 RETURNS boolean
@@ -109,20 +82,22 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND name = space_named.p_name);
 $$;
+GRANT EXECUTE ON FUNCTION auth.space_named(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.spaces_in_estate()
 RETURNS bigint
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT count(*) FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id'));
 $$;
+GRANT EXECUTE ON FUNCTION auth.spaces_in_estate() TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.space_by_name(wanted text)
 RETURNS text
@@ -130,10 +105,11 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT id FROM spaces WHERE (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND name = space_by_name.wanted ORDER BY id LIMIT 1;
 $$;
+GRANT EXECUTE ON FUNCTION auth.space_by_name(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.theme_color(p_node text)
 RETURNS text
@@ -141,7 +117,7 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT x.v FROM (
     SELECT t.color AS v, c.depth AS d FROM paths c JOIN themes t ON t.folder_id = c.ancestor_id WHERE c.descendant_id = p_node AND t.color IS NOT NULL
@@ -149,31 +125,63 @@ AS $$
     SELECT t.color, NULL FROM themes t WHERE t.folder_id IS NULL AND t.color IS NOT NULL AND t.space_id = (SELECT s.space_id FROM paths s WHERE s.ancestor_id = p_node AND s.descendant_id = p_node)
   ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;
 $$;
-REVOKE EXECUTE ON FUNCTION auth.theme_color(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.theme_color(text) FROM PUBLIC, authenticated;
+
+CREATE OR REPLACE FUNCTION auth.live_skin(p_node text)
+RETURNS text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT x.v FROM (
+    SELECT t.id AS v, c.depth AS d FROM paths c JOIN skins t ON t.folder_id = c.ancestor_id WHERE c.descendant_id = p_node AND t.id IS NOT NULL AND t.status = 'live'
+    UNION ALL
+    SELECT t.id, NULL FROM skins t WHERE t.folder_id IS NULL AND t.id IS NOT NULL AND t.status = 'live' AND t.space_id = (SELECT s.space_id FROM paths s WHERE s.ancestor_id = p_node AND s.descendant_id = p_node)
+  ) x ORDER BY x.d NULLS LAST, x.v::text LIMIT 1;
+$$;
+REVOKE EXECUTE ON FUNCTION auth.live_skin(text) FROM PUBLIC, authenticated;
+
+CREATE OR REPLACE FUNCTION auth.live_skin_own(p_node text)
+RETURNS text
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT auth.live_skin(p_node) WHERE p_node = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'folder_id');
+$$;
+GRANT EXECUTE ON FUNCTION auth.live_skin_own(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.folder_path()
 RETURNS TABLE(id text, title text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT folders.id::text, folders.name::text FROM folders WHERE estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (id IN (SELECT auth.paths_ancestors((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))));
 $$;
+GRANT EXECUTE ON FUNCTION auth.folder_path() TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.space_cards()
 RETURNS TABLE(id text, title text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT spaces.id::text, spaces.name::text FROM spaces WHERE estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'member');
 $$;
+GRANT EXECUTE ON FUNCTION auth.space_cards() TO PUBLIC;
 
 
 ALTER TABLE public.atlases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.atlases FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.banners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.banners FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.drafts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.drafts FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
@@ -186,6 +194,8 @@ ALTER TABLE public.pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pages FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.sheets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sheets FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.skins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.skins FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.spaces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.spaces FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
@@ -201,6 +211,14 @@ DROP POLICY IF EXISTS atlases_update ON public.atlases;
 CREATE POLICY atlases_update ON public.atlases FOR UPDATE TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')))
     WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')));
+
+DROP POLICY IF EXISTS banners_select ON public.banners;
+CREATE POLICY banners_select ON public.banners FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS banners_select_require ON public.banners;
+CREATE POLICY banners_select_require ON public.banners AS RESTRICTIVE FOR SELECT TO authenticated
+    USING ((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR skin_id = (SELECT auth.live_skin_own((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))));
 
 DROP POLICY IF EXISTS drafts_select ON public.drafts;
 CREATE POLICY drafts_select ON public.drafts FOR SELECT TO authenticated
@@ -266,6 +284,10 @@ DROP POLICY IF EXISTS sheets_select ON public.sheets;
 CREATE POLICY sheets_select ON public.sheets FOR SELECT TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.space_can_view(space_id)))));
 
+DROP POLICY IF EXISTS skins_select ON public.skins;
+CREATE POLICY skins_select ON public.skins FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
 DROP POLICY IF EXISTS spaces_select ON public.spaces;
 CREATE POLICY spaces_select ON public.spaces FOR SELECT TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((status = 'open'))));
@@ -305,7 +327,7 @@ CREATE OR REPLACE FUNCTION auth.paths_maintain()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'DELETE') THEN
@@ -344,6 +366,7 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+GRANT EXECUTE ON FUNCTION auth.paths_maintain() TO PUBLIC;
 
 DROP TRIGGER IF EXISTS paths_maintain_ins ON public.folders;
 CREATE TRIGGER paths_maintain_ins AFTER INSERT ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.paths_maintain();

@@ -1,9 +1,10 @@
-use crate::Sql;
 use crate::genfn::GenFn;
+use crate::genfn::Param;
+use crate::{Execute, Sql};
 use demesne_model::SpecExt;
 use demesne_model::closure;
 use demesne_runtime::quote_literal;
-use demesne_syntax::Repr;
+use demesne_syntax::{Repr, Subject, ViaGroup};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -89,12 +90,13 @@ impl ClosureTrigger {
         }
         let acyclic = self.refusal("acyclic", &format!("a row of {} cannot sit beneath itself", self.base));
         let known = self.refusal("parent_known", &format!("the {par} of a row of {} names no row the closure {clo} holds", self.base));
-        format!(
+        let f = self.fn_name();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, {ts}
+SET search_path = pg_catalog, {ts}, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'DELETE') THEN
@@ -130,20 +132,21 @@ BEGIN
   RETURN NEW;
 END;
 $$;",
-            f = self.fn_name(),
             ts = or_default(&self.table_schema, "public"),
             lock_old = lock("OLD"),
             lock_new = lock("NEW"),
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     fn relation_function_sql(&self) -> String {
-        format!(
+        let f = self.fn_name();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, {ts}, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
@@ -175,13 +178,14 @@ BEGIN
   RETURN NULL;
 END;
 $$;",
-            f = self.fn_name(),
             clo = self.closure,
             anc = self.ancestor,
             desc = self.descendant,
             id = self.base_id,
-            par = self.base_parent
-        )
+            par = self.base_parent,
+            ts = or_default(&self.table_schema, "public"),
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     fn update_condition(&self) -> String {
@@ -227,12 +231,13 @@ impl GroupTrigger {
 
     #[must_use]
     pub fn function_sql(&self) -> String {
-        format!(
+        let f = self.fn_name();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, {ts}, pg_temp
 AS $$
 BEGIN
   -- Fast path: nothing to close over and nothing stale to clear. Load-bearing
@@ -265,14 +270,15 @@ BEGIN
   RETURN NULL;
 END;
 $$;",
-            f = self.fn_name(),
             clo = self.closure,
             gc = self.group_col,
             mc = self.member_col,
             em = self.edge_member,
             eg = self.edge_group,
-            edge = self.edge
-        )
+            edge = self.edge,
+            ts = or_default(&self.table_schema, "public"),
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     #[must_use]
@@ -289,6 +295,7 @@ $$;",
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MaterializedFlat {
+    pub principal_claims: Vec<String>,
     pub schema: String,
     pub table_schema: String,
     pub flat: String,
@@ -299,7 +306,8 @@ pub struct MaterializedFlat {
     pub group_col: String,
     pub member_col: String,
     pub kind: String,
-    pub claim_expr: String,
+    /// The condition a closure row `c` meets when its member is the caller, one claim for each subject the relation names; empty when there is no reverse lookup.
+    pub caller_match: String,
     pub id_type: String,
 }
 
@@ -319,7 +327,7 @@ impl MaterializedFlat {
     fn fn_name(&self) -> String {
         format!("{}.{}_rebuild", self.schema(), self.flat)
     }
-    fn reconcile_fn(&self) -> String {
+    pub(crate) fn reconcile_fn(&self) -> String {
         format!("{}.{}_reconcile", self.schema(), self.flat)
     }
 
@@ -335,12 +343,13 @@ impl MaterializedFlat {
 
     #[must_use]
     pub fn function_sql(&self) -> String {
-        format!(
+        let f = self.fn_name();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   -- Serialize concurrent rebuilds (CONCURRENCY): a full DELETE+INSERT under READ
@@ -356,7 +365,6 @@ BEGIN
   RETURN NULL;
 END;
 $$;",
-            f = self.fn_name(),
             q = self.q_flat(),
             pk = self.obj_pk,
             kind = quote_literal(&self.kind),
@@ -366,17 +374,19 @@ $$;",
             clo = self.closure,
             gc = self.group_col,
             col = self.col
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     #[must_use]
     pub fn reconcile_sql(&self) -> String {
-        format!(
+        let f = self.reconcile_fn();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = {s}
+SET search_path = {s}, pg_temp
 AS $$
 DECLARE
   v_missing integer;
@@ -403,7 +413,6 @@ BEGIN
   RETURN v_missing + v_stale;
 END;
 $$;",
-            f = self.reconcile_fn(),
             s = self.schema(),
             q = self.q_flat(),
             pk = self.obj_pk,
@@ -414,7 +423,8 @@ $$;",
             clo = self.closure,
             gc = self.group_col,
             col = self.col
-        )
+        );
+        format!("{create}\n{}", Execute::Grantable.statement(&f, ""))
     }
 
     #[must_use]
@@ -423,7 +433,10 @@ $$;",
             schema: self.schema().into(),
             table_schema: self.table_schema().into(),
             name: format!("{}_member", self.flat),
-            sig: format!("p_resource {t}, p_principal {t}", t = self.id_type()),
+            params: vec![Param::id("p_resource"), Param::id("p_principal")],
+            id_type: self.id_type().to_string(),
+            principal: Some("p_principal".to_string()),
+            principal_claims: self.principal_claims.clone(),
             body: format!("EXISTS (SELECT 1 FROM {} WHERE resource_id = p_resource AND principal_id = p_principal)", self.q_flat()),
             ..Default::default()
         }
@@ -431,7 +444,7 @@ $$;",
 
     #[must_use]
     pub fn has_reverse(&self) -> bool {
-        !self.claim_expr.is_empty()
+        !self.caller_match.is_empty()
     }
 
     #[must_use]
@@ -440,18 +453,17 @@ $$;",
             schema: self.schema().into(),
             table_schema: self.table_schema().into(),
             name: format!("{}_resources", self.flat),
-            returns: "SETOF text".into(),
+            returns: format!("SETOF {}", self.id_type()),
             raw_body: true,
             body: format!(
-                "  SELECT o.{pk}\n  FROM {ts}.{ot} o JOIN {ts}.{clo} c ON c.{gc} = o.{col}\n  WHERE c.{mc} = {claim};",
+                "  SELECT o.{pk}\n  FROM {ts}.{ot} o JOIN {ts}.{clo} c ON c.{gc} = o.{col}\n  WHERE {callers};",
                 pk = self.obj_pk,
                 ts = self.table_schema(),
                 ot = self.obj_table,
                 clo = self.closure,
                 gc = self.group_col,
                 col = self.col,
-                mc = self.member_col,
-                claim = self.claim_expr
+                callers = self.caller_match
             ),
             ..Default::default()
         }
@@ -582,17 +594,31 @@ impl Sql<'_> {
         b
     }
 
+    fn caller_match(&self, g: &ViaGroup, owner: &str, member: &str) -> String {
+        let keys = if g.claims.is_empty() { vec![owner.to_string()] } else { g.claims.clone() };
+        let each: Vec<String> = keys
+            .iter()
+            .map(|key| {
+                let own = format!("{member} = {}", self.id_claim(key));
+                if key == owner { own } else { format!("({own} AND {} IS NULL)", self.claim(owner)) }
+            })
+            .collect();
+        each.join(" OR ")
+    }
+
     #[must_use]
     pub fn emit_materialized_flats(&self) -> Vec<MaterializedFlat> {
         let mut out = Vec::new();
         for obj in &self.s.objects {
-            let claim_expr = obj.scoped.last().and_then(|l| self.s.owner_subject(l)).map(|cust| self.id_claim(cust.identifies())).unwrap_or_default();
+            let owner = obj.scoped.last().and_then(|l| self.s.owner_subject(l)).map(Subject::identifies);
             let materialized = obj.relations.iter().filter_map(|r| match &r.repr {
                 Repr::Group(g) if g.materialized => Some((r, g)),
                 _ => None,
             });
             for (r, g) in materialized {
+                let caller_match = owner.map(|owner| self.caller_match(g, owner, &format!("c.{}", g.member_col))).unwrap_or_default();
                 out.push(MaterializedFlat {
+                    principal_claims: self.identities_of(&r.types),
                     schema: self.s.definer_schema().into(),
                     table_schema: self.s.table_schema().into(),
                     flat: format!("{}_{}_flat", obj.table, r.name),
@@ -603,7 +629,7 @@ impl Sql<'_> {
                     group_col: g.group_col.clone(),
                     member_col: g.member_col.clone(),
                     kind: r.types.first().cloned().unwrap_or_default(),
-                    claim_expr: claim_expr.clone(),
+                    caller_match,
                     id_type: self.s.id_type().into(),
                 });
             }

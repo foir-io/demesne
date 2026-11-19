@@ -1,0 +1,19 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+DROP POLICY IF EXISTS notes_select ON public.notes;
+CREATE POLICY notes_select ON public.notes FOR SELECT TO authenticated
+    USING ((workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'project_id') AND ((owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'member') OR visibility = 'public' OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'read') OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'write'))));
+
+DROP POLICY IF EXISTS notes_update ON public.notes;
+CREATE POLICY notes_update ON public.notes FOR UPDATE TO authenticated
+    USING ((workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'project_id') AND ((owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'member') OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'write'))))
+    WITH CHECK ((workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'project_id') AND ((owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'member') OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'write'))));
+
+
+--- stderr ---
+
+--- end ---

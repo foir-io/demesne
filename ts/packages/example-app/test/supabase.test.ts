@@ -12,6 +12,20 @@ const suite = canRun ? describe : describe.skip;
 
 const sqlFile = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
+const manifest = JSON.parse(sqlFile("../generated/supabase/manifest.json")) as { callable: string[]; grantable: string[]; revoked: string[] };
+const revokedFromPublic = [...manifest.revoked, ...manifest.grantable];
+
+// Each argument is a subquery: the planner folds a STRICT call on a constant NULL away before the privilege check runs.
+const nullCall = (signature: string) => {
+  const open = signature.indexOf("(");
+  const args = signature
+    .slice(open + 1, -1)
+    .split(", ")
+    .filter((a) => a !== "")
+    .map((a) => `(SELECT NULL::${a})`);
+  return `SELECT ${signature.slice(0, open)}(${args.join(", ")})`;
+};
+
 suite(`Supabase profile round-trip ${realUrl ? "(real project)" : "(local Supabase-shaped Postgres)"}`, () => {
   let cluster: Cluster | undefined;
   let client: Client;
@@ -39,7 +53,9 @@ suite(`Supabase profile round-trip ${realUrl ? "(real project)" : "(local Supaba
 
     await client.query(sqlFile("../generated/supabase/policies.sql"));
     await client.query(sqlFile("../generated/supabase/hook.sql"));
-    await client.query("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA demesne TO authenticated");
+    for (const fn of manifest.callable) {
+      await client.query(`GRANT EXECUTE ON FUNCTION ${fn} TO authenticated`);
+    }
   }, 60_000);
 
   afterAll(async () => {
@@ -93,6 +109,19 @@ suite(`Supabase profile round-trip ${realUrl ? "(real project)" : "(local Supaba
   it("containment filters a cross-org owner (claims pin the org)", async () => {
 
     expect(await visibleTo("m1", "o1", "w1")).not.toContain("n4");
+  });
+
+  it("a function the SQL revokes from PUBLIC stays refused for authenticated", async () => {
+    expect(revokedFromPublic.length).toBeGreaterThan(0);
+    for (const fn of revokedFromPublic) {
+      await client.query("BEGIN");
+      try {
+        await client.query("SET LOCAL ROLE authenticated");
+        await expect(client.query(nullCall(fn)), fn).rejects.toMatchObject({ code: "42501" });
+      } finally {
+        await client.query("ROLLBACK");
+      }
+    }
   });
 
   it("service_role (BYPASSRLS) reads past every policy — why it must stay off the request path", async () => {

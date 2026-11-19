@@ -14,9 +14,12 @@ publish = false
 demesne-syntax.workspace = true
 demesne-model.workspace = true
 demesne-emit-sql.workspace = true
+demesne-postgres.workspace = true
 postgres.workspace = true
 demesne-emit-sql-v1-1.workspace = true
 demesne-syntax-v1-1.workspace = true
+demesne-emit-sql-v4.workspace = true
+demesne-syntax-v4.workspace = true
 
 [lints]
 workspace = true

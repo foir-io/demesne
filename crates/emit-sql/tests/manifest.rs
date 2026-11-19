@@ -1,4 +1,7 @@
-use demesne_emit_sql::{Manifest, Sql, validate};
+use demesne_emit_sql::{Execute, Manifest, Sql, validate};
+use demesne_gocompat::json::{self, Value};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 fn spec(name: &str) -> demesne_syntax::Spec {
     let path = format!("{}/../../testdata/gaps/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -18,8 +21,8 @@ fn a_migration_drops_exactly_what_the_previous_surface_had_and_this_one_does_not
     let previous = Sql::new(&spec("migrate-before.demesne")).manifest().expect("a manifest");
     let after = spec("migrate-after.demesne");
     let migration = Sql::new(&after).migration(&previous).expect("a migration");
-    let plain = all_sql(&after);
-    let drops = migration.strip_prefix(plain.as_str()).expect("the migration starts with the spec's whole SQL");
+    let drops = Manifest::from_sql(&all_sql(&after)).expect("a manifest").drops_since(&previous);
+    assert!(migration.ends_with(&drops), "the migration ends with its drops:\n{migration}");
     let lines: Vec<&str> = drops.lines().filter(|l| l.starts_with("DROP ")).collect();
     assert_eq!(
         lines,
@@ -41,10 +44,10 @@ fn a_migration_drops_exactly_what_the_previous_surface_had_and_this_one_does_not
 }
 
 #[test]
-fn a_migration_from_its_own_surface_is_the_plain_sql() {
+fn a_migration_from_its_own_surface_writes_nothing() {
     let after = spec("migrate-after.demesne");
     let own = Sql::new(&after).manifest().expect("a manifest");
-    assert_eq!(Sql::new(&after).migration(&own), Ok(all_sql(&after)));
+    assert_eq!(Sql::new(&after).migration(&own), Ok(String::new()));
 }
 
 #[test]
@@ -199,4 +202,267 @@ fn a_quoted_name_with_a_dot_is_one_identifier() {
 fn a_positional_parameter_does_not_open_a_dollar_quote() {
     let m = Manifest::from_sql("CREATE POLICY a ON s.t USING ($1$ = 1); CREATE POLICY b ON s.t USING (true);").expect("a manifest");
     assert_eq!(m.policies.len(), 2, "{:?}", m.policies);
+}
+
+fn emitting_specs() -> Vec<(String, demesne_syntax::Spec)> {
+    let root = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+    let mut dirs: Vec<PathBuf> = ["examples", "testdata/corpus", "testdata/gaps"].iter().map(|d| PathBuf::from(format!("{root}/{d}"))).collect();
+    let mut paths = Vec::new();
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).expect("the corpus reads") {
+            let p = e.expect("an entry").path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "demesne") {
+                paths.push(p);
+            }
+        }
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .filter_map(|p| {
+            let s = demesne_syntax::parse(&std::fs::read_to_string(&p).ok()?).ok()?;
+            validate(&s).ok()?;
+            let mut b = String::new();
+            Sql::new(&s).write_all_sql(&mut b).ok()?;
+            Some((p.display().to_string(), s))
+        })
+        .collect()
+}
+
+fn listed(manifest: &Value, key: &str, path: &str) -> BTreeSet<String> {
+    let items = manifest.get(key).and_then(Value::as_array).unwrap_or_else(|| panic!("{path}: the manifest has no {key} list"));
+    items.iter().map(|v| v.as_str().unwrap_or_else(|| panic!("{path}: an entry of {key} is not a string")).to_string()).collect()
+}
+
+fn identity(f: &demesne_emit_sql::GenFn) -> String {
+    let types: Vec<String> = f.sig().split(',').map(|p| p.split_whitespace().skip(1).collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()).collect();
+    format!("{}.{}({})", f.schema(), f.name, types.join(", "))
+}
+
+fn name_of(signature: &str) -> &str {
+    signature.split('(').next().and_then(|q| q.rsplit('.').next()).unwrap_or_default()
+}
+
+#[test]
+fn every_function_the_sql_creates_is_in_exactly_one_of_callable_grantable_internal_and_revoked() {
+    let (mut wrong, mut totals, mut specs) = (Vec::new(), [0usize; 4], 0);
+    for (path, s) in emitting_specs() {
+        let m = Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{path}: {e}"));
+        let written = json::parse(&m.to_json()).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let functions = listed(&written, "functions", &path);
+        let lists = ["callable", "grantable", "internal", "revoked"].map(|key| (key, listed(&written, key, &path)));
+        for (total, (key, list)) in totals.iter_mut().zip(&lists) {
+            *total += list.len();
+            wrong.extend(list.iter().filter(|f| !functions.contains(*f)).map(|f| format!("{path}: {key} lists {f}, which the SQL does not create")));
+        }
+        for f in &functions {
+            let held: Vec<&str> = lists.iter().filter(|(_, list)| list.contains(f)).map(|(key, _)| *key).collect();
+            if held.len() != 1 {
+                wrong.push(format!("{path}: {f} is in {held:?}"));
+            }
+        }
+        specs += 1;
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    let [callable, grantable, internal, revoked] = totals;
+    assert!(
+        specs > 150 && callable > 30 && grantable > 200 && internal > 300 && revoked > 10,
+        "{specs} specs, {callable} callable, {grantable} grantable, {internal} internal, {revoked} revoked"
+    );
+}
+
+#[test]
+fn each_list_holds_the_functions_its_name_says() {
+    let mut wrong = Vec::new();
+    for (path, s) in emitting_specs() {
+        let sql = Sql::new(&s);
+        let lists = sql.manifest().unwrap_or_else(|e| panic!("{path}: {e}")).execute.unwrap_or_else(|| panic!("{path}: the manifest records no lists"));
+        let declared: BTreeSet<&str> = s
+            .objects
+            .iter()
+            .flat_map(|o| {
+                o.exports.iter().map(|e| e.name.as_str()).chain(o.probes.iter().map(|p| p.name.as_str())).chain(o.projections.iter().map(|p| p.name.as_str()))
+            })
+            .collect();
+        for f in sql.emit_definers().unwrap_or_else(|e| panic!("{path}: {e}")) {
+            let sig = identity(&f);
+            if (f.execute == Execute::Revoked) != lists.revoked.contains(&sig) {
+                wrong.push(format!("{path}: {sig} is {:?} and the manifest's revoked list says otherwise", f.execute));
+            }
+            if (f.execute == Execute::Grantable) != lists.grantable.contains(&sig) {
+                wrong.push(format!("{path}: {sig} is {:?} and the manifest's grantable list says otherwise", f.execute));
+            }
+            if declared.contains(f.name.as_str()) && !lists.callable.contains(&sig) {
+                wrong.push(format!("{path}: a spec line declares {sig}, and it is not callable"));
+            }
+        }
+        for c in &lists.callable {
+            let name = name_of(c);
+            if !(declared.contains(name) || name.contains("_can_access_") || name.ends_with("_resources") || name.contains("_reach_in_")) {
+                wrong.push(format!("{path}: {c} is callable, and no spec line makes it so"));
+            }
+        }
+        let nearest: BTreeSet<&str> = s.objects.iter().flat_map(|o| o.nearests.iter().map(|n| n.name.as_str())).collect();
+        let family = [
+            "_accessors",
+            "_accessors_conditional",
+            "_direct_accessors",
+            "_admits",
+            "_path",
+            "_async_apply",
+            "_async_rebuild",
+            "_async_watermark",
+            "_reconcile",
+        ];
+        let for_a_role = |name: &str| !declared.contains(name) && (family.iter().any(|f| name.ends_with(f)) || nearest.contains(name));
+        for g in &lists.grantable {
+            if !for_a_role(name_of(g)) {
+                wrong.push(format!("{path}: {g} is grantable, and it is not an interface for a role"));
+            }
+        }
+        for f in lists.callable.iter().chain(&lists.internal).chain(&lists.revoked) {
+            if for_a_role(name_of(f)) {
+                wrong.push(format!("{path}: {f} is meant for a role you grant, and it is not grantable"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn a_manifest_written_before_it_recorded_who_may_run_each_function_reads_with_that_unrecorded() {
+    let earlier = r#"{"manifest": 1, "functions": ["auth.f(text)"], "policies": [], "triggers": [], "indexes": [], "tables": [], "rls": []}"#;
+    let m = Manifest::from_json(earlier).expect("a manifest from before");
+    assert_eq!(m.execute, None, "{m:?}");
+    assert!(!m.to_json().contains("\"callable\""), "{}", m.to_json());
+}
+
+#[test]
+fn a_manifest_whose_lists_do_not_hold_each_function_once_is_refused() {
+    let with = |lists: &str| {
+        format!(
+            r#"{{"manifest": 1, "functions": ["auth.f(text)", "auth.g(text)"], {lists} "policies": [], "triggers": [], "indexes": [], "tables": [], "rls": []}}"#
+        )
+    };
+    for (lists, want) in [
+        (r#""callable": ["auth.f(text)"], "grantable": [], "internal": ["auth.g(text)"],"#, r#"no "revoked" list"#),
+        (r#""callable": ["auth.f(text)"], "internal": ["auth.g(text)"], "revoked": [],"#, r#"no "grantable" list"#),
+        (r#""revoked": ["auth.f(text)", "auth.g(text)"],"#, r#"no "callable" or "grantable" or "internal" list"#),
+        (
+            r#""callable": ["auth.f(text)"], "grantable": [], "internal": ["auth.f(text)"], "revoked": ["auth.g(text)"],"#,
+            r#""auth.f(text)" is in more than one"#,
+        ),
+        (r#""callable": [], "grantable": ["auth.f(text)"], "internal": [], "revoked": ["auth.f(text)"],"#, r#""auth.f(text)" is in more than one"#),
+        (r#""callable": ["auth.f(text)"], "grantable": [], "internal": [], "revoked": [],"#, r#""auth.g(text)" is in none"#),
+        (
+            r#""callable": ["auth.f(text)", "auth.h(text)"], "grantable": [], "internal": ["auth.g(text)"], "revoked": [],"#,
+            r#""callable" lists "auth.h(text)", which functions does not"#,
+        ),
+    ] {
+        let err = Manifest::from_json(&with(lists)).map(|m| m.to_json()).expect_err(lists).to_string();
+        assert!(err.contains(want), "{lists}: {err}");
+    }
+    let whole =
+        Manifest::from_json(&with(r#""callable": [], "grantable": ["auth.f(text)"], "internal": [], "revoked": ["auth.g(text)"],"#)).expect("a whole manifest");
+    let lists = whole.execute.expect("the lists");
+    assert_eq!(
+        (lists.grantable.into_iter().collect::<Vec<_>>(), lists.revoked.into_iter().collect::<Vec<_>>()),
+        (vec!["auth.f(text)".to_string()], vec!["auth.g(text)".to_string()])
+    );
+}
+
+#[test]
+fn a_checked_changelogs_constraint_triggers_are_recorded_and_dropped_like_any_trigger() {
+    let src = "changelog checked
+topology { level estate level space parent estate }
+subject member { anchor space; reach self; identifies sub; roles none; binds owner }
+object doc {
+  table docs
+  scoped estate > space
+  relation owner: member via owner_id where owner_kind = \"member\"
+  relation grantee: member via grant doc_acl(doc_id, principal_kind, principal_id, access) tracked
+  permission view = owner + mode visibility = \"public\" + grantee:read @rls maps select
+  track owner
+  track visibility
+}
+";
+    let s = demesne_syntax::parse(src).unwrap_or_else(|e| panic!("{e}"));
+    validate(&s).unwrap_or_else(|e| panic!("{e}"));
+    let sql = all_sql(&s);
+    let created: BTreeSet<(String, String)> = sql
+        .lines()
+        .filter_map(|l| l.strip_prefix("CREATE CONSTRAINT TRIGGER "))
+        .map(|rest| {
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            let on = words.iter().position(|w| *w == "ON").expect("a trigger names its table");
+            (words[on + 1].to_string(), words[0].to_string())
+        })
+        .collect();
+    assert_eq!(created.len(), 2, "{sql}");
+    let m = Sql::new(&s).manifest().unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(m.triggers, created, "{sql}");
+    let drops = Manifest::default().drops_since(&m);
+    for (table, name) in &created {
+        assert!(drops.contains(&format!("DROP TRIGGER IF EXISTS {name} ON {table};")), "{drops}");
+    }
+}
+
+fn renaming(subject: &str) -> demesne_syntax::Spec {
+    renaming_with(subject, "")
+}
+
+fn renaming_with(subject: &str, note: &str) -> demesne_syntax::Spec {
+    let src = format!(
+        "topology {{ level tenant }}
+subject {subject} {{ anchor tenant; reach self; identifies member_id; roles none; binds owner }}
+object doc {{
+  table docs
+  scoped tenant
+  relation owner: {subject} via owner_id
+  relation grantee: {subject} via grant acl(doc_id, principal_kind, principal_id, access)
+  permission view = owner + grantee:read @rls maps select
+}}
+object note {{
+  table notes
+  scoped tenant
+  relation owner: {subject} via owner_id
+  permission view = owner @rls maps select
+{note}}}
+"
+    );
+    let s = demesne_syntax::parse(&src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    validate(&s).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    s
+}
+
+#[test]
+fn a_migration_writes_only_what_changed_since_the_previous_manifest() {
+    let before = Sql::new(&renaming("member")).manifest().expect("a manifest");
+    let after = renaming_with("member", "  permission edit = owner @rls maps update\n");
+    let migration = Sql::new(&after).migration(&before).expect("the migration compiles");
+    assert_eq!(migration.matches("CREATE POLICY").count(), 1, "only the new policy:\n{migration}");
+    assert!(migration.contains("CREATE POLICY notes_update ON public.notes"), "{migration}");
+    assert!(!migration.contains("CREATE OR REPLACE FUNCTION auth.acl_grants("), "an unchanged function is not written again:\n{migration}");
+    let same = Sql::new(&renaming("member")).migration(&before).expect("the migration compiles");
+    assert_eq!(same.matches("CREATE ").count(), 0, "nothing changed, nothing written:\n{same}");
+    let older = Manifest { digests: None, ..before };
+    let whole = Sql::new(&after).migration(&older).expect("the migration compiles");
+    assert!(whole.contains("-- the previous manifest records no digests") && whole.matches("CREATE POLICY").count() == 3, "{whole}");
+}
+
+#[test]
+fn a_migration_drops_first_a_function_whose_parameters_changed_and_only_the_policies_that_call_it() {
+    let (before, after) = (Sql::new(&renaming("member")).manifest().expect("a manifest"), Sql::new(&renaming("customer")).manifest().expect("a manifest"));
+    let read = Manifest::from_json(&after.to_json()).expect("the manifest reads back");
+    assert_eq!(read.heads, after.heads, "the heads round-trip");
+    let prologue = after.renamed_since(&before);
+    assert_eq!(
+        prologue, "DROP POLICY IF EXISTS docs_select ON public.docs;\nDROP FUNCTION IF EXISTS auth.acl_grants(text, text, text);\n",
+        "only the check whose parameter is named after the subject, and the one policy that calls it"
+    );
+    assert_eq!(after.renamed_since(&after), "", "nothing changed, nothing dropped");
+    let older = Manifest { heads: None, ..before };
+    assert!(after.renamed_since(&older).starts_with("-- the previous manifest records no parameters"), "{}", after.renamed_since(&older));
 }

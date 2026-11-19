@@ -118,7 +118,7 @@ func (a TenantAccess) CanView(ctx context.Context, q demesne.Querier, id string)
 
 func (a TenantAccess) CanEdit(ctx context.Context, q demesne.Querier, id string) (Decision, error) {
 	var ok bool
-	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND ((auth.platform_has_perm((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage'))))", id).Scan(&ok); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND (((SELECT auth.platform_has_perm((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')))))", id).Scan(&ok); err != nil {
 		return Deny, err
 	}
 	return a.r.ComposeCan(ctx, true, ok, NotGoverned)

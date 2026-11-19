@@ -4,27 +4,19 @@ expression: "record(&repo, \"\", &args)"
 ---
 exit: 0
 --- stdout ---
-CREATE OR REPLACE FUNCTION auth.support_grants_reach(user_id text, check_tenant_id text)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-STRICT
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (SELECT 1 FROM support_grants WHERE holder_id = user_id AND tenant_id = check_tenant_id AND ended_at IS NULL);
-$$;
-
+BEGIN;
+-- the previous manifest records no parameters, so a function whose parameters changed is not dropped first
 CREATE OR REPLACE FUNCTION auth.support_grants_reach_set(user_id text)
 RETURNS SETOF text
 LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT tenant_id FROM support_grants WHERE holder_id = user_id AND ended_at IS NULL;
+  SELECT tenant_id FROM support_grants WHERE holder_id = user_id AND ended_at IS NULL AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub');
 $$;
+GRANT EXECUTE ON FUNCTION auth.support_grants_reach_set(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.acl_grants_note(p_member_id text, p_note_id text, p_access text)
 RETURNS boolean
@@ -32,17 +24,18 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM acl WHERE resource_id = p_note_id AND resource_type = 'note' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access);
+  SELECT p_member_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id') AND (EXISTS (SELECT 1 FROM acl WHERE resource_id = p_note_id AND resource_type = 'note' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
 $$;
+GRANT EXECUTE ON FUNCTION auth.acl_grants_note(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.notes_accessors(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT 'owner'::text AS source, 'member'::text AS principal_kind, owner_id AS principal_id, 'write'::text AS access
     FROM notes WHERE id = p_id AND owner_id IS NOT NULL
@@ -55,6 +48,7 @@ AS $$
     JOIN LATERAL auth.docs_accessors(t.doc_id) a ON true
     WHERE t.id = p_id
 $$;
+REVOKE EXECUTE ON FUNCTION auth.notes_accessors(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.doc_can_view(p_doc_id text)
 RETURNS boolean
@@ -62,10 +56,11 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_doc_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'read') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
 $$;
+GRANT EXECUTE ON FUNCTION auth.doc_can_view(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.notes_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -73,7 +68,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -86,28 +81,35 @@ BEGIN
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.notes_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.notes_admits(text, jsonb) FROM PUBLIC, authenticated;
 
-CREATE OR REPLACE FUNCTION auth.note_can_edit(p_id text)
+DO $demesne$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('auth.note_can_edit(text)') AND proargnames IS DISTINCT FROM ARRAY['p_note_id']::text[]) THEN
+    DROP FUNCTION auth.note_can_edit(text);
+  END IF;
+END $demesne$;
+CREATE OR REPLACE FUNCTION auth.note_can_edit(p_note_id text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM notes WHERE notes.id = p_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_note((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), notes.id, 'write')))));
+  SELECT EXISTS (SELECT 1 FROM notes WHERE notes.id = p_note_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_note((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), notes.id, 'write')))));
 $$;
+REVOKE EXECUTE ON FUNCTION auth.note_can_edit(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.acl_manage(p_type text, p_id text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT (CASE p_type WHEN 'doc' THEN auth.doc_can_edit(p_id) WHEN 'note' THEN auth.note_can_edit(p_id) ELSE false END);
+  SELECT (CASE p_type WHEN 'doc' THEN (SELECT auth.doc_can_edit(p_id)) WHEN 'note' THEN (SELECT auth.note_can_edit(p_id)) ELSE false END);
 $$;
+GRANT EXECUTE ON FUNCTION auth.acl_manage(text, text) TO PUBLIC;
 
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notes FORCE ROW LEVEL SECURITY;
@@ -123,6 +125,7 @@ CREATE POLICY notes_update ON public.notes FOR UPDATE TO authenticated
 
 -- ===== Dropped since the previous manifest =====
 DROP FUNCTION IF EXISTS auth.retired(text);
+DROP FUNCTION IF EXISTS auth.support_grants_reach(text, text);
 DO $demesne$
 DECLARE
   survivors text;
@@ -130,7 +133,7 @@ BEGIN
   SELECT string_agg(what, ', ' ORDER BY what) INTO survivors FROM (
     SELECT 'function ' || p.oid::regprocedure::text AS what
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE (n.nspname, p.proname) IN (('auth'::name, 'retired'::name))
+      WHERE (n.nspname, p.proname) IN (('auth'::name, 'retired'::name), ('auth'::name, 'support_grants_reach'::name))
         AND p.oid <> ALL (array_remove(ARRAY[]::oid[], NULL))
   ) s;
   IF survivors IS NOT NULL THEN
@@ -138,6 +141,7 @@ BEGIN
   END IF;
 END
 $demesne$;
+COMMIT;
 
 --- stderr ---
 

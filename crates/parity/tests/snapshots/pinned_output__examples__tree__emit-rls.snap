@@ -13,6 +13,14 @@ CREATE POLICY atlases_update ON public.atlases FOR UPDATE TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')))
     WITH CHECK ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')));
 
+DROP POLICY IF EXISTS banners_select ON public.banners;
+CREATE POLICY banners_select ON public.banners FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS banners_select_require ON public.banners;
+CREATE POLICY banners_select_require ON public.banners AS RESTRICTIVE FOR SELECT TO authenticated
+    USING ((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR skin_id = (SELECT auth.live_skin_own((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))));
+
 DROP POLICY IF EXISTS drafts_select ON public.drafts;
 CREATE POLICY drafts_select ON public.drafts FOR SELECT TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
@@ -76,6 +84,10 @@ CREATE POLICY pages_select ON public.pages FOR SELECT TO authenticated
 DROP POLICY IF EXISTS sheets_select ON public.sheets;
 CREATE POLICY sheets_select ON public.sheets FOR SELECT TO authenticated
     USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((auth.space_can_view(space_id)))));
+
+DROP POLICY IF EXISTS skins_select ON public.skins;
+CREATE POLICY skins_select ON public.skins FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
 
 DROP POLICY IF EXISTS spaces_select ON public.spaces;
 CREATE POLICY spaces_select ON public.spaces FOR SELECT TO authenticated

@@ -4,27 +4,17 @@ expression: "record(&repo, \"\", &args)"
 ---
 exit: 0
 --- stdout ---
-CREATE OR REPLACE FUNCTION auth.support_grants_reach(user_id text, check_tenant_id text)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-STRICT
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (SELECT 1 FROM support_grants WHERE holder_id = user_id AND tenant_id = check_tenant_id);
-$$;
-
 CREATE OR REPLACE FUNCTION auth.support_grants_reach_set(user_id text)
 RETURNS SETOF text
 LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT tenant_id FROM support_grants WHERE holder_id = user_id;
+  SELECT tenant_id FROM support_grants WHERE holder_id = user_id AND user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub');
 $$;
+GRANT EXECUTE ON FUNCTION auth.support_grants_reach_set(text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.acl_grants_doc(p_member_id text, p_doc_id text, p_access text)
 RETURNS boolean
@@ -32,17 +22,18 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM acl WHERE resource_id = p_doc_id AND resource_type = 'doc' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access);
+  SELECT p_member_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'member_id') AND (EXISTS (SELECT 1 FROM acl WHERE resource_id = p_doc_id AND resource_type = 'doc' AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
 $$;
+GRANT EXECUTE ON FUNCTION auth.acl_grants_doc(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.docs_accessors(p_id text)
 RETURNS TABLE(source text, principal_kind text, principal_id text, access text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT 'owner'::text AS source, 'member'::text AS principal_kind, owner_id AS principal_id, 'write'::text AS access
     FROM docs WHERE id = p_id AND owner_id IS NOT NULL
@@ -50,6 +41,7 @@ AS $$
   SELECT 'grant'::text, principal_kind, principal_id, access
     FROM acl WHERE resource_id = p_id AND resource_type = 'doc'
 $$;
+REVOKE EXECUTE ON FUNCTION auth.docs_accessors(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.docs_admits(p_id text, p_claims jsonb)
 RETURNS boolean
@@ -57,7 +49,7 @@ LANGUAGE plpgsql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 #variable_conflict use_column
 DECLARE
@@ -70,38 +62,46 @@ BEGIN
   RETURN admitted;
 END
 $$;
-REVOKE EXECUTE ON FUNCTION auth.docs_admits(text, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION auth.docs_admits(text, jsonb) FROM PUBLIC, authenticated;
 
-CREATE OR REPLACE FUNCTION auth.doc_can_edit(p_id text)
+DO $demesne$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('auth.doc_can_edit(text)') AND proargnames IS DISTINCT FROM ARRAY['p_doc_id']::text[]) THEN
+    DROP FUNCTION auth.doc_can_edit(text);
+  END IF;
+END $demesne$;
+CREATE OR REPLACE FUNCTION auth.doc_can_edit(p_doc_id text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
+  SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_doc_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
 $$;
+REVOKE EXECUTE ON FUNCTION auth.doc_can_edit(text) FROM PUBLIC, authenticated;
 
 CREATE OR REPLACE FUNCTION auth.acl_manage(p_type text, p_id text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT (CASE p_type WHEN 'doc' THEN auth.doc_can_edit(p_id) ELSE false END);
+  SELECT (CASE p_type WHEN 'doc' THEN (SELECT auth.doc_can_edit(p_id)) ELSE false END);
 $$;
+GRANT EXECUTE ON FUNCTION auth.acl_manage(text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.doc_readable(check_doc_id text, row_tenant_id text, row_workspace_id text, row_owner_id text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT ((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'read') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write'))) FROM (SELECT check_doc_id AS id, row_tenant_id AS tenant_id, row_workspace_id AS workspace_id, row_owner_id AS owner_id) AS docs;
 $$;
+GRANT EXECUTE ON FUNCTION auth.doc_readable(text, text, text, text) TO PUBLIC;
 
 
 ALTER TABLE public.acl ENABLE ROW LEVEL SECURITY;

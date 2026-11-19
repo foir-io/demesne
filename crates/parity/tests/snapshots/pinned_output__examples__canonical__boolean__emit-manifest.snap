@@ -7,6 +7,10 @@ exit: 0
 {
   "manifest": 1,
   "functions": [],
+  "callable": [],
+  "grantable": [],
+  "internal": [],
+  "revoked": [],
   "policies": [
     {
       "table": "public.resources",
@@ -18,6 +22,17 @@ exit: 0
   "tables": [],
   "rls": [
     "public.resources"
+  ],
+  "heads": [],
+  "digests": [
+    {
+      "object": "policy resources_select on public.resources",
+      "digest": "442b979b19ff52d4471a5b417e63c6122dcae0c9c807600f93478f44b138f8d4"
+    },
+    {
+      "object": "rls public.resources",
+      "digest": "e00b6edcd1ae28b81a5de0599e1a8253e30cc61434c63bf6f72c656d36e6221a"
+    }
   ]
 }
 

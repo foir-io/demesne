@@ -11,6 +11,15 @@ exit: 0
     "auth.operator_perm_implied_by(text)",
     "auth.platform_has_perm(text, text)"
   ],
+  "callable": [],
+  "grantable": [],
+  "internal": [
+    "auth.operator_has_perm(text, text, text, text)",
+    "auth.platform_has_perm(text, text)"
+  ],
+  "revoked": [
+    "auth.operator_perm_implied_by(text)"
+  ],
   "policies": [
     {
       "table": "public.documents",
@@ -39,6 +48,90 @@ exit: 0
   "rls": [
     "public.documents",
     "public.tenants"
+  ],
+  "heads": [
+    {
+      "function": "auth.operator_has_perm(text, text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.documents",
+          "name": "documents_select"
+        },
+        {
+          "table": "public.documents",
+          "name": "documents_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.operator_perm_implied_by(text)",
+      "parameters": "p_perm text",
+      "returns": "text[]",
+      "policies": []
+    },
+    {
+      "function": "auth.platform_has_perm(text, text)",
+      "parameters": "user_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.tenants",
+          "name": "tenants_delete"
+        },
+        {
+          "table": "public.tenants",
+          "name": "tenants_select"
+        },
+        {
+          "table": "public.tenants",
+          "name": "tenants_update"
+        }
+      ]
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.operator_has_perm(text, text, text, text)",
+      "digest": "1e92b3664c4174ef4edf9f590d98b7c85300e38bf2d51223f47b3e57f8b86da7"
+    },
+    {
+      "object": "function auth.operator_perm_implied_by(text)",
+      "digest": "bedf935ee719660ff5fd64791ccb55ee8833da5fa34d7379ce411f67d2ecfffb"
+    },
+    {
+      "object": "function auth.platform_has_perm(text, text)",
+      "digest": "08c7cb2d7875638b5a1b9ce5d5c97418ae4157abd48cc26d4585292931010255"
+    },
+    {
+      "object": "policy documents_select on public.documents",
+      "digest": "e8ed4535562f09e7e90158ecaf43c280c80e7930b0be7bcee276cf27c4f7d938"
+    },
+    {
+      "object": "policy documents_update on public.documents",
+      "digest": "4de49366a23f05a2c3b7fffaa62dda6f77aaa5e2ff002df8bf51303e98e48523"
+    },
+    {
+      "object": "policy tenants_delete on public.tenants",
+      "digest": "d1f6c5fde37e821191141fd898627ba8c9f72acc0ea5421ff24e96e15c45875d"
+    },
+    {
+      "object": "policy tenants_select on public.tenants",
+      "digest": "647c7824f4f6192251e0351008ca2538c704ea3efeb5fb845db53d2b0e0ba413"
+    },
+    {
+      "object": "policy tenants_update on public.tenants",
+      "digest": "e80975416ce2d180aef347f38b29d310aa84ee5f12e1a208d203f56e659fdd8e"
+    },
+    {
+      "object": "rls public.documents",
+      "digest": "f51b9d67743ab7ca18c5d4317607c086dde6ff505432316ecfcc99cdea6204c6"
+    },
+    {
+      "object": "rls public.tenants",
+      "digest": "fa9f7d5b4438ed09a5596f4254df7add538e4bad0e59f14d97f4ef8058de45fb"
+    }
   ]
 }
 

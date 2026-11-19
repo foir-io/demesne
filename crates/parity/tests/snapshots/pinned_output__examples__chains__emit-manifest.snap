@@ -1,0 +1,357 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+{
+  "manifest": 1,
+  "functions": [
+    "auth.demesne_instant(text)",
+    "auth.doc_composition_lent(text, text, text)",
+    "auth.doc_composition_lent_0(text, text, text)",
+    "auth.doc_shared_keyed(text, text, text)",
+    "auth.doc_shared_keyed_inside(text, text, text)",
+    "auth.doc_terms_hold(text, text, jsonb)",
+    "auth.doc_terms_hold_inside(text, text, jsonb)",
+    "auth.keeper_memberin_space(text, text)",
+    "auth.live_skin(text)",
+    "auth.live_skin_own(text)",
+    "auth.paths_maintain()",
+    "auth.paths_path(text)",
+    "auth.rule_slots_declared_by_rule(text)",
+    "auth.spaces_accessors(text)",
+    "auth.spaces_admits(text, jsonb)",
+    "auth.trail_hops_along_trail(text)"
+  ],
+  "callable": [],
+  "grantable": [
+    "auth.live_skin(text)",
+    "auth.paths_path(text)",
+    "auth.spaces_accessors(text)",
+    "auth.spaces_admits(text, jsonb)"
+  ],
+  "internal": [
+    "auth.doc_composition_lent(text, text, text)",
+    "auth.doc_shared_keyed(text, text, text)",
+    "auth.doc_terms_hold(text, text, jsonb)",
+    "auth.keeper_memberin_space(text, text)",
+    "auth.live_skin_own(text)",
+    "auth.paths_maintain()",
+    "auth.rule_slots_declared_by_rule(text)"
+  ],
+  "revoked": [
+    "auth.demesne_instant(text)",
+    "auth.doc_composition_lent_0(text, text, text)",
+    "auth.doc_shared_keyed_inside(text, text, text)",
+    "auth.doc_terms_hold_inside(text, text, jsonb)",
+    "auth.trail_hops_along_trail(text)"
+  ],
+  "policies": [
+    {
+      "table": "public.banners",
+      "name": "banners_select"
+    },
+    {
+      "table": "public.banners",
+      "name": "banners_select_require"
+    },
+    {
+      "table": "public.docs",
+      "name": "docs_select"
+    },
+    {
+      "table": "public.keeper_profiles",
+      "name": "keeper_profiles_select"
+    },
+    {
+      "table": "public.skins",
+      "name": "skins_select"
+    },
+    {
+      "table": "public.spaces",
+      "name": "spaces_select"
+    }
+  ],
+  "triggers": [
+    {
+      "table": "public.folders",
+      "name": "paths_maintain_del"
+    },
+    {
+      "table": "public.folders",
+      "name": "paths_maintain_ins"
+    },
+    {
+      "table": "public.folders",
+      "name": "paths_maintain_upd"
+    }
+  ],
+  "indexes": [],
+  "tables": [],
+  "rls": [
+    "public.banners",
+    "public.docs",
+    "public.keeper_profiles",
+    "public.skins",
+    "public.spaces"
+  ],
+  "heads": [
+    {
+      "function": "auth.demesne_instant(text)",
+      "parameters": "p_text text",
+      "returns": "timestamptz",
+      "policies": []
+    },
+    {
+      "function": "auth.doc_composition_lent(text, text, text)",
+      "parameters": "p_doc_id text, p_access text, p_slot text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.doc_composition_lent_0(text, text, text)",
+      "parameters": "p_doc_id text, p_access text, p_slot text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.doc_shared_keyed(text, text, text)",
+      "parameters": "p_principal text, p_object text, p_key text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.doc_shared_keyed_inside(text, text, text)",
+      "parameters": "p_principal text, p_object text, p_key text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.doc_terms_hold(text, text, jsonb)",
+      "parameters": "p_object text, p_key text, p_values jsonb",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.doc_terms_hold_inside(text, text, jsonb)",
+      "parameters": "p_object text, p_key text, p_values jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.keeper_memberin_space(text, text)",
+      "parameters": "p_principal text, p_space text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.keeper_profiles",
+          "name": "keeper_profiles_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.live_skin(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": []
+    },
+    {
+      "function": "auth.live_skin_own(text)",
+      "parameters": "p_node text",
+      "returns": "text",
+      "policies": [
+        {
+          "table": "public.banners",
+          "name": "banners_select_require"
+        }
+      ]
+    },
+    {
+      "function": "auth.paths_maintain()",
+      "parameters": "",
+      "returns": "trigger",
+      "policies": []
+    },
+    {
+      "function": "auth.paths_path(text)",
+      "parameters": "p_node text",
+      "returns": "TABLE(node text, depth integer)",
+      "policies": []
+    },
+    {
+      "function": "auth.rule_slots_declared_by_rule(text)",
+      "parameters": "p_key text",
+      "returns": "TABLE(kind text, param text, role text)",
+      "policies": [
+        {
+          "table": "public.docs",
+          "name": "docs_select"
+        }
+      ]
+    },
+    {
+      "function": "auth.spaces_accessors(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text)",
+      "policies": []
+    },
+    {
+      "function": "auth.spaces_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.trail_hops_along_trail(text)",
+      "parameters": "p_key text",
+      "returns": "TABLE(doc_id text, field text, kind text, rule text)",
+      "policies": []
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.demesne_instant(text)",
+      "digest": "60088154c2ffe9f226d297cef7b6334a7d5e48002080858e0c4f80b9067f3e9a"
+    },
+    {
+      "object": "function auth.doc_composition_lent(text, text, text)",
+      "digest": "392806bce765db4e6e0a0c12a9a16ecd870abd0ade719b38186ca725cba19939"
+    },
+    {
+      "object": "function auth.doc_composition_lent_0(text, text, text)",
+      "digest": "b60925fd255a1f133bd4345c6b890133633326bef48c079e337d89fc978a546d"
+    },
+    {
+      "object": "function auth.doc_shared_keyed(text, text, text)",
+      "digest": "d0593a8d79834638e2af258f31777600dfb007fc3651ab0e2d998ffd8ac868a2"
+    },
+    {
+      "object": "function auth.doc_shared_keyed_inside(text, text, text)",
+      "digest": "de207e9a842fd9ee4bbdd92c68712549d0aaa637e42e33e5c939f270df9d5a7d"
+    },
+    {
+      "object": "function auth.doc_terms_hold(text, text, jsonb)",
+      "digest": "aa1fc4932cd430dea36bea46ec52ac0bc77bd987ea7b8c6da6ded0f51207bb8b"
+    },
+    {
+      "object": "function auth.doc_terms_hold_inside(text, text, jsonb)",
+      "digest": "0aa362f85db3fbd52ba0bf43691ab6cac1779be323921a108a490218e004d714"
+    },
+    {
+      "object": "function auth.keeper_memberin_space(text, text)",
+      "digest": "eeb4f2297bf967e04be83844926fc3db3c88d74dd2f752eb43df7497dde5b7b3"
+    },
+    {
+      "object": "function auth.live_skin(text)",
+      "digest": "48b2eed595d55def97efeb379366f483a3549edac61a3f09efeaa00649ee925d"
+    },
+    {
+      "object": "function auth.live_skin_own(text)",
+      "digest": "9a2d1456b83bcbab36cc4a1d895f1bfc5d029ac1c03b09b9d5958f0db3f79a61"
+    },
+    {
+      "object": "function auth.paths_maintain()",
+      "digest": "5ff3ccaafa91b96c668ed5852ce10c648aff1576cd9f388d03d2353dce3f60ce"
+    },
+    {
+      "object": "function auth.paths_path(text)",
+      "digest": "e0b4d6e15990ab09964b55dbc3b4990ab96a2d043187c2907d71fa8a26a95a03"
+    },
+    {
+      "object": "function auth.rule_slots_declared_by_rule(text)",
+      "digest": "dc9b508dc55904a50e22f0f8949eac79d383fd8b4208e4ea8a303e4c27700161"
+    },
+    {
+      "object": "function auth.spaces_accessors(text)",
+      "digest": "bc90881f8116090e4a14dc42266024dd5b3f9daffabb259fa661335b35753e0a"
+    },
+    {
+      "object": "function auth.spaces_admits(text, jsonb)",
+      "digest": "fe3b827c02b06de093f3a338af92e0a0da09a94fe692fa226d317975bd628052"
+    },
+    {
+      "object": "function auth.trail_hops_along_trail(text)",
+      "digest": "c3b9f724fdb55313219a68dd5eb4141a40003feb2f7dce50afd15898531773fe"
+    },
+    {
+      "object": "policy banners_select on public.banners",
+      "digest": "4fc0e5b9cae9fdf93183d9d30e55461c703f610ce33480008ce34c5c385f3e37"
+    },
+    {
+      "object": "policy banners_select_require on public.banners",
+      "digest": "52a31ea9cc1ef0b9ae17f395af6c7ac29cedc4ecee3fad3eacf38193faf5a4d9"
+    },
+    {
+      "object": "policy docs_select on public.docs",
+      "digest": "7e0d8458370cf82aadf6e97e1d43b542c978a530a53304ebeaa3734e2bfc1491"
+    },
+    {
+      "object": "policy keeper_profiles_select on public.keeper_profiles",
+      "digest": "619e4018d1bafabae4c0e77b0c37ddb9e7d46bdae7647108ab475df31d1aa227"
+    },
+    {
+      "object": "policy skins_select on public.skins",
+      "digest": "f2b371e6d0f161e4c5f30039ad09c1fcb64a75e26f4cc1d88902a3f075a179aa"
+    },
+    {
+      "object": "policy spaces_select on public.spaces",
+      "digest": "122aad3b79d416bde7024e591c4ecd2a4b64d3227f8c62527e5245527d0b1d01"
+    },
+    {
+      "object": "rls public.banners",
+      "digest": "fa424da85a98b0d4b5e411a8707822282dabd25c4367dfb8e273f988090bb880"
+    },
+    {
+      "object": "rls public.docs",
+      "digest": "7cb507caa91f74539002e69c1d224ad6fcf0947645ce4bdefc4a76512ff741ce"
+    },
+    {
+      "object": "rls public.keeper_profiles",
+      "digest": "a61eea85b309096c5e2cf41c7efab4f53e794aca74eb132172b009625b99e476"
+    },
+    {
+      "object": "rls public.skins",
+      "digest": "e0f88da6a82c39cc0465a91fc869b25d5b3aac00f5fa0985b962a80c382f1d5b"
+    },
+    {
+      "object": "rls public.spaces",
+      "digest": "89f17b4a0549b894a19e4cdb70693bec78bcd00f72035b3f2bcce3c4e59bdcc4"
+    },
+    {
+      "object": "trigger paths_maintain_del on public.folders",
+      "digest": "fc6732aec350ea0dbf33d15db13a7716a52252d03bcd6b4c5b1bb79a1d43662a"
+    },
+    {
+      "object": "trigger paths_maintain_ins on public.folders",
+      "digest": "7d9aee57241c411e9f910ff61bd5de4d5136a565ecdc993c158b717c8150ab99"
+    },
+    {
+      "object": "trigger paths_maintain_upd on public.folders",
+      "digest": "1d2ed274074ab1285b17fc81b9eac1b3f4ac1a1b6479e025c2f1d4a62062cbec"
+    }
+  ]
+}
+
+--- stderr ---
+
+--- end ---

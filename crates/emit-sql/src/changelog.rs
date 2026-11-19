@@ -1,4 +1,4 @@
-use crate::Sql;
+use crate::{Execute, Sql};
 use demesne_model::SpecExt;
 use demesne_runtime::quote_literal;
 use demesne_syntax::{Changelog, Repr};
@@ -17,7 +17,8 @@ fn written_check(changelog: &str, table: &str, indent: &str, event: [&str; 5]) -
 
 fn checking_function(name: &str, body: &str) -> String {
     format!(
-        "CREATE OR REPLACE FUNCTION {name}()\nRETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = pg_catalog, public\nAS $$\nBEGIN\n{body}  RETURN NULL;\nEND;\n$$;"
+        "CREATE OR REPLACE FUNCTION {name}()\nRETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = pg_catalog, public, pg_temp\nAS $$\nBEGIN\n{body}  RETURN NULL;\nEND;\n$$;\n{}",
+        Execute::Public.statement(name, "")
     )
 }
 
@@ -67,12 +68,13 @@ impl ChangelogTrigger {
         if self.checked {
             return self.checking_sql();
         }
-        format!(
+        let f = self.fn_name();
+        let create = format!(
             r"CREATE OR REPLACE FUNCTION {f}()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
@@ -89,7 +91,6 @@ BEGIN
   RETURN NULL;
 END;
 $$;",
-            f = self.fn_name(),
             cl = self.changelog,
             new_rel = self.rel_expr("NEW"),
             rc = self.record_col,
@@ -97,7 +98,8 @@ $$;",
             pc = self.principal_col,
             old_rel = self.rel_expr("OLD"),
             ch = quote_literal(CHANGELOG_CHANNEL)
-        )
+        );
+        format!("{create}\n{}", Execute::Public.statement(&f, ""))
     }
 
     #[must_use]
@@ -214,10 +216,10 @@ impl ObjectChangelogTrigger {
             ).expect("fmt::Write for String never fails");
             body.push_str("  END IF;\n");
         }
+        let f = self.fn_name();
         format!(
-            "CREATE OR REPLACE FUNCTION {}()\nRETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = pg_catalog, public\nAS $$\nBEGIN\n{}  RETURN NEW;\nEND;\n$$;",
-            self.fn_name(),
-            body
+            "CREATE OR REPLACE FUNCTION {f}()\nRETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = pg_catalog, public, pg_temp\nAS $$\nBEGIN\n{body}  RETURN NEW;\nEND;\n$$;\n{}",
+            Execute::Public.statement(&f, "")
         )
     }
 

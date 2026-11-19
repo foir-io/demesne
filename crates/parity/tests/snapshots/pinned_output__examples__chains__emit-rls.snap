@@ -1,0 +1,34 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+DROP POLICY IF EXISTS banners_select ON public.banners;
+CREATE POLICY banners_select ON public.banners FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS banners_select_require ON public.banners;
+CREATE POLICY banners_select_require ON public.banners AS RESTRICTIVE FOR SELECT TO authenticated
+    USING ((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR skin_id = (SELECT auth.live_skin_own((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))));
+
+DROP POLICY IF EXISTS docs_select ON public.docs;
+CREATE POLICY docs_select ON public.docs FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND (EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with(demesne_element.v, 'read.') AND demesne_element.v = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text((SELECT current_setting('request.jwt.claims', true)::json ->> 'rules_held')::jsonb) e)) AND ((NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule(demesne_element.v) AS demesne_slot WHERE demesne_slot.role = 'require' AND ((demesne_slot.kind = 'share') AND (auth.doc_shared_keyed((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), docs.id, demesne_element.v)) OR (demesne_slot.kind = 'lend') AND (auth.doc_composition_lent(docs.id, 'read', demesne_slot.param))) IS NOT TRUE)) AND (auth.doc_terms_hold(docs.id, demesne_element.v, (SELECT (current_setting('request.jwt.claims', true)::json -> 'facts')::jsonb))))))));
+
+DROP POLICY IF EXISTS keeper_profiles_select ON public.keeper_profiles;
+CREATE POLICY keeper_profiles_select ON public.keeper_profiles FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND (id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub') OR auth.keeper_memberin_space(id, (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')))));
+
+DROP POLICY IF EXISTS skins_select ON public.skins;
+CREATE POLICY skins_select ON public.skins FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')));
+
+DROP POLICY IF EXISTS spaces_select ON public.spaces;
+CREATE POLICY spaces_select ON public.spaces FOR SELECT TO authenticated
+    USING ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND (auth.keeper_memberin_space((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), id))));
+
+
+--- stderr ---
+
+--- end ---

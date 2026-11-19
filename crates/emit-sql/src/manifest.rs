@@ -1,9 +1,9 @@
 use crate::Sql;
 use crate::error::{Error, ManifestError};
-use crate::genfn::definers_sql;
+use crate::genfn::{Execute, definers_sql};
 use demesne_gocompat::json::{self, Value};
 use demesne_gocompat::quote;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 const FORMAT: i64 = 1;
@@ -13,6 +13,8 @@ const FORMAT: i64 = 1;
 pub struct Manifest {
     /// Functions by identity signature, such as `auth.notes_accessors(text)`.
     pub functions: BTreeSet<String>,
+    /// Who may run each function, when the manifest records it: [`Sql::manifest`] always does, and a manifest read from SQL alone, or one written before this was recorded, does not.
+    pub execute: Option<ExecuteLists>,
     /// Policies as `(table, name)`.
     pub policies: BTreeSet<(String, String)>,
     /// Triggers as `(table, name)`.
@@ -23,6 +25,61 @@ pub struct Manifest {
     pub tables: BTreeSet<String>,
     /// Tables the SQL enables row level security on.
     pub rls: BTreeSet<String>,
+    /// Each function's parameters and return type, and the policies that call it, by identity signature. `None` for a
+    /// manifest written before these were recorded, whose next migration cannot see a renamed parameter.
+    pub heads: Option<BTreeMap<String, Head>>,
+    /// A digest of the statements that create each object, by [`Object`] as [`object_key`] names it. `None` for a
+    /// manifest written before these were recorded, whose next migration writes every object again.
+    pub digests: Option<BTreeMap<String, String>>,
+}
+
+/// What a function declares beyond its identity, and the policies that call it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Head {
+    /// The parameter list as the script declares it, such as `p_doc_id text`.
+    pub parameters: String,
+    /// The return type, such as `boolean`.
+    pub returns: String,
+    /// The policies that call the function, as `(table, name)`.
+    pub policies: BTreeSet<(String, String)>,
+}
+
+/// Every function a manifest records, in exactly one of four lists by who may run it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ExecuteLists {
+    /// Functions a spec line makes yours to call: PUBLIC may run each, and each answers only about the caller.
+    pub callable: BTreeSet<String>,
+    /// Functions the SQL revokes `EXECUTE` on from PUBLIC that are yours to grant to a role of your own, such as a listing
+    /// of accessors, `<table>_admits` or the async tier's maintenance: each is an interface, versioned like `callable`.
+    pub grantable: BTreeSet<String>,
+    /// Functions PUBLIC may run that a policy or a generated check calls as the caller, or a trigger runs, and no spec line
+    /// makes yours to call.
+    pub internal: BTreeSet<String>,
+    /// Functions the SQL revokes `EXECUTE` on from PUBLIC that only the generated functions call.
+    pub revoked: BTreeSet<String>,
+}
+
+const EXECUTE_KEYS: [&str; 4] = ["callable", "grantable", "internal", "revoked"];
+
+impl ExecuteLists {
+    fn covers(&self, functions: &BTreeSet<String>) -> Result<(), String> {
+        let listed = EXECUTE_KEYS.iter().zip([&self.callable, &self.grantable, &self.internal, &self.revoked]);
+        let mut seen = BTreeSet::new();
+        for (key, f) in listed.flat_map(|(key, list)| list.iter().map(move |f| (key, f))) {
+            if !functions.contains(f) {
+                return Err(format!("manifest: {} lists {}, which functions does not", quote(key), quote(f)));
+            }
+            if !seen.insert(f) {
+                return Err(format!("manifest: {} is in more than one of callable, grantable, internal and revoked", quote(f)));
+            }
+        }
+        match functions.iter().find(|f| !seen.contains(f)) {
+            Some(f) => Err(format!("manifest: {} is in none of callable, grantable, internal and revoked", quote(f))),
+            None => Ok(()),
+        }
+    }
 }
 
 impl Manifest {
@@ -33,7 +90,25 @@ impl Manifest {
     /// A `CREATE` statement of a kind the manifest does not record, or one it cannot read the identity of.
     pub fn from_sql(sql: &str) -> Result<Self, ManifestError> {
         let mut m = Self::default();
-        for (object, _) in objects(sql)? {
+        let made = objects(sql)?;
+        let mut heads: BTreeMap<String, Head> = BTreeMap::new();
+        for (object, stmt) in &made {
+            if let Object::Function(sig) = object
+                && let Some((parameters, returns)) = function_head(stmt)
+            {
+                heads.insert(sig.clone(), Head { parameters, returns, policies: BTreeSet::new() });
+            }
+        }
+        for (object, stmt) in &made {
+            let Object::Policy { table, name } = object else { continue };
+            let calls = |sig: &str| stmt.contains(&format!("{}(", sig.split('(').next().unwrap_or_default()));
+            for (_, head) in heads.iter_mut().filter(|(sig, _)| calls(sig)) {
+                head.policies.insert((table.clone(), name.clone()));
+            }
+        }
+        m.heads = Some(heads);
+        m.digests = units(sql).ok().map(|us| us.iter().map(|(object, unit)| (object_key(object), digest(unit))).collect());
+        for (object, _) in made {
             match object {
                 Object::Function(sig) => m.functions.insert(sig),
                 Object::Policy { table, name } => m.policies.insert((table, name)),
@@ -76,13 +151,33 @@ impl Manifest {
                 })
                 .collect()
         };
+        let functions = names("functions")?;
+        let execute = match EXECUTE_KEYS.map(|key| v.get(key).is_some()) {
+            [false, false, false, false] => None,
+            [true, true, true, true] => {
+                let lists =
+                    ExecuteLists { callable: names("callable")?, grantable: names("grantable")?, internal: names("internal")?, revoked: names("revoked")? };
+                lists.covers(&functions)?;
+                Some(lists)
+            }
+            present => {
+                let missing: Vec<String> = EXECUTE_KEYS.iter().zip(present).filter(|(_, here)| !here).map(|(key, _)| quote(key)).collect();
+                return Err(format!(
+                    "manifest: no {} list: a manifest records who may run each function in all of callable, grantable, internal and revoked, or in none",
+                    missing.join(" or ")
+                ));
+            }
+        };
         Ok(Self {
-            functions: names("functions")?,
+            functions,
+            execute,
             policies: pairs("policies")?,
             triggers: pairs("triggers")?,
             indexes: pairs("indexes")?,
             tables: names("tables")?,
             rls: names("rls")?,
+            heads: v.get("heads").map(read_heads).transpose()?,
+            digests: v.get("digests").map(read_digests).transpose()?,
         })
     }
 
@@ -95,18 +190,92 @@ impl Manifest {
                 xs.iter().map(|(t, n)| Value::Struct(vec![("table".into(), Value::str(t.as_str())), ("name".into(), Value::str(n.as_str()))])).collect(),
             )
         };
-        let v = Value::Struct(vec![
-            ("manifest".into(), Value::Int(FORMAT)),
-            ("functions".into(), names(&self.functions)),
+        let mut fields = vec![("manifest".into(), Value::Int(FORMAT)), ("functions".into(), names(&self.functions))];
+        if let Some(lists) = &self.execute {
+            fields.extend([
+                ("callable".into(), names(&lists.callable)),
+                ("grantable".into(), names(&lists.grantable)),
+                ("internal".into(), names(&lists.internal)),
+                ("revoked".into(), names(&lists.revoked)),
+            ]);
+        }
+        fields.extend([
             ("policies".into(), pairs(&self.policies)),
             ("triggers".into(), pairs(&self.triggers)),
             ("indexes".into(), pairs(&self.indexes)),
             ("tables".into(), names(&self.tables)),
             ("rls".into(), names(&self.rls)),
         ]);
+        if let Some(heads) = &self.heads {
+            let head = |(f, h): (&String, &Head)| {
+                Value::Struct(vec![
+                    ("function".into(), Value::str(f.as_str())),
+                    ("parameters".into(), Value::str(h.parameters.as_str())),
+                    ("returns".into(), Value::str(h.returns.as_str())),
+                    ("policies".into(), pairs(&h.policies)),
+                ])
+            };
+            fields.push(("heads".into(), Value::Array(heads.iter().map(head).collect())));
+        }
+        if let Some(digests) = &self.digests {
+            let entry = |(k, d): (&String, &String)| Value::Struct(vec![("object".into(), Value::str(k.as_str())), ("digest".into(), Value::str(d.as_str()))]);
+            fields.push(("digests".into(), Value::Array(digests.iter().map(entry).collect())));
+        }
+        let v = Value::Struct(fields);
         let mut out = json::marshal_indent(&v, "", "  ");
         out.push('\n');
         out
+    }
+
+    /// Returns the SQL that must run before this manifest's SQL over what `previous` created: for each function both
+    /// create whose parameters or return type changed, which `CREATE OR REPLACE` cannot change, the policies `previous`
+    /// records as calling it are dropped and then the function is; the SQL creates both again. When `previous` records no
+    /// parameters, a line says that a changed parameter cannot be seen.
+    #[must_use]
+    pub fn renamed_since(&self, previous: &Self) -> String {
+        let (Some(now), Some(before)) = (&self.heads, &previous.heads) else {
+            return "-- the previous manifest records no parameters, so a function whose parameters changed is not dropped first\n".to_string();
+        };
+        let changed: Vec<(&String, &Head)> = before
+            .iter()
+            .filter(|(f, was)| match now.get(*f) {
+                Some(is) => (&is.parameters, &is.returns) != (&was.parameters, &was.returns),
+                None => !self.functions.contains(*f) && !was.policies.is_empty(),
+            })
+            .collect();
+        let policies = self.taken_policies(previous);
+        let mut b = String::new();
+        for (table, name) in policies {
+            writeln!(b, "DROP POLICY IF EXISTS {} ON {table};", ident(&name)).expect("fmt::Write for String never fails");
+        }
+        for (f, _) in changed {
+            writeln!(b, "DROP FUNCTION IF EXISTS {f};").expect("fmt::Write for String never fails");
+        }
+        b
+    }
+
+    fn taken_policies(&self, previous: &Self) -> BTreeSet<(String, String)> {
+        let (Some(now), Some(was)) = (&self.heads, &previous.heads) else { return BTreeSet::new() };
+        let taken = |f: &String, h: &Head| match now.get(f) {
+            Some(n) => (&n.parameters, &n.returns) != (&h.parameters, &h.returns),
+            None => !self.functions.contains(f),
+        };
+        was.iter().filter(|(f, h)| taken(f, h)).flat_map(|(_, h)| h.policies.iter().cloned()).collect()
+    }
+
+    fn changed_since(&self, sql: &str, previous: &Self) -> Result<String, String> {
+        let Some(before) = &previous.digests else {
+            return Ok(format!("-- the previous manifest records no digests, so every object is written again\n{sql}"));
+        };
+        let dropped = self.taken_policies(previous);
+        let mut out = String::new();
+        for (object, unit) in units(sql)? {
+            let again = matches!(&object, Object::Policy { table, name } if dropped.contains(&(table.clone(), name.clone())));
+            if again || before.get(&object_key(&object)) != Some(&digest(&unit)) {
+                out.push_str(&unit);
+            }
+        }
+        Ok(out)
     }
 
     /// Returns the SQL that removes what `previous` created and this manifest does not: exact drops, then a check that fails the migration if any of them survived.
@@ -167,19 +336,19 @@ impl Manifest {
         };
         if !policies.is_empty() {
             arms.push(format!(
-                "SELECT 'policy ' || pol.polname || ' on ' || pol.polrelid::regclass::text\n      FROM pg_policy pol\n      WHERE (pol.polrelid, pol.polname) IN ({})",
+                "SELECT 'policy ' || pol.polname || ' on ' || pol.polrelid::regclass::text AS what\n      FROM pg_policy pol\n      WHERE (pol.polrelid, pol.polname) IN ({})",
                 on_table(policies)
             ));
         }
         if !triggers.is_empty() {
             arms.push(format!(
-                "SELECT 'trigger ' || t.tgname || ' on ' || t.tgrelid::regclass::text\n      FROM pg_trigger t\n      WHERE NOT t.tgisinternal AND (t.tgrelid, t.tgname) IN ({})",
+                "SELECT 'trigger ' || t.tgname || ' on ' || t.tgrelid::regclass::text AS what\n      FROM pg_trigger t\n      WHERE NOT t.tgisinternal AND (t.tgrelid, t.tgname) IN ({})",
                 on_table(triggers)
             ));
         }
         if !indexes.is_empty() {
             arms.push(format!(
-                "SELECT 'index ' || c.oid::regclass::text\n      FROM pg_class c\n      WHERE c.oid IN ({})",
+                "SELECT 'index ' || c.oid::regclass::text AS what\n      FROM pg_class c\n      WHERE c.oid IN ({})",
                 indexes.iter().map(|(t, n)| format!("to_regclass({})::oid", literal(&sibling(t, n)))).collect::<Vec<_>>().join(", ")
             ));
         }
@@ -233,9 +402,82 @@ pub fn objects(sql: &str) -> Result<Vec<(Object, String)>, ManifestError> {
 }
 
 /// Returns the signature of each function `sql` revokes `EXECUTE` on from PUBLIC, such as `auth.notes_admits(text, jsonb)`, in script order.
+///
+/// A revoke from PUBLIC and [`crate::POLICY_ROLE`] together counts, as this release writes it, and so does one from PUBLIC alone.
 #[must_use]
 pub fn revoked_from_public(sql: &str) -> Vec<String> {
-    statements(sql).iter().filter_map(|stmt| stmt.strip_prefix("REVOKE EXECUTE ON FUNCTION ")?.strip_suffix(" FROM PUBLIC").map(str::to_string)).collect()
+    let both = format!(" FROM PUBLIC, {}", crate::POLICY_ROLE);
+    statements(sql)
+        .iter()
+        .filter_map(|stmt| {
+            let rest = stmt.strip_prefix("REVOKE EXECUTE ON FUNCTION ")?;
+            rest.strip_suffix(both.as_str()).or_else(|| rest.strip_suffix(" FROM PUBLIC")).map(str::to_string)
+        })
+        .collect()
+}
+
+/// Returns the signature of each function `sql` grants `EXECUTE` on to PUBLIC, such as `auth.notes_can_view(text)`, in script order.
+#[must_use]
+pub fn granted_to_public(sql: &str) -> Vec<String> {
+    statements(sql).iter().filter_map(|stmt| stmt.strip_prefix("GRANT EXECUTE ON FUNCTION ")?.strip_suffix(" TO PUBLIC").map(str::to_string)).collect()
+}
+
+fn read_heads(v: &Value) -> Result<BTreeMap<String, Head>, String> {
+    let items = v.as_array().ok_or("manifest: \"heads\" is not a list")?;
+    let text = |i: &Value, key: &str| i.get(key).and_then(Value::as_str).map(String::from).ok_or_else(|| format!("manifest: a head needs {}", quote(key)));
+    items
+        .iter()
+        .map(|i| {
+            let policies = i.get("policies").and_then(Value::as_array).ok_or("manifest: a head needs \"policies\"")?;
+            let policies = policies
+                .iter()
+                .map(|p| match (p.get("table").and_then(Value::as_str), p.get("name").and_then(Value::as_str)) {
+                    (Some(t), Some(n)) => Ok((t.to_string(), n.to_string())),
+                    _ => Err("manifest: a head's policy needs a table and a name".to_string()),
+                })
+                .collect::<Result<_, _>>()?;
+            Ok((text(i, "function")?, Head { parameters: text(i, "parameters")?, returns: text(i, "returns")?, policies }))
+        })
+        .collect()
+}
+
+/// Returns the name a manifest's digests record `object` under, such as `function auth.f(text)` or `policy p on public.t`.
+#[must_use]
+pub fn object_key(object: &Object) -> String {
+    match object {
+        Object::Function(sig) => format!("function {sig}"),
+        Object::Policy { table, name } => format!("policy {name} on {table}"),
+        Object::Trigger { table, name } => format!("trigger {name} on {table}"),
+        Object::Index { table, name } => format!("index {name} on {table}"),
+        Object::Table(t) => format!("table {t}"),
+        Object::Rls(t) => format!("rls {t}"),
+    }
+}
+
+fn digest(unit: &str) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(unit.as_bytes()).iter().fold(String::new(), |mut hex, b| {
+        write!(hex, "{b:02x}").expect("fmt::Write for String never fails");
+        hex
+    })
+}
+
+fn read_digests(v: &Value) -> Result<BTreeMap<String, String>, String> {
+    let items = v.as_array().ok_or("manifest: \"digests\" is not a list")?;
+    items
+        .iter()
+        .map(|i| match (i.get("object").and_then(Value::as_str), i.get("digest").and_then(Value::as_str)) {
+            (Some(o), Some(d)) => Ok((o.to_string(), d.to_string())),
+            _ => Err("manifest: a digest needs an object and a digest".to_string()),
+        })
+        .collect()
+}
+
+fn function_head(stmt: &str) -> Option<(String, String)> {
+    let open = stmt.find('(')?;
+    let close = open + stmt[open..].find(")\nRETURNS ")?;
+    let returns = stmt[close + ")\nRETURNS ".len()..].lines().next()?.trim().to_string();
+    Some((stmt[open + 1..close].to_string(), returns))
 }
 
 fn read_objects(sql: &str) -> Result<Vec<(Object, String)>, String> {
@@ -253,9 +495,9 @@ fn object_of(stmt: &str) -> Result<Option<Object>, String> {
     Ok(Some(match words.as_slice() {
         ["CREATE", "OR", "REPLACE", "FUNCTION", ..] | ["CREATE", "FUNCTION", ..] => Object::Function(function_signature(stmt)?),
         ["CREATE", "POLICY", name, "ON", table, ..] => Object::Policy { table: (*table).to_string(), name: (*name).to_string() },
-        ["CREATE", "OR", "REPLACE", "TRIGGER", name, rest @ ..] | ["CREATE", "TRIGGER", name, rest @ ..] => {
-            Object::Trigger { table: target(rest, stmt)?, name: (*name).to_string() }
-        }
+        ["CREATE", "OR", "REPLACE", "TRIGGER", name, rest @ ..]
+        | ["CREATE", "TRIGGER", name, rest @ ..]
+        | ["CREATE", "CONSTRAINT", "TRIGGER", name, rest @ ..] => Object::Trigger { table: target(rest, stmt)?, name: (*name).to_string() },
         ["CREATE", "UNIQUE", "INDEX", rest @ ..] | ["CREATE", "INDEX", rest @ ..] => {
             let (table, name) = index_entry(rest, stmt)?;
             Object::Index { table, name }
@@ -268,16 +510,21 @@ fn object_of(stmt: &str) -> Result<Option<Object>, String> {
 }
 
 /// Splits `sql` into one unit per object, in script order: the statement that creates the object, with the `DROP … IF
-/// EXISTS` written before it and the `REVOKE` or `FORCE ROW LEVEL SECURITY` written after it.
+/// EXISTS` written before it and the `GRANT`, `REVOKE` or `FORCE ROW LEVEL SECURITY` written after it.
 pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
     let mut out: Vec<(Object, String)> = Vec::new();
     let mut before = String::new();
     for stmt in statements(sql) {
         let words: Vec<&str> = stmt.split_whitespace().collect();
         match words.as_slice() {
-            ["DROP", "POLICY" | "TRIGGER", "IF", "EXISTS", ..] => writeln!(before, "{stmt};").expect("fmt::Write for String never fails"),
-            ["REVOKE", "EXECUTE", "ON", "FUNCTION", ..] | ["ALTER", "TABLE", _, "FORCE", "ROW", "LEVEL", "SECURITY"] => {
+            ["DROP", "POLICY" | "TRIGGER", "IF", "EXISTS", ..] | ["DO", ..] => writeln!(before, "{stmt};").expect("fmt::Write for String never fails"),
+            ["GRANT" | "REVOKE", "EXECUTE", "ON", "FUNCTION", ..] | ["ALTER", "TABLE", _, "FORCE", "ROW", "LEVEL", "SECURITY"] => {
                 let (_, unit) = out.last_mut().ok_or_else(|| format!("no object precedes {}", first_line(&stmt)))?;
+                writeln!(unit, "{stmt};").expect("fmt::Write for String never fails");
+            }
+            ["ALTER", "TABLE", table, "ADD", "COLUMN", ..] => {
+                let created = Object::Table((*table).to_string());
+                let (_, unit) = out.iter_mut().find(|(o, _)| *o == created).ok_or_else(|| format!("no table precedes {}", first_line(&stmt)))?;
                 writeln!(unit, "{stmt};").expect("fmt::Write for String never fails");
             }
             _ => {
@@ -294,6 +541,17 @@ pub(crate) fn units(sql: &str) -> Result<Vec<(Object, String)>, String> {
 
 impl Manifest {
     pub(crate) fn union(mut self, other: &Manifest) -> Manifest {
+        self.execute = None;
+        self.digests = None;
+        self.heads = match (self.heads.take(), &other.heads) {
+            (Some(mut mine), Some(theirs)) => {
+                for (f, h) in theirs {
+                    mine.entry(f.clone()).or_insert_with(|| h.clone());
+                }
+                Some(mine)
+            }
+            _ => None,
+        };
         self.functions.extend(other.functions.iter().cloned());
         self.policies.extend(other.policies.iter().cloned());
         self.triggers.extend(other.triggers.iter().cloned());
@@ -324,7 +582,7 @@ impl Sql<'_> {
         if !res.unsupported.is_empty() {
             return Err(Error::unplaced(format!("spec has uncompilable @rls permissions: {}", res.unsupported.join("; "))));
         }
-        b.push_str(&res.policy_sql("authenticated"));
+        b.push_str(&res.policy_sql(crate::POLICY_ROLE));
         for part in [self.triggers_sql(), self.changelog_sql(), self.async_sql()] {
             if !part.is_empty() {
                 b.push('\n');
@@ -332,6 +590,14 @@ impl Sql<'_> {
             }
         }
         Ok(())
+    }
+
+    fn grantable(&self) -> Result<BTreeSet<String>, Error> {
+        let definers = self.emit_definers()?.into_iter().filter(|f| f.execute == Execute::Grantable).map(|f| format!("{}.{}", f.schema(), f.name));
+        let mut names: BTreeSet<String> = definers.collect();
+        names.extend(self.emit_async_indexes().iter().flat_map(crate::asynch::AsyncIndex::grantable_functions));
+        names.extend(self.emit_materialized_flats().iter().map(crate::closure::MaterializedFlat::reconcile_fn));
+        Ok(names)
     }
 
     /// Returns the manifest of everything [`Sql::write_all_sql`] creates.
@@ -342,7 +608,17 @@ impl Sql<'_> {
     pub fn manifest(&self) -> Result<Manifest, Error> {
         let mut b = String::new();
         self.write_all_sql(&mut b)?;
-        Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))
+        let mut m = Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))?;
+        let (revoked, granted) = (revoked_from_public(&b), granted_to_public(&b));
+        if let Some(f) = m.functions.iter().find(|f| revoked.iter().chain(&granted).filter(|g| g == f).count() != 1) {
+            return Err(Error::unplaced(format!("function {f} is not followed by exactly one statement granting or revoking EXECUTE for PUBLIC")));
+        }
+        let yours = self.adopter_callable();
+        let (callable, internal) = granted.into_iter().partition(|f| yours.contains(&function_name(f).1));
+        let roles = self.grantable()?;
+        let (grantable, revoked) = revoked.into_iter().partition(|f| roles.contains(f.split('(').next().unwrap_or_default()));
+        m.execute = Some(ExecuteLists { callable, grantable, internal, revoked });
+        Ok(m)
     }
 
     /// Returns a migration from the surface `previous` records to this spec's: the whole SQL, then [`Manifest::drops_since`].
@@ -353,9 +629,11 @@ impl Sql<'_> {
     pub fn migration(&self, previous: &Manifest) -> Result<String, Error> {
         let mut b = String::new();
         self.write_all_sql(&mut b)?;
-        let drops = Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))?.drops_since(previous);
-        b.push_str(&drops);
-        Ok(b)
+        let current = Manifest::from_sql(&b).map_err(|e| Error::unplaced(e.to_string()))?;
+        let mut out = current.renamed_since(previous);
+        out.push_str(&current.changed_since(&b, previous).map_err(Error::unplaced)?);
+        out.push_str(&current.drops_since(previous));
+        Ok(out)
     }
 }
 

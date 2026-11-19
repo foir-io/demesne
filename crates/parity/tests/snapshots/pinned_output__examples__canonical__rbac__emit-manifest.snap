@@ -11,6 +11,14 @@ exit: 0
     "auth.staff_has_perm(text, text, text, text)",
     "auth.staff_has_resource_role(text, text, text)"
   ],
+  "callable": [],
+  "grantable": [],
+  "internal": [
+    "auth.is_tenant_staff(text, text)",
+    "auth.staff_has_perm(text, text, text, text)",
+    "auth.staff_has_resource_role(text, text, text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.resources",
@@ -26,6 +34,75 @@ exit: 0
   "tables": [],
   "rls": [
     "public.resources"
+  ],
+  "heads": [
+    {
+      "function": "auth.is_tenant_staff(text, text)",
+      "parameters": "user_id text, check_tenant_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.resources",
+          "name": "resources_select"
+        },
+        {
+          "table": "public.resources",
+          "name": "resources_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.staff_has_perm(text, text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.resources",
+          "name": "resources_select"
+        },
+        {
+          "table": "public.resources",
+          "name": "resources_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.staff_has_resource_role(text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.resources",
+          "name": "resources_select"
+        }
+      ]
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.is_tenant_staff(text, text)",
+      "digest": "bc08631e2e555930401366607a399baec2ab82c2043b5d4e889400b50187d874"
+    },
+    {
+      "object": "function auth.staff_has_perm(text, text, text, text)",
+      "digest": "2b071d28e14db072ef936614e28654f0ededbdff192ea82f2a8ec59757238f34"
+    },
+    {
+      "object": "function auth.staff_has_resource_role(text, text, text)",
+      "digest": "d622c013b7053e4de79a10ac039140f5490c53e6c5108f6a642b100ce36c6c5a"
+    },
+    {
+      "object": "policy resources_select on public.resources",
+      "digest": "adfe6bafeafb9c8738ac92126731c282c6508b1d067e8e48c42217e72bfcc776"
+    },
+    {
+      "object": "policy resources_update on public.resources",
+      "digest": "3eed932e3516d17678bc1dda01de37e4450a914ea15dd36f9983b589f9da76e0"
+    },
+    {
+      "object": "rls public.resources",
+      "digest": "e00b6edcd1ae28b81a5de0599e1a8253e30cc61434c63bf6f72c656d36e6221a"
+    }
   ]
 }
 

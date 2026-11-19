@@ -14,7 +14,7 @@ subject member {
   reach  self
   identifies member_ref
   roles  none
-  binds  owner
+  binds  admin
 }
 ";
 
@@ -213,7 +213,7 @@ fn every_example_validates_without_warnings() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 13, "the example count changed; update the test if that was deliberate");
+    assert_eq!(checked, 15, "the example count changed; update the test if that was deliberate");
 }
 
 #[test]
@@ -265,6 +265,10 @@ fn supported(edit_suffix: &str) -> String {
 }
 
 fn support(perms: &str) -> String {
+    reached("reach support unscoped", perms)
+}
+
+fn reached(declared: &str, perms: &str) -> String {
     format!(
         r#"
 topology {{
@@ -289,6 +293,7 @@ rolestore admin {{
 
 grant support at tenant
   via edge support_grants(grantee_id, tenant_id)
+  scope project on project_id missing deny
 
 subject operator {{ anchor platform; reach via grant support; identifies sub; roles none }}
 subject admin    {{ anchor tenant;   reach descendants; identifies sub; roles configurable admin; binds admin }}
@@ -297,6 +302,7 @@ object project {{
   table  projects
   level  project
   scoped tenant > project
+  {declared}
   relation admin: admin via role
   {perms}
 }}
@@ -308,6 +314,13 @@ object project {{
 fn a_subjects_own_reach_past_select_is_refused() {
     let errs = errors(&supported(""));
     assert!(errs.iter().any(|e| e.contains("permission project.edit maps update, and a subject's own reach on this object admits callers")), "{errs:#?}");
+}
+
+#[test]
+fn a_reach_no_line_declares_is_bound_by_the_write_term_and_is_no_reach_of_its_own() {
+    let errs = errors(&reached("", "permission edit = @session(admin) @rls maps update"));
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert!(errs[0].contains("permission project.edit maps update, and its term `@session(admin)` admits callers"), "{errs:#?}");
 }
 
 #[test]

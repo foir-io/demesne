@@ -18,6 +18,8 @@ USAGE:
                                                             manifest's surface had and this spec no longer emits
                                                --file <spec.demesne>: one file's share of a spec in several
                                                             files (kind all, manifest or migrate)
+                                               --no-transaction: migrate without BEGIN and COMMIT, for a
+                                                            runner that wraps each migration itself
                                                --target ts: emit TypeScript (@foir/demesne)
                                                             kind: claims|pdp|projections|framework|all
                                                --target go: emit Go (github.com/foir-io/demesne/go)
@@ -30,10 +32,12 @@ USAGE:
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role,
                                                and look for schema traps (owner-rights views, NULL-blind unique
                                                scope indexes, policy comparisons that can't use an index)
-  demesne diff     <spec.demesne> <dsn> [--exit-code] [--allow <file>]
+  demesne diff     <spec.demesne> <dsn> [--exit-code] [--allow <file>] [--grantee <role>]...
                                                generated-vs-live drift, both ways: policies, definers, triggers
                                                and orphans; --exit-code fails (exit 1) on any drift (CI guard);
-                                               --allow lists orphans to leave unreported, one per line
+                                               --allow lists orphans to leave unreported, one per line;
+                                               --grantee names a role you grant the manifest's grantable
+                                               functions to, whose grants of them are not drift
   demesne coverage <spec.demesne> <dsn> [--exit-code]   ungoverned tables (no object → no RLS); --exit-code fails (exit 1) if any (CI guard)
   demesne version                              print the build version
 
@@ -259,8 +263,48 @@ pub fn strip_flag(args: &[String], name: &str, def: &str) -> (String, Vec<String
     (val, out)
 }
 
+/// Removes every `--<name> <value>` and `--<name>=<value>` from `args`, and returns the values in order with what is left.
+#[must_use]
+pub fn strip_repeated_flag(args: &[String], name: &str) -> (Vec<String>, Vec<String>) {
+    let pfx = format!("--{name}=");
+    let flag = format!("--{name}");
+    let (mut values, mut out) = (Vec::new(), Vec::new());
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        if *a == flag {
+            values.extend(rest.next().cloned());
+        } else if let Some(v) = a.strip_prefix(&pfx) {
+            values.push(v.to_string());
+        } else {
+            out.push(a.clone());
+        }
+    }
+    (values, out)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Transaction {
+    One,
+    TheRunners,
+}
+
+fn script(sql: String, transaction: Transaction) -> String {
+    match transaction {
+        Transaction::One => format!("BEGIN;\n{sql}COMMIT;\n"),
+        Transaction::TheRunners => sql,
+    }
+}
+
+struct Ask<'a> {
+    kind: &'a str,
+    rest: &'a [String],
+    transaction: Transaction,
+}
+
 fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
-    let (target, args) = strip_flag(args, "target", "");
+    let transaction = if args.iter().any(|a| a == "--no-transaction") { Transaction::TheRunners } else { Transaction::One };
+    let args: Vec<String> = args.iter().filter(|a| *a != "--no-transaction").cloned().collect();
+    let (target, args) = strip_flag(&args, "target", "");
     let (profile, args) = strip_flag(&args, "profile", "");
     let (file, args) = strip_flag(&args, "file", "");
     need(&args, 1, "<spec.demesne>")?;
@@ -272,7 +316,7 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
         if !target.is_empty() || !profile.is_empty() {
             return Err("--file picks one file's share of the SQL; --target and --profile emit the whole spec, so give them the files it is made of".into());
         }
-        return emit_file(out, files, &paths, &loaded, &file, kind, &rest);
+        return emit_file(out, files, &paths, &loaded, &file, &Ask { kind, rest: &rest, transaction });
     }
     let s = loaded.spec();
     if !profile.is_empty() {
@@ -301,7 +345,7 @@ fn cmd_emit(out: &mut Out, files: &dyn Files, args: &[String]) -> R {
             Ok(())
         }
         "migrate" => {
-            out.print(&sql.migration(&previous_manifest(files, &rest)?).map_err(|e| e.to_string())?);
+            out.print(&script(sql.migration(&previous_manifest(files, &rest)?).map_err(|e| e.to_string())?, transaction));
             Ok(())
         }
         other => Err(format!("unknown emit kind {} (rls|definers|enablement|triggers|pdp|all|manifest|migrate)", quote(other))),
@@ -314,7 +358,8 @@ fn previous_manifest(files: &dyn Files, rest: &[String]) -> Result<Manifest, Str
     Manifest::from_json(&String::from_utf8_lossy(&src)).map_err(|e| format!("{path}: {e}"))
 }
 
-fn emit_file(out: &mut Out, files: &dyn Files, paths: &[String], loaded: &Loaded, file: &str, kind: &str, rest: &[String]) -> R {
+fn emit_file(out: &mut Out, files: &dyn Files, paths: &[String], loaded: &Loaded, file: &str, ask: &Ask<'_>) -> R {
+    let (kind, rest) = (ask.kind, ask.rest);
     let k = paths.iter().position(|p| p == file).ok_or_else(|| format!("--file {} names none of the spec's files ({})", quote(file), paths.join(", ")))?;
     let spec = match loaded {
         Loaded::Many(spec) => spec.clone(),
@@ -326,7 +371,7 @@ fn emit_file(out: &mut Out, files: &dyn Files, paths: &[String], loaded: &Loaded
     let text = match kind {
         "all" => demesne_emit_sql::file_sql(&spec, k).map_err(|e| e.to_string())?,
         "manifest" => Sql::new(spec.prefix(k)).manifest().map_err(|e| e.to_string())?.to_json(),
-        "migrate" => demesne_emit_sql::file_migration(&spec, k, &previous_manifest(files, rest)?).map_err(|e| e.to_string())?,
+        "migrate" => script(demesne_emit_sql::file_migration(&spec, k, &previous_manifest(files, rest)?).map_err(|e| e.to_string())?, ask.transaction),
         other => {
             return Err(format!("--file takes the emit kinds all, manifest and migrate, and {} covers the whole spec: emit it without --file", quote(other)));
         }

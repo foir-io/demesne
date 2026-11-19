@@ -11,6 +11,15 @@ exit: 0
     "demesne.notes_accessors_conditional(text)",
     "demesne.notes_admits(text, jsonb)"
   ],
+  "callable": [],
+  "grantable": [
+    "demesne.notes_accessors_conditional(text)",
+    "demesne.notes_admits(text, jsonb)"
+  ],
+  "internal": [
+    "demesne.note_acl_grants(text, text, text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.notes",
@@ -22,6 +31,53 @@ exit: 0
   "tables": [],
   "rls": [
     "public.notes"
+  ],
+  "heads": [
+    {
+      "function": "demesne.note_acl_grants(text, text, text)",
+      "parameters": "p_member_id text, p_note_id text, p_access text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.notes",
+          "name": "notes_select"
+        }
+      ]
+    },
+    {
+      "function": "demesne.notes_accessors_conditional(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])",
+      "policies": []
+    },
+    {
+      "function": "demesne.notes_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    }
+  ],
+  "digests": [
+    {
+      "object": "function demesne.note_acl_grants(text, text, text)",
+      "digest": "995c6d9e96d259e443ffc25f58037089cd94b7ac91eebe1bd545600b8bcff3cf"
+    },
+    {
+      "object": "function demesne.notes_accessors_conditional(text)",
+      "digest": "9fe3421273475668302c0d4cd2b2b66eb9e0d57a62839515e601a6e36542ed04"
+    },
+    {
+      "object": "function demesne.notes_admits(text, jsonb)",
+      "digest": "897e67e3515fc7b1f34f3add6640d5c4365b1f0f572b14009d996f2be241d083"
+    },
+    {
+      "object": "policy notes_select on public.notes",
+      "digest": "125fa83d7dfe9f6044969ddb63795196d1e98c77729eb97d7093603a21b27108"
+    },
+    {
+      "object": "rls public.notes",
+      "digest": "d8dc01b58dded4571bda73f3e8f14aa31923cbe1c2a9c67feabd8b8edb197340"
+    }
   ]
 }
 

@@ -9,30 +9,33 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM role_grants ra JOIN roles r ON r.id = ra.role_id WHERE ra.grantee_kind = 'staff' AND ra.grantee_id = user_id AND ra.tenant_id = check_tenant_id AND ra.project_id = check_project_id AND ra.revoked_at IS NULL AND r.key IN ('editor', 'viewer'));
+  SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM role_grants ra JOIN roles r ON r.id = ra.role_id WHERE ra.grantee_kind = 'staff' AND ra.grantee_id = user_id AND ra.tenant_id = check_tenant_id AND ra.project_id = check_project_id AND ra.revoked_at IS NULL AND r.key IN ('editor', 'viewer')));
 $$;
+GRANT EXECUTE ON FUNCTION auth.staff_has_resource_role(text, text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.is_tenant_staff(user_id text, check_tenant_id text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM role_grants ra JOIN roles r ON r.id = ra.role_id WHERE ra.grantee_kind = 'staff' AND ra.grantee_id = user_id AND ra.tenant_id = check_tenant_id AND ra.project_id IS NULL AND ra.revoked_at IS NULL AND r.key IN ('owner'));
+  SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM role_grants ra JOIN roles r ON r.id = ra.role_id WHERE ra.grantee_kind = 'staff' AND ra.grantee_id = user_id AND ra.tenant_id = check_tenant_id AND ra.project_id IS NULL AND ra.revoked_at IS NULL AND r.key IN ('owner')));
 $$;
+GRANT EXECUTE ON FUNCTION auth.is_tenant_staff(text, text) TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION auth.staff_has_perm(user_id text, check_tenant_id text, check_project_id text, p_perm text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM role_grants ra JOIN roles r ON r.id = ra.role_id WHERE ra.grantee_kind = 'staff' AND ra.grantee_id = user_id AND (ra.tenant_id IS NULL OR ra.tenant_id = check_tenant_id) AND (ra.project_id IS NULL OR ra.project_id = check_project_id) AND ra.revoked_at IS NULL AND p_perm = ANY(r.permissions));
+  SELECT user_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM role_grants ra JOIN roles r ON r.id = ra.role_id WHERE ra.grantee_kind = 'staff' AND ra.grantee_id = user_id AND (ra.tenant_id IS NULL OR ra.tenant_id = check_tenant_id) AND (ra.project_id IS NULL OR ra.project_id = check_project_id) AND ra.revoked_at IS NULL AND p_perm = ANY(r.permissions)));
 $$;
+GRANT EXECUTE ON FUNCTION auth.staff_has_perm(text, text, text, text) TO PUBLIC;
 
 
 --- stderr ---

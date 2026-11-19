@@ -3,13 +3,16 @@
 
 mod app_surface;
 mod asynch;
+mod chains;
 mod changelog;
 mod closure;
+mod conditions;
 mod definers;
 mod error;
 mod files;
 mod genfn;
 mod manifest;
+mod remembered;
 mod rls;
 mod supabase;
 mod write_reach;
@@ -19,8 +22,8 @@ pub use changelog::{CHANGELOG_CHANNEL, ChangelogTrigger, ObjectChangelogTrigger}
 pub use closure::{ClosureTrigger, DeclaredMaintenance, GroupTrigger, MaterializedFlat};
 pub use error::{Error, ManifestError};
 pub use files::{file_migration, file_sql, validate_files, validate_files_warnings};
-pub use genfn::{DefinerArm, Execute, GenFn, Language, definers_sql};
-pub use manifest::{Manifest, Object, objects, revoked_from_public};
+pub use genfn::{Before, Bound, DefinerArm, Execute, GenFn, Language, POLICY_ROLE, Param, ParamKind, Security, definers_sql, render};
+pub use manifest::{ExecuteLists, Head, Manifest, Object, granted_to_public, object_key, objects, revoked_from_public};
 pub use rls::{Policy, RlsResult, scan_definers};
 
 use demesne_gocompat::quote;
@@ -35,12 +38,23 @@ use std::fmt::Write as _;
 pub struct Sql<'a> {
     pub s: &'a Spec,
     pub definer_body: bool,
+    nest: Option<usize>,
+    upper: bool,
+    negated: bool,
+    given: Option<(&'a str, bool)>,
+    binds: Binds,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Binds {
+    Parameters,
+    HopRow,
 }
 
 impl<'a> Sql<'a> {
     #[must_use]
     pub fn new(s: &'a Spec) -> Self {
-        Sql { s, definer_body: false }
+        Sql { s, definer_body: false, nest: None, upper: false, negated: false, given: None, binds: Binds::Parameters }
     }
 }
 

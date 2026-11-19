@@ -1,5 +1,6 @@
 use demesne_model::SpecExt;
 use demesne_runtime::{AppObjectSurface, Decision, SettingLifetime, compose_can, mint_claims_values_with_extra};
+use postgres::error::SqlState;
 use postgres::{Client, Error, GenericClient, Transaction};
 use std::any::Any;
 use std::cell::RefCell;
@@ -178,7 +179,8 @@ fn round_trip(t: &T, url: &str) {
     let fw = Framework::new(&s);
 
     let _cleanup = Cleanup { url, sql: "drop table if exists public.note_acl, public.notes cascade; drop schema if exists demesne cascade;" };
-    install(&mut db, &s);
+    let execute = install(&mut db, &s);
+    check_revoked_stay_refused(t, &mut db, &execute);
 
     let mut can_view = |member: &str, org: &str, ws: &str, id: &str| -> Decision {
         session(&fw, &mut db, member, org, ws, |q| fw.note.can_view(q, id).unwrap_or_else(|e| panic!("CanView({id}): {e}")))
@@ -225,16 +227,19 @@ fn round_trip(t: &T, url: &str) {
     check_pgx_session(t, &fw, url);
 }
 
-fn install(db: &mut Client, s: &demesne_syntax::Spec) {
+fn install(db: &mut Client, s: &demesne_syntax::Spec) -> demesne_emit_sql::ExecuteLists {
     let sql = demesne_emit_sql::Sql::new(s);
     let defs = sql.emit_definers().unwrap_or_else(|e| panic!("EmitDefiners: {e}"));
     let rls = sql.emit_rls().unwrap_or_else(|e| panic!("EmitRLS: {e}"));
+    let manifest = sql.manifest().unwrap_or_else(|e| panic!("manifest: {e}"));
+    let execute = manifest.execute.unwrap_or_else(|| panic!("the manifest does not record who may run each function"));
+    let grants = execute.callable.iter().map(|f| format!("grant execute on function {f} to authenticated;")).collect::<Vec<_>>().join("\n");
     for stmt in [
         SCHEMA.to_string(),
         demesne_emit_sql::definers_sql(&defs),
         rls.enablement_sql(),
         rls.policy_sql("authenticated"),
-        "grant execute on all functions in schema demesne to authenticated;".to_string(),
+        grants,
         "insert into public.notes (note_pk, org_ref, ws_ref, owner_ref, visibility) values
 		 ('n1','o1','w1','m1','private'),('n2','o1','w1','m2','open'),
 		 ('n3','o1','w1','m2','private'),('n4','o2','w9','m1','private');"
@@ -242,6 +247,32 @@ fn install(db: &mut Client, s: &demesne_syntax::Spec) {
     ] {
         if let Err(e) = db.batch_execute(&stmt) {
             panic!("apply DDL/seed: {e}\n--- stmt ---\n{stmt}");
+        }
+    }
+    execute
+}
+
+// Each argument is a subquery: the planner folds a STRICT call on a constant NULL away before the privilege check runs.
+fn null_call(signature: &str) -> String {
+    let (name, args) = signature.split_once('(').unwrap_or_else(|| panic!("{signature} is not a function signature"));
+    let args: Vec<String> = args.trim_end_matches(')').split(", ").filter(|a| !a.is_empty()).map(|a| format!("(SELECT NULL::{a})")).collect();
+    format!("select {name}({})", args.join(", "))
+}
+
+fn check_revoked_stay_refused(t: &T, db: &mut Client, execute: &demesne_emit_sql::ExecuteLists) {
+    let revoked: Vec<&String> = execute.revoked.iter().chain(&execute.grantable).collect();
+    if revoked.is_empty() {
+        t.errorf("the example revokes no function, so nothing shows that a revoked one stays refused");
+    }
+    for f in revoked {
+        let mut tx = db.transaction().unwrap_or_else(|e| panic!("begin: {e}"));
+        if let Err(e) = tx.batch_execute("SET LOCAL ROLE authenticated") {
+            panic!("set role: {e}");
+        }
+        match tx.batch_execute(&null_call(f)) {
+            Err(e) if e.code() == Some(&SqlState::INSUFFICIENT_PRIVILEGE) => {}
+            Err(e) => t.errorf(format!("authenticated running {f}: {e}, want permission denied")),
+            Ok(()) => t.errorf(format!("authenticated ran {f}, which the SQL revokes from PUBLIC; want permission denied")),
         }
     }
 }

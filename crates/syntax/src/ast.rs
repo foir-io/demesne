@@ -29,6 +29,8 @@ pub struct Spec {
     pub table_schema: Option<String>,
     pub identifiers: Option<String>,
     pub changelog: Option<Changelog>,
+    /// Extensions the spec says its database has.
+    pub extensions: Vec<Extension>,
 }
 
 impl Spec {
@@ -79,6 +81,21 @@ impl Spec {
     #[must_use]
     pub fn closure_by_table(&self, table: &str) -> Option<&Closure> {
         self.closures.iter().find(|c| c.table == table)
+    }
+}
+
+/// An `extension` declaration: an extension the database has, and the schema its functions are in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Extension {
+    pub name: String,
+    pub schema: Option<String>,
+}
+
+impl Extension {
+    /// Returns the schema the extension's functions are called in, `public` when none is named.
+    #[must_use]
+    pub fn schema(&self) -> &str {
+        self.schema.as_deref().unwrap_or("public")
     }
 }
 
@@ -228,12 +245,33 @@ pub struct RoleStore {
     pub key_col: Option<String>,
     pub revoked_col: Option<String>,
     pub perms_col: Option<String>,
+    /// `held claim <key>`: a claim holding a JSON array of permissions the session's credential carries.
+    pub held_claim: Option<String>,
+    /// `form claim <key> = "<value>" …`: the forms a role's definition has, each picked by a value of one claim.
+    pub forms: Vec<RoleForm>,
+    /// `absent claim reads "<value>"`: the form a session with no value for the claim takes.
+    pub absent_form: Option<String>,
+    /// `unversioned <column> …`: tests of a role's row, any of which marks a role that has the base form only.
+    pub unversioned: Vec<(String, Option<String>)>,
+    /// `active <column> …`: tests of a role's row, all of which a role in force passes.
+    pub active: Vec<(String, Option<String>)>,
     pub id_col: Option<String>,
     pub granted_at_col: Option<String>,
     pub granted_by_col: Option<String>,
     pub revoked_by_col: Option<String>,
     pub extra_cols: Vec<String>,
     pub pos: Pos,
+}
+
+/// One form of a role's definition, picked by a claim value.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoleForm {
+    pub claim: String,
+    pub value: String,
+    /// The column holding the form's permissions; `None` for the `base` form.
+    pub perms_col: Option<String>,
+    /// The column holding the form's name; `None` reads the base key.
+    pub key_col: Option<String>,
 }
 
 impl RoleStore {
@@ -401,6 +439,10 @@ pub struct Object {
     pub probes: Vec<Probe>,
     pub nearests: Vec<Nearest>,
     pub projections: Vec<Projection>,
+    pub point_checks: Vec<PointCheck>,
+    pub markers: Vec<Marker>,
+    /// `nested <n>`: how many compositions deep an element is judged at another row of the object.
+    pub nested: Option<usize>,
     pub relations: Vec<Relation>,
     pub perms: Vec<Perm>,
     pub requires: Vec<Require>,
@@ -523,6 +565,7 @@ pub enum Repr {
     Object(ViaObject),
     MemberIn(ViaMemberIn),
     Grant(ViaGrant),
+    Conditions(ViaConditions),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -536,6 +579,67 @@ pub struct ViaColumn {
 pub struct ViaEdge {
     pub table: String,
     pub cols: Vec<String>,
+    /// `key <column>`: the edge column that must equal the element a `some` has bound.
+    pub key: Option<String>,
+    /// `on <column>` on a keyed edge: the row column the edge's object must equal, the primary key when absent.
+    pub on: Option<String>,
+    /// `where <column> = "<value>"` on a keyed edge: a literal the edge must also hold.
+    pub filter: Option<(String, String)>,
+    /// `slot <column> [from <declared column>]`: the edge column that must equal a column of the declared row an `every` or `none` has bound.
+    pub slot: Option<(String, String)>,
+}
+
+/// Whether a `every` or `none` scope asks that all declared rows satisfy its expression, or that none does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quantifier {
+    Every,
+    None,
+}
+
+/// An `every` or `none` scope inside a `some`: the rows a table declares for the bound element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredScope {
+    pub quantifier: Quantifier,
+    pub var: String,
+    pub table: String,
+    pub key_col: String,
+    /// `where <column> = "<value>"`: only declared rows holding the value are counted.
+    pub filter: Option<(String, String)>,
+    pub body: PermNode,
+}
+
+/// `via conditions`: conditions stored for a row, each compared with a value the caller's claim carries.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ViaConditions {
+    pub table: String,
+    pub object_col: String,
+    pub term_col: String,
+    pub op_col: String,
+    pub num_col: String,
+    pub txt_col: String,
+    pub at_col: String,
+    /// The column holding a stored list of text, for `includes`.
+    pub list_col: Option<String>,
+    /// The latitude and longitude columns, for `within_km`.
+    pub point_cols: Option<(String, String)>,
+    /// `key <column>`: the conditions belong to the element a `some` has bound.
+    pub key: Option<String>,
+    /// The row column the conditions are stored against.
+    pub on: String,
+    /// The claim holding the caller's values, a JSON object keyed by term.
+    pub claim: String,
+}
+
+/// A `some` scope: one element of a row's array column, and the expression that must hold for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SomeScope {
+    pub var: String,
+    pub col: String,
+    /// `prefix "<text>"`: only elements that start with the text are bound.
+    pub prefix: Option<String>,
+    /// `held <claim>`: only elements the claim's JSON array also holds are bound.
+    pub held: Option<String>,
+    pub body: PermNode,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -545,6 +649,26 @@ pub struct ViaComposition {
     pub parent_col: String,
     pub kind_col: Option<String>,
     pub kind_val: Option<String>,
+    /// `slot <column> from <declared column>`: only hops whose column equals the bound declared row's are followed.
+    pub slot: Option<(String, String)>,
+    /// `path <column> along ( <expression> )`: a hop counts only when the expression holds of the rows declared for its path key.
+    pub path: Option<CompPath>,
+}
+
+/// `path <column> along ( <expression> )` on `via composition`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompPath {
+    /// The column holding the path key for each operation; one entry with an empty operation serves every operation.
+    pub cols: Vec<(String, String)>,
+    pub along: PermNode,
+}
+
+impl CompPath {
+    /// Returns the column that holds the path key when the composition is followed for `op`.
+    #[must_use]
+    pub fn col_for(&self, op: &str) -> Option<&str> {
+        self.cols.iter().find(|(o, _)| o.is_empty() || o == op).map(|(_, col)| col.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -570,6 +694,8 @@ pub struct ViaGroup {
     pub edge_group: String,
     pub col: String,
     pub materialized: bool,
+    /// `from claim <key> [| <key>]`: the claims the group's members are matched by, each the identity claim of a subject the relation names.
+    pub claims: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -687,7 +813,7 @@ impl Perm {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermNode {
     Leaf(Term),
     Or(Vec<PermNode>),
@@ -722,6 +848,19 @@ impl PermNode {
     pub fn leaves(&self) -> Vec<&Term> {
         let mut out = Vec::new();
         self.collect_leaves(&mut out);
+        out
+    }
+
+    /// Returns every leaf term, and the leaves inside each `some`, `every` or `none` term's brackets after it.
+    #[must_use]
+    pub fn leaves_deep(&self) -> Vec<&Term> {
+        let mut out = Vec::new();
+        for t in self.leaves() {
+            out.push(t);
+            if let Some(body) = t.bracketed() {
+                out.extend(body.leaves_deep());
+            }
+        }
         out
     }
 
@@ -839,7 +978,7 @@ pub struct Guard {
     pub pos: Pos,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
     pub kind: TermKind,
     pub pos: Pos,
@@ -853,9 +992,16 @@ pub enum TermKind {
     Builtin(Builtin),
 }
 
+/// `@session(<relation> [as <subject> | <subject>])`: the relation the session holds, and the subjects whose calls it admits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRel {
+    pub rel: String,
+    pub subjects: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Builtin {
-    Session(Option<String>),
+    Session(Option<SessionRel>),
     AppScope(Vec<String>),
     Kind(String),
     Claim {
@@ -872,6 +1018,32 @@ pub enum Builtin {
         args: Vec<ExternalArg>,
     },
     Holds(String),
+    /// `some <name> in <column> … ( <expression> )`.
+    Some(Box<SomeScope>),
+    /// `@element prefix "<text>"`: the element a `some` has bound starts with the text.
+    ElementPrefix(String),
+    /// `@clock(<column> reached)`: the row's instant is not in the future.
+    Clock(String),
+    /// `every <name> in <table>(<key column>) … ( <expression> )`, or `none …`.
+    Declared(Box<DeclaredScope>),
+    /// `@slot(<column>, "<value>")`: the declared row an `every` or `none` has bound holds the value.
+    Slot {
+        col: String,
+        val: String,
+    },
+    /// `@slot(<column> held <claim>)`: the bound declared row's column is one of the claim's JSON array.
+    SlotHeld {
+        col: String,
+        claim: String,
+    },
+    /// `@holds_at(<record column>, <element column> [slot <column>] [for <operation>])`: the element the bound declared row names holds at
+    /// the row it names, with the composition the path is on taken as followed there.
+    HoldsAt {
+        record: String,
+        element: String,
+        slot: Option<String>,
+        op: Option<String>,
+    },
     /// `@holds(<perm> every <column> at <level>)`: the permission is held at every value an array column names at a level.
     HoldsEvery {
         perm: String,
@@ -888,6 +1060,12 @@ pub enum Builtin {
     ClaimAbsent(String),
     /// `@within(<level> exact)`: true when the row's column at the level is not distinct from the request's claim.
     WithinExact(String),
+    /// `@nearest(<lookup>, <column> from claim <key>)`: the row's column equals what a `nearest` lookup answers at the node the claim names.
+    Nearest {
+        lookup: String,
+        col: String,
+        claim: String,
+    },
     Other(String),
 }
 
@@ -896,7 +1074,8 @@ impl Builtin {
     #[must_use]
     pub fn display(&self) -> String {
         match self {
-            Builtin::Session(Some(rel)) => format!("@session({rel})"),
+            Builtin::Session(Some(SessionRel { rel, subjects })) if subjects.is_empty() => format!("@session({rel})"),
+            Builtin::Session(Some(SessionRel { rel, subjects })) => format!("@session({rel} as {})", subjects.join(" | ")),
             Builtin::AppScope(rels) if !rels.is_empty() => format!("@app_scope(exclude {})", rels.join(", ")),
             Builtin::Kind(v) => format!("@kind({})", quote(v)),
             Builtin::Claim { key, val } => format!("@claim({}, {})", quote(key), quote(val)),
@@ -904,12 +1083,35 @@ impl Builtin {
             Builtin::Within { level, nullable: true } => format!("@within({level} nullable)"),
             Builtin::Within { level, nullable: false } => format!("@within({level})"),
             Builtin::Holds(p) => format!("@holds({p})"),
+            Builtin::Some(scope) => {
+                let prefix = scope.prefix.as_ref().map(|p| format!(" prefix {}", quote(p))).unwrap_or_default();
+                let held = scope.held.as_ref().map(|h| format!(" held {h}")).unwrap_or_default();
+                format!("some {} in {}{prefix}{held} ({})", scope.var, scope.col, scope.body.display())
+            }
+            Builtin::ElementPrefix(p) => format!("@element prefix {}", quote(p)),
+            Builtin::Clock(col) => format!("@clock({col} reached)"),
+            Builtin::Declared(scope) => {
+                let word = match scope.quantifier {
+                    Quantifier::Every => "every",
+                    Quantifier::None => "none",
+                };
+                let filter = scope.filter.as_ref().map(|(c, v)| format!(" where {c} = {}", quote(v))).unwrap_or_default();
+                format!("{word} {} in {}({}){filter} ({})", scope.var, scope.table, scope.key_col, scope.body.display())
+            }
+            Builtin::Slot { col, val } => format!("@slot({col}, {})", quote(val)),
+            Builtin::SlotHeld { col, claim } => format!("@slot({col} held {claim})"),
+            Builtin::HoldsAt { record, element, slot, op } => {
+                let slot = slot.as_ref().map(|slot| format!(" slot {slot}")).unwrap_or_default();
+                let op = op.as_ref().map(|op| format!(" for {op}")).unwrap_or_default();
+                format!("@holds_at({record}, {element}{slot}{op})")
+            }
             Builtin::HoldsEvery { perm, col, level } => format!("@holds({perm} every {col} at {level})"),
             Builtin::External { func, .. } => format!("@external({func})"),
             Builtin::Row { col, val } => format!("@row({col}, {})", quote(val)),
             Builtin::RowNull(col) => format!("@row({col}, null)"),
             Builtin::ClaimAbsent(key) => format!("@claim({}, null)", quote(key)),
             Builtin::WithinExact(level) => format!("@within({level} exact)"),
+            Builtin::Nearest { lookup, col, claim } => format!("@nearest({lookup}, {col} from claim {claim})"),
             Builtin::Session(None) | Builtin::AppScope(_) | Builtin::Other(_) => format!("@{}", self.name()),
         }
     }
@@ -925,8 +1127,16 @@ impl Builtin {
             Builtin::Within { .. } | Builtin::WithinExact(_) => "within",
             Builtin::External { .. } => "external",
             Builtin::Holds(_) => "holds",
+            Builtin::Some(_) => "some",
+            Builtin::ElementPrefix(_) => "element",
+            Builtin::Clock(_) => "clock",
+            Builtin::Declared(_) => "declared",
+            Builtin::Slot { .. } => "slot",
+            Builtin::SlotHeld { .. } => "slot_held",
+            Builtin::HoldsAt { .. } => "holds_at",
             Builtin::HoldsEvery { .. } => "holds_every",
             Builtin::Row { .. } | Builtin::RowNull(_) => "row",
+            Builtin::Nearest { .. } => "nearest",
             Builtin::Other(name) => name,
         }
     }
@@ -963,8 +1173,17 @@ impl Term {
     #[must_use]
     pub fn session_rel(&self) -> &str {
         match self.builtin_ref() {
-            Some(Builtin::Session(Some(r))) => r,
+            Some(Builtin::Session(Some(r))) => &r.rel,
             _ => "",
+        }
+    }
+
+    /// Returns the subjects `@session(<relation> as …)` names, empty when it names none.
+    #[must_use]
+    pub fn session_subjects(&self) -> &[String] {
+        match self.builtin_ref() {
+            Some(Builtin::Session(Some(r))) => &r.subjects,
+            _ => &[],
         }
     }
 
@@ -1043,7 +1262,7 @@ impl Term {
     #[must_use]
     pub fn row_col(&self) -> &str {
         match self.builtin_ref() {
-            Some(Builtin::Row { col, .. } | Builtin::RowNull(col)) => col,
+            Some(Builtin::Row { col, .. } | Builtin::RowNull(col) | Builtin::Clock(col)) => col,
             _ => "",
         }
     }
@@ -1095,11 +1314,98 @@ impl Term {
         }
     }
 
+    /// Returns the scope of a `some` term.
+    #[must_use]
+    pub fn some_scope(&self) -> Option<&SomeScope> {
+        match self.builtin_ref() {
+            Some(Builtin::Some(scope)) => Some(scope),
+            _ => None,
+        }
+    }
+
+    /// Returns the scope of an `every` or `none` term.
+    #[must_use]
+    pub fn declared_scope(&self) -> Option<&DeclaredScope> {
+        match self.builtin_ref() {
+            Some(Builtin::Declared(scope)) => Some(scope),
+            _ => None,
+        }
+    }
+
+    /// Returns the column and value of `@slot(<column>, "<value>")`.
+    #[must_use]
+    pub fn slot_test(&self) -> Option<(&str, &str)> {
+        match self.builtin_ref() {
+            Some(Builtin::Slot { col, val }) => Some((col, val)),
+            _ => None,
+        }
+    }
+
+    /// Returns the column and claim of `@slot(<column> held <claim>)`.
+    #[must_use]
+    pub fn slot_held(&self) -> Option<(&str, &str)> {
+        match self.builtin_ref() {
+            Some(Builtin::SlotHeld { col, claim }) => Some((col, claim)),
+            _ => None,
+        }
+    }
+
+    /// Returns the record column, the element column and the operation of `@holds_at(…)`.
+    #[must_use]
+    pub fn holds_at(&self) -> Option<(&str, &str, Option<&str>)> {
+        match self.builtin_ref() {
+            Some(Builtin::HoldsAt { record, element, op, .. }) => Some((record, element, op.as_deref())),
+            _ => None,
+        }
+    }
+
+    /// Returns the column of `@holds_at(… slot <column>)` that says which of the composition's slots a hop follows.
+    #[must_use]
+    pub fn holds_at_slot(&self) -> Option<&str> {
+        match self.builtin_ref() {
+            Some(Builtin::HoldsAt { slot, .. }) => slot.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Returns the expression in the brackets of a `some`, `every` or `none` term.
+    #[must_use]
+    pub fn bracketed(&self) -> Option<&PermNode> {
+        self.some_scope().map(|s| &s.body).or_else(|| self.declared_scope().map(|d| &d.body))
+    }
+
+    /// Returns the column of `@clock(<column> reached)`.
+    #[must_use]
+    pub fn clock_col(&self) -> Option<&str> {
+        match self.builtin_ref() {
+            Some(Builtin::Clock(col)) => Some(col),
+            _ => None,
+        }
+    }
+
+    /// Returns the text of `@element prefix "<text>"`.
+    #[must_use]
+    pub fn element_prefix(&self) -> Option<&str> {
+        match self.builtin_ref() {
+            Some(Builtin::ElementPrefix(p)) => Some(p),
+            _ => None,
+        }
+    }
+
     /// Returns the permission, array column and level of `@holds(<perm> every <column> at <level>)`.
     #[must_use]
     pub fn holds_every(&self) -> Option<(&str, &str, &str)> {
         match self.builtin_ref() {
             Some(Builtin::HoldsEvery { perm, col, level }) => Some((perm, col, level)),
+            _ => None,
+        }
+    }
+
+    /// Returns the lookup, the row column and the claim key of an `@nearest` term.
+    #[must_use]
+    pub fn nearest(&self) -> Option<(&str, &str, &str)> {
+        match self.builtin_ref() {
+            Some(Builtin::Nearest { lookup, col, claim }) => Some((lookup, col, claim)),
             _ => None,
         }
     }
@@ -1166,6 +1472,17 @@ pub struct PermissionExport {
     pub pos: Pos,
 }
 
+/// A `marker` on a level's object: rows beneath a marked row are written only by a session whose claim equals the marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marker {
+    pub col: String,
+    pub claim: String,
+    pub ops: Vec<String>,
+    /// `through closure <table>`: a marked row above the row's own container confines too.
+    pub closure: Option<String>,
+    pub pos: Pos,
+}
+
 /// A `projection`: named columns of the rows an expression admits, read without the object's own permission.
 #[derive(Debug, Clone)]
 pub struct Projection {
@@ -1183,6 +1500,19 @@ impl Projection {
     }
 }
 
+/// A `check`: whether the caller passes a predicate-only permission on one row, named by its key.
+#[derive(Debug, Clone)]
+pub struct PointCheck {
+    /// The predicate-only permission it answers.
+    pub verb: String,
+    /// `for <op>`: the operation the permission is answered for, as a borrow's `for` chooses it.
+    pub op: Option<String>,
+    pub name: String,
+    /// The arguments as written; a valid check takes exactly one, the object's key.
+    pub params: Vec<ExportParameter>,
+    pub pos: Pos,
+}
+
 /// A `nearest` lookup: the value a column holds on the nearest row at or above a node of a closure.
 #[derive(Debug, Clone)]
 pub struct Nearest {
@@ -1191,6 +1521,8 @@ pub struct Nearest {
     pub ty: String,
     pub closure: String,
     pub node_col: String,
+    /// `where <column> = "<value>"`: only rows whose column holds the value are counted.
+    pub filter: Option<(String, String)>,
     pub pos: Pos,
 }
 

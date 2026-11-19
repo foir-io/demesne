@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-use demesne_cli::{Files, OsFiles, Out, R, finish, load_specs, need, run_pure, spec_args, strip_flag};
+use demesne_cli::{Files, OsFiles, Out, R, finish, load_specs, need, run_pure, spec_args, strip_flag, strip_repeated_flag};
 use demesne_emit_sql::Sql;
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
@@ -253,21 +253,28 @@ fn cmd_coverage(out: &mut Out, args: &[String]) -> R {
 fn cmd_diff(out: &mut Out, args: &[String]) -> R {
     let (exit_code, args) = strip_bool_flag(args, "exit-code");
     let (allow_path, args) = strip_flag(&args, "allow", "");
+    let (roles, args) = strip_repeated_flag(&args, "grantee");
     need(&args, 1, "<spec.demesne>")?;
     let (paths, rest) = spec_args(&args);
     let loaded = load_specs(&OsFiles, &paths)?;
     out.warn_loaded(&paths, &loaded);
     let s = loaded.spec();
     let dsn = dsn_arg(&rest, 0)?;
+    let compiled = Sql::new(s);
     let mut sql = String::new();
-    Sql::new(s).write_all_sql(&mut sql).map_err(|e| e.to_string())?;
+    compiled.write_all_sql(&mut sql).map_err(|e| e.to_string())?;
+    let grantees = if roles.is_empty() {
+        demesne_postgres::Grantees::default()
+    } else {
+        demesne_postgres::Grantees::new(&compiled.manifest().map_err(|e| e.to_string())?, &roles).map_err(|e| e.to_string())?
+    };
     let allow: Vec<String> = if allow_path.is_empty() {
         Vec::new()
     } else {
         String::from_utf8_lossy(&OsFiles.read(&allow_path)?).lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
     };
     let mut client = demesne_postgres::connect(&dsn).map_err(|e| e.to_string())?;
-    let d = demesne_postgres::drift(&mut client, &sql, &allow).map_err(|e| e.to_string())?;
+    let d = demesne_postgres::drift(&mut client, &sql, &allow, &grantees).map_err(|e| e.to_string())?;
     for f in &d.findings {
         out.print(&format!("{:<8} {} — {}\n", f.kind.label(), f.object, f.detail));
     }

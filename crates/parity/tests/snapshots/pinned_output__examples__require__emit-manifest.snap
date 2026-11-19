@@ -9,6 +9,12 @@ exit: 0
   "functions": [
     "auth.admin_has_perm(text, text, text, text)"
   ],
+  "callable": [],
+  "grantable": [],
+  "internal": [
+    "auth.admin_has_perm(text, text, text, text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.invitations",
@@ -36,6 +42,57 @@ exit: 0
   "tables": [],
   "rls": [
     "public.invitations"
+  ],
+  "heads": [
+    {
+      "function": "auth.admin_has_perm(text, text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.invitations",
+          "name": "invitations_insert"
+        },
+        {
+          "table": "public.invitations",
+          "name": "invitations_select"
+        },
+        {
+          "table": "public.invitations",
+          "name": "invitations_update"
+        }
+      ]
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.admin_has_perm(text, text, text, text)",
+      "digest": "ae8e7f2ab1a019f6100e118c94b622d3076ab4f3645cc1adee871eb09a261f63"
+    },
+    {
+      "object": "policy invitations_insert on public.invitations",
+      "digest": "32ddc4416df794989056184343be36289ef9e39443c66ddf8f6f396392656e4c"
+    },
+    {
+      "object": "policy invitations_insert_require on public.invitations",
+      "digest": "fccfe74029f101b439a4e94033b58055fe448aec8175013c2c907c6b9895f451"
+    },
+    {
+      "object": "policy invitations_select on public.invitations",
+      "digest": "41f9df19cee0607b1e43f2557c0e4e44d2965a1e8cc15a07381f9196f0802063"
+    },
+    {
+      "object": "policy invitations_update on public.invitations",
+      "digest": "aae3cdef16abefa3fd57b3a222a0f2c61f098559012de9d5e926dea0085f2346"
+    },
+    {
+      "object": "policy invitations_update_require on public.invitations",
+      "digest": "d8dc24a9cfd62cbaca8c06309c842f5ccc1fce948bf8f70b7976b2baf500d6c0"
+    },
+    {
+      "object": "rls public.invitations",
+      "digest": "34b2c6f1447fd7bc7740d23b0e03cd797fede21ded305e15285521d7db38bf3b"
+    }
   ]
 }
 

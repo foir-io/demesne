@@ -16,14 +16,135 @@ pub enum Language {
     Plpgsql,
 }
 
+/// The role every generated policy is written for.
+///
+/// The SQL revokes from it, as from PUBLIC, every function it revokes, so a grant made to it by name or by default
+/// privileges does not outlast applying the SQL.
+pub const POLICY_ROLE: &str = "authenticated";
+
 /// Which roles may execute a definer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Execute {
-    /// Every role: Postgres grants execute on a new function to PUBLIC.
+    /// Every role: the SQL grants execute to PUBLIC, so applying it again restores what a revoke took away.
     #[default]
     Public,
-    /// Only the roles the adopter grants it to: execute is revoked from PUBLIC.
-    Granted,
+    /// No role but the definer's owner: execute is revoked from PUBLIC and from [`POLICY_ROLE`], and only generated
+    /// functions call it.
+    Revoked,
+    /// The roles the adopter grants it to: execute is revoked from PUBLIC and from [`POLICY_ROLE`], and the function is an
+    /// interface for such a role.
+    Grantable,
+}
+
+/// Whose rights a generated function runs with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Security {
+    /// Its owner's, so it reads the tables its check needs whoever calls it.
+    #[default]
+    Definer,
+    /// The caller's. A copy that other generated functions call with an argument they have already checked runs so:
+    /// called from one of them it runs as that function's owner, and run directly it reads only what the caller may.
+    Invoker,
+}
+
+impl Execute {
+    pub(crate) fn statement(self, function: &str, arg_types: &str) -> String {
+        match self {
+            Execute::Public => format!("GRANT EXECUTE ON FUNCTION {function}({arg_types}) TO PUBLIC;"),
+            Execute::Revoked | Execute::Grantable => format!("REVOKE EXECUTE ON FUNCTION {function}({arg_types}) FROM PUBLIC, {POLICY_ROLE};"),
+        }
+    }
+}
+
+pub(crate) enum Arg {
+    Fixed(String),
+    Row(String),
+}
+
+pub(crate) fn definer_call(function: &str, args: &[Arg]) -> String {
+    let list = args.iter().map(|a| match a {
+        Arg::Fixed(s) | Arg::Row(s) => s.as_str(),
+    });
+    let call = format!("{function}({})", list.collect::<Vec<_>>().join(", "));
+    if args.iter().all(|a| matches!(a, Arg::Fixed(_))) { format!("(SELECT {call})") } else { call }
+}
+
+/// A parameter of a generated function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Param {
+    /// The parameter's name, such as `p_doc_id`.
+    pub name: String,
+    /// What the parameter holds, which decides its type.
+    pub kind: ParamKind,
+}
+
+/// What a generated function's parameter holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParamKind {
+    /// The id of a subject, an object or a level's node, typed as the spec's identifiers.
+    Id,
+    /// An array of such ids.
+    Ids,
+    /// A value of the named SQL type, such as `text` for an access or `jsonb` for claims.
+    Typed(String),
+}
+
+impl Param {
+    /// A parameter that holds an id, typed as the spec's identifiers.
+    #[must_use]
+    pub fn id(name: impl Into<String>) -> Self {
+        Self { name: name.into(), kind: ParamKind::Id }
+    }
+
+    /// A parameter that holds an array of ids.
+    #[must_use]
+    pub fn ids(name: impl Into<String>) -> Self {
+        Self { name: name.into(), kind: ParamKind::Ids }
+    }
+
+    /// A parameter of the named SQL type.
+    #[must_use]
+    pub fn typed(name: impl Into<String>, sql_type: impl Into<String>) -> Self {
+        Self { name: name.into(), kind: ParamKind::Typed(sql_type.into()) }
+    }
+}
+
+/// Returns `params` as a signature, each id typed as `id_type`, such as `p_doc_id text, p_access text`.
+#[must_use]
+pub fn render(params: &[Param], id_type: &str) -> String {
+    let typed = |p: &Param| match &p.kind {
+        ParamKind::Id => format!("{} {id_type}", p.name),
+        ParamKind::Ids => format!("{} {id_type}[]", p.name),
+        ParamKind::Typed(t) => format!("{} {t}", p.name),
+    };
+    params.iter().map(typed).collect::<Vec<_>>().join(", ")
+}
+
+/// What the SQL does before it creates a definer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Before {
+    /// Nothing.
+    #[default]
+    Nothing,
+    /// Drops a function of the same name and argument types whose parameters are named otherwise, since
+    /// `CREATE OR REPLACE` cannot rename a parameter. Only a function no policy calls is marked so, since a policy that
+    /// calls a function keeps it from being dropped.
+    DropRenamed,
+}
+
+/// How a function PUBLIC may run is bound to the caller's own claims.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Bound {
+    /// The position of the argument that must be the caller's own.
+    pub argument: usize,
+    /// The expressions that read the claims the argument may equal.
+    pub claims: Vec<String>,
+    /// The PL/pgSQL body of the copy PUBLIC cannot run, which another generated function calls with one of `claims`.
+    pub inside: String,
+    /// The PL/pgSQL body that remembers a verified argument for as long as the claims setting keeps its text.
+    pub remembered: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -31,7 +152,9 @@ pub struct GenFn {
     pub name: String,
     pub schema: String,
     pub table_schema: String,
-    pub sig: String,
+    pub params: Vec<Param>,
+    /// The spec's identifier type, which every [`ParamKind::Id`] parameter takes; `text` when empty.
+    pub id_type: String,
     pub body: String,
     pub returns: String,
     pub raw_body: bool,
@@ -40,12 +163,28 @@ pub struct GenFn {
     pub arms: Vec<DefinerArm>,
     pub language: Language,
     pub execute: Execute,
+    /// Whose rights the function runs with.
+    pub security: Security,
+    pub bound: Option<Bound>,
+    /// The parameter the generator filled from a principal. A function PUBLIC may run answers only when it is one of the caller's own claims.
+    pub principal: Option<String>,
+    /// The identity claims of the subjects whose principal [`GenFn::principal`] holds. A function PUBLIC may run is
+    /// bound to these alone, so a caller of one subject is never taken for a principal of another that shares its id.
+    pub principal_claims: Vec<String>,
+    /// What the SQL does before it creates the function.
+    pub before: Before,
 }
 
 impl GenFn {
     #[must_use]
     pub fn schema(&self) -> &str {
         if self.schema.is_empty() { "auth" } else { &self.schema }
+    }
+
+    /// Returns the parameter list as the SQL declares it.
+    #[must_use]
+    pub fn sig(&self) -> String {
+        render(&self.params, if self.id_type.is_empty() { "text" } else { &self.id_type })
     }
 
     #[must_use]
@@ -69,25 +208,42 @@ impl GenFn {
             body = self.arms_body();
         }
         let strict = if self.strict { "STRICT\n" } else { "" };
-        let mut sql = format!(
-            "CREATE OR REPLACE FUNCTION {}.{}({})\nRETURNS {}\nLANGUAGE {}\nSTABLE\n{}SECURITY DEFINER\nSET search_path = {}\nAS $$\n{}\n$$;",
+        let mut sql = self.before_sql();
+        write!(
+            sql,
+            "CREATE OR REPLACE FUNCTION {}.{}({})\nRETURNS {}\nLANGUAGE {}\nSTABLE\n{}SECURITY {}\nSET search_path = {}, pg_temp\nAS $$\n{}\n$$;",
             self.schema(),
             self.name,
-            self.sig,
+            self.sig(),
             returns,
             lang,
             strict,
+            match self.security {
+                Security::Definer => "DEFINER",
+                Security::Invoker => "INVOKER",
+            },
             self.table_schema(),
             body
-        );
-        match self.execute {
-            Execute::Public => {}
-            Execute::Granted => {
-                write!(sql, "\nREVOKE EXECUTE ON FUNCTION {}.{}({}) FROM PUBLIC;", self.schema(), self.name, sig_types(&self.sig))
-                    .expect("fmt::Write for String never fails");
+        )
+        .expect("fmt::Write for String never fails");
+        sql.push('\n');
+        sql.push_str(&self.execute.statement(&format!("{}.{}", self.schema(), self.name), &sig_types(&self.sig())));
+        sql
+    }
+
+    fn before_sql(&self) -> String {
+        match self.before {
+            Before::Nothing => String::new(),
+            Before::DropRenamed => {
+                let identity = format!("{}.{}({})", self.schema(), self.name, sig_types(&self.sig()));
+                let names: Vec<String> = self.params.iter().map(|p| quote_literal(&p.name)).collect();
+                format!(
+                    "DO $demesne$ BEGIN\n  IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure({}) AND proargnames IS DISTINCT FROM ARRAY[{}]::text[]) THEN\n    DROP FUNCTION {identity};\n  END IF;\nEND $demesne$;\n",
+                    quote_literal(&identity),
+                    names.join(", ")
+                )
             }
         }
-        sql
     }
 
     fn arms_body(&self) -> String {
@@ -109,7 +265,7 @@ impl GenFn {
     }
 }
 
-fn sig_types(sig: &str) -> String {
+pub(crate) fn sig_types(sig: &str) -> String {
     sig.split(',').map(|p| p.split_whitespace().skip(1).collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(", ")
 }
 

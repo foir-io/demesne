@@ -43,7 +43,7 @@ fn the_first_file_emits_its_whole_sql() {
 fn a_later_file_writes_again_a_function_it_widens() {
     let files = multi();
     let sql = file_sql(&files, 1).expect("the second file emits");
-    assert!(function(&sql, "acl_manage").contains("WHEN 'note' THEN auth.note_can_edit(p_id)"), "{sql}");
+    assert!(function(&sql, "acl_manage").contains("WHEN 'note' THEN (SELECT auth.note_can_edit(p_id))"), "{sql}");
     assert!(!function(&all_sql(&files, 0), "acl_manage").contains("'note'"));
     assert!(sql.contains("CREATE POLICY notes_select ON public.notes"), "{sql}");
     assert!(!sql.contains("CREATE POLICY docs_select"), "an unchanged policy is written again:\n{sql}");
@@ -54,8 +54,8 @@ fn a_later_file_writes_again_a_function_it_widens() {
 fn a_replaced_declaration_rewrites_the_functions_it_emits() {
     let files = multi();
     let sql = file_sql(&files, 1).expect("the second file emits");
-    assert!(function(&sql, "support_grants_reach").contains("AND ended_at IS NULL"), "{sql}");
-    assert!(!function(&all_sql(&files, 0), "support_grants_reach").contains("ended_at"));
+    assert!(function(&sql, "support_grants_reach_set").contains("AND ended_at IS NULL"), "{sql}");
+    assert!(!function(&all_sql(&files, 0), "support_grants_reach_set").contains("ended_at"));
 }
 
 #[test]
@@ -164,4 +164,35 @@ fn a_warning_names_its_file_once() {
     let warnings: Vec<String> = validate_files_warnings(&files).iter().map(ToString::to_string).collect();
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].starts_with("blind.demesne:7: permission ledger.delete maps delete"), "{warnings:?}");
+}
+
+#[test]
+fn a_checked_changelogs_column_is_written_with_its_table() {
+    let first = "changelog checked
+topology { level estate level space parent estate }
+subject member { anchor space; reach self; identifies sub; roles none; binds owner }
+object doc {
+  table docs
+  scoped estate > space
+  relation owner: member via owner_id where owner_kind = \"member\"
+  permission view = owner @rls maps select
+  track owner
+}
+";
+    let second = "object note {
+  table notes
+  scoped estate > space
+  relation owner: member via owner_id where owner_kind = \"member\"
+  permission view = owner @rls maps select
+  track owner
+}
+";
+    let files = named(&[("a.demesne", first), ("b.demesne", second)]).expect("the files parse");
+    validate_files(&files).expect("the files validate");
+    let column = "ALTER TABLE auth._authz_changelog ADD COLUMN IF NOT EXISTS txid";
+    let earlier = file_sql(&files, 0).unwrap_or_else(|e| panic!("{e}"));
+    assert!(earlier.contains(column), "{earlier}");
+    let later = file_sql(&files, 1).unwrap_or_else(|e| panic!("{e}"));
+    assert!(later.contains("CREATE CONSTRAINT TRIGGER notes_obj_changelog"), "{later}");
+    assert!(!later.contains(column), "the table is unchanged, so its column is not written again:\n{later}");
 }

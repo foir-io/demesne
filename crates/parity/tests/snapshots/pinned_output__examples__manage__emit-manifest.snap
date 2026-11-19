@@ -10,6 +10,14 @@ exit: 0
     "auth.member_has_perm(text, text, text, text)",
     "auth.member_perm_implied_by(text)"
   ],
+  "callable": [],
+  "grantable": [],
+  "internal": [
+    "auth.member_has_perm(text, text, text, text)"
+  ],
+  "revoked": [
+    "auth.member_perm_implied_by(text)"
+  ],
   "policies": [
     {
       "table": "public.records",
@@ -25,6 +33,51 @@ exit: 0
   "tables": [],
   "rls": [
     "public.records"
+  ],
+  "heads": [
+    {
+      "function": "auth.member_has_perm(text, text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_project_id text, p_perm text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.records",
+          "name": "records_select"
+        },
+        {
+          "table": "public.records",
+          "name": "records_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.member_perm_implied_by(text)",
+      "parameters": "p_perm text",
+      "returns": "text[]",
+      "policies": []
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.member_has_perm(text, text, text, text)",
+      "digest": "a2d6ccfacadac5191dbb32d0efac0763cb120a21b8d8fade1b932989dfdb04cd"
+    },
+    {
+      "object": "function auth.member_perm_implied_by(text)",
+      "digest": "aa97587ae6082d0e5ca98ddc100f3a2bf976444c91c0be159af263495450c0c5"
+    },
+    {
+      "object": "policy records_select on public.records",
+      "digest": "c0761fad48828d4904538ecd2c6538c346292d278314a0ecef7bbdac3f64ea5d"
+    },
+    {
+      "object": "policy records_update on public.records",
+      "digest": "4b24f0812359463c22d106fa3bef6c33666cdb1ff379bd3c9b921c0423cf6eb5"
+    },
+    {
+      "object": "rls public.records",
+      "digest": "313857ed20846626e634de099309770f9c6c658bd4e27045c4d51e80300241c6"
+    }
   ]
 }
 

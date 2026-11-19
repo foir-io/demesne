@@ -27,7 +27,7 @@ impl Sql<'_> {
         self.app_surface().map_err(Error::unplaced)
     }
 
-    fn app_surface(&self) -> Result<AppCheckSurface, String> {
+    pub(crate) fn app_surface(&self) -> Result<AppCheckSurface, String> {
         if self.s.objects.is_empty() {
             return Err("EmitAppSurface: the spec declares no objects".into());
         }
@@ -51,7 +51,7 @@ impl Sql<'_> {
         Ok(AppCheckSurface { objects: objects.into() })
     }
 
-    fn flat_list_fn(&self, o: &Object) -> String {
+    pub(crate) fn flat_list_fn(&self, o: &Object) -> String {
         let Some(sel) = o.perms.iter().find(|pm| pm.maps() == "select") else { return String::new() };
         let leaves = sel.tree.leaves();
         if leaves.len() != 1 || !accessor_tree_op(&sel.tree).is_empty() {
@@ -71,12 +71,28 @@ impl Sql<'_> {
     fn async_check_sql(&self, o: &Object) -> String {
         let Some(rel) = o.relations.iter().find(|r| relation_is_async(r)) else { return String::new() };
         let Some(cust) = o.scoped.last().and_then(|l| self.s.owner_subject(l)) else { return String::new() };
-        let kind = rel.types.first().map_or("", String::as_str);
-        format!(
-            "SELECT allowed, as_of::text FROM {}_affordance($1, {}, {})",
-            self.s.async_index_base(&o.table, &rel.name),
-            quote_literal(kind),
-            self.id_claim(cust.identifies())
-        )
+        let affordance = format!("{}_affordance", self.s.async_index_base(&o.table, &rel.name));
+        let asked: Vec<(Option<String>, String)> = rel
+            .types
+            .iter()
+            .filter_map(|t| self.s.subject_by_name(t).map(|sub| (t, sub.identifies())))
+            .map(|(t, claim)| {
+                let without_owner = (claim != cust.identifies()).then(|| format!(" AND {} IS NULL", self.claim(cust.identifies())));
+                (without_owner, format!("{affordance}($1, {}, {})", quote_literal(t), self.id_claim(claim)))
+            })
+            .collect();
+        match asked.as_slice() {
+            [] => String::new(),
+            [(None, call)] => format!("SELECT allowed, as_of::text FROM {call}"),
+            [(Some(without_owner), call)] => format!("SELECT allowed{without_owner} AS allowed, as_of::text FROM {call}"),
+            _ => format!(
+                "SELECT COALESCE(bool_or(allowed), false) AS allowed, (array_agg(as_of))[1]::text AS as_of FROM ({}) AS asked",
+                asked
+                    .iter()
+                    .map(|(without_owner, call)| format!("SELECT allowed{} AS allowed, as_of FROM {call}", without_owner.as_deref().unwrap_or_default()))
+                    .collect::<Vec<_>>()
+                    .join(" UNION ALL ")
+            ),
+        }
     }
 }

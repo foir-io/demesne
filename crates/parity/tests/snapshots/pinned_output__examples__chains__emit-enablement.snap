@@ -1,0 +1,20 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+ALTER TABLE public.banners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.banners FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.docs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.docs FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.keeper_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.keeper_profiles FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.skins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.skins FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.spaces ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.spaces FORCE ROW LEVEL SECURITY;
+
+--- stderr ---
+
+--- end ---

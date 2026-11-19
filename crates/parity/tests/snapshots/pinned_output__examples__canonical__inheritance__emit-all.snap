@@ -10,10 +10,11 @@ LANGUAGE sql
 STABLE
 STRICT
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM folder_closure WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant);
+  SELECT EXISTS (SELECT 1 FROM folder_closure WHERE ancestor_id = p_ancestor AND descendant_id = p_descendant AND (p_ancestor = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'viewer_folder') OR p_descendant = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'viewer_folder')));
 $$;
+GRANT EXECUTE ON FUNCTION auth.folder_closure_reachable(text, text) TO PUBLIC;
 
 
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
@@ -33,7 +34,7 @@ CREATE OR REPLACE FUNCTION auth.folder_closure_maintain()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
@@ -65,6 +66,7 @@ BEGIN
   RETURN NULL;
 END;
 $$;
+GRANT EXECUTE ON FUNCTION auth.folder_closure_maintain() TO PUBLIC;
 
 DROP TRIGGER IF EXISTS folder_closure_maintain_ins ON public.folders;
 CREATE TRIGGER folder_closure_maintain_ins AFTER INSERT ON public.folders FOR EACH ROW EXECUTE FUNCTION auth.folder_closure_maintain();

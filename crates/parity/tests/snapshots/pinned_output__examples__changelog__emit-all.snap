@@ -1,0 +1,154 @@
+---
+source: crates/parity/tests/pinned_output.rs
+expression: "record(&repo, &spec, args)"
+---
+exit: 0
+--- stdout ---
+CREATE OR REPLACE FUNCTION auth.note_grants_grants(p_member_id text, p_note_id text, p_access text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT p_member_id = (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub') AND (EXISTS (SELECT 1 FROM note_grants WHERE note_id = p_note_id AND principal_kind = 'member' AND principal_id = p_member_id AND access = p_access));
+$$;
+GRANT EXECUTE ON FUNCTION auth.note_grants_grants(text, text, text) TO PUBLIC;
+
+CREATE OR REPLACE FUNCTION auth.notes_accessors_conditional(p_id text)
+RETURNS TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT b.source, b.principal_kind, b.principal_id, b.access, NULL::text[] AS via_claim_keys, NULL::text[] AS via_claim_values
+    FROM (
+  SELECT 'owner'::text AS source, 'member'::text AS principal_kind, owner_id AS principal_id, 'write'::text AS access
+    FROM notes WHERE id = p_id AND owner_id IS NOT NULL AND owner_kind = 'member'
+  UNION ALL
+  SELECT 'grant'::text, principal_kind, principal_id, access
+    FROM note_grants WHERE note_id = p_id
+    ) b(source, principal_kind, principal_id, access)
+  UNION ALL
+  SELECT 'mode'::text, NULL::text, NULL::text, 'read'::text, NULL::text[], NULL::text[]
+    FROM notes WHERE id = p_id AND visibility = 'public'
+$$;
+REVOKE EXECUTE ON FUNCTION auth.notes_accessors_conditional(text) FROM PUBLIC, authenticated;
+
+CREATE OR REPLACE FUNCTION auth.notes_admits(p_id text, p_claims jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+#variable_conflict use_column
+DECLARE
+  prior text := current_setting('request.jwt.claims', true);
+  admitted boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', p_claims::text, true);
+  admitted := EXISTS (SELECT 1 FROM notes WHERE id = p_id AND ((workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'project_id') AND ((owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'member') OR visibility = 'public' OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'read') OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'write')))));
+  PERFORM set_config('request.jwt.claims', coalesce(prior, ''), true);
+  RETURN admitted;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION auth.notes_admits(text, jsonb) FROM PUBLIC, authenticated;
+
+
+ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notes FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS notes_select ON public.notes;
+CREATE POLICY notes_select ON public.notes FOR SELECT TO authenticated
+    USING ((workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'project_id') AND ((owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'member') OR visibility = 'public' OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'read') OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'write'))));
+
+DROP POLICY IF EXISTS notes_update ON public.notes;
+CREATE POLICY notes_update ON public.notes FOR UPDATE TO authenticated
+    USING ((workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'project_id') AND ((owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'member') OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'write'))))
+    WITH CHECK ((workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND project_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'project_id') AND ((owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub') AND owner_kind = 'member') OR auth.note_grants_grants((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), notes.id, 'write'))));
+
+
+-- ===== Authz changelog (via grant ... tracked + track owner/visibility) =====
+-- An ordered (seq = zookie) feed of grant/revoke + owner/visibility events on the
+-- tracked stores/objects — the source a consumer Watches to react to access changes
+-- (WS5 realtime force-drop). It never feeds the RLS floor (the WS4 fail-closed asymmetry).
+
+CREATE TABLE IF NOT EXISTS auth._authz_changelog (
+  seq bigserial PRIMARY KEY,
+  rel text NOT NULL,
+  resource_id text NOT NULL,
+  principal_kind text NOT NULL,
+  principal_id text NOT NULL,
+  op text NOT NULL,
+  at timestamptz NOT NULL DEFAULT now(),
+  txid xid8 NOT NULL DEFAULT pg_current_xact_id()
+);
+CREATE INDEX IF NOT EXISTS _authz_changelog_seq_idx ON auth._authz_changelog (seq);
+CREATE INDEX IF NOT EXISTS _authz_changelog_principal_idx ON auth._authz_changelog (principal_kind, principal_id);
+ALTER TABLE auth._authz_changelog ADD COLUMN IF NOT EXISTS txid xid8 NOT NULL DEFAULT pg_current_xact_id();
+CREATE INDEX IF NOT EXISTS _authz_changelog_rel_txid_idx ON auth._authz_changelog (rel, txid);
+
+CREATE OR REPLACE FUNCTION auth.note_grants_changelog()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    IF NOT EXISTS (SELECT 1 FROM auth._authz_changelog WHERE txid = pg_current_xact_id() AND rel = 'note_grants' AND resource_id = (NEW.note_id)::text AND principal_kind = NEW.principal_kind AND principal_id = (NEW.principal_id)::text AND op = 'grant') THEN
+      RAISE EXCEPTION 'a change to note_grants was committed without its row in the access changelog' USING ERRCODE = 'check_violation', CONSTRAINT = 'note_grants_changelog_written', TABLE = 'note_grants';
+    END IF;
+  ELSIF (TG_OP = 'DELETE') THEN
+    IF NOT EXISTS (SELECT 1 FROM auth._authz_changelog WHERE txid = pg_current_xact_id() AND rel = 'note_grants' AND resource_id = (OLD.note_id)::text AND principal_kind = OLD.principal_kind AND principal_id = (OLD.principal_id)::text AND op = 'revoke') THEN
+      RAISE EXCEPTION 'a change to note_grants was committed without its row in the access changelog' USING ERRCODE = 'check_violation', CONSTRAINT = 'note_grants_changelog_written', TABLE = 'note_grants';
+    END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION auth.note_grants_changelog() TO PUBLIC;
+
+DROP TRIGGER IF EXISTS note_grants_changelog ON public.note_grants;
+CREATE CONSTRAINT TRIGGER note_grants_changelog AFTER INSERT OR DELETE ON public.note_grants DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION auth.note_grants_changelog();
+
+CREATE OR REPLACE FUNCTION auth.notes_obj_changelog()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+  IF (OLD.owner_id IS DISTINCT FROM NEW.owner_id) OR (OLD.owner_kind IS DISTINCT FROM NEW.owner_kind) THEN
+    IF OLD.owner_id IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM auth._authz_changelog WHERE txid = pg_current_xact_id() AND rel = 'note' AND resource_id = (NEW.id)::text AND principal_kind = COALESCE(OLD.owner_kind, '') AND principal_id = (OLD.owner_id)::text AND op = 'revoke') THEN
+        RAISE EXCEPTION 'a change to notes was committed without its row in the access changelog' USING ERRCODE = 'check_violation', CONSTRAINT = 'notes_changelog_written', TABLE = 'notes';
+      END IF;
+    END IF;
+    IF NEW.owner_id IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM auth._authz_changelog WHERE txid = pg_current_xact_id() AND rel = 'note' AND resource_id = (NEW.id)::text AND principal_kind = COALESCE(NEW.owner_kind, '') AND principal_id = (NEW.owner_id)::text AND op = 'grant') THEN
+        RAISE EXCEPTION 'a change to notes was committed without its row in the access changelog' USING ERRCODE = 'check_violation', CONSTRAINT = 'notes_changelog_written', TABLE = 'notes';
+      END IF;
+    END IF;
+  END IF;
+  IF (OLD.visibility IS DISTINCT FROM NEW.visibility) THEN
+    IF NOT EXISTS (SELECT 1 FROM auth._authz_changelog WHERE txid = pg_current_xact_id() AND rel = 'note' AND resource_id = (NEW.id)::text AND principal_kind = '' AND principal_id = ('')::text AND op = 'visibility') THEN
+      RAISE EXCEPTION 'a change to notes was committed without its row in the access changelog' USING ERRCODE = 'check_violation', CONSTRAINT = 'notes_changelog_written', TABLE = 'notes';
+    END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION auth.notes_obj_changelog() TO PUBLIC;
+
+DROP TRIGGER IF EXISTS notes_obj_changelog ON public.notes;
+CREATE CONSTRAINT TRIGGER notes_obj_changelog AFTER UPDATE OF owner_id, owner_kind, visibility ON public.notes DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION auth.notes_obj_changelog();
+
+
+--- stderr ---
+
+--- end ---

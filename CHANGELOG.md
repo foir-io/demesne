@@ -1,5 +1,849 @@
 # Changelog
 
+## v5.0.0
+
+The crates are 5.0.0 because public types of `demesne-syntax`,
+`demesne-model` and `demesne-emit-sql` gain fields and variants, named under
+each change, and `demesne_emit_sql::Sql` gains private fields, so it is built
+with `Sql::new`. A spec that uses none of the constructs below emits the
+policies v4.0.0 did, with seven exceptions: the first two under "Fixed"; a
+`via memberin` relation that takes both its principal and its scope from the
+row, which is refused (the first "Breaking" entry); a permission whose terms a
+grant's holder used to pass (the second "Breaking" entry); a call to a
+generated function whose arguments are the same for every row, which now runs
+once per statement; a group or closure relation of a
+subject other than the owner, or an `@session` over a relation judged by
+several calls, which is refused until the spec says what it admits (the third
+"Breaking" entry); and a rule that asks about the admin in a spec where no
+subject binds admin and none is identified by `sub`, which is refused (the
+fourth "Breaking" entry). Its generated functions change: see "Breaking"
+first. The Go module's API doesn't change, so it is `go/v1.6.0`.
+
+### Security: a temporary table could stand in for a table a generated function reads
+
+Every generated function runs as its owner and names the tables it reads
+without a schema, relying on the search path it sets. Postgres searches a
+session's temporary schema before that path unless the path names `pg_temp`.
+A caller who may create temporary tables, as PUBLIC may in a new database,
+could create one named like a table a function reads (a subject's membership
+table, a role store's assignments or roles, a grant table, a group's
+closure) and the function read the caller's rows instead: a check answered
+from rows the caller wrote. A trigger that keeps a closure in step could
+likewise write the caller's table and leave the real one stale.
+
+Every generated function now sets its search path with `pg_temp` last. Every
+release from v1.0.0 has this, and so does the Go engine's v0.93.x, which gets
+no fix: upgrade to v5. Upgrading fixes it: `emit migrate` from a v4.0.0
+manifest writes the whole SQL, so every function is created again, and `diff`
+names any live function whose definition still lacks `pg_temp`. A live test
+shadows every table a spec reads with forged rows in a session that may create
+temporary tables, and every check, and both triggers, still use the real
+tables.
+
+### Breaking: a generated function answers only about the caller, or PUBLIC cannot run it
+
+Every generated function is `SECURITY DEFINER`, and Postgres lets PUBLIC
+execute a new function. Many took an identity or a node as an argument and
+answered for any value. A caller could run one directly and ask about someone
+else: list another node's subtree, read which levels another principal is
+granted, or learn whether another principal holds a role.
+
+From this release one rule holds for every generated function but
+`<table>_declared_by_<key>` (below). **It answers only about the caller's own
+claims, or `EXECUTE` is revoked from PUBLIC.**
+
+- **Bound to the caller.** A function that takes a principal (`user_id`,
+  `p_principal`, `p_member`, the first argument of
+  `<principal>_can_access_<object>`), a closure node (`<closure>_descendants`,
+  `_ancestors`, `_reachable`), a marker's claim value or a stored condition's
+  claim values now answers only when that argument is the caller's own claim.
+  For any other value it answers false, the empty set, or NULL where the
+  function can already say "undecided". The binding changes no signature;
+  ids retyped to the spec's identifiers and a store copy's renamed parameter
+  are the `<object>_can_<verb>` entry's (below).
+  `<admin>_memberin_<level>(principal, scope)` is bound on its principal. Where
+  a rule passes a row's column as the principal and a claim as the scope
+  (`via memberin tenant(id, @tenant_id)`), it also answers for the scope that
+  claim names, and for no other scope: such a rule already shows the caller
+  which principals are members of the scope the caller stands in. A grant
+  relation's check (`<relation>_grants`, `<acl>_grants_<object>`) is bound on
+  the principal it is asked about. The async tier's
+  `<index>_affordance(p_resource, p_kind, p_principal)` answers only where
+  `p_principal` is the caller's own claim for the subject `p_kind` names. The
+  async check now asks it once for each subject the relation names, each with
+  that subject's claim, and, as the policy does, takes a grant to a subject
+  other than the owner only from a caller who carries no owner claim. It
+  passed the owner's claim under the first subject's kind, so a caller of
+  another subject was never asked about, and where the first subject was not
+  the owner, a grant to a principal of that subject whose id equalled the
+  caller's claim answered for the caller.
+  `demesne_emit_sql::AsyncIndex` gains `callers`, each principal kind with the
+  claim that identifies a caller of that kind. Which argument is the principal
+  is decided where the function is generated, not by its name, so a parameter
+  of an `export` or a `probe` is never taken for one. A function is bound to
+  the identity claims of the subjects whose principal it takes, never another
+  subject's, so where ids collide across subjects (two integer sequences, say)
+  a caller of one subject is never taken for a principal of another.
+- **Revoked from PUBLIC, or not emitted.** A generated function stays PUBLIC
+  only where something must run it as the caller: a policy calls it, a
+  generated application check calls it (a `@check` point check, the edit
+  check, the async check), or a spec line makes it yours to call (an `export`,
+  a `probe`, a `projection`, a `check` (below), `<principal>_can_access_<object>`
+  for a `@kernel` permission, and the `<flat>_resources()` list the application
+  surface reads). A grant's `_reach_in_<level>` is yours to call too: it answers
+  only about the caller, at the node you name. A function meant for a role you
+  grant is revoked and listed `grantable` (below): `<table>_accessors`,
+  `<table>_accessors_conditional`, `<table>_direct_accessors` and
+  `<table>_<verb>_accessors`, which name the principals that reach any row id,
+  `<closure>_path`, which returns any node's ancestors, `<table>_admits`, a
+  `nearest` lookup for any node, the async tier's maintenance and a
+  materialized group's `<flat>_reconcile()`. Any other function that only
+  generated functions call is revoked, since they run as its owner, and keeps
+  its binding. A function nothing calls is no longer emitted: a grant's
+  `_reach`, `_reach_unscoped` and a `_reach_set` no policy calls, a declared
+  closure's functions no relation reads, and a role check, a membership, a
+  borrowed `<object>_can_<perm>`, an `<acl>_grants_<object>` or a group lookup
+  that no permission uses. Neither is a composition's lower bound where only
+  its upper bound is called, `<flat>_resources()` where the surface doesn't
+  list through it, or `<object>_<operation>_holds_at` (below). A migration
+  drops each one. `Sql::unused_definers()` names the functions a spec's
+  generators make and this rule leaves out.
+- **Left as it was.** `<table>_declared_by_<key>` returns the rows a table
+  declares for a key, with the columns permissions read. A policy calls it with
+  a row's value, so it answers any caller for any key: keep nothing in a table
+  a permission declares that a caller of any tenant should not learn. A `path`
+  reads its rows through `<table>_along_<key>`, with the columns paths read.
+  Only the chain calls it, so it is revoked, even where a permission reads the
+  same table by the same key.
+
+Every policy passed the caller's claim but one shape's:
+`via memberin <level>(<column>, <column>)` takes both the principal and the
+scope from the row, so bound to the caller it would admit only a caller who is
+the row's own principal. Validation now refuses that shape (below). The binding
+changes no other policy, and no rule that still compiles admits or refuses
+anyone it did not before because of it. Other entries do change what some
+specs admit or whether they compile: the grant and relation Breaking entries
+below, and the first two under "Fixed".
+
+The binding assumes only your API sets the claims. A caller who can run
+arbitrary SQL as the caller role can set them with `set_config`, as it always
+could; the guide now says so in as many words.
+
+Every function the SQL creates is now followed by `GRANT EXECUTE … TO PUBLIC`
+or `REVOKE EXECUTE … FROM PUBLIC, authenticated`. `CREATE OR REPLACE FUNCTION`
+keeps a function's privileges, so without the grant a function that one
+release revoked and a later one made PUBLIC again would have stayed revoked.
+A revoke also names `authenticated`, the role every policy is written for, so
+a grant made to it by name, by a grant over the whole schema or by default
+privileges does not outlast applying the SQL. Applying the SQL now leaves
+PUBLIC and `authenticated` exactly the right it states. A grant to any other
+role stays.
+
+`demesne diff` reports a function PUBLIC may not run that the SQL grants, as
+well as one PUBLIC may run that the SQL revokes. For a function the SQL
+revokes, it also reports, as `GRANTED`, each role other than the owner that
+may run it live, and each default privilege that grants new functions in a
+definers schema, or in every schema, to a role other than its own. Each
+finding ends with the statement that takes the grant back. A role you grant the
+manifest's `grantable` functions to holds them by design: name it with
+`demesne diff --grantee <role>`, once for each such role, and its grants of
+those functions are not reported. Its grant of a revoked function and every
+default privilege still are. `--grantee PUBLIC` is refused, since PUBLIC holds
+exactly what the SQL grants it, and so is `--grantee authenticated`, the role
+every policy is written for, since a grantable function answers for any id.
+`demesne_postgres::drift` takes a fourth argument, `&Grantees`, built by
+`Grantees::new` from the manifest and the role names; `Grantees::default()`
+names none and reports what it did before. `demesne_postgres::Error` gains
+`is_grantee`. `demesne_emit_sql::granted_to_public` reads the grants as
+`revoked_from_public` reads the revokes; `demesne_emit_sql::POLICY_ROLE` names
+`authenticated`, and `demesne_postgres::DriftKind` gains `Granted`. Every
+spec's SQL gains these lines.
+
+What breaks for an adopter:
+
+- **SQL of your own that calls a bound function with another principal's id,
+  or another node, now gets false or nothing.** So does a call made with no
+  claims set. Read the tables in that statement instead, under a role that may.
+- **A `via memberin <level>(<column>, <column>)` rule no longer compiles.**
+  Validation refuses a `memberin` that takes both its principal and its scope
+  from the row, with `reachedby` or without: its function answers only about
+  the caller, so the rule would admit no one but the row's own principal. A
+  `memberin` with a claim on either side, such as
+  `memberin tenant(id, @tenant_id)`, compiles as before.
+- **SQL of your own that runs as the caller role and calls a generated
+  function no policy calls now gets `permission denied`.** That includes a role
+  helper, a grant's reach function and a closure function you called directly.
+  A generated function is the policies' tool: read the tables that statement
+  needs instead, under a role that may. Granting `EXECUTE` on a revoked
+  function that keeps its binding gives back only what the caller could ask
+  about itself. An `<function>_inside` copy has no check of its own, so it
+  runs with its caller's rights (`SECURITY INVOKER`): called from a generated
+  function it runs as that function's owner, and run directly it reads only
+  what the caller may. A function the `grantable` list names answers for any
+  id or claims it is given, so grant it only to a server-side role you trust,
+  such as a worker's, never to a role your API's callers run as.
+- **A grant of every function in the definers schema, or default privileges
+  that grant new functions there, outlive the upgrade for any role but
+  `authenticated`.** Earlier versions of the Supabase guide said to run `grant
+  execute on all functions in schema demesne to authenticated`. After
+  upgrading, revoke such a grant from each role you made it to, with the
+  matching default privileges (`alter default privileges in schema demesne
+  revoke execute on functions from anon, authenticated`), grant what
+  `callable` lists, and run `demesne diff`, naming with `--grantee` each role
+  you grant the `grantable` functions to: it names each grant still left on a
+  revoked function, or on a grantable one to a role you did not name, and each
+  default privilege that would make one, with the statement that takes it
+  back.
+- **SQL of your own that called a generated function nothing else calls gets
+  `function does not exist`**, since that function is no longer emitted. Read
+  the tables in that statement instead, under a role that may.
+- **A role that lists accessors or reads `<closure>_path` needs
+  `GRANT EXECUTE`** on those functions. So does the role your async worker
+  runs as, on `<index>_apply()`, `_rebuild()` and `_watermark()`, and the role
+  that reconciles a materialized group, on `<flat>_reconcile()`: PUBLIC could
+  run those four before. The manifest's `grantable` list names every function
+  meant for a role you grant (below). Each answers for any id, so grant it
+  only to a server-side role you trust, never to a role your API's callers
+  run as.
+- **A revoke from PUBLIC that you made by hand on a function the SQL grants is
+  undone** when you apply the SQL. So is one made by default privileges
+  (`ALTER DEFAULT PRIVILEGES … REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`). The
+  manifest's `callable` and `internal` lists name every function the SQL
+  grants.
+
+**Upgrade with `emit migrate`, never by applying the new SQL alone.** v5.0.0
+no longer emits functions v4.0.0 did (above). Applying v5's SQL over a v4
+database leaves each of them as v4 made it: PUBLIC, unbound, and answering for
+any argument. `auth.has_org_role(user_id)`, for one, would go on telling any
+caller whether any user holds the role. Keep v4's manifest, or write it with
+v4's CLI (`npx @foir/demesne-cli@4.0.0 emit <spec> manifest > v4.json`), and
+apply `demesne emit <spec> migrate v4.json`: v5's SQL, then exact drops of
+what v4 created and v5 does not, then a check that nothing dropped is still
+there. If v4's manifest is lost, apply v5's SQL and run `demesne diff`: it
+reports each function v4 left behind as an orphan, and you drop each one. A
+spec that declares `changelog checked` has no v4 manifest to give, since
+v4.0.0 refuses to write one for it (see "Fixed" below), so it upgrades by
+`diff`.
+
+### The manifest says who may run each function
+
+`demesne emit <spec> manifest`, and its `--file` form, puts every function the
+SQL creates in exactly one of four lists beside `functions`. `callable` holds
+the functions a spec line makes yours to call. `grantable` holds those PUBLIC
+may not run that are yours to grant to a role of your own: the listings of
+accessors, `<table>_admits`, `<closure>_path`, a `nearest` lookup for any
+node, the async tier's `<index>_apply()`, `_rebuild()` and `_watermark()`, and
+a materialized group's `<flat>_reconcile()`. Each answers for any id it is
+given, so grant it only to a server-side role you trust, never to a role your
+API's callers run as. `internal` holds those PUBLIC may run that no spec line
+makes yours, and `revoked` those PUBLIC may not run that only the generated
+functions call. Code of your own calls what `callable` lists, and what
+`grantable` lists from a role you granted it to. Every
+manifest gains the four lists, empty ones included. A policy or a generated
+check that would call a `grantable` function is refused when the SQL is
+emitted, naming both, since the caller's role may not run it; a function is
+never made PUBLIC because something calls it.
+
+Reading a manifest refuses one whose lists hold a function twice, leave one out
+or name one `functions` does not, and one with some of the lists and not the
+others. A manifest written before this release has none of them. It still
+reads, as one that does not record who may run its functions, and `migrate`
+uses it as before.
+
+`demesne_emit_sql::Manifest` gains `execute: Option<ExecuteLists>`.
+`Sql::manifest` always fills it, and `Manifest::from_sql` leaves it `None`,
+since SQL alone does not say which functions a spec line makes yours.
+
+### `emit migrate` writes only what changed, in one transaction
+
+The manifest now records a digest of the statements that create each object,
+under `digests`. `emit migrate` writes only the objects whose statements
+changed or are new since the manifest it is given, with the policies a renamed
+function's drop takes (below). An unchanged policy is not dropped and created
+again, so its table is not locked and the policy keeps its oid. A manifest
+without digests gives the whole SQL, with a comment line saying so. Since an
+unchanged object is not written, a migration no longer undoes a hand edit to
+one, such as a revoke from PUBLIC: `demesne diff` reports it, and applying the
+whole SQL restores it.
+
+`emit migrate` and `emit --file … migrate` now wrap what they write in
+`BEGIN` and `COMMIT`. A migration that drops a policy and creates it again
+must be one transaction: between the two, a reader saw the table without that
+policy, and without a restrictive `_require` policy that means rows it bars.
+`--no-transaction` leaves the wrapping out, for a runner that wraps each
+migration itself (sqlx does, and a `COMMIT` inside would end its transaction
+early).
+
+### `emit migrate` drops first a function whose parameters changed
+
+Some generated parameters are named after a subject or a level, such as
+`<acl>_grants(p_<subject>_id, …)` or a role check's `check_<level>_id`, so
+renaming one renames the parameter, and `CREATE OR REPLACE` cannot rename a
+parameter. The manifest now records each function's parameters, its return
+type and the policies that call it, under `heads`. A migration from a manifest
+that has them first drops each function whose parameters or return type
+changed, and only the policies that call it; the SQL then creates both again.
+So does a function the migration drops because its argument types changed,
+with the policies that call it, since a policy whose text is the same would
+otherwise keep the old function and the drop would fail.
+A manifest written before has no `heads`, so its migration cannot see such a
+change and says so in a comment line: drop those functions by hand.
+`Manifest` gains `heads` and `Manifest::renamed_since`, and the multi-file
+`--file` forms do the same.
+
+### `check`: one row against a permission lent with `predicate`
+
+A predicate-only permission is answered for one row by the function its borrow
+emits, `<object>_can_<verb>`. A policy calls that function as the caller, so
+PUBLIC may run it, but no spec line makes it yours: it is `internal`, and a
+release may change it. A `check` is the form for code of your own:
+
+```demesne
+check open_only for select as ledger_open(id text)
+```
+
+It emits `ledger_open(p_id text)`, listed `callable`. Its body is the borrow's,
+`<object>_can_<verb>` or `<object>_can_<verb>_for_<op>`, with the argument as
+the row's key, so it answers exactly what a policy that borrows the permission
+enforces, the object's containment and a grant's reach included. It takes no
+principal and reads the caller's claims. A key that names no row answers
+false; a NULL key answers NULL. `as` names the parameter, which is `p_<key>`
+otherwise.
+
+A check is refused when its permission is not predicate-only (an `export`
+answers one that maps an operation), when `for` names no table operation, when
+its one argument is not the object's key, on an object with a composite key,
+and when another generated function has its name. It counts as a use of the
+permission it lends, so such a permission that only a check reads is no longer
+refused as never borrowed. `demesne_syntax::Object` gains `point_checks`.
+
+### Breaking: a grant gives reach, and the permission's terms still bind its holders
+
+A grant at a scope level lets its holder stand at rows the holder's claims do
+not name. On two shapes it also let the holder pass without the rest of the
+permission, though nothing in the spec said so: an object whose lowest scope
+level is the grant's, and a level's own table. `permission view = @scoped and
+<terms>` emitted `<reach> OR (<scope> AND <terms>)`. On an object with a level
+below the grant's the same grant only widened that level's column and the
+terms applied.
+
+Now the terms apply on every shape. The same permission emits
+`(<reach> OR <scope>) AND <terms>`. A permission with no term under the scope
+at all (`view = @self(<column>)`) no longer admits the grant's holders. A
+permission that is `@scoped` alone emits what it did. An admit arm, a
+projection and the evaluator a `@holds_at` hop asks take the grant's reach the
+same way, beside the scope and under their own terms, so a grant's holder
+passes them where it passes the permission; they used to hold it to the scope
+its claims name on these two shapes.
+
+What breaks for an adopter, and how to keep a pass that was meant:
+
+- **A holder of such a grant is refused where it does not satisfy the
+  permission's terms.** Read every object scoped at a grant's own level and
+  every level table a grant reaches. A holder who has no role, ownership or
+  claim the terms ask for is now refused there.
+- **A role check no longer counts a grant's holder as holding the role.** The
+  check behind `<level>->owner` (`is_<level>_<subject>`) answered yes for a
+  caller who held a grant at that level, so such a term admitted the grant's
+  holders whatever role they had, and through an identity the check did not
+  bind. A grant gives reach, not a role: the check now answers from role
+  assignments alone, and from a platform operator's membership only where the
+  operator is identified by the same claim as the role's subject. There an
+  operator presenting a scope's claims holds every role in it, which the
+  operator's own branch, for a caller presenting no scope, does not give.
+  Where the claims differ, the membership was asked about the role subject's
+  id and answered only for a credential carrying both claims with one value.
+- **To keep the pass, name the grant:** `permission view = (@scoped and
+  <terms>) + via grant <name>`. That permission emits exactly what it emitted
+  before. A `reach <grant> unscoped|bound|via … for <operations>` line on the
+  object keeps it too, for the operations it names, and also emits what it
+  did.
+- **A grant named in a permission where it adds nothing is refused at
+  validation.** On an object with a level below the grant's, or where every
+  subject reaching by the grant is anchored at the grant's level,
+  `+ via grant <name>` was silently dropped: the SQL was the same with it and
+  without. The message names the level and says to remove the term. Removing
+  it changes no SQL. No spec admits more after this release than before it.
+- **A `pinned` borrow on an object whose terms now bind a grant's callers is
+  refused.** Drop `pinned` there, or name the grant in the permission
+  (`+ via grant <name>`): its holders then pass by the grant, and the pinned
+  borrow binds only callers the scope holds, so the permission compiles.
+- The reverse listings (`<table>_accessors`) list a grant's holders as they
+  did; they are an upper bound there, as they already were on deeper objects.
+
+`demesne_emit_sql`'s write check reports such a reach as part of the write
+term it now belongs to, not as "a subject's own reach".
+
+### Breaking: a relation of another subject, and `@session` over several calls, say what they admit
+
+A policy passed a group's `<closure>_member`, a materialized group's
+`<flat>_member` and an undeclared closure's `_reachable` the claim of the
+object's owner subject, whichever subject the relation names. A relation
+typed as another subject (`team: staff via group ...` on an object a customer
+owns) so admitted none of that subject. `@session(<relation>)` over a relation
+judged by one call per subject (a grant or group relation naming several)
+used only the first subject's call.
+
+Now the spec says which it means, or validation refuses it, naming the
+relation and showing the line to write:
+
+- **A group relation naming a subject other than the owner** takes
+  `from claim <key> [| <key>]` after `on <column>`: `relation team: staff via
+  group tc(grp, mem) edge te(mem, grp) on team_id from claim sub`. Each key is
+  the identity claim of a subject the relation names. The policy makes one call
+  per key and, as a grant relation does, judges a credential that also carries
+  the owner's claim only as the owner. To keep the rows v4.0.0 admitted, type
+  the relation as the owner subject alone.
+- **A closure relation naming a subject other than the owner** takes the
+  `from claim <key> missing allow|deny` it already could. A closure relation on
+  an object with no owner subject was refused before and still is, now with
+  that line shown.
+- **`@session(<relation>)` over a relation judged by more than one call**
+  names the subjects it admits: `@session(grantee as customer)` keeps v4.0.0's
+  meaning, the first subject's call; `@session(grantee as customer | staff)`
+  admits each. A subject the relation does not name is refused.
+
+No spec admits more after this release than before it.
+
+Alongside: a materialized group's `<flat>_resources()` matches the claims its
+policy passes and returns the spec's identifier type rather than `text`; a
+group's `<closure>_member` answers for the subjects of every group relation
+over that closure, not only the first; and an undeclared closure's
+`_reachable` answers for the claims its relations pass, no longer for every
+subject's identity.
+
+A corpus test checks that every call to a function bound to the caller passes,
+at the bound parameter, a claim that function binds. A live test admits staff
+through a team, a materialized crew and a closure that say `from claim sub` on
+a customer's objects, admits a customer through a group whose closure a staff
+relation shares, and refuses staff whose credential also carries a customer.
+
+### Breaking: a rule that asks about the admin needs a subject that declares the admin's claim
+
+A role relation (`via role`), a role walk (`tenant->owner`), `@holds`,
+`@session` over a role relation, a `memberin … reachedby`, `@self` and
+`selfcheck` ask about the admin: they pass the claim of the subject that
+`binds admin`. With no such subject they passed `sub`, whether or not any
+subject is identified by it. In a spec where no subject binds admin and none
+is identified by `sub`, such a rule asked about a claim nothing declares. It
+refused every caller whose credential lacks `sub`, and asked about whatever
+`sub` held for a caller whose credential carries one.
+
+Validation now refuses each of those constructs in such a spec, wherever it
+appears: in a permission, a requirement, an `admit` arm or a relation's path.
+The refusal names the construct and the remedy: add `binds admin` to the
+subject it asks about. A spec with a subject that binds admin, or one
+identified by `sub`, compiles as before and emits the same policies. A
+`@holds` in a permission only the decision point answers reads no such claim
+and is not refused. A validation test refuses each construct in such a spec,
+and accepts each once a subject binds admin or is identified by `sub`.
+
+### `some`: one element of an array column, and what must hold for it
+
+```demesne
+permission view = some r in rules_live prefix "read." held rules_held (
+    (@element prefix "read.edge." and shared) + (@element prefix "read.open." and mode access = "open")
+) @rls maps select
+```
+
+`some <name> in <array column> [prefix "<text>"] [held <claim>] ( … )` is true
+of a row when one element of the column satisfies the brackets. `prefix` binds
+only elements that start with the text, and `held` only elements the claim's
+JSON array also holds. Inside the brackets `@element prefix "<text>"` tests the
+bound element, and a keyed edge matches it:
+`via edge <table>(<principal>, <object>) key <column> [on <row column>] [where <column> = "<value>"]`
+compiles to `<object>_<relation>_keyed(principal, object, key)`. The term is one
+`EXISTS` over `unnest(<column>)` per row.
+
+`demesne_syntax::Builtin` gains `Some` and `ElementPrefix`, `ViaEdge` gains
+`key`, `on`, `filter` and `slot`, and `PermNode` and `Term` derive `PartialEq`.
+
+### `every` and `none`: the rows a table declares for the element
+
+Inside a `some`,
+`every <name> in <table>(<key column>) [where <column> = "<value>"] ( … )` holds
+when the brackets hold for every row the table has for the bound element, and
+`none …` when they hold for no row. `@slot(<column>, "<value>")` tests the
+declared row, and `slot <column> [from <declared column>]` on a keyed edge or a
+`via composition` matches one of its columns against the declared row's. A
+permission reads the declared rows through one generated function per table
+and key, `<table>_declared_by_<key>`, which returns only the columns
+permissions read.
+
+`none` bars when a row's brackets cannot be decided, and `every` fails on one.
+A plain `not` keeps its meaning.
+
+`Builtin` gains `Declared`, `Slot` and `SlotHeld` (`@slot(<column> held <claim>)`:
+the declared row's column is one of the claim's JSON array), and
+`ViaComposition` gains `slot`.
+
+### `via conditions`: stored conditions compared with what the caller's claim carries
+
+```demesne
+relation terms: member via conditions doc_terms(doc_id, term, op) values (num, txt, at, list, lat, lng) key rule on id from claim facts
+```
+
+Each stored row names a term, an operator and a value. The caller's claim is a
+JSON object keyed by term. The relation holds when every stored row for the
+object (and key, inside a `some`) holds against the claim's value for its term.
+It is three-valued: false when any condition is decided false, unknown when
+one cannot be decided (the claim carries no value for the term, or a value of
+the wrong form), and true otherwise. It compiles to
+`<object>_<relation>_hold(object[, key], values)`.
+
+The operators are `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `in`, `not_in`,
+`includes`, `not_includes`, `contains`, `prefix`, `suffix`, their `caller_` and
+`not_` forms, `not_before`, `not_after` and `within_km`. `num` is double
+precision and text is compared by code point. `within_km` is the haversine
+distance with a radius of 6371.0 km, and is unknown for a latitude or longitude
+out of range. With `extension postgis [schema "<name>"]` declared it compiles
+to `ST_DWithin` on geography.
+
+A conditions relation only narrows: a rule in which it would admit a caller by
+itself is refused.
+
+`demesne_syntax::Repr` gains `Conditions(ViaConditions)` and `Spec` gains
+`extensions`.
+
+### A role store's `held claim`: permissions the credential carries
+
+`held claim <key>` in a `rolestore` names a claim holding a JSON array of
+permissions. `@holds(<permission>)` is then also true when the array holds the
+permission (or one that implies it) and the row stands where the session
+stands: at the top level its scope column equals the claim, and at a lower
+level the claim is absent or equal. A row whose object is not scoped at a level
+the session names is not reached. An assignment in the role store still counts
+as before.
+
+`demesne_syntax::RoleStore` gains `held_claim`.
+
+### A role store whose roles have forms, and roles that are in force
+
+```demesne
+rolestore staff {
+  rolejoin role_id roles id key
+  permissions permissions
+  form claim channel = "draft" base
+  form claim channel = "live" permissions live_permissions
+  absent claim reads "live"
+  unversioned estate_id null
+  active disabled_at null
+}
+```
+
+A role's definition can exist in more than one form, and a claim picks the one
+a session reads. `form claim <key> = "<value>" base` reads the base columns for
+that value, and `form … permissions <column> [key <column>]` reads the named
+ones. `absent claim reads "<value>"` names the form a session with no value
+takes; a store with a `form` line is refused without it. A value no `form`
+names reads no role. A form whose permissions column is NULL is no role in
+that form, by name as well. `unversioned <column> null` or `= "<value>"` marks
+roles that have the base form only. `active <column> null` or `= "<value>"`
+says which roles are in force: a role that fails one is no role in any form,
+and the line stands alone in a store with no forms.
+
+Every generated read of a role's name or permissions follows the same rule:
+`@holds`, a role matched by name, and the access listings. A store with none
+of the lines emits what it did.
+
+`demesne_syntax::RoleStore` gains `forms` (a list of the new `RoleForm`),
+`absent_form`, `unversioned` and `active`.
+
+### `@clock(<column> reached)`
+
+A row test: true when the row's instant is not in the future. An unset column
+is never reached. It compiles to `<column> <= now()`.
+
+`Builtin` gains `Clock`.
+
+### `marker`: a column on a level's row confines the operations it names beneath it
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate > space
+  marker made_by from claim job_id confines insert, update, delete through closure paths
+}
+```
+
+Every other object scoped at the level gains, for each named operation, a
+restrictive condition: the caller holds the row's container, and the container
+is unmarked or its marker equals the session's claim. A marker confines its
+ops to callers whose containment, reach or claim-only branch holds the
+container, for every container, top-level included: declaring a marker for an
+operation makes that operation holder-only. A row that `@self` or `@public`
+admits is therefore refused beneath any container the caller does not hold,
+whatever its marker column holds. A level value that names no container
+refuses, and a row whose level column is NULL is asked nothing. With `through
+closure <table>` every marked container above the row's own confines too.
+Several markers on one level all apply. The container's own row keeps its own
+rule. Each marker compiles to `<table>_<column>_marker_admits(container,
+claim)`, and the condition joins the object's `<table>_<operation>_require`
+policy, its point checks and any predicate another object borrows. The
+function is false for a container the caller does not hold, whatever its
+marker column holds, so calling it directly tells a caller nothing about
+another tenant's containers.
+
+A marker that confines `select` must confine `update` and `delete` too, or the
+spec is refused: Postgres applies a write only to rows the read policy shows.
+
+`demesne_syntax::Object` gains `markers`, a list of the new `Marker`.
+
+### Chains whose hops depend on the caller: `path`, `nested` and the evaluator
+
+A closure table says a row reaches another through a chain. It is shared by
+every caller, so it cannot say whether each hop holds for this one.
+
+```demesne
+object doc {
+  nested 1
+  relation lent: member via composition doc_lends(borrower_id, lender_id) slot field from param
+      path trail along (
+        every h in trail_hops(trail) (
+            (@slot(kind, "claim") and @slot(rule held rules_held))
+          + (@slot(kind, "live") and @holds_at(doc_id, rule slot field for select)) ) )
+}
+```
+
+- `path <column> along ( … )` on `via composition`: a closure row counts only
+  when the brackets hold of the rows declared for its path key. One column
+  serves every operation, or name one each:
+  `path select seen, update changed, delete dropped along ( … )`. The chain
+  reads those rows through `<table>_along_<key>`, which returns only the
+  columns paths read and which no caller may run.
+- `@holds_at(<record column>, <element column> [slot <column>] [for <operation>])`:
+  the element the hop names holds at the row it names, for this caller, **with
+  the composition the path is on taken as followed there**. A slot-bound
+  composition names the column that says which slot the hop follows. Without
+  `for`, a hop is judged for the operation the composition is followed for.
+- The evaluator is the permission's `some` brackets compiled for one element at
+  one row: the row is inside the caller's containment, the element is in the
+  row's column and passes `prefix` and `held`, and the brackets hold.
+  A hop inlines it where it is followed. Nothing calls it as a function of its
+  own, so none is emitted: to ask whether the caller passes a permission on one
+  row, declare a `check` (above), which reads the stored row.
+- `nested <n>` on the object says how many further compositions deep a hop is
+  judged. A hop's own composition costs nothing. Another composition in the
+  hop's rule is followed through one level less, and at the last level it is
+  not followed.
+
+Past the nesting the answer is the safe one. Every generated function has a
+lower bound and, where something narrows by it, an upper bound
+(`…_upper`). A composition that widens a rule is followed by the lower bound,
+so what cannot be followed does not admit. A composition under `not` or inside
+`none` is followed by the upper bound, so what cannot be followed, or cannot be
+decided, bars. Only the functions something calls are emitted.
+
+A hop is judged inside the chain function's own statement, and a helper
+function a chain calls is emitted as PL/pgSQL, so that its plan is kept
+between rows. No answer is kept between rows or statements. A row reached
+through a chain still costs several times a row its own rule admits; the guide
+gives the figures.
+
+On a spec with a chain, a helper bound to the caller (see "Breaking") does not
+parse the claims on every call. It remembers the argument it verified and the
+exact text of the claims setting, in two transaction-local settings named
+`demesne.<definers schema>.<function>.own` and `.seen`, and verifies again
+whenever the claims text differs or is empty. A transaction-local setting reads
+as empty in the session's later transactions, so an empty claims text is never
+taken as the one remembered. A `via conditions` check does the same on
+every spec. A generated function that already passes the caller's own claim
+calls `<function>_inside`, a copy with no check that PUBLIC cannot run, so a
+hop pays nothing for the binding. The copy is `SECURITY INVOKER`: it runs as
+the owner of the generated function that calls it, and run directly, under a
+grant made by mistake, it reads only what its caller may. `demesne_emit_sql`
+gains `Bound` and `Security`, and `GenFn` gains `bound` and `security`.
+
+`demesne_syntax` gains `CompPath`; `ViaComposition` gains `path`, `Object` gains
+`nested`, `Builtin` gains `HoldsAt`, and the lexer reads a whole number.
+`demesne_model::analysis` gains `Cut`, `CutAt`, `Bounded`, `composition_cut`
+and `cut_tree`.
+
+### `nearest … where`, and `@nearest`: a column compared with the nearest value at the caller's node
+
+```demesne
+nearest live_skin(id text) via closure paths on folder_id where status = "live"
+require view = @claim("folder_id", null) + @nearest(live_skin, skin_id from claim folder_id)
+```
+
+`where <column> = "<value>"` on a `nearest` counts only the rows whose column
+holds the value. `@nearest(<lookup>, <column> from claim <key>)`, written only
+in a `require`, is true of a row whose column equals what the lookup answers at
+the node the caller's claim names. It is read live, once a statement. The term
+calls `<lookup>_own(<node>)`, emitted when a term asks for it, which answers
+only at the caller's own claimed node; the lookup itself stays revoked from
+PUBLIC.
+
+`demesne_syntax::Nearest` gains `filter`, and `Builtin` gains `Nearest`.
+
+### Breaking: `<object>_can_<verb>` takes one parameter list, whichever generator makes it
+
+A borrow (`via object <object>-><verb>`) and a `@store_manage` dispatch both
+make `<object>_can_<verb>`. The borrow named its parameter `p_<object>_id` and
+typed it `text`; the dispatch's copy named it `p_id` and typed it as the
+spec's identifiers. A spec that moved between the two failed to apply, since
+`CREATE OR REPLACE` cannot rename a parameter, and the migration dropped
+nothing, since the function's identity stayed. Both now take
+`p_<object>_id`, typed as the spec's identifiers. The SQL drops an earlier copy
+whose parameter is named otherwise before it creates the dispatch's, which no
+policy calls.
+
+What breaks: on a spec whose identifiers are not `text`, a borrow's function
+now takes that type, so it is a new function and a migration drops the `text`
+one. So do a grant relation's check (`<acl>_grants…`), a `@kernel` check, a
+composition's function, a group's `<closure>_member`, a materialized group's
+`<flat>_member` and an undeclared closure's `_reachable`, whose id parameters
+were `text` too: a spec with
+`identifiers integer` or `uuid` and a grant relation could not be applied
+before, since Postgres compares an integer or uuid column with a `text`
+parameter only through a cast the SQL did not write. A corpus test now holds
+every generated parameter that names an id to the spec's identifier type, and
+`testdata/ids` holds an integer and a uuid spec that a live test applies and
+judges.
+
+A generated function's parameters are now typed values,
+`demesne_emit_sql::Param` with a `ParamKind`, and `GenFn::params` replaces the
+`sig` string, which `GenFn::sig()` renders. A parameter that holds an id is
+`ParamKind::Id`, and takes the spec's identifier type when the SQL is written,
+so no generator can give one another type. The corpus test reads each
+function's declared parameters, checks every id against the SQL, and refuses
+a parameter whose name says id that its generator declared otherwise. SQL of
+your own that names the dispatch copy's argument (`p_id => …`) names
+`p_<object>_id` instead.
+
+### A generated function called with the same arguments for every row runs once per statement
+
+A policy or a generated function that calls a generated function with
+arguments that are the same for every row now wraps the call in a scalar
+subquery, as v1.2.0 did for each claim read:
+
+```sql
+(SELECT auth.is_ops((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))
+```
+
+Such arguments are claims, literals and the calling function's own
+parameters. Postgres evaluates the subquery once per statement. The emitter
+wraps only calls to the functions it declares `STABLE`, which answer the same
+within a statement, and never a call to a `VOLATILE` function. A call that
+reads a column of the row stays as it was.
+
+In a policy this changes how often the function runs. These calls ran once
+for each row the policy looked at:
+
+- a membership check such as `is_ops`;
+- a platform role check, `has_<anchor>_role`;
+- `<admin>_memberin_<level>`, and `is_<level>_<admin>` reached by `memberin`;
+- `@holds` on a plane above the object's own scope.
+
+On Postgres 17, a filter shaped like such a policy, a membership check ORed
+with an owner column over 2000 rows, ran the check 2000 times in 5.5 ms;
+wrapped, it runs once in 0.26 ms, and the same rows pass.
+
+In a generated function that answers for one row per call, only the form
+changes: `<table>_admits` reuses the policy's predicate, `<store>_manage`
+calls each kind's `<object>_can_edit(p_id)`, and a role check
+`is_<level>_<admin>` first asks whether its `user_id` is an operator, through
+a membership check, where the operator is identified by the same claim (see
+the grant entry). Each still runs its call once per call. Over the same 2000
+rows, `<store>_manage` called `<object>_can_edit` 2000 times either way.
+
+The policies admit the rows they admitted. The comparison with v1.1.0 sets
+these wraps aside as it does the claim reads. A corpus test finds every call
+to a generated function that reads claims with arguments fixed for the
+statement, and fails if one is left to run per row or if a `VOLATILE`
+function is wrapped.
+
+### A worked example: `examples/chains.demesne`
+
+One spec that uses this release's constructs together: a chain whose hops are
+judged for the caller, a stored condition, a membership check asked both by
+the caller and by the space the caller stands in, and a `nearest … where`
+floor. `crates/postgres/tests/chains_example_pg.rs` runs it against Postgres.
+
+### Fixed: a composition under `not` or inside `none` was judged by a lower bound
+
+`member and not parent` asked the same generated function a widening `parent`
+asks. That function judges the parent by its own rule with every branch that
+needs a composition left out, so it can say "not reached" of a parent the
+caller does reach, and the `not` then admitted. A composition that narrows a
+rule now calls `<object>_composition_<relation>_upper`, which counts such a
+branch as possibly true. The change can only narrow what a spec admits, and a
+spec with no composition under `not` or inside `none` emits what it did.
+
+### Fixed: a composition inside an `and` let the parent admit on the other side alone
+
+`via composition` reaches a row because the caller reaches its parent, and the
+parent is judged by the object's rule with the composition terms taken out.
+Only the composition term itself was taken out. With
+
+```demesne
+permission view = owner + (@kind("auditor") and parent) @rls maps select
+```
+
+the parent was judged by `owner + @kind("auditor")`, so an auditor read every
+row that had a parent, whether or not they could read that parent. The rule as
+written admits an auditor to a row only when they reach its parent. A
+composition under `not` had the same fault: `member and not parent` judged the
+parent by `member`.
+
+Every release since the cascade was added has this: the Go engine from v0.62.1
+to v0.93.1, and every Rust release from v0.94.0 to v4.0.0.
+
+The parent is now judged without any branch that needs a composition: the whole
+`and` goes, not one side of it. A rule is affected only if it has a composition
+relation directly inside an `and` or under a `not`. A rule whose composition
+terms are branches of a union, including a union that is one side of an `and`,
+emits exactly what it did. The change can only narrow what a spec admits.
+
+To check a spec, look for a `via composition` relation named beside `and` or
+after `not` in a permission. The upgrade's migration (see the first
+"Breaking" entry) carries the fix, which is in the generated
+`<object>_composition_<relation>` functions.
+
+### Fixed: the manifest refused every spec that declares `changelog checked`
+
+`changelog checked` creates each changelog trigger with `CREATE CONSTRAINT
+TRIGGER`, and the manifest didn't read that statement. So `demesne emit
+manifest`, `demesne emit migrate` and `demesne diff` each refused such a spec
+and named the trigger. v4.0.0 has this. The manifest now records a constraint
+trigger like any other trigger, a migration drops it with `DROP TRIGGER`, and
+`diff` compares it.
+
+A spec in several files that declares it was refused too. Every file after the
+first failed on the `ALTER TABLE … ADD COLUMN txid` that the declaration adds
+to the changelog table. That statement now goes with the table's own
+statement, so a later file writes it only when it writes the table. The SQL
+these specs emit as one file doesn't change. `examples/changelog.demesne`
+declares one, so the pinned outputs and the corpus tests cover it.
+
+### Fixed: a migration that dropped no function failed to apply
+
+The check a migration runs after its drops, that nothing it dropped is still
+present, named its column only in the arm that looks for functions. A
+migration that dropped a policy, a trigger or an index and no function failed
+with `column "what" does not exist`. Every release from v1.0.0 has this. Each
+arm now names the column.
+
+### Fixed: a group's and a closure's triggers ignored `tables schema`
+
+The trigger that rebuilds a group's closure from its edge table, and the one
+that keeps an undeclared closure in step with its base table, set their
+search path to `pg_catalog, public` and named their tables without a schema.
+In a spec that declares `tables schema`, a write to the edge or base table
+failed with `relation ... does not exist` where `public` holds no table of
+the same name. Where it holds one, the trigger used that table instead: it
+wrote `public`'s closure table, which a group's trigger empties and refills
+from `public`'s edge table, and the closure in the tables schema missed the
+write. Until it is refilled, a closure that missed writes still admits
+members removed from the edge or base table since, and refuses members added
+since. Every release from v1.0.0 has this. Both now search the tables schema,
+as a declared closure's trigger already did; a spec whose tables are in
+`public` emits the same SQL. After upgrading, check those tables in `public`
+and refill each closure that missed writes: a group's is rebuilt by the next
+write to its edge table, and an undeclared closure's trigger trusts the rows
+it holds, so refill that one from its base table.
+
 ## v4.0.0
 
 The crates are 4.0.0 because public types of `demesne-syntax` and

@@ -17,6 +17,22 @@ exit: 0
     "auth.spaces_accessors(text)",
     "auth.spaces_admits(text, jsonb)"
   ],
+  "callable": [
+    "auth.member_can_access_asset(text, text, text)"
+  ],
+  "grantable": [
+    "auth.assets_accessors_conditional(text)",
+    "auth.assets_admits(text, jsonb)",
+    "auth.spaces_accessors(text)",
+    "auth.spaces_admits(text, jsonb)"
+  ],
+  "internal": [
+    "auth.asset_acl_grants(text, text, text)",
+    "auth.crew_has_space_role(text, text, text)",
+    "auth.is_ops(text)",
+    "auth.is_tenant_crew(text, text)"
+  ],
+  "revoked": [],
   "policies": [
     {
       "table": "public.assets",
@@ -49,6 +65,188 @@ exit: 0
   "rls": [
     "public.assets",
     "public.spaces"
+  ],
+  "heads": [
+    {
+      "function": "auth.asset_acl_grants(text, text, text)",
+      "parameters": "p_member_id text, p_asset_id text, p_access text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.assets",
+          "name": "assets_delete"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_select"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.assets_accessors_conditional(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text, via_claim_keys text[], via_claim_values text[])",
+      "policies": []
+    },
+    {
+      "function": "auth.assets_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.crew_has_space_role(text, text, text)",
+      "parameters": "user_id text, check_tenant_id text, check_space_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.is_ops(text)",
+      "parameters": "user_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.assets",
+          "name": "assets_delete"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_insert"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_select"
+        },
+        {
+          "table": "public.assets",
+          "name": "assets_update"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.is_tenant_crew(text, text)",
+      "parameters": "user_id text, check_tenant_id text",
+      "returns": "boolean",
+      "policies": [
+        {
+          "table": "public.spaces",
+          "name": "spaces_select"
+        },
+        {
+          "table": "public.spaces",
+          "name": "spaces_update"
+        }
+      ]
+    },
+    {
+      "function": "auth.member_can_access_asset(text, text, text)",
+      "parameters": "p_member_id text, p_asset_id text, p_access text",
+      "returns": "boolean",
+      "policies": []
+    },
+    {
+      "function": "auth.spaces_accessors(text)",
+      "parameters": "p_id text",
+      "returns": "TABLE(source text, principal_kind text, principal_id text, access text)",
+      "policies": []
+    },
+    {
+      "function": "auth.spaces_admits(text, jsonb)",
+      "parameters": "p_id text, p_claims jsonb",
+      "returns": "boolean",
+      "policies": []
+    }
+  ],
+  "digests": [
+    {
+      "object": "function auth.asset_acl_grants(text, text, text)",
+      "digest": "fc37f317b746dfe2e322fbcf9ee3d57679140c8a07b5db634b835533f11e8e60"
+    },
+    {
+      "object": "function auth.assets_accessors_conditional(text)",
+      "digest": "73005075f78bfa784105581febdd0107a085a7882ef22d8839943bde9a9c9a97"
+    },
+    {
+      "object": "function auth.assets_admits(text, jsonb)",
+      "digest": "f35b65716d78588673a6c1437717b3dc5f342c9a821b5da8c5b6bae64f994159"
+    },
+    {
+      "object": "function auth.crew_has_space_role(text, text, text)",
+      "digest": "60b437261496e870f985e6816d1bfe33e5824447d0a87e299604293ad75181e4"
+    },
+    {
+      "object": "function auth.is_ops(text)",
+      "digest": "807c75eb4dc609308587b74c0c93dcb6891af75c4911cb14e16dca9332291a40"
+    },
+    {
+      "object": "function auth.is_tenant_crew(text, text)",
+      "digest": "7162edc4eb6136454f82ac26c233da1c23bbcdc09bd0663a946c6ec580793b1a"
+    },
+    {
+      "object": "function auth.member_can_access_asset(text, text, text)",
+      "digest": "65584b0f29678e9b237ff330e9774572a73b8fbe9f84682e011c16e17c9427be"
+    },
+    {
+      "object": "function auth.spaces_accessors(text)",
+      "digest": "1e642cc758fa0a3e3060eb93e99517426f3e0419ba5d7c646a5ba4422d5b50f7"
+    },
+    {
+      "object": "function auth.spaces_admits(text, jsonb)",
+      "digest": "98d06e8fb41ac972d7ed60f7ea47aaf4d83f5c9daf43b6fb2c93526bb7ee2c70"
+    },
+    {
+      "object": "policy assets_delete on public.assets",
+      "digest": "ba77ec728da9fafc8c21273397637a9fb22a1a70f97ffb681ca9ab9b06aa281d"
+    },
+    {
+      "object": "policy assets_insert on public.assets",
+      "digest": "a6b47636b26fe590958259cc81de6e98120403148f10f0ec8c0787007d946b6c"
+    },
+    {
+      "object": "policy assets_select on public.assets",
+      "digest": "f7a24c9c567469f77d9b93d199779db58a132c75e11a571c2363baba92173f74"
+    },
+    {
+      "object": "policy assets_update on public.assets",
+      "digest": "851524aae1cec65dbbe2e25e5962f2013d6be6273c22e58c22405d433d60143a"
+    },
+    {
+      "object": "policy spaces_select on public.spaces",
+      "digest": "fac96b4ec1d34261220ecfa05529353639281c38481c09f8da016d088b6dac9f"
+    },
+    {
+      "object": "policy spaces_update on public.spaces",
+      "digest": "326cc5ec5671b20a0bc09fe0b4611b0061e52f560d887c6066322ce6886e8b59"
+    },
+    {
+      "object": "rls public.assets",
+      "digest": "44d72c3caaf9c056bde683bc92afccaa671f57955c1580ed62c90b7bb79eb13b"
+    },
+    {
+      "object": "rls public.spaces",
+      "digest": "89f17b4a0549b894a19e4cdb70693bec78bcd00f72035b3f2bcce3c4e59bdcc4"
+    }
   ]
 }
 

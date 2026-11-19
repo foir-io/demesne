@@ -76,7 +76,7 @@ export const appSurface: AppObjectSurface[] = [
     "pk": "id",
     "flatListFn": "",
     "asyncCheckSQL": "",
-    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND ((auth.platform_has_perm((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage'))))"
+    "editCheckSQL": "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND (((SELECT auth.platform_has_perm((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub'), 'platform:manage')))))"
   }
 ];
 
