@@ -1356,36 +1356,43 @@ them is emitted, since nothing would call it. To ask whether the caller passes
 a permission on one row, declare a `check` (see "Checks" below): it reads the
 stored row and answers what the policy does.
 
-**What a chain costs.** A row its own rule admits is judged inside the
-policy's statement. A row reached through a chain is judged behind a function,
-because the caller cannot read the closure, and the ancestor's whole rule is
-set up and run again for each such row. On Postgres 17, on a loaded
-development machine, a row admitted directly cost about 18 µs, a row admitted
-through one hop about 86 µs, and each further hop judged live 35 to 52 µs
-more. No answer is kept between rows or statements, so a change at any hop
-counts in the same transaction. Each hop is judged inside the chain
-function's own statement, and the helper functions a chain calls are
-PL/pgSQL, so that their plans are kept. Measure on your own data before you
-put a chain on a list read.
+**What a chain costs.** A row its own rule admits is judged inside the policy's
+statement. A row reached through a chain is judged behind a function, because
+the caller cannot read the closure, and the ancestor's whole rule is set up and
+run again for each such row. On Postgres 17, on a development machine, a row
+admitted directly cost about 18 µs, a row admitted through one hop about 85 µs,
+and each further hop judged live 34 to 47 µs more. No answer is kept between
+rows or statements, so a change at any hop counts in the same transaction. Each
+hop is judged inside the chain function's own statement, and the helper
+functions a chain calls are PL/pgSQL, so that their plans are kept. Measure on
+your own data before you put a chain on a list read.
 
 A helper the policy calls for every row must check that it is asked about the
-caller, and parsing the claims for each call would cost more than the lookup
-it guards. So on a spec with a chain, and in every `via conditions` check, the
+caller, and parsing the claims for each call would cost more than the lookup it
+guards. So on a spec with a chain, and in every `via conditions` check, the
 helper remembers what it verified: the first call in a transaction reads the
-claims, checks the argument against them, and stores the argument and the
-exact text of the claims setting in two transaction-local settings named
+claims, checks the argument against them, and stores the argument and the exact
+text of the claims setting in two transaction-local settings named
 `demesne.<definers schema>.<function>.own` and `.seen`. A later call compares
 its argument and the claims setting's current text with those, and parses
-nothing. If the claims text differs in any byte, the call verifies against
-the claims again, so a remembered value never answers for other claims. An
-empty claims setting is never taken as the one remembered: a setting made for
-one transaction reads as empty, not unset, in the session's later
-transactions, so a call made with no claims set always verifies. With 291
-bytes of claims, the check makes a directly admitted row cost 9.5 to 15
-percent more than it did without it, 1.8 to 4.5 µs; with 8 KB of claims, 37
-to 48 percent more, since their text is still read on each call. The first
-read in a transaction parses the claims and stores the two settings, which
-adds about 22 µs once.
+nothing. If the claims text differs in any byte, the call verifies against the
+claims again, so a remembered value never answers for other claims. An empty
+claims setting is never taken as the one remembered: a setting made for one
+transaction reads as empty, not unset, in the session's later transactions, so a
+call made with no claims set always verifies. With 291 bytes of claims, the
+check makes a directly admitted row cost 10 to 16 percent more than it did
+without it, 2.0 to 4.8 µs. The cost grows with the claims, since each call reads
+their text twice, once to refuse an empty setting and once to compare it in full
+with the text remembered: with 8 KB of claims, a directly admitted row costs 48
+to 63 percent more, 7.4 to 18 µs. The first read in a transaction parses the
+claims and stores the two settings, which adds 16 to 21 µs once.
+
+A helper no chain calls, outside a `via conditions` check, remembers nothing and
+parses the claims on each call, so a policy pays the check each time it calls
+such a helper for a row. On a spec with no chain, with 291 bytes of claims, a
+row the read policy rejects after trying each of its terms costs 2.3 µs more,
+3.7 percent, than it did without the checks, and a row an ordinary term admits
+costs nothing more.
 
 A generated function that already passes the caller's own claim calls a copy
 of the helper with no check, `<function>_inside`, which neither PUBLIC nor
