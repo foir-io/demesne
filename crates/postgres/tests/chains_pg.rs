@@ -1,19 +1,16 @@
 use postgres::{Client, NoTls, Transaction};
 use std::collections::BTreeSet;
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
-const ROWS: &str = "demesne_chain_rows";
-const AUTH: &str = "demesne_chain_auth";
 const CALLER: &str = "demesne_chain_caller";
 
 const BRACKET: &str = "every s in rule_slots(rule) where role = \"require\" ((@slot(kind, \"edge\") and shared) + (@slot(kind, \"grant\") and granted:read) + (@slot(kind, \"lend\") and lent) + (@slot(kind, \"tree\") and under)) and none s in rule_slots(rule) where role = \"except\" ((@slot(kind, \"edge\") and barred) + (@slot(kind, \"lend\") and lent)) and terms";
 
-fn spec() -> String {
+fn spec(rows: &str, auth: &str) -> String {
     let hops =
         |hop: &str| format!("(every h in trail_hops(trail) ((@slot(kind, \"claim\") and @slot(rule held rules_held)) + (@slot(kind, \"live\") and {hop})))");
     let some = |prefix: &str| format!("some r in rules_live prefix \"{prefix}\" held rules_held ({BRACKET})");
     format!(
-        "definers schema \"{AUTH}\"\ntables schema \"{ROWS}\"\ntopology {{ level estate }}\nsubject member {{ anchor estate; reach self; identifies sub; roles none }}\nobject doc {{\n  table docs\n  scoped estate\n  nested 1\n  relation shared: member via edge doc_shares(member_id, doc_id) key rule\n  relation barred: member via edge doc_bars(member_id, doc_id) key rule\n  relation granted: member via grant doc_acl(doc_id, principal_kind, principal_id, access)\n  relation terms: member via conditions doc_terms(doc_id, term, op) values (num, txt, at) key rule on id from claim facts\n  relation lent: member via composition doc_lends(borrower_id, lender_id) slot field from param path trail along {}\n  relation under: member via composition doc_tree(below_id, above_id) path select seen, update changed, delete dropped along {}\n  permission view = {} @rls maps select\n  permission edit = {} and {} @rls maps update blind\n  permission remove = {} and {} @rls maps delete blind\n}}\n",
+        "definers schema \"{auth}\"\ntables schema \"{rows}\"\ntopology {{ level estate }}\nsubject member {{ anchor estate; reach self; identifies sub; roles none }}\nobject doc {{\n  table docs\n  scoped estate\n  nested 1\n  relation shared: member via edge doc_shares(member_id, doc_id) key rule\n  relation barred: member via edge doc_bars(member_id, doc_id) key rule\n  relation granted: member via grant doc_acl(doc_id, principal_kind, principal_id, access)\n  relation terms: member via conditions doc_terms(doc_id, term, op) values (num, txt, at) key rule on id from claim facts\n  relation lent: member via composition doc_lends(borrower_id, lender_id) slot field from param path trail along {}\n  relation under: member via composition doc_tree(below_id, above_id) path select seen, update changed, delete dropped along {}\n  permission view = {} @rls maps select\n  permission edit = {} and {} @rls maps update blind\n  permission remove = {} and {} @rls maps delete blind\n}}\n",
         hops("@holds_at(doc_id, rule slot field for select)"),
         hops("@holds_at(doc_id, rule)"),
         some("read."),
@@ -369,19 +366,30 @@ impl Oracle {
     }
 }
 
-static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+struct Installed {
+    rows: String,
+    auth: String,
+}
 
-fn install(db: &mut Client) -> MutexGuard<'static, ()> {
-    let held = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
-    let s = demesne_syntax::parse(&spec()).unwrap_or_else(|e| panic!("the spec parses: {e}\n{}", spec()));
+impl Installed {
+    fn remove(self, db: &mut Client) {
+        let Self { rows, auth } = self;
+        db.batch_execute(&format!("RESET search_path; DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");
+    }
+}
+
+fn install(db: &mut Client, tag: &str) -> Installed {
+    let (rows, auth) = (format!("demesne_chain_{tag}_rows"), format!("demesne_chain_{tag}_auth"));
+    let src = spec(&rows, &auth);
+    let s = demesne_syntax::parse(&src).unwrap_or_else(|e| panic!("the spec parses: {e}\n{src}"));
     demesne_emit_sql::validate(&s).unwrap_or_else(|e| panic!("the spec validates: {e}"));
     let sql = demesne_emit_sql::Sql::new(&s);
     let (defs, rls) = (sql.emit_definers().expect("the definers compile"), sql.emit_rls().expect("the policies compile"));
     assert_eq!(rls.unsupported, [] as [String; 0]);
     db.batch_execute(&format!(
-        "DROP SCHEMA IF EXISTS {ROWS} CASCADE; DROP SCHEMA IF EXISTS {AUTH} CASCADE; CREATE SCHEMA {ROWS}; CREATE SCHEMA {AUTH};
+        "DROP SCHEMA IF EXISTS {rows} CASCADE; DROP SCHEMA IF EXISTS {auth} CASCADE; CREATE SCHEMA {rows}; CREATE SCHEMA {auth};
          DO $$ BEGIN CREATE ROLE {CALLER} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
-         SET search_path = {ROWS};
+         SET search_path = {rows};
          CREATE TABLE docs (id text PRIMARY KEY, estate_id text, rules_live text[], note text);
          CREATE TABLE rule_slots (rule text, role text, kind text, param text);
          CREATE TABLE doc_shares (member_id text, doc_id text, rule text);
@@ -398,11 +406,11 @@ fn install(db: &mut Client) -> MutexGuard<'static, ()> {
         db.batch_execute(&stmt).unwrap_or_else(|e| panic!("apply: {e}\n{stmt}"));
     }
     db.batch_execute(&format!(
-        "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER}; GRANT SELECT, UPDATE, DELETE ON {ROWS}.docs TO {CALLER}; SET search_path = {ROWS};"
+        "GRANT USAGE ON SCHEMA {rows}, {auth} TO {CALLER}; GRANT SELECT, UPDATE, DELETE ON {rows}.docs TO {CALLER}; SET search_path = {rows};"
     ))
     .expect("grants");
     seed(db);
-    held
+    Installed { rows, auth }
 }
 
 fn seed(db: &mut Client) {
@@ -479,7 +487,7 @@ fn connect() -> Client {
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn the_policy_answers_as_the_rule_says_for_every_caller_row_and_operation() {
     let mut db = connect();
-    let _installed = install(&mut db);
+    let at = install(&mut db, "grid");
     let within = |id: &&str| !DEEPER_THAN_THE_NESTING.contains(id);
     let mut cells = 0;
     for op in ["select", "update", "delete"] {
@@ -532,14 +540,14 @@ fn the_policy_answers_as_the_rule_says_for_every_caller_row_and_operation() {
     assert!(reached(&mut db, ann, "update").contains("t_r") && !reached(&mut db, ann, "delete").contains("t_r"), "each operation follows its own path");
     assert!(reached(&mut db, ann, "update").contains("n_r"), "a borrow's hops are judged for reading whatever the operation");
 
-    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
+    at.remove(&mut db);
 }
 
 #[test]
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn a_change_at_a_middle_hop_ends_or_gives_access_in_the_same_transaction() {
     let mut db = connect();
-    let _installed = install(&mut db);
+    let at = install(&mut db, "middle");
     let ann = CALLERS[0];
     for (change, why) in [
         ("DELETE FROM doc_shares WHERE member_id = 'ann' AND doc_id = 'c4_x1'", "the first hop loses its extra slot"),
@@ -563,5 +571,5 @@ fn a_change_at_a_middle_hop_ends_or_gives_access_in_the_same_transaction() {
     tx.batch_execute(&format!("RESET ROLE; INSERT INTO doc_shares VALUES ('bob', 'c4_x1', 'read.lend_edge'); SET LOCAL ROLE {CALLER}")).expect("the share");
     assert_eq!(ids(&mut tx, "SELECT id FROM docs WHERE id = 'c4_r'").len(), 1, "the share at the first hop gives the chain at once");
     tx.rollback().expect("rollback");
-    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
+    at.remove(&mut db);
 }

@@ -1,9 +1,6 @@
 use postgres::{Client, NoTls};
 use std::collections::BTreeSet;
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
-const ROWS: &str = "demesne_chains_example_rows";
-const AUTH: &str = "demesne_chains_example_auth";
 const CALLER: &str = "demesne_chains_example_caller";
 
 const TABLES: &str = "
@@ -73,31 +70,50 @@ fn connect() -> Client {
     Client::connect(&url, NoTls).expect("connect to $DEMESNE_PG_URL")
 }
 
-static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+struct Installed {
+    rows: String,
+    auth: String,
+}
 
-fn install(db: &mut Client) -> MutexGuard<'static, ()> {
-    let held = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+fn install(db: &mut Client, tag: &str) -> Installed {
+    let (rows, auth) = (format!("demesne_chains_example_{tag}_rows"), format!("demesne_chains_example_{tag}_auth"));
     let path = format!("{}/../../examples/chains.demesne", env!("CARGO_MANIFEST_DIR"));
     let example = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    let s = demesne_syntax::parse(&format!("definers schema \"{AUTH}\"\ntables schema \"{ROWS}\"\n{example}")).expect("the example parses");
+    let s = demesne_syntax::parse(&format!("definers schema \"{auth}\"\ntables schema \"{rows}\"\n{example}")).expect("the example parses");
     demesne_emit_sql::validate(&s).expect("the example validates");
     let sql = demesne_emit_sql::Sql::new(&s);
     let (defs, rls) = (sql.emit_definers().expect("the definers compile"), sql.emit_rls().expect("the policies compile"));
     assert_eq!(rls.unsupported, [] as [String; 0]);
     db.batch_execute(&format!(
-        "DROP SCHEMA IF EXISTS {ROWS} CASCADE; DROP SCHEMA IF EXISTS {AUTH} CASCADE; CREATE SCHEMA {ROWS}; CREATE SCHEMA {AUTH};
+        "DROP SCHEMA IF EXISTS {rows} CASCADE; DROP SCHEMA IF EXISTS {auth} CASCADE; CREATE SCHEMA {rows}; CREATE SCHEMA {auth};
          DO $$ BEGIN CREATE ROLE {CALLER} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
-         SET search_path = {ROWS}; {TABLES} RESET search_path;"
+         SET search_path = {rows}; {TABLES} RESET search_path;"
     ))
     .expect("fresh schemas and tables");
     for stmt in [demesne_emit_sql::definers_sql(&defs), sql.triggers_sql(), rls.enablement_sql(), rls.policy_sql(CALLER)] {
         db.batch_execute(&stmt).unwrap_or_else(|e| panic!("apply: {e}\n{stmt}"));
     }
     db.batch_execute(&format!(
-        "GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER}; GRANT SELECT ON {ROWS}.docs, {ROWS}.spaces, {ROWS}.keeper_profiles, {ROWS}.skins, {ROWS}.banners TO {CALLER}; SET search_path = {ROWS}; {SEED}"
+        "GRANT USAGE ON SCHEMA {rows}, {auth} TO {CALLER}; GRANT SELECT ON {rows}.docs, {rows}.spaces, {rows}.keeper_profiles, {rows}.skins, {rows}.banners TO {CALLER}; SET search_path = {rows}; {SEED}"
     ))
     .expect("grants and rows");
-    held
+    Installed { rows, auth }
+}
+
+impl Installed {
+    fn is_member(&self, db: &mut Client, claims: &str, principal: &str, space: &str) -> bool {
+        !read(db, claims, &format!("SELECT 'yes' WHERE {}.keeper_memberin_space('{principal}', '{space}')", self.auth)).is_empty()
+    }
+
+    fn asked(&self, tx: &mut postgres::Transaction<'_>, claims: &str, call: &str) -> Option<bool> {
+        tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
+        tx.query_one(&format!("SELECT {}.{call}", self.auth), &[]).unwrap_or_else(|e| panic!("{call}: {e}")).get(0)
+    }
+
+    fn remove(self, db: &mut Client) {
+        let Self { rows, auth } = self;
+        db.batch_execute(&format!("RESET search_path; DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");
+    }
 }
 
 fn read(db: &mut Client, claims: &str, sql: &str) -> BTreeSet<String> {
@@ -109,15 +125,11 @@ fn read(db: &mut Client, claims: &str, sql: &str) -> BTreeSet<String> {
     got
 }
 
-fn is_member(db: &mut Client, claims: &str, principal: &str, space: &str) -> bool {
-    !read(db, claims, &format!("SELECT 'yes' WHERE {AUTH}.keeper_memberin_space('{principal}', '{space}')")).is_empty()
-}
-
 #[test]
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn the_chains_example_admits_whom_its_rules_say() {
     let mut db = connect();
-    let _installed = install(&mut db);
+    let at = install(&mut db, "admits");
     let (mut admitted, mut refused) = (0, 0);
     for (table, claims, wanted, why) in CELLS {
         let total: i64 = db.query_one(&format!("SELECT count(*) FROM {table}"), &[]).expect("the rows").get(0);
@@ -140,35 +152,31 @@ fn the_chains_example_admits_whom_its_rules_say() {
         (KAY_IN_S1, "ken", "s2", false, "another keeper of another space"),
         (KEN_IN_S2, "kay", "s1", false, "another keeper of another space"),
     ] {
-        assert_eq!(is_member(&mut db, claims, principal, space), wanted, "{claims} asks whether {principal} keeps {space}: {why}");
+        assert_eq!(at.is_member(&mut db, claims, principal, space), wanted, "{claims} asks whether {principal} keeps {space}: {why}");
     }
-    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
-}
-
-fn asked(tx: &mut postgres::Transaction<'_>, claims: &str, call: &str) -> Option<bool> {
-    tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
-    tx.query_one(&format!("SELECT {AUTH}.{call}"), &[]).unwrap_or_else(|e| panic!("{call}: {e}")).get(0)
+    at.remove(&mut db);
 }
 
 #[test]
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn a_remembered_claim_does_not_outlive_the_claims_it_was_verified_against() {
     let mut db = connect();
-    let _installed = install(&mut db);
+    let at = install(&mut db, "outlives");
+    let auth = &at.auth;
     let mut tx = db.transaction().expect("a transaction");
     tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
     let shared = |who: &str| format!("doc_shared_keyed('{who}', 'd_own', 'read.share')");
     let terms = |team: &str| format!("doc_terms_hold('d_terms', 'read.share', '{{\"team\":\"{team}\"}}'::jsonb)");
     for round in 0..2 {
-        assert_eq!(asked(&mut tx, ANN, &shared("ann")), Some(true), "round {round}: ann asks about herself");
-        assert_eq!(asked(&mut tx, ANN, &shared("ann")), Some(true), "round {round}: and again, from what was remembered");
-        assert_eq!(asked(&mut tx, BOB, &shared("ann")), Some(false), "round {round}: the claims are now bob's, so ann's remembered claim answers nothing");
-        assert_eq!(asked(&mut tx, BOB, &shared("bob")), Some(false), "round {round}: bob has no share");
-        assert_eq!(asked(&mut tx, ANN, &shared("bob")), Some(false), "round {round}: back as ann, bob's remembered claim answers nothing");
-        assert_eq!(asked(&mut tx, ANN, &terms("red")), Some(true), "round {round}: ann's own values meet the stored condition");
-        assert_eq!(asked(&mut tx, ANN_ON_BLUE, &terms("red")), None, "round {round}: values that are no longer the caller's are not judged");
-        assert_eq!(asked(&mut tx, ANN_ON_BLUE, &terms("blue")), Some(false), "round {round}: her own values now fail it");
-        assert_eq!(asked(&mut tx, ANN, &terms("blue")), None, "round {round}: and the values remembered for other claims are not hers");
+        assert_eq!(at.asked(&mut tx, ANN, &shared("ann")), Some(true), "round {round}: ann asks about herself");
+        assert_eq!(at.asked(&mut tx, ANN, &shared("ann")), Some(true), "round {round}: and again, from what was remembered");
+        assert_eq!(at.asked(&mut tx, BOB, &shared("ann")), Some(false), "round {round}: the claims are now bob's, so ann's remembered claim answers nothing");
+        assert_eq!(at.asked(&mut tx, BOB, &shared("bob")), Some(false), "round {round}: bob has no share");
+        assert_eq!(at.asked(&mut tx, ANN, &shared("bob")), Some(false), "round {round}: back as ann, bob's remembered claim answers nothing");
+        assert_eq!(at.asked(&mut tx, ANN, &terms("red")), Some(true), "round {round}: ann's own values meet the stored condition");
+        assert_eq!(at.asked(&mut tx, ANN_ON_BLUE, &terms("red")), None, "round {round}: values that are no longer the caller's are not judged");
+        assert_eq!(at.asked(&mut tx, ANN_ON_BLUE, &terms("blue")), Some(false), "round {round}: her own values now fail it");
+        assert_eq!(at.asked(&mut tx, ANN, &terms("blue")), None, "round {round}: and the values remembered for other claims are not hers");
     }
     let read = |tx: &mut postgres::Transaction<'_>, claims: &str| -> BTreeSet<String> {
         tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
@@ -182,7 +190,7 @@ fn a_remembered_claim_does_not_outlive_the_claims_it_was_verified_against() {
     tx.rollback().expect("rollback");
 
     for copy in ["doc_shared_keyed_inside(text, text, text)", "doc_terms_hold_inside(text, text, jsonb)"] {
-        let may: bool = db.query_one(&format!("SELECT has_function_privilege('{CALLER}', '{AUTH}.{copy}', 'EXECUTE')"), &[]).expect("the privilege").get(0);
+        let may: bool = db.query_one(&format!("SELECT has_function_privilege('{CALLER}', '{auth}.{copy}', 'EXECUTE')"), &[]).expect("the privilege").get(0);
         assert!(!may, "{copy} answers for any principal, so the caller may not run it");
     }
     let copies = [
@@ -190,44 +198,45 @@ fn a_remembered_claim_does_not_outlive_the_claims_it_was_verified_against() {
         ("doc_terms_hold_inside(text, text, jsonb)", "doc_terms_hold_inside('d_terms', 'read.share', '{\"team\":\"red\"}'::jsonb)"),
     ];
     for (copy, call) in copies {
-        db.batch_execute(&format!("GRANT EXECUTE ON FUNCTION {AUTH}.{copy} TO {CALLER}")).expect("a grant made by mistake");
+        db.batch_execute(&format!("GRANT EXECUTE ON FUNCTION {auth}.{copy} TO {CALLER}")).expect("a grant made by mistake");
         let mut tx = db.transaction().expect("a transaction");
         tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
         tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&ANN]).expect("the claims");
-        let refused = tx.query_one(&format!("SELECT {AUTH}.{call}"), &[]).err().and_then(|e| e.code().cloned());
+        let refused = tx.query_one(&format!("SELECT {auth}.{call}"), &[]).err().and_then(|e| e.code().cloned());
         assert_eq!(
             refused,
             Some(postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
             "{copy}, granted to the caller by mistake, runs with the caller's rights and reads no table the caller may not"
         );
     }
-    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
+    at.remove(&mut db);
 }
 
 #[test]
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
 fn a_remembered_claim_does_not_carry_into_a_later_transaction_of_the_same_session() {
     let mut db = connect();
-    let _installed = install(&mut db);
+    let at = install(&mut db, "later");
+    let auth = &at.auth;
     db.batch_execute("INSERT INTO doc_shares VALUES ('', 'd_own', 'read.share')").expect("a share held by an empty principal");
     let mut tx = db.transaction().expect("the first transaction");
     tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
-    assert_eq!(asked(&mut tx, ANN, "doc_shared_keyed('ann', 'd_own', 'read.share')"), Some(true), "ann asks about herself, and her claim is remembered");
+    assert_eq!(at.asked(&mut tx, ANN, "doc_shared_keyed('ann', 'd_own', 'read.share')"), Some(true), "ann asks about herself, and her claim is remembered");
     tx.commit().expect("commit");
 
     let mut tx = db.transaction().expect("a later transaction on the same connection");
     tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
-    let settings = ["request.jwt.claims".to_string(), format!("demesne.{AUTH}.doc_shared_keyed.seen"), format!("demesne.{AUTH}.doc_shared_keyed.own")];
+    let settings = ["request.jwt.claims".to_string(), format!("demesne.{auth}.doc_shared_keyed.seen"), format!("demesne.{auth}.doc_shared_keyed.own")];
     for name in &settings {
         let length: Option<i32> = tx.query_one("SELECT length(current_setting($1, true))", &[name]).expect("the setting").get(0);
         assert_eq!(length, Some(0), "{name} was set only for the first transaction, so it now reads as empty");
     }
     let unclaimed = tx
-        .query_one(&format!("SELECT {AUTH}.doc_shared_keyed('', 'd_own', 'read.share')"), &[])
+        .query_one(&format!("SELECT {auth}.doc_shared_keyed('', 'd_own', 'read.share')"), &[])
         .map(|r| r.get::<_, Option<bool>>(0))
         .map_err(|e| e.code().cloned());
     assert_eq!(unclaimed, Ok(None), "with no claims set, the empty settings left behind are not a remembered caller, so the empty principal is not admitted");
-    assert_eq!(asked(&mut tx, ANN, "doc_shared_keyed('ann', 'd_own', 'read.share')"), Some(true), "and ann, claimed again, is judged afresh");
+    assert_eq!(at.asked(&mut tx, ANN, "doc_shared_keyed('ann', 'd_own', 'read.share')"), Some(true), "and ann, claimed again, is judged afresh");
     tx.rollback().expect("rollback");
-    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
+    at.remove(&mut db);
 }
