@@ -231,6 +231,10 @@ pub(crate) fn leaf(obj: &Object) -> &str {
     obj.scoped.last().map_or("", String::as_str)
 }
 
+pub(crate) fn scopes_its_level(obj: &Object) -> bool {
+    obj.is_level_entity() && leaf(obj) == obj.level()
+}
+
 impl Sql<'_> {
     /// Returns the SQL that reads the caller's claim `key`: an uncorrelated scalar subquery,
     /// which Postgres evaluates once per statement rather than once per row.
@@ -461,7 +465,7 @@ impl Sql<'_> {
 
     fn membership_branch(&self, obj: &Object, sub: &Subject, m: &Membership, obj_leaf: &str, obj_is_global: bool) -> String {
         let f = definer_call(&format!("{}.{}", self.s.definer_schema(), membership_fn(m)), &[Arg::Fixed(self.id_claim(sub.identifies()))]);
-        if obj.is_level_entity() || obj_is_global {
+        if scopes_its_level(obj) || obj_is_global {
             return f;
         }
         format!("({} AND {} IS NULL)", f, self.claim(&self.s.claim_key_for_level(obj_leaf)))
@@ -495,7 +499,7 @@ impl Sql<'_> {
     }
 
     fn grant_reach_is_contained(obj: &Object, sub: &Subject, g: &Grant, obj_leaf: &str, obj_is_global: bool) -> bool {
-        if obj.is_level_entity() || obj_is_global {
+        if scopes_its_level(obj) || obj_is_global {
             return false;
         }
         if g.level != obj_leaf {
@@ -1550,7 +1554,7 @@ impl Sql<'_> {
             if !above.is_empty() {
                 within.push(format!("({above})"));
             }
-            if let Some(l) = level {
+            if let Some(l) = level.filter(|_| scopes_its_level(container)) {
                 within.push(self.containment_col_pred(container, l, &own.inject, op));
             }
             if !within.is_empty() {

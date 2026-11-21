@@ -110,3 +110,81 @@ fn a_marker_is_refused_where_it_could_confine_nothing_or_reads_what_is_not_decla
         assert!(err.contains(want), "{what}: {err}");
     }
 }
+
+const ABOVE_HEAD: &str = "topology { level root virtual level estate parent root level space parent estate }\nvocabulary staff { permission spaces:read permission spaces:write implies spaces:read preset keeper @ estate = spaces:write }\nrolestore staff {\n  assignments role_grants\n  subject     grantee_id\n  scope       estate_id space_id\n  rolejoin    role_id roles id key\n  permissions permissions\n}\ngrant visit at estate via edge visits(guest_id, estate_id)\nsubject staff { anchor estate; reach descendants; identifies sub; roles configurable staff; binds admin }\nsubject operator { anchor root; reach descendants; identifies op_id via membership operators(user_id, is_op); roles none }\nsubject guest { anchor estate; reach via grant visit; identifies guest_id; roles none }\n";
+
+fn above(declared: &str, markers: &str) -> String {
+    format!(
+        "{ABOVE_HEAD}object estate {{\n  table estates\n  level estate\n  scoped estate\n  permission view = @scoped @rls maps select\n}}\nobject space {{\n  table spaces\n{declared}  scoped estate\n{markers}\n  relation member: staff via role\n  permission view = member + @holds(spaces:read) @rls maps select\n  permission edit = @holds(spaces:write) @rls maps update\n  permission add = @scoped @rls maps insert\n}}\nobject note {{\n  table notes\n  scoped estate > space\n  permission view = @scoped @rls maps select\n  permission add = @scoped @rls maps insert\n  permission edit = @scoped @rls maps update\n  permission remove = @scoped @rls maps delete\n}}\n"
+    )
+}
+
+const LEVEL: &str = "  level space\n";
+
+fn own(pols: &[Policy], table: &str) -> Vec<(String, bool, String, String)> {
+    pols.iter().filter(|p| p.name.starts_with(&format!("{table}_"))).map(|p| (p.name.clone(), p.restrictive, p.using.clone(), p.check.clone())).collect()
+}
+
+fn bodies(defs: &[GenFn]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = defs.iter().map(|d| (d.name.clone(), d.body.clone())).collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn a_level_whose_object_is_scoped_only_above_it_takes_a_marker_that_confines_the_rows_beneath() {
+    let src = above(LEVEL, MADE_BY);
+    let pols = policies(&src);
+    let cond = format!("(space_id IS NULL OR auth.spaces_made_by_marker_admits(space_id, {}))", claim(&src, "job_id"));
+    for (name, using, check) in
+        [("notes_insert_require", "", cond.as_str()), ("notes_update_require", cond.as_str(), cond.as_str()), ("notes_delete_require", cond.as_str(), "")]
+    {
+        let p = named(&pols, name);
+        assert_eq!((p.restrictive, p.using.as_str(), p.check.as_str()), (true, using, check), "{name}");
+    }
+}
+
+#[test]
+fn a_container_scoped_only_above_its_level_is_held_by_whoever_the_levels_above_contain_or_reach() {
+    let src = above(LEVEL, MADE_BY);
+    let (_, defs) = compiled(&src).expect("compiles");
+    let f = defs.iter().find(|d| d.name == "spaces_made_by_marker_admits").expect("the definer");
+    let estate = claim(&src, "estate_id");
+    let guest = claim(&src, "guest_id");
+    let held = format!("((estate_id = {estate} OR estate_id IN (SELECT auth.visits_reach_set({guest}))))");
+    assert!(f.body.contains(&held), "the caller's estate, or a grant reaching it, holds every space of it: {}", f.body);
+    assert!(!f.body.contains(&format!("id = {}", claim(&src, "space_id"))), "no space claim is asked of the container: {}", f.body);
+    assert!(f.body.contains("auth.is_op("), "a claim-only branch holds every container: {}", f.body);
+}
+
+#[test]
+fn declaring_a_level_it_is_scoped_only_above_leaves_the_objects_own_rules_as_they_were() {
+    let (plain_pols, plain_defs) = compiled(&above("", "")).expect("compiles without the level");
+    let (level_pols, level_defs) = compiled(&above(LEVEL, "")).expect("compiles with the level");
+    assert_eq!(own(&level_pols, "spaces"), own(&plain_pols, "spaces"));
+    assert_eq!(bodies(&level_defs), bodies(&plain_defs));
+    let (marked_pols, marked_defs) = compiled(&above(LEVEL, MADE_BY)).expect("compiles with the marker");
+    assert_eq!(own(&marked_pols, "spaces"), own(&plain_pols, "spaces"));
+    assert_eq!(own(&marked_pols, "estates"), own(&plain_pols, "estates"));
+    let added: Vec<String> = bodies(&marked_defs).into_iter().filter(|d| !bodies(&plain_defs).contains(d)).map(|(name, _)| name).collect();
+    assert_eq!(added, ["spaces_made_by_marker_admits"]);
+}
+
+#[test]
+fn a_level_is_refused_on_an_object_scoped_neither_at_it_nor_at_exactly_the_levels_above_it() {
+    let deep =
+        "topology { level estate level space parent estate level room parent space }\nsubject member { anchor room; reach self; identifies sub; roles none }\n";
+    let object = |scoped: &str, level: &str| {
+        format!("{deep}object thing {{\n  table things\n  level {level}\n  scoped {scoped}\n  permission view = @scoped @rls maps select\n}}\n")
+    };
+    let cases = [
+        ("a level two beneath the deepest scoped", object("estate", "room")),
+        ("a level above the deepest scoped", object("estate > space", "estate")),
+        ("the root level, which has none above", object("estate", "estate").replace("level estate\n  scoped estate", "level estate\n  scoped space")),
+    ];
+    for (what, src) in cases {
+        let err = compiled(&src).map(|(p, _)| p.len()).expect_err(what);
+        assert!(err.contains("must be its deepest scoped level, or the object must be scoped at exactly the levels above"), "{what}: {err}");
+    }
+    compiled(&object("estate > space", "room")).expect("the level directly beneath the levels the object is scoped at");
+}

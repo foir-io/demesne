@@ -1,7 +1,9 @@
 use crate::Sql;
 use crate::error::Error;
 use crate::genfn::{Arg, Before, Bound, Execute, GenFn, Language, Param, binds_every, definer_call, grant_edge_exists, order_by_calls, render};
-use crate::rls::{Virtual, along_fn, declared_fn, held_fn, keyed_edge_fn, membership_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn};
+use crate::rls::{
+    Virtual, along_fn, declared_fn, held_fn, keyed_edge_fn, membership_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn, scopes_its_level,
+};
 use demesne_gocompat::quote;
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -1128,7 +1130,7 @@ impl Sql<'_> {
     }
 
     fn def_emit_structural_accessors(&self, defs: &mut Definers) -> R<()> {
-        for obj in self.s.objects.iter().filter(|o| o.is_level_entity()) {
+        for obj in self.s.objects.iter().filter(|o| scopes_its_level(o)) {
             let name = format!("{}_accessors", obj.table);
             if defs.named.contains(&name) {
                 continue;

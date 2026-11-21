@@ -1546,6 +1546,29 @@ Several markers on one level all apply. With `through closure <table>`, naming
 a closure declared over the container's table, every marked container above
 the row's own confines too.
 
+The object that declares a level may instead be scoped at exactly the levels
+above it, for a container that callers stand above rather than in:
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate
+  marker made_by from claim job_id confines insert, update, delete
+  …
+}
+```
+
+Its own rows keep the rules they would have if it declared no level. Its
+containers are held by the levels above them: the caller's containment holds
+a container when the caller's claims name each level above it, whether or not
+they name the container, and a reach holds it when one of the caller's grants
+reaches a level above it. A claim-only branch holds every container, as
+before. So a caller standing in the estate writes beneath any of its spaces
+that is unmarked or marked with the caller's claim, and beneath no space of
+another estate. The level is refused on an object scoped neither at it nor at
+exactly the levels above it.
+
 Reads are confined only when `select` is named, and a marker that confines
 `select` must confine `update` and `delete` as well: Postgres applies a write
 only to rows the read policy shows, so the compiler refuses a spec in which a

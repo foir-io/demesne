@@ -430,7 +430,7 @@ fn validate_predicate_only_referenced(s: &Spec) -> Vec<Finding> {
 fn validate_object(s: &Spec, o: &Object, chain: &[&Level]) -> Vec<Finding> {
     let mut errs = Vec::new();
     errs.extend(check_scope_path(s, o, chain));
-    errs.extend(check_level_entity(o, chain));
+    errs.extend(check_level_entity(s, o, chain));
     let (rels, rel_errs) = check_object_relations(s, o);
     errs.extend(rel_errs);
     errs.extend(check_grant_rel_count(o));
@@ -545,16 +545,34 @@ fn check_scope_wildcards(s: &Spec, o: &Object) -> Vec<Finding> {
     errs
 }
 
-fn check_level_entity(o: &Object, chain: &[&Level]) -> Vec<Finding> {
+fn check_level_entity(s: &Spec, o: &Object, chain: &[&Level]) -> Vec<Finding> {
     let Some(level) = &o.level else { return Vec::new() };
     let mut errs = Vec::new();
     if !chain.iter().any(|l| &l.name == level) {
         errs.push(Finding::at(o.pos.line, format!("object {} declares level {} which is not a topology level", quote(&o.name), quote(level))));
     }
-    if o.scoped.last() != Some(level) {
-        errs.push(Finding::at(o.pos.line, format!("object {} level {} must be its deepest scoped level", quote(&o.name), quote(level))));
+    if o.scoped.last() != Some(level) && !scoped_only_above(s, o, level, chain) {
+        errs.push(Finding::at(
+            o.pos.line,
+            format!(
+                "object {} level {} must be its deepest scoped level, or the object must be scoped at exactly the levels above {}",
+                quote(&o.name),
+                quote(level),
+                quote(level)
+            ),
+        ));
     }
     errs
+}
+
+fn scoped_only_above(s: &Spec, o: &Object, level: &str, chain: &[&Level]) -> bool {
+    if s.level_is_virtual(level) || contains(&o.scoped, level) {
+        return false;
+    }
+    let Ok(paths) = topology::ancestor_paths(s, level) else { return false };
+    let above: HashSet<&str> = paths.iter().flatten().map(|l| l.name.as_str()).filter(|l| *l != level).collect();
+    let want: Vec<&str> = chain.iter().filter(|l| above.contains(l.name.as_str()) && !l.is_virtual).map(|l| l.name.as_str()).collect();
+    !want.is_empty() && want.iter().copied().eq(o.scoped.iter().map(String::as_str))
 }
 
 fn check_object_relations<'a>(s: &Spec, o: &'a Object) -> (Rels<'a>, Vec<Finding>) {

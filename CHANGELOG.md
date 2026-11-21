@@ -1,5 +1,42 @@
 # Changelog
 
+## v5.0.1
+
+A spec that compiled under v5.0.0 emits the same SQL, definers, manifest and
+application surface. The public API doesn't change, and neither does the Go
+module's, so it stays `go/v1.6.0`.
+
+### A marker on a level whose object is scoped only above it
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate
+  marker made_by from claim job_id confines insert, update, delete
+}
+```
+
+The object that declares a level may now be scoped at exactly the levels above
+it, for a container that callers stand above rather than in. v5.0.0 refused
+such an object (`level space must be its deepest scoped level`), so a marker
+could go only on a container scoped at its own level, which made each confined
+operation holder-only: a caller whose claims did not name the container was
+refused beneath it.
+
+Its own rows keep the rules they would have if it declared no level: the same
+policies and the same definers, with no accessor listing of its own. Its
+markers confine the rows beneath it as before, but its containers are held by
+the levels above them. The caller's containment holds a container when the
+caller's claims name each level above it, whether or not they name the
+container; a reach holds it when one of the caller's grants reaches a level
+above it; a claim-only branch holds every container. `<table>_<column>_marker_admits`
+asks the same, and is false for a container the caller does not hold.
+
+The level is refused on an object scoped neither at it nor at exactly the
+levels above it, with `object "…" level "…" must be its deepest scoped level,
+or the object must be scoped at exactly the levels above "…"`.
+
 ## v5.0.0
 
 The crates are 5.0.0 because public types of `demesne-syntax`,
