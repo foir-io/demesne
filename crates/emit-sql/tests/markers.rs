@@ -188,3 +188,107 @@ fn a_level_is_refused_on_an_object_scoped_neither_at_it_nor_at_exactly_the_level
     }
     compiled(&object("estate > space", "room")).expect("the level directly beneath the levels the object is scoped at");
 }
+
+fn ledger(beneath: &str) -> String {
+    format!(
+        "object ledger {{\n  table ledgers\n  scoped estate\n{beneath}  permission view = @scoped @rls maps select\n  permission add = @scoped @rls maps insert\n  permission edit = @scoped @rls maps update\n  permission remove = @scoped @rls maps delete\n  require edit = @row(closed_at, null)\n}}\n"
+    )
+}
+
+const BENEATH: &str = "  beneath space\n";
+
+#[test]
+fn an_object_beneath_a_level_takes_its_containers_markers_by_the_levels_column() {
+    let src = format!("{}{}", spec(MADE_BY, ""), ledger(BENEATH));
+    let pols = policies(&src);
+    let cond = format!("(space_id IS NULL OR auth.spaces_made_by_marker_admits(space_id, {}))", claim(&src, "job_id"));
+    let edit = format!("(closed_at IS NULL) AND {cond}");
+    for (name, using, check) in
+        [("ledgers_insert_require", "", cond.as_str()), ("ledgers_update_require", edit.as_str(), edit.as_str()), ("ledgers_delete_require", cond.as_str(), "")]
+    {
+        let p = named(&pols, name);
+        assert_eq!((p.restrictive, p.using.as_str(), p.check.as_str()), (true, using, check), "{name}");
+    }
+    assert!(!pols.iter().any(|p| p.name == "ledgers_select_require"), "a read is confined only when `select` is named");
+}
+
+#[test]
+fn beneath_a_level_with_no_marker_or_without_the_clause_an_object_keeps_its_own_rules() {
+    let (plain, plain_defs) = compiled(&format!("{}{}", spec(MADE_BY, ""), ledger(""))).expect("compiles without the clause");
+    let (unmarked, _) = compiled(&format!("{}{}", spec("", ""), ledger(BENEATH))).expect("compiles with no marker on the level");
+    let (marked, marked_defs) = compiled(&format!("{}{}", spec(MADE_BY, ""), ledger(BENEATH))).expect("compiles with both");
+    assert_eq!(own(&unmarked, "ledgers"), own(&plain, "ledgers"));
+    for table in ["spaces", "notes"] {
+        assert_eq!(own(&marked, table), own(&plain, table), "{table}");
+    }
+    assert_eq!(bodies(&marked_defs), bodies(&plain_defs), "the clause emits no function of its own");
+}
+
+#[test]
+fn beneath_is_refused_where_no_container_of_the_level_could_hold_the_row() {
+    let deep = "topology { level root virtual level estate parent root level space parent estate level room parent space }\nsubject member { anchor room; reach self; identifies sub; roles none }\n";
+    let container = "object space {\n  table spaces\n  level space\n  scoped estate > space\n  marker made_by from claim job_id confines insert\n  permission view = @scoped @rls maps select\n}\n";
+    let thing = |scoped: &str, beneath: &str| {
+        format!("{deep}{container}object thing {{\n  table things\n  scoped {scoped}\n  beneath {beneath}\n  permission view = @scoped @rls maps select\n}}\n")
+    };
+    let cases = [
+        ("a level the topology lacks", thing("estate", "hall"), "beneath level \"hall\" names no topology level"),
+        ("a virtual level", thing("estate", "root"), "names a virtual level"),
+        ("a level the object is scoped at", thing("estate > space", "space"), "is a level the object is scoped at"),
+        ("a level two beneath the deepest scoped", thing("estate", "room"), "needs the object scoped at exactly the levels above it"),
+        ("a level above the deepest scoped", thing("estate > space > room", "estate"), "is a level the object is scoped at"),
+        ("a level no object declares", thing("estate > space", "room"), "names a level no object declares"),
+        ("the clause twice", thing("estate", "space\n  beneath space"), "declares `beneath` more than once"),
+    ];
+    for (what, src, want) in cases {
+        let err = compiled(&src).map(|(p, _)| p.len()).expect_err(what);
+        assert!(err.contains(want), "{what}: {err}");
+    }
+    compiled(&thing("estate", "space")).expect("the level directly beneath the levels the object is scoped at");
+}
+
+fn nearest_spec(markers: &str) -> String {
+    spec(markers, "").replace("closure paths(anc, des) base spaces(id, parent_id)", "closure paths(anc, des) base spaces(id, parent_id) depth hops")
+}
+
+const NEAREST: &str = "  marker made_by from claim job_id confines insert, update, delete through nearest closure paths\n  marker kept_by from claim kind_id confines insert, update, delete through nearest closure paths";
+
+#[test]
+fn through_the_nearest_closure_the_nearest_container_carrying_any_of_the_markers_decides() {
+    let src = nearest_spec(NEAREST);
+    let (_, defs) = compiled(&src).expect("compiles");
+    let f = defs.iter().find(|d| d.name == "spaces_made_by_marker_admits").expect("the definer");
+    assert_eq!(
+        f.body,
+        "p_claim IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'job_id') AND EXISTS (SELECT 1 FROM spaces m WHERE m.id = p_container AND ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (m.made_by IS NULL OR m.made_by::text = p_claim)) AND NOT EXISTS (SELECT 1 FROM (SELECT m.made_by AS v FROM paths c JOIN spaces m ON m.id = c.anc WHERE c.des = p_container AND (m.made_by IS NOT NULL OR m.kept_by IS NOT NULL) ORDER BY c.hops LIMIT 1) n WHERE n.v IS NOT NULL AND n.v::text IS DISTINCT FROM p_claim)"
+    );
+    let pols = policies(&src);
+    let made = format!("(space_id IS NULL OR auth.spaces_made_by_marker_admits(space_id, {}))", claim(&src, "job_id"));
+    let kept = format!("(space_id IS NULL OR auth.spaces_kept_by_marker_admits(space_id, {}))", claim(&src, "kind_id"));
+    assert_eq!(named(&pols, "notes_delete_require").using, format!("{made} AND {kept}"), "the rows beneath are confined as before");
+}
+
+#[test]
+fn a_nearest_marker_is_refused_where_no_closure_says_which_container_is_nearest() {
+    let cases = [
+        (
+            "a closure with no depth",
+            spec("  marker made_by from claim job_id confines delete through nearest closure paths", ""),
+            "reads closure \"paths\" through its nearest marked container, which declares no `depth` column",
+        ),
+        (
+            "two closures",
+            format!(
+                "closure trails(up, down) base spaces(id, parent_id) depth steps\n{}",
+                nearest_spec(
+                    "  marker made_by from claim job_id confines delete through nearest closure paths\n  marker kept_by from claim kind_id confines delete through nearest closure trails"
+                )
+            ),
+            "one closure says which container is nearest",
+        ),
+    ];
+    for (what, src, want) in cases {
+        let err = compiled(&src).map(|(p, _)| p.len()).expect_err(what);
+        assert!(err.contains(want), "{what}: {err}");
+    }
+}

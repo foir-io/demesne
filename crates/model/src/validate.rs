@@ -11,8 +11,8 @@ use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_syntax::{
-    ArgSrc, Finding, Grant, GrantUse, Level, Marker, Object, Perm, PermNode, PermissionExport, PointCheck, ProbeAnswer, Relation, Repr, Require, Spec, Subject,
-    Term, ViaClosure, ViaComposition, ViaGrant, ViaMemberIn, ViaObject, Vocabulary,
+    ArgSrc, Finding, Grant, GrantUse, Level, Marker, MarkerClosure, Object, Perm, PermNode, PermissionExport, PointCheck, ProbeAnswer, Relation, Repr, Require,
+    Spec, Subject, Term, ViaClosure, ViaComposition, ViaGrant, ViaMemberIn, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -88,6 +88,7 @@ pub fn validate_structure(s: &Spec) -> Structure {
     errs.extend(validate_projections(s));
     errs.extend(validate_point_checks(s));
     errs.extend(validate_markers(s));
+    errs.extend(validate_beneath(s));
     errs.extend(validate_chains(s));
     errs.extend(validate_role_forms(s));
     errs.extend(validate_grant_stores(s));
@@ -2241,6 +2242,7 @@ fn validate_markers(s: &Spec) -> Vec<Finding> {
     let mut errs = Vec::new();
     for o in &s.objects {
         let mut cols: HashSet<&str> = HashSet::new();
+        let mut nearest: Option<&str> = None;
         for m in &o.markers {
             let at = |msg: String| Finding::at(m.pos.line, format!("object {}: marker {} {msg}", quote(&o.name), quote(&m.col)));
             if !o.is_level_entity() {
@@ -2250,6 +2252,16 @@ fn validate_markers(s: &Spec) -> Vec<Finding> {
                 errs.push(at("is declared twice".into()));
             }
             errs.extend(marker_faults(s, o, m).into_iter().map(at));
+            if let Some(MarkerClosure::Nearest(table)) = &m.closure {
+                match nearest {
+                    Some(first) if first != table => errs.push(at(format!(
+                        "reads closure {} through its nearest marked container, and another marker of the object reads closure {}: one closure says which container is nearest",
+                        quote(table),
+                        quote(first)
+                    ))),
+                    _ => nearest = Some(table),
+                }
+            }
         }
     }
     errs
@@ -2265,15 +2277,48 @@ fn marker_faults(s: &Spec, o: &Object, m: &Marker) -> Vec<String> {
             faults.push(format!("confines {} twice", quote(op)));
         }
     }
-    let Some(name) = &m.closure else { return faults };
+    let Some(closure) = &m.closure else { return faults };
+    let name = closure.table();
     match s.closure_by_table(name) {
         None => faults.push(format!("reads closure {}, which the spec does not declare", quote(name))),
         Some(c) if c.base.as_ref().is_none_or(|b| b.table != o.table) => {
             faults.push(format!("reads closure {}, whose base is not table {}", quote(name), quote(&o.table)));
         }
+        Some(c) if matches!(closure, MarkerClosure::Nearest(_)) && c.depth_col.is_none() => faults.push(format!(
+            "reads closure {} through its nearest marked container, which declares no `depth` column to say which container is nearest",
+            quote(name)
+        )),
         Some(_) => {}
     }
     faults
+}
+
+fn validate_beneath(s: &Spec) -> Vec<Finding> {
+    let mut errs = Vec::new();
+    let Ok(chain) = topology::chain(s) else { return errs };
+    for o in &s.objects {
+        let Some(b) = &o.beneath else { continue };
+        let at = |msg: String| Finding::at(b.pos.line, format!("object {} beneath level {} {msg}", quote(&o.name), quote(&b.level)));
+        let Some(level) = s.level_by_name(&b.level) else {
+            errs.push(at("names no topology level".into()));
+            continue;
+        };
+        if level.is_virtual {
+            errs.push(at("names a virtual level, which has no column for a row to name a container by".into()));
+            continue;
+        }
+        if contains(&o.scoped, &b.level) {
+            errs.push(at("is a level the object is scoped at, whose containers' markers already confine its rows".into()));
+            continue;
+        }
+        if !scoped_only_above(s, o, &b.level, &chain) {
+            errs.push(at("needs the object scoped at exactly the levels above it".into()));
+        }
+        if !s.objects.iter().any(|c| c.level.as_deref() == Some(b.level.as_str())) {
+            errs.push(at("names a level no object declares, so no container's markers reach the rows".into()));
+        }
+    }
+    errs
 }
 
 fn validate_nearests(s: &Spec) -> Vec<Finding> {

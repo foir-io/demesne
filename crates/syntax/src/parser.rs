@@ -1,10 +1,10 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, DeclaredScope, ExportParameter, Extension, External, ExternalArg,
-    FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker, Membership, Nearest,
-    Object, Perm, PermNode, PermissionExport, PointCheck, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures, Projection, Quantifier, Relation,
-    RelationKind, Repr, Require, RoleForm, RoleStore, SessionRel, SomeScope, Spec, Subject, Template, Term, TermKind, Topology, UngovEntry, Ungoverned,
-    ViaClosure, ViaColumn, ViaComposition, ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Beneath, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, DeclaredScope, ExportParameter, Extension, External,
+    ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker,
+    MarkerClosure, Membership, Nearest, Object, Perm, PermNode, PermissionExport, PointCheck, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures,
+    Projection, Quantifier, Relation, RelationKind, Repr, Require, RoleForm, RoleStore, SessionRel, SomeScope, Spec, Subject, Template, Term, TermKind,
+    Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -669,6 +669,13 @@ impl Parser {
             o.fields.push(f);
         } else if self.is_kw("marker") {
             self.parse_marker(o)?;
+        } else if self.is_kw("beneath") {
+            let pos = self.pos();
+            self.advance();
+            if o.beneath.is_some() {
+                return Err(self.err(format!("object {} declares `beneath` more than once", quote(&o.name))));
+            }
+            o.beneath = Some(Beneath { level: self.ident()?, pos });
         } else if self.is_kw("nested") {
             self.advance();
             let n = self.expect(Tok::Int)?;
@@ -1827,8 +1834,10 @@ impl Parser {
         self.expect_kw("confines")?;
         let ops = self.ident_list()?;
         let closure = if self.accept_kw("through") {
+            let nearest = self.accept_kw("nearest");
             self.expect_kw("closure")?;
-            Some(self.ident()?)
+            let table = self.ident()?;
+            Some(if nearest { MarkerClosure::Nearest(table) } else { MarkerClosure::Every(table) })
         } else {
             None
         };

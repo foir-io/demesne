@@ -1580,6 +1580,65 @@ answers only for a container the caller holds. For any other it is false,
 whatever the container's marker column holds, so calling it directly tells a
 caller nothing about another tenant's containers.
 
+### An object scoped above the level: `beneath`
+
+An object scoped only above a level may still place each row in one of the
+level's containers, by the level's column, without being contained by it:
+
+```demesne
+object ledger {
+  table ledgers
+  scoped estate
+  beneath space
+  permission view = @scoped @rls maps select
+  permission edit = @scoped @rls maps update
+}
+```
+
+`beneath <level>` says the rows sit beneath the level's containers. The
+level's markers then confine them exactly as they confine an object scoped at
+the level: a ledger naming a marked space is written only under the space's
+claim, and one naming no space is asked nothing. Nothing else about the object
+changes. The object must be scoped at exactly the levels above the level, and
+some object must declare the level.
+
+### The nearest marked container: `through nearest closure`
+
+With `through closure`, every marked container above the row's own confines
+it, so a container marked inside another is written under neither claim alone.
+When marked containers nest and the inner one should decide, read the closure
+for the nearest one instead:
+
+```demesne
+closure paths(anc, des)
+  base spaces(id, parent_id)
+  depth hops
+
+object space {
+  table spaces
+  level space
+  scoped estate
+  marker made_by from claim job_id confines insert, update, delete through nearest closure paths
+  marker kept_by from claim kind_id confines insert, update, delete through nearest closure paths
+}
+```
+
+The nearest container at or above the row's own that carries any of the
+object's nearest markers decides. Each of its markers applies, an unset one
+passing, and the marked containers above it don't confine. An unmarked
+container belongs to the nearest marked one above it.
+
+| The row's container | Nearest marked at or above | `job_id`, `kind_id` that write |
+|---|---|---|
+| unmarked, under no marked one | none | any |
+| `made_by` J, `kept_by` K | itself | J and K |
+| unmarked, under the one above | that one | J and K |
+| `made_by` J2, `kept_by` K2, under the first | itself | J2 and K2 |
+| `kept_by` K3 alone | itself | any job, and K3 |
+
+The closure must declare `depth`, which says which container is nearest, and
+every nearest marker of an object reads the same closure.
+
 ---
 
 ## Probes: asking about rows the caller cannot read

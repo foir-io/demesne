@@ -441,6 +441,8 @@ pub struct Object {
     pub projections: Vec<Projection>,
     pub point_checks: Vec<PointCheck>,
     pub markers: Vec<Marker>,
+    /// `beneath <level>`: the level whose containers the object's rows sit beneath, by the level's column, though the object is scoped only above it.
+    pub beneath: Option<Beneath>,
     /// `nested <n>`: how many compositions deep an element is judged at another row of the object.
     pub nested: Option<usize>,
     pub relations: Vec<Relation>,
@@ -1478,8 +1480,34 @@ pub struct Marker {
     pub col: String,
     pub claim: String,
     pub ops: Vec<String>,
-    /// `through closure <table>`: a marked row above the row's own container confines too.
-    pub closure: Option<String>,
+    /// `through [nearest] closure <table>`: which marked rows above the row's own container confine too.
+    pub closure: Option<MarkerClosure>,
+    pub pos: Pos,
+}
+
+/// The closure a `marker` reads above a row's own container, and which of the marked containers there confine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarkerClosure {
+    /// `through closure <table>`: every marked container above confines.
+    Every(String),
+    /// `through nearest closure <table>`: the nearest container at or above that carries any of its object's nearest markers decides, and those above it don't confine.
+    Nearest(String),
+}
+
+impl MarkerClosure {
+    /// The closure's table.
+    #[must_use]
+    pub fn table(&self) -> &str {
+        match self {
+            Self::Every(table) | Self::Nearest(table) => table,
+        }
+    }
+}
+
+/// A `beneath` clause: an object scoped only above a level whose rows still name one of the level's containers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Beneath {
+    pub level: String,
     pub pos: Pos,
 }
 
