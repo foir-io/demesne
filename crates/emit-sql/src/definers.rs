@@ -19,8 +19,8 @@ use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    ArgSrc, Closure, DeclaredScope, Grant, Nearest, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Subject, Term, ViaClosure, ViaColumn,
-    ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
+    ArgSrc, Closure, DeclaredScope, Grant, MarkerClosure, Nearest, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Subject, Term, ViaClosure,
+    ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -2153,17 +2153,43 @@ impl Sql<'_> {
                 "p_claim IS NOT DISTINCT FROM {} AND EXISTS (SELECT 1 FROM {t} m WHERE m.{pk} = p_container AND ({hold}) AND (m.{col} IS NULL OR m.{col}::text = p_claim))",
                 self.claim(&m.claim)
             );
-            if let Some(c) = m.closure.as_deref().and_then(|c| self.s.closure_by_table(c)) {
-                write!(
-                    body,
-                    " AND NOT EXISTS (SELECT 1 FROM {} c JOIN {t} m ON m.{pk} = c.{} WHERE c.{} = p_container AND m.{col} IS NOT NULL AND m.{col}::text IS DISTINCT FROM p_claim)",
-                    c.table, c.ancestor_col, c.descendant_col
-                )
-                .expect("fmt::Write for String never fails");
+            if let Some(clause) = self.marker_closure_clause(obj, m)? {
+                body.push_str(&clause);
             }
             out.push(GenFn { name, params: vec![Param::id("p_container"), Param::typed("p_claim", "text")], body, ..Default::default() });
         }
         Ok(())
+    }
+
+    fn marker_closure_clause(&self, obj: &Object, m: &demesne_syntax::Marker) -> R<Option<String>> {
+        let Some((kind, c)) = m.closure.as_ref().and_then(|k| self.s.closure_by_table(k.table()).map(|c| (k, c))) else { return Ok(None) };
+        let (t, pk, col) = (&obj.table, obj.pk(), &m.col);
+        let (clo, anc, desc) = (&c.table, &c.ancestor_col, &c.descendant_col);
+        Ok(Some(match kind {
+            MarkerClosure::Every(_) => format!(
+                " AND NOT EXISTS (SELECT 1 FROM {clo} c JOIN {t} m ON m.{pk} = c.{anc} WHERE c.{desc} = p_container AND m.{col} IS NOT NULL AND m.{col}::text IS DISTINCT FROM p_claim)"
+            ),
+            MarkerClosure::Nearest(_) => {
+                let depth = c.depth_col.as_deref().ok_or_else(|| {
+                    format!(
+                        "object {}: marker {} reads closure {} through its nearest marked container, which declares no `depth`",
+                        quote(&obj.name),
+                        quote(col),
+                        quote(clo)
+                    )
+                })?;
+                let marked = obj
+                    .markers
+                    .iter()
+                    .filter(|n| matches!(n.closure, Some(MarkerClosure::Nearest(_))))
+                    .map(|n| format!("m.{} IS NOT NULL", n.col))
+                    .collect::<Vec<_>>()
+                    .join(" OR ");
+                format!(
+                    " AND NOT EXISTS (SELECT 1 FROM (SELECT m.{col} AS v FROM {clo} c JOIN {t} m ON m.{pk} = c.{anc} WHERE c.{desc} = p_container AND ({marked}) ORDER BY c.{depth} LIMIT 1) n WHERE n.v IS NOT NULL AND n.v::text IS DISTINCT FROM p_claim)"
+                )
+            }
+        }))
     }
 
     fn def_emit_nearests(&self, out: &mut Vec<GenFn>) -> R<()> {

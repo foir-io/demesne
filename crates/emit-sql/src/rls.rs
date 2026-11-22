@@ -1527,7 +1527,8 @@ impl Sql<'_> {
 
     fn marker_conditions(&self, obj: &Object, op: &str) -> Vec<String> {
         let mut out = Vec::new();
-        for container in self.s.objects.iter().filter(|c| c.is_level_entity() && c.table != obj.table && contains(&obj.scoped, c.level())) {
+        let beneath = |level: &str| contains(&obj.scoped, level) || obj.beneath.as_ref().is_some_and(|b| b.level == level);
+        for container in self.s.objects.iter().filter(|c| c.is_level_entity() && c.table != obj.table && beneath(c.level())) {
             let col = self.s.scope_col(obj, container.level());
             for m in container.markers.iter().filter(|m| m.ops.iter().any(|o| o == op)) {
                 out.push(format!("({col} IS NULL OR {}.{}({col}, {}))", self.s.definer_schema(), Self::marker_fn(container, m), self.claim(&m.claim)));

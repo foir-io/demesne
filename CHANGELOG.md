@@ -1,5 +1,77 @@
 # Changelog
 
+## v6.0.0
+
+The crates are 6.0.0 because public types of `demesne-syntax` change:
+`Object` gains `beneath`, and `Marker`'s `closure` becomes a `MarkerClosure`,
+which says which marked containers above a row's own confine it. A spec that
+uses neither construct below emits the same SQL, definers, manifest and
+application surface as v5.0.1. The Go module's API doesn't change, so it stays
+`go/v1.6.0`.
+
+### `beneath`: an object scoped above a level takes its containers' markers
+
+```demesne
+object space {
+  table spaces
+  level space
+  scoped estate
+  marker made_by from claim job_id confines insert, update, delete
+}
+
+object ledger {
+  table ledgers
+  scoped estate
+  beneath space
+}
+```
+
+A marker confined the rows of every object scoped at its level and no other.
+An object scoped only above the level, whose rows still name one of the
+level's containers by the level's column, took none of its markers, so a row
+placed in a marked container was written by whoever the object's own rules
+admit. `beneath <level>` says the object's rows sit beneath the level's
+containers. Each marker on the level then joins the object's
+`<table>_<operation>_require`, its point checks and any predicate another
+object borrows from it, as `(<column> IS NULL OR
+<table>_<column>_marker_admits(<column>, <claim>))`, exactly as it does for an
+object scoped at the level. The object's other rules don't change, and the
+clause emits no function of its own.
+
+It is refused on a level the topology lacks, a virtual level, a level the
+object is scoped at, an object not scoped at exactly the levels above it, a
+level no object declares, and a second `beneath` on one object.
+
+### `through nearest closure`: the nearest marked container decides
+
+```demesne
+closure paths(anc, des)
+  base spaces(id, parent_id)
+  depth hops
+
+object space {
+  table spaces
+  level space
+  scoped estate
+  marker made_by from claim job_id confines insert, update, delete through nearest closure paths
+  marker kept_by from claim kind_id confines insert, update, delete through nearest closure paths
+}
+```
+
+`through closure` confines a row by every marked container above its own, so
+a container marked inside another marked one is written under neither claim
+alone. `through nearest closure <table>` lets the nearest container at or
+above the row's own that carries any of the object's nearest markers decide:
+each of that container's markers applies, an unset one passing, and the marked
+containers above it don't confine. A container that carries none of them
+belongs to the nearest one above it that does. The closure must declare
+`depth`, and every nearest marker of an object reads the same closure.
+
+`demesne_syntax::Object` gains `beneath`, an `Option` of the new `Beneath`.
+`demesne_syntax::Marker`'s `closure` is an `Option` of the new
+`MarkerClosure`, `Every` or `Nearest` with the closure's table, in place of
+the table's name.
+
 ## v5.0.1
 
 A spec that compiled under v5.0.0 emits the same SQL, definers, manifest and
