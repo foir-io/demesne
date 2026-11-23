@@ -598,10 +598,21 @@ pub enum Quantifier {
     None,
 }
 
+/// How many declared rows an `every` asks for before its brackets decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Counted {
+    /// Any number, none included: an `every` over no rows holds.
+    AnyNumber,
+    /// `nonempty`: at least one row is counted, so an `every` over no rows fails.
+    AtLeastOne,
+}
+
 /// An `every` or `none` scope inside a `some`: the rows a table declares for the bound element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclaredScope {
     pub quantifier: Quantifier,
+    /// How many counted rows an `every` needs: `nonempty` for at least one.
+    pub counted: Counted,
     pub var: String,
     pub table: String,
     pub key_col: String,
@@ -1098,7 +1109,11 @@ impl Builtin {
                     Quantifier::None => "none",
                 };
                 let filter = scope.filter.as_ref().map(|(c, v)| format!(" where {c} = {}", quote(v))).unwrap_or_default();
-                format!("{word} {} in {}({}){filter} ({})", scope.var, scope.table, scope.key_col, scope.body.display())
+                let counted = match scope.counted {
+                    Counted::AnyNumber => "",
+                    Counted::AtLeastOne => " nonempty",
+                };
+                format!("{word} {} in {}({}){filter}{counted} ({})", scope.var, scope.table, scope.key_col, scope.body.display())
             }
             Builtin::Slot { col, val } => format!("@slot({col}, {})", quote(val)),
             Builtin::SlotHeld { col, claim } => format!("@slot({col} held {claim})"),

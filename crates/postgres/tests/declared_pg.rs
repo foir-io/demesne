@@ -8,8 +8,12 @@ const CALLER: &str = "demesne_decl_caller";
 const ANCHORS: &str = "(@slot(kind, \"edge\") and edge_slot) + (@slot(kind, \"grant\") and grantee:read) + (@slot(kind, \"borrow\") and borrow)";
 
 fn spec() -> String {
+    spec_with("", ROWS, AUTH)
+}
+
+fn spec_with(counted: &str, rows: &str, auth: &str) -> String {
     format!(
-        "definers schema \"{AUTH}\"\ntables schema \"{ROWS}\"\ntopology {{ level estate level space parent estate }}\nsubject member {{ anchor space; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate > space\n  relation owner: member via owner_id\n  relation grantee: member via grant doc_acl(doc_id, principal_kind, principal_id, access)\n  relation edge_slot: member via edge doc_edges(principal_id, object_id) key rule_id slot slot\n  relation borrow: member via composition doc_reads(descendant_id, ancestor_id) slot first_field from param\n  permission view = owner + some r in rules_live prefix \"read.\" held rules_held (every s in rule_slots(rule_id) where role = \"require\" ({ANCHORS}) and none s in rule_slots(rule_id) where role = \"except\" ({ANCHORS})) @rls maps select\n}}\n"
+        "definers schema \"{auth}\"\ntables schema \"{rows}\"\ntopology {{ level estate level space parent estate }}\nsubject member {{ anchor space; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate > space\n  relation owner: member via owner_id\n  relation grantee: member via grant doc_acl(doc_id, principal_kind, principal_id, access)\n  relation edge_slot: member via edge doc_edges(principal_id, object_id) key rule_id slot slot\n  relation borrow: member via composition doc_reads(descendant_id, ancestor_id) slot first_field from param\n  permission view = owner + some r in rules_live prefix \"read.\" held rules_held (every s in rule_slots(rule_id) where role = \"require\"{counted} ({ANCHORS}) and none s in rule_slots(rule_id) where role = \"except\" ({ANCHORS})) @rls maps select\n}}\n"
     )
 }
 
@@ -63,14 +67,18 @@ const HOPS: [(&str, &str, &str); 5] = [
 const ALL: [&str; 8] = ["read.free", "read.one", "read.two", "read.bar", "read.grant", "read.team", "read.both", "read.xb"];
 
 fn install(db: &mut Client) {
-    let s = demesne_syntax::parse(&spec()).expect("the spec parses");
+    install_as(db, &spec(), ROWS, AUTH);
+}
+
+fn install_as(db: &mut Client, src: &str, rows_schema: &str, auth_schema: &str) {
+    let s = demesne_syntax::parse(src).expect("the spec parses");
     demesne_emit_sql::validate(&s).expect("the spec validates");
     let sql = demesne_emit_sql::Sql::new(&s);
     let (defs, rls) = (sql.emit_definers().expect("the definers compile"), sql.emit_rls().expect("the policies compile"));
     db.batch_execute(&format!(
-        "DROP SCHEMA IF EXISTS {ROWS} CASCADE; DROP SCHEMA IF EXISTS {AUTH} CASCADE; CREATE SCHEMA {ROWS}; CREATE SCHEMA {AUTH};
+        "DROP SCHEMA IF EXISTS {rows_schema} CASCADE; DROP SCHEMA IF EXISTS {auth_schema} CASCADE; CREATE SCHEMA {rows_schema}; CREATE SCHEMA {auth_schema};
          DO $$ BEGIN CREATE ROLE {CALLER} NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
-         SET search_path = {ROWS};
+         SET search_path = {rows_schema};
          CREATE TABLE docs (id text PRIMARY KEY, estate_id text, space_id text, owner_id text, rules_live text[]);
          CREATE TABLE doc_edges (principal_id text, object_id text, rule_id text, slot integer);
          CREATE TABLE doc_acl (doc_id text, principal_kind text, principal_id text, access text);
@@ -96,7 +104,8 @@ fn install(db: &mut Client) {
     for stmt in [demesne_emit_sql::definers_sql(&defs), rls.enablement_sql(), rls.policy_sql(CALLER)] {
         db.batch_execute(&stmt).unwrap_or_else(|e| panic!("apply: {e}\n{stmt}"));
     }
-    db.batch_execute(&format!("GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER}; GRANT SELECT ON {ROWS}.docs TO {CALLER};")).expect("grants");
+    db.batch_execute(&format!("GRANT USAGE ON SCHEMA {rows_schema}, {auth_schema} TO {CALLER}; GRANT SELECT ON {rows_schema}.docs TO {CALLER};"))
+        .expect("grants");
 }
 
 type Slot = (&'static str, &'static str, &'static str, &'static str, &'static str);
@@ -183,4 +192,31 @@ fn every_declared_row_must_match_and_no_excepted_one_may() {
         assert_eq!(visible(&mut db, who, &ALL).contains(doc), want, "{who} on {doc}: {why}");
     }
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {ROWS} CASCADE; DROP SCHEMA {AUTH} CASCADE;")).expect("drop the schemas");
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_nonempty_every_admits_by_no_element_whose_declared_rows_are_none_or_gone() {
+    let url =
+        std::env::var("DEMESNE_PG_URL").ok().filter(|v| !v.is_empty()).expect("set $DEMESNE_PG_URL to run the declared-row checks against a live Postgres");
+    let mut db = Client::connect(&url, NoTls).expect("connect to $DEMESNE_PG_URL");
+    let (rows, auth) = ("demesne_decl_nonempty_rows", "demesne_decl_nonempty_auth");
+    let src = spec_with(" nonempty", rows, auth);
+    assert!(src.contains("where role = \"require\" nonempty ("), "{src}");
+    install_as(&mut db, &src, rows, auth);
+    for (who, doc, want, why) in [
+        ("eve", "d_free", false, "an element that declares no row admits nobody"),
+        ("bob", "d_free", false, "nor anyone who meets what every other element requires"),
+        ("bob", "d_one", true, "its one declared edge"),
+        ("bob", "d_two", true, "both declared edges"),
+        ("cat", "d_two", false, "one of two declared edges"),
+        ("ann", "d_free", true, "the owner reads it by its own term"),
+    ] {
+        assert_eq!(visible(&mut db, who, &ALL).contains(doc), want, "{who} on {doc}: {why}");
+    }
+    db.batch_execute(&format!("DELETE FROM {rows}.rule_slots WHERE rule_id = 'read.one'")).expect("the rows removed");
+    assert!(!visible(&mut db, "bob", &ALL).contains("d_one"), "an element whose declared rows are gone admits nobody");
+    assert!(visible(&mut db, "bob", &ALL).contains("d_two"), "another element's rows still decide");
+    assert!(visible(&mut db, "ann", &ALL).contains("d_one"), "the owner still reads it");
+    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");
 }

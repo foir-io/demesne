@@ -53,7 +53,7 @@ const fn obj(name: &'static str, view: &'static str) -> Obj {
     Obj { name, wildcard: false, view, extra: "" }
 }
 
-const OBJECTS: [Obj; 19] = [
+const OBJECTS: [Obj; 21] = [
     obj("plain", "owner + grantee:read"),
     obj("byrole", "owner + editor + grantee:read"),
     obj("held", "owner + @holds(docs:read) + grantee:read"),
@@ -71,6 +71,8 @@ const OBJECTS: [Obj; 19] = [
     Obj { name: "req", wildcard: false, view: "owner + grantee:read", extra: "require view = @self(author_id)" },
     obj("negrow", r#"(owner and not @row(status, "archived")) + grantee:read"#),
     obj("scopedby", "(@scoped and owner) + grantee:read"),
+    obj("somein", r#"some r in tags prefix "open." ((owner and @claim("tier", "gold")) + grantee:read)"#),
+    obj("condonly", r#"@kind("auditor") + (mode visibility = "open" and @claim("tier", "gold"))"#),
     Obj { name: "ext", wildcard: false, view: "owner + grantee:read", extra: "require view = @external(tier_allows, status, @tier)" },
     Obj {
         name: "admitted",
@@ -117,12 +119,12 @@ fn tables() -> String {
         let n = o.name;
         write!(
             b,
-            "CREATE TABLE {n}s (id text PRIMARY KEY, tenant_id text, project_id text, owner_id text, author_id text, status text, visibility text);
+            "CREATE TABLE {n}s (id text PRIMARY KEY, tenant_id text, project_id text, owner_id text, author_id text, status text, visibility text, tags text[]);
              INSERT INTO {n}s VALUES
-               ('d1', 't1', 'p1', 'm1', 's_viewer', 'open', 'open'),
-               ('d2', 't1', 'p2', 'm2', 's_owner', 'archived', 'private'),
-               ('d3', 't2', 'p1', 'm1', 'op1', 'open', 'open'),
-               ('d4', 't1', NULL, 'm2', NULL, NULL, NULL);
+               ('d1', 't1', 'p1', 'm1', 's_viewer', 'open', 'open', '{{open.a}}'),
+               ('d2', 't1', 'p2', 'm2', 's_owner', 'archived', 'private', '{{closed.b}}'),
+               ('d3', 't2', 'p1', 'm1', 'op1', 'open', 'open', '{{closed.c,open.c}}'),
+               ('d4', 't1', NULL, 'm2', NULL, NULL, NULL, NULL);
              CREATE TABLE {n}_acl (doc_id text, principal_kind text, principal_id text, access text);
              INSERT INTO {n}_acl VALUES ('d1', 'member', 'm2', 'read'), ('d2', 'member', 'm1', 'read'), ('d3', 'member', 'm2', 'read'), ('d4', 'member', 'm1', 'read');\n"
         )
@@ -274,6 +276,7 @@ fn admits_is_exact_and_the_listing_never_names_fewer() {
     let mut failures = admits_failures(&mut db);
     failures.extend(listing_failures(&mut db));
     failures.extend(narrowing_failures(&mut db));
+    failures.extend(candidate_failures(&mut db));
     failures.extend(privilege_failures(&mut db));
     assert!(failures.is_empty(), "{} failures, first 20:\n{}", failures.len(), failures.iter().take(20).cloned().collect::<Vec<_>>().join("\n"));
 }
@@ -339,6 +342,8 @@ fn narrowing_failures(db: &mut Client) -> Vec<String> {
         ("heldby", "d1", "staff", "s_writer", true),
         ("heldby", "d1", "staff", "s_viewer", false),
         ("heldby", "d1", "member", "m1", true),
+        ("somein", "d1", "member", "m1", true),
+        ("somein", "d2", "member", "m2", false),
     ];
     let mut failures = Vec::new();
     for (table, row, kind, id, want) in cases {
@@ -348,6 +353,42 @@ fn narrowing_failures(db: &mut Client) -> Vec<String> {
         }
     }
     failures
+}
+
+fn admits(db: &mut Client, table: &str, row: &str, claims: &str) -> bool {
+    db.query_one(&format!("SELECT ad_auth.{table}s_admits($1, $2::text::jsonb)"), &[&row, &claims]).expect("admits").get(0)
+}
+
+fn candidate_failures(db: &mut Client) -> Vec<String> {
+    let mut failures = Vec::new();
+    let some = listing(db, "somein", "d1");
+    if !lists(&some, "member", "m1") || some.iter().any(|r| r.id.is_none()) {
+        failures.push(format!("somein/d1: the some's owner is listed by name and nobody unnamed: {some:?}"));
+    }
+    let owner = r#"{"member_id":"m1","tenant_id":"t1","project_id":"p1"}"#;
+    let gold = r#"{"member_id":"m1","tenant_id":"t1","project_id":"p1","tier":"gold"}"#;
+    if admits(db, "somein", "d1", owner) {
+        failures.push("somein/d1: admits the listed owner without the claim the some's brackets require".into());
+    }
+    if !admits(db, "somein", "d1", gold) {
+        failures.push("somein/d1: refuses the listed owner who carries the claim".into());
+    }
+    let conditions = listing(db, "condonly", "d1");
+    let auditor = Claims(vec![("kind", "auditor"), ("tenant_id", "t1"), ("project_id", "p1")]);
+    if conditions.iter().any(|r| r.id.is_some()) || !covers(&conditions, &auditor) {
+        failures.push(format!("condonly/d1: only conditional rows, one of them the auditor's: {conditions:?}"));
+    }
+    if admits(db, "condonly", "d2", r#"{"kind":"courier","tier":"gold","tenant_id":"t1","project_id":"p2"}"#) {
+        failures.push("condonly/d2: admits a courier the conditional rows list as no one on a private row".into());
+    }
+    if !admits(db, "condonly", "d2", &auditor_at("p2")) {
+        failures.push("condonly/d2: refuses the auditor its conditional row lists".into());
+    }
+    failures
+}
+
+fn auditor_at(project: &str) -> String {
+    format!(r#"{{"kind":"auditor","tenant_id":"t1","project_id":"{project}"}}"#)
 }
 
 fn privilege_failures(db: &mut Client) -> Vec<String> {

@@ -565,6 +565,24 @@ conditional function, reports `is_conditional()`, and whose `accessors_sql()`
 selects the claim columns. A caller written against the conditional constructor
 stays correct if a claim is added to the spec later.
 
+A union whose every arm is conditional, such as `@kind("auditor") + (mode
+visibility = "open" and @claim("tier", "gold"))`, names nobody, so its own
+branch lists no row and its listing is its conditional rows alone. Each arm is
+one of them, so no caller an arm admits is left out.
+
+A **`some`** whose brackets name principals is listed through rather than as one
+condition. When each branch of its brackets is a relation that names principals
+(a column, a grant, a group, or a closure no claim confines), alone or beside
+conditions on the request, the row or its mode, or is such a condition alone,
+the listing names those principals on the rows whose column holds an element
+the term binds by its prefix, and lists the conditions as conditional rows on
+the same rows. The `held` claim is no row's to state, so it is left to
+`<table>_admits` as a claim conjunct is: the listing names candidates the claim
+may refuse, and never fewer callers than the policy admits. Any other `some`,
+one whose brackets test the bound element or a declared row, or use a keyed
+relation, a composition or a borrow, stays one conditional row with the `some`
+source, admitting every caller on a row whose column holds an element.
+
 #### One tail, two shapes
 
 A permission carrying `and`/`not` composes into a single SQL expression; a pure
@@ -1209,7 +1227,8 @@ Inside the brackets:
   and `where <column> = "<value>"` keeps only rows holding the value.
 
 One element is bound at a time: a `some` does not nest. A keyed relation is
-refused outside a `some`.
+refused outside a `some`. How an object's reader listing names the callers a
+`some` admits is under the conditional enumerator, above.
 
 ### `every` and `none`: what a table declares for the element
 
@@ -1235,6 +1254,15 @@ JSON array. A keyed edge or a `via composition` with `slot <column> [from
 `none` bars when the brackets cannot be decided for a row, and `every` fails on
 one. A plain `not` keeps its meaning: it is true of what is not known to be
 true.
+
+An `every` over no rows holds, so an element that declares none, or whose rows
+were removed by whatever route, is held back by nothing. Where that must
+refuse, write `nonempty` after the table and its `where`: `every s in
+rule_slots(rule) where role = "require" nonempty ( … )` holds only when at
+least one counted row exists and the brackets hold for each. It compiles to
+`EXISTS (<the counted rows>) AND NOT EXISTS (<a counted row the brackets
+fail>)`. `nonempty` belongs to `every` alone: a `none` over no rows already
+holds, so `none … nonempty` is refused.
 
 A permission's declared rows come through one generated function per table
 and key, `<table>_declared_by_<key>`, which returns the columns permissions

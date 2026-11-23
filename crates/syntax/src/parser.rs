@@ -1,6 +1,6 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Beneath, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, DeclaredScope, ExportParameter, Extension, External,
+    Admit, ArgSrc, Beneath, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, Counted, DeclaredScope, ExportParameter, Extension, External,
     ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker,
     MarkerClosure, Membership, Nearest, Object, Perm, PermNode, PermissionExport, PointCheck, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures,
     Projection, Quantifier, Relation, RelationKind, Repr, Require, RoleForm, RoleStore, SessionRel, SomeScope, Spec, Subject, Template, Term, TermKind,
@@ -1320,6 +1320,14 @@ impl Parser {
         let table = self.ident()?;
         let key_col = self.paren_ident()?;
         let filter = self.parse_where()?;
+        let counted = if self.accept_kw("nonempty") {
+            if quantifier == Quantifier::None {
+                return Err(self.err("`nonempty` counts the rows an `every` reads: a `none` over no rows already holds"));
+            }
+            Counted::AtLeastOne
+        } else {
+            Counted::AnyNumber
+        };
         if self.depth == MAX_NESTING {
             return Err(self.err(format!("parentheses nest more than {MAX_NESTING} deep")));
         }
@@ -1328,7 +1336,7 @@ impl Parser {
         let body = self.parse_perm_union()?;
         self.depth -= 1;
         self.expect(Tok::RParen)?;
-        Ok(Builtin::Declared(Box::new(DeclaredScope { quantifier, var, table, key_col, filter, body })))
+        Ok(Builtin::Declared(Box::new(DeclaredScope { quantifier, counted, var, table, key_col, filter, body })))
     }
 
     fn parse_some(&mut self) -> PResult<Builtin> {

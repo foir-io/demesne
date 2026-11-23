@@ -1,7 +1,7 @@
 use crate::ConditionalAdmission;
 use crate::analysis::Rels;
 use demesne_runtime::quote_literal;
-use demesne_syntax::{PermNode, Repr, Term};
+use demesne_syntax::{PermNode, Repr, SomeScope, Term};
 
 pub fn accessor_tree_op(n: &PermNode) -> &'static str {
     match n {
@@ -39,6 +39,16 @@ pub fn row_term_sql(t: &Term) -> String {
         return format!("{} IS NULL", t.row_col());
     }
     format!("{} = {}", t.row_col(), quote_literal(t.row_val()))
+}
+
+/// Returns the SQL that holds of a row when its `some` column has an element the term binds by its prefix, the
+/// `held` claim aside: what a reader listing applies to the principals the term's brackets name.
+#[must_use]
+pub fn some_row_sql(scope: &SomeScope) -> String {
+    match &scope.prefix {
+        Some(prefix) => format!("EXISTS (SELECT 1 FROM unnest({}) AS demesne_element(v) WHERE starts_with({ELEMENT}, {}))", scope.col, quote_literal(prefix)),
+        None => format!("cardinality({}) > 0", scope.col),
+    }
 }
 
 /// Returns the SQL a `mode` term tests on the row, without the plane it may be scoped to.

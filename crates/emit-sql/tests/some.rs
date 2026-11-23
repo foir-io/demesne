@@ -176,3 +176,73 @@ fn some_and_its_keyed_terms_are_refused_where_they_bind_nothing() {
     );
     assert!(demesne_syntax::parse(&three).expect_err("three columns").to_string().contains("a keyed edge names 2 columns (principal, object), got 3"));
 }
+
+fn shared(expr: &str) -> String {
+    format!(
+        "{HEAD}object doc {{\n  table docs\n  scoped estate > space\n  relation owner: member via owner_id\n  relation grantee: member via grant doc_acl(doc_id, principal_kind, principal_id, access)\n  relation parent: member via composition docs(id, parent_id)\n  permission view = {expr} @rls maps select\n}}\n"
+    )
+}
+
+fn listing_body(src: &str, name: &str) -> String {
+    definers(src).into_iter().find(|d| d.name == name).unwrap_or_else(|| panic!("no {name} in\n{src}")).create_sql()
+}
+
+#[test]
+fn a_union_of_conditions_alone_lists_only_its_conditional_rows() {
+    let src = shared("@kind(\"auditor\") + (mode visibility = \"open\" and @claim(\"tier\", \"gold\"))");
+    let s = compile(&src).expect("compiles");
+    let rows = s.conditional_accessors(s.object_by_name("doc").expect("the object"));
+    assert_eq!(
+        rows.iter().map(|r| (r.source.as_str(), r.row_cond.as_str(), r.claims.iter().map(|c| c.key.as_str()).collect::<Vec<_>>())).collect::<Vec<_>>(),
+        [("claim", "", vec!["kind"]), ("mode", "visibility = 'open'", vec!["tier"])],
+        "{rows:#?}"
+    );
+    let listing = listing_body(&src, "docs_accessors_conditional");
+    assert!(listing.contains("WHERE false"), "the union names nobody, so its own branch lists no row:\n{listing}");
+    assert!(!listing.contains("'owner'::text"), "{listing}");
+}
+
+#[test]
+fn a_some_naming_principals_lists_them_on_the_rows_it_binds_and_no_one_else() {
+    let src = shared("some r in tags prefix \"open.\" ((owner and @claim(\"tier\", \"gold\")) + grantee:read)");
+    let s = compile(&src).expect("compiles");
+    let rows = s.conditional_accessors(s.object_by_name("doc").expect("the object"));
+    assert!(rows.is_empty(), "the brackets name every caller they admit, so no row admits anyone: {rows:#?}");
+    let listing = listing_body(&src, "docs_accessors");
+    let bound = format!("EXISTS (SELECT 1 FROM unnest(tags) AS demesne_element(v) WHERE starts_with({EL}, 'open.'))");
+    let named = format!("a(source, principal_kind, principal_id, access)\n    WHERE EXISTS (SELECT 1 FROM docs WHERE id = p_id AND {bound})");
+    assert!(listing.contains(&named), "the owner is listed only where an element is bound:\n{listing}");
+    assert!(listing.contains("'owner'::text, 'member'::text, owner_id"), "{listing}");
+
+    for (what, expr) in [
+        ("a composition inside", "some r in tags (owner + parent)"),
+        ("an element test inside", "some r in tags ((@element prefix \"x.\" and owner) + grantee:read)"),
+        ("conditions alone inside", "some r in tags (@kind(\"auditor\"))"),
+    ] {
+        let s = compile(&shared(expr)).unwrap_or_else(|e| panic!("{what}: {e}"));
+        let rows = s.conditional_accessors(s.object_by_name("doc").expect("the object"));
+        assert_eq!(
+            rows.iter().map(|r| (r.source.as_str(), r.row_cond.as_str())).collect::<Vec<_>>(),
+            [("some", "cardinality(tags) > 0")],
+            "{what}: a some the listing can't name through stays one row admitting anyone it binds: {rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_condition_beside_the_principals_a_some_names_is_listed_on_the_rows_it_binds() {
+    let bound = format!("EXISTS (SELECT 1 FROM unnest(tags) AS demesne_element(v) WHERE starts_with({EL}, 'open.'))");
+    let src = shared("some r in tags prefix \"open.\" (owner + @kind(\"auditor\"))");
+    let s = compile(&src).expect("compiles");
+    let rows = s.conditional_accessors(s.object_by_name("doc").expect("the object"));
+    assert_eq!(
+        rows.iter().map(|r| (r.source.as_str(), r.row_cond.as_str(), r.claims.iter().map(|c| c.key.as_str()).collect::<Vec<_>>())).collect::<Vec<_>>(),
+        [("claim", bound.as_str(), vec!["kind"])],
+        "{rows:#?}"
+    );
+
+    let composed = shared("(owner and @row(status, \"open\")) + some r in tags prefix \"open.\" (grantee:read + @kind(\"auditor\"))");
+    let listing = listing_body(&composed, "docs_accessors_conditional");
+    let named = format!("a(source, principal_kind, principal_id, access)\n    WHERE EXISTS (SELECT 1 FROM docs WHERE id = p_id AND {bound})");
+    assert!(listing.contains(&named), "a union that composes still names the grantees the some binds:\n{listing}");
+}

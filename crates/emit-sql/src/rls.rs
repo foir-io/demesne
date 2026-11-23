@@ -12,8 +12,8 @@ use demesne_model::conditional::{ELEMENT, SLOT, mode_row_sql, row_term_sql};
 use demesne_model::topology;
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Admit, ArgSrc, Grant, Guard, GuardOp, Level, Membership, Object, Perm, PermNode, Quantifier, Relation, Repr, Require, Subject, Term, ViaClosure, ViaColumn,
-    ViaComposition, ViaGrant, ViaGroup, ViaObject,
+    Admit, ArgSrc, Counted, Grant, Guard, GuardOp, Level, Membership, Object, Perm, PermNode, Quantifier, Relation, Repr, Require, Subject, Term, ViaClosure,
+    ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject,
 };
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as _;
@@ -913,8 +913,15 @@ impl Sql<'_> {
             (Quantifier::None, false) => "IS NOT FALSE",
             (Quantifier::None, true) => "IS TRUE",
         };
+        let counted = conds.clone();
         conds.push(format!("({body}) {fails}"));
-        format!("NOT EXISTS (SELECT 1 FROM {}.{rows}({key}) AS {SLOT} WHERE {})", self.s.definer_schema(), conds.join(" AND "))
+        let from = format!("{}.{rows}({key}) AS {SLOT}", self.s.definer_schema());
+        let decided = format!("NOT EXISTS (SELECT 1 FROM {from} WHERE {})", conds.join(" AND "));
+        match scope.counted {
+            Counted::AnyNumber => decided,
+            Counted::AtLeastOne if counted.is_empty() => format!("(EXISTS (SELECT 1 FROM {from}) AND {decided})"),
+            Counted::AtLeastOne => format!("(EXISTS (SELECT 1 FROM {from} WHERE {}) AND {decided})", counted.join(" AND ")),
+        }
     }
 
     pub(crate) fn flipped(&self) -> Self {
