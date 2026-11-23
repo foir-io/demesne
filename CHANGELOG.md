@@ -1,6 +1,20 @@
 # Changelog
 
-## v6.0.1
+## v7.0.0
+
+The crates are 7.0.0 because a public type of `demesne-syntax` changes:
+`DeclaredScope` gains `counted`, a `Counted`. A spec that uses none of the
+forms below emits the same SQL, definers, manifest and application surface as
+v6.0.0. The Go module's API doesn't change, so it stays `go/v1.6.0`.
+
+### `every … nonempty`: at least one declared row
+
+An `every` over no rows holds, so an element that declares no row, or whose
+rows were removed, was held back by nothing. `every s in <table>(<key>) [where
+<column> = "<value>"] nonempty ( … )` also needs at least one counted row,
+compiling to `EXISTS (<the counted rows>) AND NOT EXISTS (<a counted row the
+brackets fail>)`. It is opt-in, so a plain `every` keeps its meaning, and a
+`none … nonempty` is refused.
 
 ### A reader listing names through a `some`, and lists a union of conditions alone
 
@@ -14,9 +28,6 @@
   conditional rows on those rows, in place of one conditional row admitting
   every caller. `held` is left to `<table>_admits`, as a claim conjunct is. Any
   other `some` lists as before.
-
-A spec with neither emits the same SQL, definers, manifest and application
-surface as v6.0.0.
 
 ## v6.0.0
 

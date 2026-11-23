@@ -45,6 +45,25 @@ fn every_refuses_when_a_declared_row_fails_and_none_when_one_matches() {
 }
 
 #[test]
+fn a_nonempty_every_also_needs_a_counted_row_so_no_declared_row_admits_nobody() {
+    let expr = "some r in rules_live (every s in rule_slots(rule_id) where role = \"require\" nonempty (@slot(kind, \"edge\") and edge_slot))";
+    assert_eq!(compile(&view(expr)).expect("compiles").objects[0].perms[0].tree.display(), expr);
+    let edge = "(demesne_slot.kind = 'edge') AND (auth.doc_edge_slot_keyed(SUB, docs.id, demesne_element.v, demesne_slot.slot))";
+    let (using, _) = emitted(&view(expr));
+    let want = format!(
+        "(EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'require') AND NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'require' AND ({edge}) IS NOT TRUE))"
+    );
+    assert!(using.contains(&want), "{using}");
+    let (unfiltered, _) = emitted(&view("some r in rules_live (every s in rule_slots(rule_id) nonempty (@slot(kind, \"edge\") and edge_slot))"));
+    assert!(unfiltered.contains(&format!("(EXISTS (SELECT 1 FROM {ROWS}) AND NOT EXISTS (SELECT 1 FROM {ROWS} WHERE ({edge}) IS NOT TRUE))")), "{unfiltered}");
+    let (plain, _) = emitted(&view("some r in rules_live (every s in rule_slots(rule_id) (@slot(kind, \"edge\") and edge_slot))"));
+    assert!(
+        !plain.contains("EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule_id(demesne_element.v) AS demesne_slot)"),
+        "a plain every counts nothing: {plain}"
+    );
+}
+
+#[test]
 fn the_declared_rows_come_through_one_definer_that_returns_only_the_columns_the_spec_reads() {
     let (_, defs) = emitted(&view(
         "some r in rules_live (every s in rule_slots(rule_id) where role = \"require\" ((@slot(kind, \"edge\") and edge_slot) + (@slot(kind, \"borrow\") and borrow)) and none s in rule_slots(rule_id) where role = \"except\" (@slot(kind, \"edge\") and by_part))",
@@ -134,6 +153,11 @@ fn declared_scopes_and_slot_terms_are_refused_where_they_bind_nothing() {
             "uses `none s` whose brackets hold no positive term",
         ),
         ("a containment term inside", view("some r in rules_live (every s in rule_slots(rule_id) (@scoped and edge_slot))"), "uses @scoped inside `every s`"),
+        (
+            "a none that counts its rows",
+            view("some r in rules_live (named and none s in rule_slots(rule_id) nonempty (edge_slot))"),
+            "`nonempty` counts the rows an `every` reads",
+        ),
     ];
     for (what, src, want) in cases {
         let err = compile(&src).map(|_| ()).expect_err(what);

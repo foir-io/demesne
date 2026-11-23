@@ -1255,6 +1255,15 @@ JSON array. A keyed edge or a `via composition` with `slot <column> [from
 one. A plain `not` keeps its meaning: it is true of what is not known to be
 true.
 
+An `every` over no rows holds, so an element that declares none, or whose rows
+were removed by whatever route, is held back by nothing. Where that must
+refuse, write `nonempty` after the table and its `where`: `every s in
+rule_slots(rule) where role = "require" nonempty ( … )` holds only when at
+least one counted row exists and the brackets hold for each. It compiles to
+`EXISTS (<the counted rows>) AND NOT EXISTS (<a counted row the brackets
+fail>)`. `nonempty` belongs to `every` alone: a `none` over no rows already
+holds, so `none … nonempty` is refused.
+
 A permission's declared rows come through one generated function per table
 and key, `<table>_declared_by_<key>`, which returns the columns permissions
 read and no others. It takes the key as an argument and answers for any key: a
