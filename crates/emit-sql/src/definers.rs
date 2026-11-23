@@ -12,15 +12,15 @@ use demesne_model::analysis::{
 };
 use demesne_model::closure;
 use demesne_model::conditional::{
-    accessor_tree_op, admission_names, is_claim_leaf, is_composition_leaf, is_row_leaf, mode_row_sql, narrowing_accessor_leaf, row_term_sql,
+    accessor_tree_op, admission_names, is_claim_leaf, is_composition_leaf, is_row_leaf, mode_row_sql, narrowing_accessor_leaf, row_term_sql, some_row_sql,
 };
 use demesne_model::topology;
 use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    ArgSrc, Closure, DeclaredScope, Grant, MarkerClosure, Nearest, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Subject, Term, ViaClosure,
-    ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
+    ArgSrc, Closure, DeclaredScope, Grant, MarkerClosure, Nearest, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, SomeScope, Subject, Term,
+    ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -1066,6 +1066,9 @@ impl Sql<'_> {
             }
             return (true, String::new());
         }
+        if let Err(e) = self.listed_some_branches(obj, Some(sel), &rels) {
+            return (false, e);
+        }
         for t in sel.tree.leaves() {
             if t.ident().is_empty() {
                 continue;
@@ -1509,6 +1512,7 @@ impl Sql<'_> {
             branches.push(rb);
         }
         if !composed_tree {
+            branches.extend(self.listed_some_branches(obj, sel, &rels).expect("the coverage check compiled every listed some's branch"));
             branches.extend(Self::sel_leaves(sel).into_iter().filter_map(|t| self.reach_accessor_branch(obj, t, &rels)));
             branches.extend(self.def_group_accessor_branches(obj, sel, &rels));
             branches.extend(Self::def_closure_accessor_branches(obj, sel, &rels));
@@ -1661,7 +1665,24 @@ impl Sql<'_> {
         out
     }
 
+    fn some_listing_sql(&self, obj: &Object, scope: &SomeScope, rels: &Rels) -> R<String> {
+        let named = self.accessor_tree_sql(obj, &scope.body, rels)?;
+        Ok(format!(
+            "SELECT a.* FROM ({named}) a(source, principal_kind, principal_id, access)\n    WHERE EXISTS (SELECT 1 FROM {} WHERE {} = p_id AND {})",
+            obj.table,
+            obj.pk(),
+            some_row_sql(scope)
+        ))
+    }
+
+    fn listed_some_branches(&self, obj: &Object, sel: Option<&Perm>, rels: &Rels) -> R<Vec<String>> {
+        Self::sel_leaves(sel).into_iter().filter_map(|t| self.s.listed_some(t, rels)).map(|scope| self.some_listing_sql(obj, scope, rels)).collect()
+    }
+
     fn accessor_branch_for_term(&self, obj: &Object, t: &Term, rels: &Rels) -> R<String> {
+        if let Some(scope) = self.s.listed_some(t, rels) {
+            return self.some_listing_sql(obj, scope, rels);
+        }
         if t.builtin() == "claim" {
             return Err(format!(
                 "term {} is a condition on the request, not a subject, so it cannot be a branch of an accessor union; a claim can only narrow a conjunction or widen a disjunct (which makes the object enumerate conditionally) — it cannot be negated or nested where neither applies",
@@ -1720,7 +1741,10 @@ impl Sql<'_> {
                     .map(|k| self.accessor_tree_sql(obj, k, rels).map(|sql| format!("({sql})")))
                     .collect::<R<Vec<String>>>()?;
                 if parts.is_empty() {
-                    return Err("empty union in the SELECT permission tree".into());
+                    return Ok(format!(
+                        "SELECT NULL::text AS source, NULL::text AS principal_kind, NULL::{} AS principal_id, NULL::text AS access WHERE false",
+                        self.s.id_type()
+                    ));
                 }
                 Ok(parts.join("\n  UNION ALL\n  "))
             }

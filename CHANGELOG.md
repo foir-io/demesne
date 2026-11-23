@@ -1,5 +1,23 @@
 # Changelog
 
+## v6.0.1
+
+### A reader listing names through a `some`, and lists a union of conditions alone
+
+- A select permission whose every arm is conditional no longer fails with
+  "empty union in the SELECT permission tree": its listing,
+  `<table>_accessors_conditional`, is its conditional rows alone.
+- A `some` whose brackets name principals (a column, a grant, a group or an
+  unconfined closure, alone or beside conditions on the request, the row or its
+  mode, or such a condition alone) lists those principals on the rows whose
+  column holds an element the term binds by its prefix, with its conditions as
+  conditional rows on those rows, in place of one conditional row admitting
+  every caller. `held` is left to `<table>_admits`, as a claim conjunct is. Any
+  other `some` lists as before.
+
+A spec with neither emits the same SQL, definers, manifest and application
+surface as v6.0.0.
+
 ## v6.0.0
 
 The crates are 6.0.0 because public types of `demesne-syntax` change:
