@@ -571,17 +571,20 @@ branch lists no row and its listing is its conditional rows alone. Each arm is
 one of them, so no caller an arm admits is left out.
 
 A **`some`** whose brackets name principals is listed through rather than as one
-condition. When each branch of its brackets is a relation that names principals
-(a column, a grant, a group, or a closure no claim confines), alone or beside
-conditions on the request, the row or its mode, or is such a condition alone,
-the listing names those principals on the rows whose column holds an element
-the term binds by its prefix, and lists the conditions as conditional rows on
-the same rows. The `held` claim is no row's to state, so it is left to
-`<table>_admits` as a claim conjunct is: the listing names candidates the claim
-may refuse, and never fewer callers than the policy admits. Any other `some`,
-one whose brackets test the bound element or a declared row, or use a keyed
-relation, a composition or a borrow, stays one conditional row with the `some`
-source, admitting every caller on a row whose column holds an element.
+condition, branch by branch. Each branch of its brackets that is a relation
+naming principals (a column, a grant, a group, or a closure no claim confines),
+alone or beside conditions on the request, the row or its mode, or such a
+condition alone, is listed on the rows whose column holds an element the term
+binds by its prefix: the principals by name, the conditions as conditional rows
+on the same rows. An `every` over declared rows in the brackets is listed
+through its body, its `@slot` tests set aside, and a `none` beside it bars no
+one the listing names. Any other branch, one that tests the bound element, uses
+a keyed relation, a composition or a borrow, adds one conditional row with the
+`some` source, admitting every caller on a row whose column holds an element,
+beside the principals the other branches name. The `held` claim, the declared
+rows' tests and a `none`'s bars are no row's to state, so they are left to
+`<table>_admits` as a claim conjunct is: the listing names candidates they may
+refuse, and never fewer callers than the policy admits.
 
 #### One tail, two shapes
 

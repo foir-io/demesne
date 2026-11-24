@@ -220,3 +220,46 @@ fn a_nonempty_every_admits_by_no_element_whose_declared_rows_are_none_or_gone() 
     assert!(visible(&mut db, "ann", &ALL).contains("d_one"), "the owner still reads it");
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");
 }
+
+fn claims_of(who: &str) -> String {
+    let list: Vec<String> = ALL.iter().map(|h| format!("\"{h}\"")).collect();
+    format!("{{\"sub\":\"{who}\",\"estate_id\":\"e1\",\"space_id\":\"s1\",\"rules_held\":[{}]}}", list.join(","))
+}
+
+fn named(db: &mut Client, auth: &str, doc: &str) -> (BTreeSet<String>, bool) {
+    let rows =
+        db.query(&format!("SELECT principal_id FROM {auth}.docs_accessors_conditional($1)"), &[&doc]).unwrap_or_else(|e| panic!("the listing of {doc}: {e}"));
+    let ids: Vec<Option<String>> = rows.iter().map(|r| r.get(0)).collect();
+    (ids.iter().flatten().cloned().collect(), ids.iter().any(Option::is_none))
+}
+
+fn admitted(db: &mut Client, auth: &str, doc: &str, who: &str) -> bool {
+    db.query_one(&format!("SELECT {auth}.docs_admits($1, $2::text::jsonb)"), &[&doc, &claims_of(who)])
+        .unwrap_or_else(|e| panic!("admits {who} on {doc}: {e}"))
+        .get(0)
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn the_reader_listing_names_the_grantees_an_every_admits_through_and_admits_decides_each() {
+    let url =
+        std::env::var("DEMESNE_PG_URL").ok().filter(|v| !v.is_empty()).expect("set $DEMESNE_PG_URL to run the declared-row checks against a live Postgres");
+    let mut db = Client::connect(&url, NoTls).expect("connect to $DEMESNE_PG_URL");
+    let (rows, auth) = ("demesne_decl_listing_rows", "demesne_decl_listing_auth");
+    install_as(&mut db, &spec_with(" nonempty", rows, auth), rows, auth);
+
+    let (both, rest) = named(&mut db, auth, "d_both");
+    assert!(both.contains("cat") && both.contains("dan"), "the grant shape's grantees are named on the row its element binds: {both:?}");
+    assert!(rest, "the edge and borrow shapes can't be named through, so one row admits every caller it binds");
+    assert!(admitted(&mut db, auth, "d_both", "cat"), "cat holds the grant and the edge both declared rows require");
+    assert!(!admitted(&mut db, auth, "d_both", "dan"), "dan is named by the grant shape, yet lacks the edge the other declared row requires");
+    assert!(visible(&mut db, "cat", &ALL).contains("d_both") && !visible(&mut db, "dan", &ALL).contains("d_both"), "as the policy decides");
+
+    let (grant, _) = named(&mut db, auth, "d_grant");
+    assert!(grant.contains("bob"), "bob's grant is named where its element binds: {grant:?}");
+    assert!(admitted(&mut db, auth, "d_grant", "bob"), "and admitted");
+    let (one, _) = named(&mut db, auth, "d_one");
+    assert!(!one.contains("dan") && !one.contains("cat"), "no grantee of another row is named on one whose element declares an edge alone: {one:?}");
+    assert!(!admitted(&mut db, auth, "d_one", "dan"), "nor admitted there");
+    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");
+}

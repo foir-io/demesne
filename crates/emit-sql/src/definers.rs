@@ -5,7 +5,6 @@ use crate::rls::{
     Virtual, along_fn, declared_fn, held_fn, keyed_edge_fn, membership_fn, nearest_own_fn, owner_col_present_pub, platform_role_fn, scopes_its_level,
 };
 use demesne_gocompat::quote;
-use demesne_model::SpecExt;
 use demesne_model::analysis::{
     Rels, access_for, contains, go_type_name, grant_relation, grant_selector, mapped_perm, object_grant_edge, object_select_perm, object_select_policy_perm,
     object_uses_store_manage, rels_of, store_manage_name,
@@ -17,10 +16,11 @@ use demesne_model::conditional::{
 use demesne_model::topology;
 use demesne_model::vocab::to_runtime;
 use demesne_model::{ClaimMatch, ClaimValue, ConditionalAdmission, ConditionalExt};
+use demesne_model::{SomeListing, SpecExt};
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    ArgSrc, Closure, DeclaredScope, Grant, MarkerClosure, Nearest, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, SomeScope, Subject, Term,
-    ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
+    ArgSrc, Closure, DeclaredScope, Grant, MarkerClosure, Nearest, Object, Perm, PermNode, ProbeAnswer, Relation, Repr, RoleStore, Subject, Term, ViaClosure,
+    ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject, Vocabulary,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -1665,8 +1665,9 @@ impl Sql<'_> {
         out
     }
 
-    fn some_listing_sql(&self, obj: &Object, scope: &SomeScope, rels: &Rels) -> R<String> {
-        let named = self.accessor_tree_sql(obj, &scope.body, rels)?;
+    fn some_listing_sql(&self, obj: &Object, listing: &SomeListing<'_>, rels: &Rels) -> R<String> {
+        let scope = listing.scope;
+        let named = self.accessor_tree_sql(obj, &listing.body, rels)?;
         Ok(format!(
             "SELECT a.* FROM ({named}) a(source, principal_kind, principal_id, access)\n    WHERE EXISTS (SELECT 1 FROM {} WHERE {} = p_id AND {})",
             obj.table,
@@ -1676,12 +1677,12 @@ impl Sql<'_> {
     }
 
     fn listed_some_branches(&self, obj: &Object, sel: Option<&Perm>, rels: &Rels) -> R<Vec<String>> {
-        Self::sel_leaves(sel).into_iter().filter_map(|t| self.s.listed_some(t, rels)).map(|scope| self.some_listing_sql(obj, scope, rels)).collect()
+        Self::sel_leaves(sel).into_iter().filter_map(|t| self.s.some_listing(t, rels)).map(|listing| self.some_listing_sql(obj, &listing, rels)).collect()
     }
 
     fn accessor_branch_for_term(&self, obj: &Object, t: &Term, rels: &Rels) -> R<String> {
-        if let Some(scope) = self.s.listed_some(t, rels) {
-            return self.some_listing_sql(obj, scope, rels);
+        if let Some(listing) = self.s.some_listing(t, rels) {
+            return self.some_listing_sql(obj, &listing, rels);
         }
         if t.builtin() == "claim" {
             return Err(format!(

@@ -1,8 +1,8 @@
 use crate::SpecExt;
 use crate::analysis::{Rels, grant_selector, rels_of};
-use crate::conditional::{accessor_tree_op, is_row_leaf, mode_row_sql, narrowing_accessor_leaf, not_kid, row_term_sql, some_row_sql};
+use crate::conditional::{accessor_tree_op, is_row_leaf, mode_row_sql, narrowing_accessor_leaf, not_kid, row_term_sql, some_row_sql, without_slot_tests};
 use demesne_runtime::quote_literal;
-use demesne_syntax::{Object, PermNode, Relation, Repr, SomeScope, Term, ViaColumn};
+use demesne_syntax::{Object, PermNode, Quantifier, Relation, Repr, SomeScope, Term, ViaColumn};
 
 /// The value a claim must have for a conditional row to admit a caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,10 +84,10 @@ pub trait ConditionalExt: SpecExt {
             return Some(ConditionalAdmission { source: "held".into(), ..Default::default() });
         }
         if let Some(scope) = t.some_scope() {
-            if self.listed_some(t, rels).is_some() {
+            if self.some_listing(t, rels).is_some_and(|listing| !listing.rest) {
                 return None;
             }
-            return Some(ConditionalAdmission { source: "some".into(), row_cond: format!("cardinality({}) > 0", scope.col), ..Default::default() });
+            return Some(bare_some(scope));
         }
         if t.builtin() == "claim" {
             return Some(ConditionalAdmission {
@@ -113,9 +113,14 @@ pub trait ConditionalExt: SpecExt {
     /// Beyond what [`ConditionalExt::conditional_term`] names, a union lists `@public`, `@kind`, `@self`,
     /// `@session` and `@within` as conditions: none names a principal, but each admits callers.
     fn union_admissions(&self, obj: &Object, t: &Term, rels: &Rels) -> Vec<ConditionalAdmission> {
-        if let Some(scope) = self.listed_some(t, rels) {
-            let bound = some_row_sql(scope);
-            return self.adding_conditional_terms(obj, &scope.body, rels).into_iter().map(|a| on_bound_rows(&bound, a)).collect();
+        if let Some(listing) = self.some_listing(t, rels) {
+            let bound = some_row_sql(listing.scope);
+            let mut rows: Vec<ConditionalAdmission> =
+                self.adding_conditional_terms(obj, &listing.body, rels).into_iter().map(|a| on_bound_rows(&bound, a)).collect();
+            if listing.rest {
+                rows.push(bare_some(listing.scope));
+            }
+            return rows;
         }
         if let Some(a) = self.conditional_term(t, rels) {
             return vec![a];
@@ -148,40 +153,26 @@ pub trait ConditionalExt: SpecExt {
 
     /// Returns the scope of `t` when it is a `some` term the reader listing names through.
     ///
-    /// Its brackets are a union whose every branch is a relation that names principals (a column, a grant, a group,
-    /// or a closure no claim confines), alone or with conditions on the request, the row or its mode beside it, or a
-    /// condition on the request or the row's mode alone, and at least one branch names principals. The listing names
-    /// them on the rows whose column holds an element the term binds by its prefix, and lists the conditions alone
-    /// as conditional rows on those rows. Neither carries the `held` claim, which `<table>_admits` decides, so the
-    /// listing may name more callers than the policy admits, never fewer. Any other `some` lists as one conditional
-    /// row admitting every caller on a row whose column holds an element.
-    fn listed_some<'a>(&self, t: &'a Term, rels: &Rels) -> Option<&'a SomeScope> {
+    /// Returns what a reader listing names through a `some` term, or `None` when it names no principal through it.
+    ///
+    /// Each branch of its brackets that is a relation naming principals (a column, a grant, a group, or a closure no
+    /// claim confines), alone or with conditions on the request, the row or its mode beside it, or a condition on the
+    /// request or the row's mode alone, is named on the rows whose column holds an element the term binds by its
+    /// prefix, and its conditions are listed as conditional rows on those rows. An `every` over declared rows is named
+    /// through its body, its `@slot` tests set aside, and a `none` beside it bars no one the listing names. Any other
+    /// branch stays as one conditional row admitting every caller on a row whose column holds an element. Nothing
+    /// named carries the `held` claim, the declared rows' tests or a `none`'s bars, which `<table>_admits` decides, so
+    /// the listing may name more callers than the policy admits, never fewer.
+    fn some_listing<'a>(&self, t: &'a Term, rels: &Rels) -> Option<SomeListing<'a>> {
         let scope = t.some_scope()?;
-        let branches: Vec<&PermNode> = match &scope.body {
-            PermNode::Or(kids) => kids.iter().collect(),
-            other => vec![other],
-        };
-        let mut names = false;
-        for branch in branches {
-            names |= self.listed_branch(branch, rels)?;
-        }
-        names.then_some(scope)
+        let pruned = listed_part(self, &scope.body, rels);
+        let body = pruned.body?;
+        names_principals(&body, &|n| self.listed_relation(n, rels)).then_some(SomeListing { scope, body, rest: pruned.rest })
     }
 
-    /// Returns whether one branch of a `some` term's brackets names principals the reader listing names, or `None`
-    /// when the listing can't name through it.
-    fn listed_branch(&self, branch: &PermNode, rels: &Rels) -> Option<bool> {
-        match branch {
-            PermNode::Leaf(_) if self.listed_relation(branch, rels) => Some(true),
-            PermNode::Leaf(_) if listed_condition(branch) && !is_row_leaf(branch) => Some(false),
-            PermNode::And(kids) => {
-                let relations = kids.iter().filter(|k| self.listed_relation(k, rels)).count();
-                let stated = kids.iter().all(|k| self.listed_relation(k, rels) || listed_condition(k));
-                let admits = relations > 0 || !kids.iter().all(is_row_leaf);
-                (stated && admits).then_some(relations > 0)
-            }
-            _ => None,
-        }
+    /// Returns the scope of a `some` term a reader listing names principals through.
+    fn listed_some<'a>(&self, t: &'a Term, rels: &Rels) -> Option<&'a SomeScope> {
+        self.some_listing(t, rels).map(|listing| listing.scope)
     }
 
     /// Returns whether `n` is a relation whose principals the reader listing names inside a `some` term's brackets.
@@ -284,6 +275,90 @@ fn app_scope_exclusions(t: &Term, rels: &Rels) -> String {
         })
         .collect();
     conds.join(" AND ")
+}
+
+/// Returns the part of `n` a reader listing names through, and whether any of it is left out.
+fn listed_part<S: ConditionalExt + ?Sized>(s: &S, n: &PermNode, rels: &Rels) -> Listed {
+    match n {
+        PermNode::Or(kids) => {
+            let parts: Vec<Listed> = kids.iter().map(|k| listed_part(s, k, rels)).collect();
+            let rest = parts.iter().any(|p| p.rest || p.body.is_none());
+            let kept: Vec<PermNode> = parts.into_iter().filter_map(|p| p.body).collect();
+            Listed { body: joined(kept, PermNode::Or), rest }
+        }
+        PermNode::Leaf(t) if let Some(scope) = t.declared_scope() => match scope.quantifier {
+            Quantifier::Every => without_slot_tests(&scope.body).map_or(Listed { body: None, rest: true }, |body| listed_part(s, &body, rels)),
+            Quantifier::None => Listed { body: None, rest: true },
+        },
+        PermNode::Leaf(_) if s.listed_relation(n, rels) => Listed { body: Some(n.clone()), rest: false },
+        PermNode::Leaf(_) if listed_condition(n) && !is_row_leaf(n) => Listed { body: Some(n.clone()), rest: false },
+        PermNode::And(kids) => listed_conjunction(s, kids, rels),
+        _ => Listed { body: None, rest: true },
+    }
+}
+
+/// Returns the part of a conjunction a reader listing names through: every conjunct a relation, a condition, an
+/// `every` it names through or a `none`, which bars only, and at least one that admits someone.
+fn listed_conjunction<S: ConditionalExt + ?Sized>(s: &S, kids: &[PermNode], rels: &Rels) -> Listed {
+    let mut kept = Vec::new();
+    let mut rest = false;
+    for k in kids {
+        match k {
+            PermNode::Leaf(t) if t.declared_scope().is_some_and(|s| s.quantifier == Quantifier::None) => {}
+            PermNode::Leaf(t) if t.declared_scope().is_some() => {
+                let part = listed_part(s, k, rels);
+                let Some(body) = part.body else { return Listed { body: None, rest: true } };
+                rest |= part.rest;
+                kept.push(body);
+            }
+            _ if s.listed_relation(k, rels) || listed_condition(k) => kept.push(k.clone()),
+            _ => return Listed { body: None, rest: true },
+        }
+    }
+    if kept.iter().all(is_row_leaf) {
+        return Listed { body: None, rest: true };
+    }
+    Listed { body: joined(kept, PermNode::And), rest }
+}
+
+/// What a reader listing names through a `some` term.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SomeListing<'a> {
+    /// The term's scope.
+    pub scope: &'a SomeScope,
+    /// The part of its brackets the listing names through, `every` bodies in place of their terms.
+    pub body: PermNode,
+    /// Whether a branch is left out, so the term also lists one conditional row admitting every caller it binds.
+    pub rest: bool,
+}
+
+/// The part of a permission node a reader listing names through.
+struct Listed {
+    body: Option<PermNode>,
+    rest: bool,
+}
+
+/// One conditional row admitting every caller on a row whose `some` column holds an element.
+fn bare_some(scope: &SomeScope) -> ConditionalAdmission {
+    ConditionalAdmission { source: "some".into(), row_cond: format!("cardinality({}) > 0", scope.col), ..Default::default() }
+}
+
+/// The node of `kept`, joined by `join` when there are several.
+fn joined(mut kept: Vec<PermNode>, join: fn(Vec<PermNode>) -> PermNode) -> Option<PermNode> {
+    match kept.len() {
+        0 => None,
+        1 => kept.pop(),
+        _ => Some(join(kept)),
+    }
+}
+
+/// Whether `n` holds a relation `names` says names principals.
+fn names_principals(n: &PermNode, names: &dyn Fn(&PermNode) -> bool) -> bool {
+    match n {
+        PermNode::Or(kids) | PermNode::And(kids) => kids.iter().any(|k| names_principals(k, names)),
+        PermNode::Not(_) => false,
+        PermNode::Leaf(_) => names(n),
+    }
 }
 
 fn on_bound_rows(bound: &str, a: ConditionalAdmission) -> ConditionalAdmission {

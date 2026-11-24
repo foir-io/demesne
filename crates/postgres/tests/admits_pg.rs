@@ -53,7 +53,7 @@ const fn obj(name: &'static str, view: &'static str) -> Obj {
     Obj { name, wildcard: false, view, extra: "" }
 }
 
-const OBJECTS: [Obj; 21] = [
+const OBJECTS: [Obj; 22] = [
     obj("plain", "owner + grantee:read"),
     obj("byrole", "owner + editor + grantee:read"),
     obj("held", "owner + @holds(docs:read) + grantee:read"),
@@ -72,6 +72,7 @@ const OBJECTS: [Obj; 21] = [
     obj("negrow", r#"(owner and not @row(status, "archived")) + grantee:read"#),
     obj("scopedby", "(@scoped and owner) + grantee:read"),
     obj("somein", r#"some r in tags prefix "open." ((owner and @claim("tier", "gold")) + grantee:read)"#),
+    obj("somemixed", r#"some r in tags prefix "open." (owner + @holds(docs:read) + grantee:read)"#),
     obj("condonly", r#"@kind("auditor") + (mode visibility = "open" and @claim("tier", "gold"))"#),
     Obj { name: "ext", wildcard: false, view: "owner + grantee:read", extra: "require view = @external(tier_allows, status, @tier)" },
     Obj {
@@ -372,6 +373,16 @@ fn candidate_failures(db: &mut Client) -> Vec<String> {
     }
     if !admits(db, "somein", "d1", gold) {
         failures.push("somein/d1: refuses the listed owner who carries the claim".into());
+    }
+    let mixed = listing(db, "somemixed", "d1");
+    if !lists(&mixed, "member", "m1") || !lists(&mixed, "member", "m2") || !mixed.iter().any(|r| r.id.is_none()) {
+        failures.push(format!("somemixed/d1: the owner and grantee are named where the element binds, beside one row for the holders of docs:read: {mixed:?}"));
+    }
+    if !admits(db, "somemixed", "d1", owner) {
+        failures.push("somemixed/d1: refuses the owner it names".into());
+    }
+    if admits(db, "somemixed", "d2", owner) {
+        failures.push("somemixed/d2: admits a grantee on a row whose element the term doesn't bind".into());
     }
     let conditions = listing(db, "condonly", "d1");
     let auditor = Claims(vec![("kind", "auditor"), ("tenant_id", "t1"), ("project_id", "p1")]);
