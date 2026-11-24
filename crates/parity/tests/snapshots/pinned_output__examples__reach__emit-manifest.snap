@@ -320,15 +320,15 @@ exit: 0
     },
     {
       "object": "function auth.catalog_can_bound(text)",
-      "digest": "8208fde76df7689abe73490433ccfec497e418ba031f608fe04afdb6e43dd175"
+      "digest": "0364f70043585823071b32edac5ec20d31073c951bffafd3d4bb94c7b5ded0e3"
     },
     {
       "object": "function auth.catalog_can_bound_for_select(text)",
-      "digest": "0c128e602b0d24ac94f577813c8b1183ad67a0b49c3df8f6ca781fb819f9ffd7"
+      "digest": "fe4e32c450f99579f03b07702edfa82464adfb35bf69dc7f4da65fcb80496f25"
     },
     {
       "object": "function auth.folder_write_allowed(text, text, text)",
-      "digest": "b1f16755d68a5cebbedfc606c191f817ce124594555a66734159badef26e894f"
+      "digest": "c1f931704d8192332fa95ad97d25bffba9f675c3936481deffe4db7d4e295e9a"
     },
     {
       "object": "function auth.paths_reach_set(text)",

@@ -94,7 +94,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM catalogs WHERE catalogs.id = p_catalog_id AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND ((folder_id IS NULL OR folder_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id')) OR folder_id IN (SELECT auth.paths_up_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'))) OR (SELECT current_setting('request.jwt.claims', true)::json ->> 'view_mode') = 'all') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))));
+  SELECT EXISTS (SELECT 1 FROM catalogs WHERE catalogs.id = p_catalog_id AND (((estate_id = (demesne_call.claims ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((demesne_call.claims ->> 'sub')))) AND space_id = (demesne_call.claims ->> 'space_id') AND ((folder_id IS NULL OR folder_id = (demesne_call.claims ->> 'folder_id')) OR folder_id IN (SELECT auth.paths_up_reach_set((demesne_call.claims ->> 'folder_id'))) OR (demesne_call.claims ->> 'view_mode') = 'all') AND (((demesne_call.claims ->> 'kind') = 'staff'))))) FROM (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::jsonb AS claims OFFSET 0) AS demesne_call;
 $$;
 GRANT EXECUTE ON FUNCTION auth.catalog_can_bound_for_select(text) TO PUBLIC;
 
@@ -106,7 +106,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM catalogs WHERE catalogs.id = p_catalog_id AND (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))));
+  SELECT EXISTS (SELECT 1 FROM catalogs WHERE catalogs.id = p_catalog_id AND (((estate_id = (demesne_call.claims ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((demesne_call.claims ->> 'sub')))) AND space_id = (demesne_call.claims ->> 'space_id') AND folder_id IS NOT DISTINCT FROM (demesne_call.claims ->> 'folder_id') AND (((demesne_call.claims ->> 'kind') = 'staff'))))) FROM (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::jsonb AS claims OFFSET 0) AS demesne_call;
 $$;
 GRANT EXECUTE ON FUNCTION auth.catalog_can_bound(text) TO PUBLIC;
 
@@ -117,7 +117,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT (((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'staff')))) OR ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id') AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'kind') = 'robot') AND (estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id')) AND (space_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'space_id')) AND (((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id') IS NULL OR auth.paths_reachable((SELECT current_setting('request.jwt.claims', true)::json ->> 'folder_id'), id))))) FROM (SELECT check_folder_id AS id, row_estate_id AS estate_id, row_space_id AS space_id) AS folders;
+  SELECT (((estate_id = (demesne_call.claims ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((demesne_call.claims ->> 'sub')))) AND space_id = (demesne_call.claims ->> 'space_id') AND (((demesne_call.claims ->> 'kind') = 'staff')))) OR ((estate_id = (demesne_call.claims ->> 'estate_id') OR estate_id IN (SELECT auth.approvals_reach_set((demesne_call.claims ->> 'sub')))) AND space_id = (demesne_call.claims ->> 'space_id') AND (((demesne_call.claims ->> 'kind') = 'robot') AND (estate_id = (demesne_call.claims ->> 'estate_id')) AND (space_id = (demesne_call.claims ->> 'space_id')) AND (((demesne_call.claims ->> 'folder_id') IS NULL OR auth.paths_reachable((demesne_call.claims ->> 'folder_id'), id))))) FROM (SELECT check_folder_id AS id, row_estate_id AS estate_id, row_space_id AS space_id) AS folders, (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::jsonb AS claims OFFSET 0) AS demesne_call;
 $$;
 GRANT EXECUTE ON FUNCTION auth.folder_write_allowed(text, text, text) TO PUBLIC;
 

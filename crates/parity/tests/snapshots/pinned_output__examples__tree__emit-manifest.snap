@@ -386,7 +386,7 @@ exit: 0
     },
     {
       "object": "function auth.space_can_view(text)",
-      "digest": "d1a9417dc4d0967cab73e307f05bfbdd657bab5af74aad79206d620f681017d2"
+      "digest": "6a5edac371d741822272349c11c8d06aff25c9f2059ede53771bafd19b9c0838"
     },
     {
       "object": "function auth.space_cards()",

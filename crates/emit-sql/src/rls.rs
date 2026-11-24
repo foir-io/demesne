@@ -1,7 +1,8 @@
 use crate::chains::HOP;
+use crate::definers::declared_columns;
 use crate::error::Error;
 use crate::genfn::{Arg, definer_call};
-use crate::{Binds, Sql};
+use crate::{Binds, CALL, Reads, Sql};
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -19,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as _;
 
 pub(crate) type Virtual = HashSet<String>;
+const CLAIMS: &str = "claims";
 type Inject = BTreeMap<String, Vec<String>>;
 type R<T> = Result<T, String>;
 
@@ -227,6 +229,10 @@ fn joined_with_terms(block: String, terms: &[String]) -> String {
     }
 }
 
+fn bound_claim(op: &str, key: &str) -> String {
+    format!("({CALL}.{CLAIMS} {op} {})", quote_literal(key))
+}
+
 pub(crate) fn leaf(obj: &Object) -> &str {
     obj.scoped.last().map_or("", String::as_str)
 }
@@ -238,10 +244,24 @@ pub(crate) fn scopes_its_level(obj: &Object) -> bool {
 impl Sql<'_> {
     /// Returns the SQL that reads the caller's claim `key`: an uncorrelated scalar subquery,
     /// which Postgres evaluates once per statement rather than once per row.
+    ///
+    /// In the body of a definer that answers one row a call, it reads the claims that call parsed once, as `jsonb`,
+    /// reading an unset or empty claims setting as no claims.
     #[must_use]
     pub fn claim(&self, key: &str) -> String {
+        if self.reads_per_call() {
+            return bound_claim("->>", key);
+        }
         let (setting, cast) = self.claims_setting();
         format!("(SELECT current_setting({}, true)::{cast} ->> {})", quote_literal(setting), quote_literal(key))
+    }
+
+    pub(crate) fn call_body(&self, select: &str, from: Option<&str>) -> String {
+        let binding = format!("(SELECT NULLIF(current_setting({}, true), '')::jsonb AS {CLAIMS} OFFSET 0) AS {CALL}", quote_literal(self.claims_setting().0));
+        match from {
+            None => format!("{select} FROM {binding}"),
+            Some(from) => format!("{select} FROM {from}, {binding}"),
+        }
     }
 
     pub(crate) fn claims_setting(&self) -> (&str, &str) {
@@ -251,24 +271,37 @@ impl Sql<'_> {
         }
     }
 
-    /// Returns the SQL that reads the caller's claim `key` as JSON, once per statement as [`Sql::claim`] does.
+    /// Returns the SQL that reads the caller's claim `key` as JSON, once per statement as [`Sql::claim`] does, or
+    /// from the call's own claims in a definer that answers one row a call.
     #[must_use]
     pub fn claim_object(&self, key: &str) -> String {
+        if self.reads_per_call() {
+            return bound_claim("->", key);
+        }
         let (setting, cast) = self.claims_setting();
         format!("(SELECT (current_setting({}, true)::{cast} -> {})::jsonb)", quote_literal(setting), quote_literal(key))
     }
 
     pub(crate) fn session_claim_object(&self, key: &str) -> String {
+        if self.reads_per_call() {
+            return bound_claim("->", key);
+        }
         let (setting, cast) = self.claims_setting();
         format!("(SELECT (NULLIF(current_setting({}, true), '')::{cast} -> {})::jsonb)", quote_literal(setting), quote_literal(key))
     }
 
     pub(crate) fn session_claim_object_inline(&self, key: &str) -> String {
+        if self.reads_per_call() {
+            return bound_claim("->", key);
+        }
         let (setting, cast) = self.claims_setting();
         format!("(NULLIF(current_setting({}, true), '')::{cast} -> {})::jsonb", quote_literal(setting), quote_literal(key))
     }
 
     pub(crate) fn session_claim_inline(&self, key: &str) -> String {
+        if self.reads_per_call() {
+            return bound_claim("->>", key) + &self.s.id_cast();
+        }
         let (setting, cast) = self.claims_setting();
         format!("(NULLIF(current_setting({}, true), '')::{cast} ->> {})", quote_literal(setting), quote_literal(key)) + &self.s.id_cast()
     }
@@ -284,9 +317,13 @@ impl Sql<'_> {
     }
 
     /// Returns the SQL that reads the caller's claim `key` as an identifier, reading an unset or
-    /// empty claims setting as no claims, once per statement as [`Sql::claim`] does.
+    /// empty claims setting as no claims, once per statement as [`Sql::claim`] does, or from the call's own claims
+    /// in a definer that answers one row a call.
     #[must_use]
     pub fn session_claim(&self, key: &str) -> String {
+        if self.reads_per_call() {
+            return bound_claim("->>", key) + &self.s.id_cast();
+        }
         let (setting, cast) = self.claims_setting();
         format!("(SELECT NULLIF(current_setting({}, true), '')::{cast} ->> {})", quote_literal(setting), quote_literal(key)) + &self.s.id_cast()
     }
@@ -899,10 +936,20 @@ impl Sql<'_> {
         if body.is_empty() {
             return Err(format!("`{}` on {}: its brackets compile to no predicate", t.display(), quote(&obj.name)));
         }
-        Ok(vec![self.declared_rows_sql(&declared_fn(&scope.table, &scope.key_col), scope, ELEMENT, &body.join(" OR "))])
+        Ok(vec![self.declared_rows_sql(&self.declared_rows(scope, rels), scope, &body.join(" OR "))])
     }
 
-    pub(crate) fn declared_rows_sql(&self, rows: &str, scope: &demesne_syntax::DeclaredScope, key: &str, body: &str) -> String {
+    fn declared_rows(&self, scope: &demesne_syntax::DeclaredScope, rels: &Rels) -> String {
+        let (table, key) = (&scope.table, &scope.key_col);
+        if !self.reads_per_call() {
+            return format!("{}.{}({ELEMENT}) AS {SLOT}", self.s.definer_schema(), declared_fn(table, key));
+        }
+        let columns: BTreeSet<String> = declared_columns(scope, rels).into_iter().collect();
+        let selected: Vec<String> = columns.iter().map(|c| format!("{table}.{c}::text AS {c}")).collect();
+        format!("(SELECT {} FROM {table} WHERE {table}.{key} = {ELEMENT}::text) AS {SLOT}", selected.join(", "))
+    }
+
+    pub(crate) fn declared_rows_sql(&self, from: &str, scope: &demesne_syntax::DeclaredScope, body: &str) -> String {
         let mut conds = Vec::new();
         if let Some((col, val)) = &scope.filter {
             conds.push(format!("{SLOT}.{col} = {}", quote_literal(val)));
@@ -915,7 +962,6 @@ impl Sql<'_> {
         };
         let counted = conds.clone();
         conds.push(format!("({body}) {fails}"));
-        let from = format!("{}.{rows}({key}) AS {SLOT}", self.s.definer_schema());
         let decided = format!("NOT EXISTS (SELECT 1 FROM {from} WHERE {})", conds.join(" AND "));
         match scope.counted {
             Counted::AnyNumber => decided,
@@ -937,7 +983,7 @@ impl Sql<'_> {
     }
 
     pub(crate) fn judged(&self, nest: Option<usize>, upper: bool) -> Self {
-        Sql { s: self.s, definer_body: false, nest, upper, negated: false, given: None, binds: Binds::Parameters }
+        Sql { s: self.s, definer_body: false, nest, upper, negated: false, given: None, binds: Binds::Parameters, reads: Reads::PerStatement }
     }
 
     pub(crate) fn composition_fn(&self, obj: &Object, r: &Relation) -> String {

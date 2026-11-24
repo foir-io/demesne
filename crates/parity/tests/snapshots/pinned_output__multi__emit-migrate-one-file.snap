@@ -80,7 +80,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_doc_id AND (((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write')))));
+  SELECT EXISTS (SELECT 1 FROM docs WHERE docs.id = p_doc_id AND (((tenant_id = (demesne_call.claims ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((demesne_call.claims ->> 'sub')))) AND workspace_id = (demesne_call.claims ->> 'workspace_id') AND (owner_id = (demesne_call.claims ->> 'member_id') OR auth.acl_grants_doc((demesne_call.claims ->> 'member_id'), docs.id, 'write'))))) FROM (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::jsonb AS claims OFFSET 0) AS demesne_call;
 $$;
 REVOKE EXECUTE ON FUNCTION auth.doc_can_edit(text) FROM PUBLIC, authenticated;
 
@@ -102,7 +102,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT ((tenant_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')))) AND workspace_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'workspace_id') AND (owner_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'read') OR auth.acl_grants_doc((SELECT current_setting('request.jwt.claims', true)::json ->> 'member_id'), docs.id, 'write'))) FROM (SELECT check_doc_id AS id, row_tenant_id AS tenant_id, row_workspace_id AS workspace_id, row_owner_id AS owner_id) AS docs;
+  SELECT ((tenant_id = (demesne_call.claims ->> 'tenant_id') OR tenant_id IN (SELECT auth.support_grants_reach_set((demesne_call.claims ->> 'sub')))) AND workspace_id = (demesne_call.claims ->> 'workspace_id') AND (owner_id = (demesne_call.claims ->> 'member_id') OR auth.acl_grants_doc((demesne_call.claims ->> 'member_id'), docs.id, 'read') OR auth.acl_grants_doc((demesne_call.claims ->> 'member_id'), docs.id, 'write'))) FROM (SELECT check_doc_id AS id, row_tenant_id AS tenant_id, row_workspace_id AS workspace_id, row_owner_id AS owner_id) AS docs, (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::jsonb AS claims OFFSET 0) AS demesne_call;
 $$;
 GRANT EXECUTE ON FUNCTION auth.doc_readable(text, text, text, text) TO PUBLIC;
 

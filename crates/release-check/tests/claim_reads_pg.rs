@@ -1117,6 +1117,74 @@ fn searching_its_own_schemas(sql: &str) -> String {
         .collect()
 }
 
+fn paren_ends(rest: &str) -> usize {
+    let mut depth = 0_usize;
+    for (at, ch) in rest.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth == 1 => return at + 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    rest.len()
+}
+
+fn claims_read_as_one(stmt: &str) -> String {
+    let mut out = stmt.to_string();
+    while let Some(close) = out.find(") AS demesne_call") {
+        let mut depth = 0_usize;
+        let open = out[..=close]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| {
+                match ch {
+                    ')' => depth += 1,
+                    '(' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                depth == 0
+            })
+            .map_or(close, |(at, _)| at);
+        let start = if out[..open].ends_with(", ") { open - 2 } else { out[..open].rfind(" FROM ").unwrap_or(open) };
+        out.replace_range(start..close + ") AS demesne_call".len(), "");
+    }
+    let mut from = 0;
+    while let Some(found) = ["(current_setting(", "(NULLIF(current_setting(", "(demesne_call.claims "].iter().filter_map(|p| out[from..].find(p)).min() {
+        let at = from + found;
+        let end = at + paren_ends(&out[at..]);
+        let read = &out[at..end];
+        let op = if read.contains(" ->> ") { "->>" } else { "->" };
+        let key = read.rsplit('\'').nth(1).unwrap_or_default().to_string();
+        let drop_cast = op == "->" && out[end..].starts_with("::jsonb");
+        let canonical = format!("(CLAIM {op} '{key}')");
+        out.replace_range(at..end + if drop_cast { "::jsonb".len() } else { 0 }, &canonical);
+        from = at + canonical.len();
+    }
+    out
+}
+
+fn with_definers_reading_their_call_s_claims(now: &str, before: &str) -> (String, String) {
+    let (mut now_out, mut before_out) = (now.to_string(), before.to_string());
+    let functions = |sql: &str| -> Vec<(String, String)> {
+        sql.match_indices("CREATE OR REPLACE FUNCTION ")
+            .filter_map(|(at, _)| {
+                let end = at + sql[at..].find("\n$$;")? + "\n$$;".len();
+                let head = sql[at..].split('(').next()?.to_string();
+                Some((head, sql[at..end].to_string()))
+            })
+            .collect()
+    };
+    let earlier = functions(before);
+    for (head, stmt) in functions(now).into_iter().filter(|(_, stmt)| stmt.contains(" AS demesne_call")) {
+        now_out = now_out.replacen(&stmt, &claims_read_as_one(&stmt), 1);
+        if let Some((_, old)) = earlier.iter().find(|(h, _)| *h == head) {
+            before_out = before_out.replacen(old, &claims_read_as_one(old), 1);
+        }
+    }
+    (now_out, before_out)
+}
+
 fn read_per_row(sql: &str) -> String {
     sql.replace("(SELECT current_setting(", "(current_setting(").replace("(SELECT NULLIF(current_setting(", "(NULLIF(current_setting(")
 }
@@ -1236,18 +1304,17 @@ fn the_sql_differs_from_v1_1_0_only_in_the_ways_this_release_states() {
                 let before = with_triggers_searching_the_tables_schema(&before, s.table_schema());
                 let dropped: BTreeSet<String> =
                     demesne_emit_sql::Sql::new(&s).unused_definers().unwrap_or_else(|e| panic!("{name}: {e}")).into_iter().collect();
+                let (now_read, before_read) = with_definers_reading_their_call_s_claims(
+                    &calls_per_row(&answering_any_caller(&read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, &s)), &before)),
+                    &calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
+                );
                 if terms_now_bind_a_reach(&name) {
-                    assert_ne!(
-                        calls_per_row(&answering_any_caller(&read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, &s)), &before)),
-                        calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
-                        "{name}: no term binds a grant's reach here any more"
-                    );
+                    assert_ne!(now_read, before_read, "{name}: no term binds a grant's reach here any more");
                     bound += 1;
                 } else {
                     assert_eq!(
-                        calls_per_row(&answering_any_caller(&read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, &s)), &before)),
-                        calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
-                        "{name}: the SQL changed beyond its claim reads, the callers its sets answer, pg_temp last, the triggers' tables schema, the functions since pruned, the parameters declared and named as ids retyped to the spec's ids, and the store copy's renamed parameter"
+                        now_read, before_read,
+                        "{name}: the SQL changed beyond its claim reads, the callers its sets answer, pg_temp last, the triggers' tables schema, the functions since pruned, the parameters declared and named as ids retyped to the spec's ids, the store copy's renamed parameter, and the claims a definer reads from its call"
                     );
                 }
                 compared += 1;

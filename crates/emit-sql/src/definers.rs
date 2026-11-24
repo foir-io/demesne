@@ -1333,12 +1333,14 @@ impl Sql<'_> {
             let Some(other) = self.s.object_by_name(&vo.object) else {
                 return Err(format!("relation {} references unknown object {}", quote(&r.name), quote(&vo.object)));
             };
-            let pred = self.object_verb_predicate_for(other, &vo.verb, vo.op.as_deref().unwrap_or(""), virt)?;
+            let call = self.per_call();
+            let pred = call.object_verb_predicate_for(other, &vo.verb, vo.op.as_deref().unwrap_or(""), virt)?;
             let params = vec![Param::id(format!("p_{}_id", vo.object))];
             let sig = render(&params, self.s.id_type());
             let key = format!("{}.{} = p_{}_id", other.table, other.pk(), vo.object);
             let strict = binds_every(&sig, &[std::slice::from_ref(&key)]);
-            defs.fns.push(GenFn { name, params, body: grant_edge_exists(&other.table, &[key, format!("({pred})")]), strict, ..Default::default() });
+            let body = call.call_body(&grant_edge_exists(&other.table, &[key, format!("({pred})")]), None);
+            defs.fns.push(GenFn { name, params, body, strict, ..Default::default() });
         }
         Ok(())
     }
@@ -1386,13 +1388,14 @@ impl Sql<'_> {
     }
 
     fn store_can_edit_definer(&self, name: &str, o: &Object, virt: &Virtual, store: &str) -> R<GenFn> {
-        let pred = self.object_verb_predicate(o, "edit", virt).map_err(|e| format!("@store_manage dispatch for {}: {e}", quote(store)))?;
+        let call = self.per_call();
+        let pred = call.object_verb_predicate(o, "edit", virt).map_err(|e| format!("@store_manage dispatch for {}: {e}", quote(store)))?;
         let param = format!("p_{}_id", o.name);
         let params = vec![Param::id(param.clone())];
         let sig = render(&params, self.s.id_type());
         let key = format!("{}.{} = {param}", o.table, o.pk());
         let strict = binds_every(&sig, &[std::slice::from_ref(&key)]);
-        let body = grant_edge_exists(&o.table, &[key, format!("({pred})")]);
+        let body = call.call_body(&grant_edge_exists(&o.table, &[key, format!("({pred})")]), None);
         Ok(GenFn { name: name.to_string(), params, body, strict, before: Before::DropRenamed, ..Default::default() })
     }
 
@@ -2152,13 +2155,14 @@ impl Sql<'_> {
             let [key] = c.params.as_slice() else {
                 return Err(format!("check {} takes one argument, the key {}", quote(&c.name), quote(obj.pk())));
             };
-            let pred = self.object_verb_predicate_for(obj, &c.verb, c.op.as_deref().unwrap_or(""), virt)?;
+            let call = self.per_call();
+            let pred = call.object_verb_predicate_for(obj, &c.verb, c.op.as_deref().unwrap_or(""), virt)?;
             let conds = [format!("{}.{} = $1", obj.table, obj.pk()), format!("({pred})")];
             out.push(GenFn {
                 name: c.name.clone(),
                 params: vec![Param::typed(key.name(), key.ty.clone())],
                 strict: true,
-                body: grant_edge_exists(&obj.table, &conds),
+                body: call.call_body(&grant_edge_exists(&obj.table, &conds), None),
                 ..Default::default()
             });
         }
@@ -2290,13 +2294,14 @@ impl Sql<'_> {
             let Some(pm) = mapped_perm(obj, &export.verb) else {
                 return Err(format!("permission export {}: object {} has no mapped permission {}", quote(&export.name), quote(&obj.name), quote(&export.verb)));
             };
-            let pred = self.admission_with_require(obj, pm, self.s.owner_subject(leaf(obj)), virt)?;
+            let call = self.per_call();
+            let pred = call.admission_with_require(obj, pm, self.s.owner_subject(leaf(obj)), virt)?;
             let args: Vec<Param> = export.params.iter().map(|p| Param::typed(p.name(), p.ty.clone())).collect();
             let columns: Vec<String> = export.params.iter().map(|p| format!("{} AS {}", p.name(), p.column)).collect();
             out.push(GenFn {
                 name: export.name.clone(),
                 params: args,
-                body: format!("{} FROM (SELECT {}) AS {}", pred, columns.join(", "), obj.table),
+                body: call.call_body(&pred, Some(&format!("(SELECT {}) AS {}", columns.join(", "), obj.table))),
                 ..Default::default()
             });
         }
@@ -2304,7 +2309,7 @@ impl Sql<'_> {
     }
 }
 
-fn declared_columns(scope: &DeclaredScope, rels: &Rels) -> Vec<String> {
+pub(crate) fn declared_columns(scope: &DeclaredScope, rels: &Rels) -> Vec<String> {
     let bound = |t: &&Term| {
         rels.get(t.ident()).and_then(|r| match &r.repr {
             Repr::Edge(e) => e.slot.as_ref(),

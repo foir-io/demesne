@@ -127,12 +127,18 @@ fn a_permission_with_no_term_under_the_scope_gives_a_grant_nothing() {
     assert_eq!(using(&sql, "keepsakes_select"), "holder_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'sub')");
 }
 
+fn read_from_the_call(policy: &str) -> String {
+    policy.replace("(SELECT current_setting('request.jwt.claims', true)::json ->> ", "(demesne_call.claims ->> ")
+}
+
 #[test]
 fn a_predicate_another_object_borrows_binds_the_grant_the_same_way() {
     let sql = emitted(SPEC);
+    let (reach, stands) = (read_from_the_call(REACH), read_from_the_call(STANDS));
+    let binding = "FROM (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::jsonb AS claims OFFSET 0) AS demesne_call;";
     assert!(
-        sql.contains(&format!("WHERE ledgers.id = p_ledger_id AND ((({REACH} OR ({STANDS})) AND ((state = 'open')))));")),
-        "the borrowed predicate:\n{sql}"
+        sql.contains(&format!("WHERE ledgers.id = p_ledger_id AND ((({reach} OR ({stands})) AND ((state = 'open'))))) {binding}")),
+        "the borrowed predicate, reading the claims its call parsed once:\n{sql}"
     );
 }
 

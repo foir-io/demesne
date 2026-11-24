@@ -252,7 +252,7 @@ impl<'a> Sql<'a> {
                 };
                 let judge = if scope.quantifier == Quantifier::None { self.flipped() } else { *self };
                 let body = judge.hop_node(on, &scope.body, at, virt)?;
-                Ok(self.declared_rows_sql(&along_fn(&scope.table, &scope.key_col), scope, key, &body))
+                Ok(self.declared_rows_sql(&format!("{}.{}({key}) AS {SLOT}", self.s.definer_schema(), along_fn(&scope.table, &scope.key_col)), scope, &body))
             }
             PermNode::Not(k) => Ok(format!("({}) IS NOT TRUE", self.flipped().path_node(on, k, key, at, virt)?)),
             PermNode::And(kids) => each(kids, " AND "),
