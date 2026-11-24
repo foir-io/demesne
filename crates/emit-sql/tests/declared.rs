@@ -1,4 +1,5 @@
 use demesne_emit_sql::{GenFn, Sql};
+use demesne_model::{ConditionalExt, SpecExt};
 
 const HEAD: &str =
     "topology { level estate level space parent estate }\nsubject member { anchor space; reach self; identifies sub; roles none; binds owner }\n";
@@ -163,4 +164,28 @@ fn declared_scopes_and_slot_terms_are_refused_where_they_bind_nothing() {
         let err = compile(&src).map(|_| ()).expect_err(what);
         assert!(err.contains(want), "{what}: {err}");
     }
+}
+
+fn listing(src: &str, name: &str) -> String {
+    emitted(src).1.into_iter().find(|d| d.name == name).unwrap_or_else(|| panic!("no {name} in\n{src}")).create_sql()
+}
+
+fn conditional_rows(src: &str) -> Vec<(String, String)> {
+    let s = compile(src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    s.conditional_accessors(s.object_by_name("doc").expect("the object")).into_iter().map(|r| (r.source, r.row_cond)).collect()
+}
+
+const BOUND: &str = "EXISTS (SELECT 1 FROM unnest(rules_live) AS demesne_element(v) WHERE starts_with(demesne_element.v, 'read.'))";
+
+#[test]
+fn a_some_over_declared_rows_lists_the_principals_their_shapes_name_on_the_rows_it_binds() {
+    let src = view(
+        "some r in rules_live prefix \"read.\" (every s in rule_slots(rule_id) where role = \"require\" nonempty ((@slot(kind, \"owner\") and owner) + (@slot(kind, \"grant\") and grantee:read)) and none s in rule_slots(rule_id) where role = \"except\" (@slot(kind, \"owner\") and owner))",
+    );
+    assert_eq!(conditional_rows(&src), Vec::new(), "every shape names its principals, so no row admits anyone unnamed");
+    let listed = listing(&src, "docs_accessors");
+    assert!(listed.contains(&format!("WHERE EXISTS (SELECT 1 FROM docs WHERE id = p_id AND {BOUND})")), "named only where an element is bound:\n{listed}");
+    assert!(listed.contains("'owner'::text, 'member'::text, owner_id"), "the owner shape's principal:\n{listed}");
+    assert!(listed.contains("doc_acl"), "the grant shape's principals:\n{listed}");
+    assert!(!listed.contains("demesne_slot"), "the declared rows' tests are left to the policy:\n{listed}");
 }

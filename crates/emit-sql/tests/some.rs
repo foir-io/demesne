@@ -246,3 +246,21 @@ fn a_condition_beside_the_principals_a_some_names_is_listed_on_the_rows_it_binds
     let named = format!("a(source, principal_kind, principal_id, access)\n    WHERE EXISTS (SELECT 1 FROM docs WHERE id = p_id AND {bound})");
     assert!(listing.contains(&named), "a union that composes still names the grantees the some binds:\n{listing}");
 }
+
+#[test]
+fn a_some_lists_the_branches_it_names_through_and_keeps_one_row_for_the_rest() {
+    let src = shared("some r in tags prefix \"open.\" (owner + grantee:read + parent)");
+    let s = compile(&src).expect("compiles");
+    let rows = s.conditional_accessors(s.object_by_name("doc").expect("the object"));
+    assert_eq!(
+        rows.iter().map(|r| (r.source.as_str(), r.row_cond.as_str())).collect::<Vec<_>>(),
+        [("some", "cardinality(tags) > 0")],
+        "the composition can't be named through, so one row still admits every caller the term binds: {rows:#?}"
+    );
+    let listing = listing_body(&src, "docs_accessors_conditional");
+    let bound = format!("EXISTS (SELECT 1 FROM unnest(tags) AS demesne_element(v) WHERE starts_with({EL}, 'open.'))");
+    let named = format!("a(source, principal_kind, principal_id, access)\n    WHERE EXISTS (SELECT 1 FROM docs WHERE id = p_id AND {bound})");
+    assert!(listing.contains(&named), "the others are named where an element is bound:\n{listing}");
+    assert!(listing.contains("'owner'::text, 'member'::text, owner_id"), "the owner:\n{listing}");
+    assert!(listing.contains("doc_acl"), "the grantees:\n{listing}");
+}

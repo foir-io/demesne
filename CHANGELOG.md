@@ -1,5 +1,23 @@
 # Changelog
 
+## v7.1.0
+
+A spec whose `some` brackets the listing can name through entirely, or not at
+all, emits what v7.0.0 did. `demesne-model` gains `SomeListing` and
+`ConditionalExt::some_listing`. The Go module's API doesn't change, so it stays
+`go/v1.6.0`.
+
+### A reader listing names a `some`'s principals branch by branch, and through an `every`
+
+- A `some` lists the principals of each branch of its brackets it can name
+  through, on the rows it binds, and adds one conditional row admitting every
+  caller it binds for the branches it can't, in place of one conditional row
+  for the whole term.
+- An `every` over declared rows in a `some`'s brackets is listed through its
+  body, its `@slot` tests set aside, and a `none` beside it bars no one the
+  listing names. `<table>_admits` decides each candidate, so the listing may
+  name more callers than the policy admits, never fewer.
+
 ## v7.0.0
 
 The crates are 7.0.0 because a public type of `demesne-syntax` changes:

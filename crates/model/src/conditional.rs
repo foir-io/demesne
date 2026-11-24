@@ -57,6 +57,27 @@ pub fn mode_row_sql(t: &Term) -> Option<String> {
     t.mode_col().map(|col| format!("{col} = {}", quote_literal(t.mode_val())))
 }
 
+/// Returns `n` with its `@slot` tests taken out, or `None` when nothing else is left: an `every` body as a reader
+/// listing names through it, the declared rows' tests set aside.
+#[must_use]
+pub fn without_slot_tests(n: &PermNode) -> Option<PermNode> {
+    let kept = |kids: &[PermNode]| -> Vec<PermNode> { kids.iter().filter_map(without_slot_tests).collect() };
+    match n {
+        PermNode::Leaf(t) if t.slot_test().is_some() => None,
+        PermNode::And(kids) => one_or(kept(kids), PermNode::And),
+        PermNode::Or(kids) => one_or(kept(kids), PermNode::Or),
+        _ => Some(n.clone()),
+    }
+}
+
+fn one_or(mut kept: Vec<PermNode>, join: fn(Vec<PermNode>) -> PermNode) -> Option<PermNode> {
+    match kept.len() {
+        0 => None,
+        1 => kept.pop(),
+        _ => Some(join(kept)),
+    }
+}
+
 #[must_use]
 pub fn is_claim_leaf(n: &PermNode) -> bool {
     matches!(n, PermNode::Leaf(t) if t.builtin() == "claim")
