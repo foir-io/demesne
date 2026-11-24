@@ -175,6 +175,16 @@ pub trait ConditionalExt: SpecExt {
         self.some_listing(t, rels).map(|listing| listing.scope)
     }
 
+    /// Returns whether one branch of a `some` term's brackets names principals the reader listing names, or `None`
+    /// when the listing can't name through all of it.
+    fn listed_branch(&self, branch: &PermNode, rels: &Rels) -> Option<bool> {
+        let part = listed_part(self, branch, rels);
+        if part.rest {
+            return None;
+        }
+        part.body.map(|body| names_principals(&body, &|n| self.listed_relation(n, rels)))
+    }
+
     /// Returns whether `n` is a relation whose principals the reader listing names inside a `some` term's brackets.
     fn listed_relation(&self, n: &PermNode, rels: &Rels) -> bool {
         let PermNode::Leaf(t) = n else { return false };
