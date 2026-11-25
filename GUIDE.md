@@ -1275,6 +1275,10 @@ and any caller can run it. Keep nothing in a table a permission declares that
 a caller of any tenant should not learn. A `path` reads its rows through a
 function of its own (below), which no caller may run.
 
+A definer that compiles a whole permission, such as the function another
+object borrows it through (`via object`), reads the declared rows from the
+table itself, as the function would, since it already runs as their owner.
+
 ### `via conditions`: comparisons stored as rows
 
 ```demesne
@@ -2440,7 +2444,9 @@ operation already has one.
 ### A borrow asked once a statement
 
 A borrowed permission is a function call on the row's column, and Postgres runs
-it for every row the statement reads:
+it for every row the statement reads. Each call parses the claims setting once,
+as `jsonb`, and reads every claim from that one binding, reading an unset or
+empty setting as no claims:
 
 ```demesne
 relation open_space: member via object space->view on space_id

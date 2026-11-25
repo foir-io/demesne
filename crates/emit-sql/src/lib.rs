@@ -43,6 +43,7 @@ pub struct Sql<'a> {
     negated: bool,
     given: Option<(&'a str, bool)>,
     binds: Binds,
+    reads: Reads,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,10 +52,26 @@ enum Binds {
     HopRow,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reads {
+    PerStatement,
+    PerCall,
+}
+
+pub(crate) const CALL: &str = "demesne_call";
+
 impl<'a> Sql<'a> {
     #[must_use]
     pub fn new(s: &'a Spec) -> Self {
-        Sql { s, definer_body: false, nest: None, upper: false, negated: false, given: None, binds: Binds::Parameters }
+        Sql { s, definer_body: false, nest: None, upper: false, negated: false, given: None, binds: Binds::Parameters, reads: Reads::PerStatement }
+    }
+
+    pub(crate) fn per_call(&self) -> Self {
+        Sql { reads: Reads::PerCall, ..*self }
+    }
+
+    pub(crate) fn reads_per_call(&self) -> bool {
+        self.reads == Reads::PerCall
     }
 }
 

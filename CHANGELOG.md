@@ -1,5 +1,37 @@
 # Changelog
 
+## v7.2.0
+
+No spec changes form, and the policies are what v7.1.0 emitted. Only the
+bodies of the definers that compile a whole permission change: a `via object`
+borrow (`<object>_can_<verb>`), a point check, a permission export and the
+`@store_manage` dispatch's `<object>_can_edit`. Their answers are the same; a
+borrow's equals the policy it borrows over every caller, element and declared
+row the live suite tries. No public type changes, and the Go module's API
+doesn't change, so it stays `go/v1.6.0`.
+
+### A definer that answers one row a call parses the claims once and reads declared rows from their table
+
+A policy calls such a definer once a row, and Postgres starts its plan afresh on
+each call, so a claim read by a scalar subquery of its own was parsed again on
+every call, as an init plan, and an `every` or `none` over declared rows called
+`<table>_declared_by_<key>`, a definer of its own, planned again on every call.
+
+- The body binds the claims setting once a call,
+  `(SELECT NULLIF(current_setting(<setting>, true), '')::jsonb AS claims OFFSET 0) AS demesne_call`,
+  and every claim it reads is `(demesne_call.claims ->> '<key>')`, or `->` for
+  JSON. The claims are parsed as `jsonb` whatever cast the spec names, and an
+  unset or empty setting reads as no claims, as the session forms always did;
+  a plain claim read in one of these definers used to raise on an empty
+  setting.
+- An `every` or `none` in the body reads its declared rows from the table, as
+  `<table>_declared_by_<key>` does and as the definer's owner, in place of
+  calling it. A policy still calls the function, since its caller may not read
+  the table.
+
+On rows whose element an `every` decides, a borrow's call costs about half of
+what it did, and about a third when the claims run to a few kilobytes.
+
 ## v7.1.0
 
 A spec whose `some` brackets the listing can name through entirely, or not at

@@ -244,15 +244,15 @@ exit: 0
     },
     {
       "object": "function auth.doc_can_edit(text)",
-      "digest": "6e874a15b952e18a103ca192e46792a1d37b8b06622f5a839db7eee4236e735f"
+      "digest": "4f25e4c6e7a3c8996780e6e481d67b6513b61d917673a3c535908a15eee28120"
     },
     {
       "object": "function auth.doc_can_view(text)",
-      "digest": "c73ad69242948e4363cc7293640903732bd76af4701c01986ba69948e9a55e19"
+      "digest": "885a1918e73bc64399c76de15ea1bc3f559764aa1bccc2e20af92cd83fe40ac7"
     },
     {
       "object": "function auth.doc_readable(text, text, text, text)",
-      "digest": "8dfca93b25e4d9ac30303c017b525e997cf2d3f34577f0ca1ac3804d9b7801b7"
+      "digest": "a75a024e82e8ec16ac717469ba1372d7f72b47f91711c63a4fa047f1377731e4"
     },
     {
       "object": "function auth.docs_accessors(text)",
@@ -264,7 +264,7 @@ exit: 0
     },
     {
       "object": "function auth.note_can_edit(text)",
-      "digest": "1cf6638287809c4a7ef7503ac8e589e60166e539e7397e01525fa18ebf3dd215"
+      "digest": "ae68ef4ab35b10d52498661a409bb5365429c1387560d3bca327df12a8ff8222"
     },
     {
       "object": "function auth.notes_accessors(text)",

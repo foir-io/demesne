@@ -72,7 +72,7 @@ STRICT
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (SELECT 1 FROM spaces WHERE spaces.id = p_space_id AND ((estate_id = (SELECT current_setting('request.jwt.claims', true)::json ->> 'estate_id') AND ((status = 'open')))));
+  SELECT EXISTS (SELECT 1 FROM spaces WHERE spaces.id = p_space_id AND ((estate_id = (demesne_call.claims ->> 'estate_id') AND ((status = 'open'))))) FROM (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::jsonb AS claims OFFSET 0) AS demesne_call;
 $$;
 GRANT EXECUTE ON FUNCTION auth.space_can_view(text) TO PUBLIC;
 
