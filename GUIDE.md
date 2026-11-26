@@ -1220,6 +1220,12 @@ column satisfies the brackets. `prefix "<text>"` binds only the elements that
 start with the text. `held <claim>` binds only the elements the claim's JSON
 array also holds, so a rule the caller's credential does not carry is never
 tried.
+`clear of <claim>` binds only the elements the claim's JSON array does not
+hold: a deny-list. When the claims carry no array under that name (the claim
+is absent, or holds anything but an array), or the array holds a `null`, it
+binds none, so a call that never worked the list out admits nothing through
+it, rather than everything. `held` and `clear of` may both be written, in that
+order, and each narrows.
 
 Inside the brackets:
 

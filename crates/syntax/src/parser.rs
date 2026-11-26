@@ -1346,6 +1346,12 @@ impl Parser {
         let col = self.ident()?;
         let prefix = if self.accept_kw("prefix") { Some(self.string()?) } else { None };
         let held = if self.accept_kw("held") { Some(self.ident()?) } else { None };
+        let clear_of = if self.accept_kw("clear") {
+            self.expect_kw("of")?;
+            Some(self.ident()?)
+        } else {
+            None
+        };
         if self.depth == MAX_NESTING {
             return Err(self.err(format!("parentheses nest more than {MAX_NESTING} deep")));
         }
@@ -1354,7 +1360,7 @@ impl Parser {
         let body = self.parse_perm_union()?;
         self.depth -= 1;
         self.expect(Tok::RParen)?;
-        Ok(Builtin::Some(Box::new(SomeScope { var, col, prefix, held, body })))
+        Ok(Builtin::Some(Box::new(SomeScope { var, col, prefix, held, clear_of, body })))
     }
 
     fn parse_app_scope_excludes(&mut self) -> PResult<Vec<String>> {

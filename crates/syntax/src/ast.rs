@@ -652,6 +652,9 @@ pub struct SomeScope {
     pub prefix: Option<String>,
     /// `held <claim>`: only elements the claim's JSON array also holds are bound.
     pub held: Option<String>,
+    /// `clear of <claim>`: only elements the claim's JSON array does not hold
+    /// are bound, and none when the claims carry no such array.
+    pub clear_of: Option<String>,
     pub body: PermNode,
 }
 
@@ -1099,7 +1102,8 @@ impl Builtin {
             Builtin::Some(scope) => {
                 let prefix = scope.prefix.as_ref().map(|p| format!(" prefix {}", quote(p))).unwrap_or_default();
                 let held = scope.held.as_ref().map(|h| format!(" held {h}")).unwrap_or_default();
-                format!("some {} in {}{prefix}{held} ({})", scope.var, scope.col, scope.body.display())
+                let clear = scope.clear_of.as_ref().map(|c| format!(" clear of {c}")).unwrap_or_default();
+                format!("some {} in {}{prefix}{held}{clear} ({})", scope.var, scope.col, scope.body.display())
             }
             Builtin::ElementPrefix(p) => format!("@element prefix {}", quote(p)),
             Builtin::Clock(col) => format!("@clock({col} reached)"),

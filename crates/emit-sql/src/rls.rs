@@ -998,6 +998,11 @@ impl Sql<'_> {
         format!("{value} = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text({}::jsonb) e))", self.claim(claim))
     }
 
+    pub(crate) fn clear_of_sql(&self, value: &str, claim: &str) -> String {
+        let list = self.claim_object(claim);
+        format!("jsonb_typeof({list}) = 'array' AND {value} <> ALL(ARRAY(SELECT e FROM jsonb_array_elements_text({list}) e))")
+    }
+
     pub(crate) fn some_bounds(&self, scope: &demesne_syntax::SomeScope) -> Vec<String> {
         let mut bound = Vec::new();
         if let Some(prefix) = &scope.prefix {
@@ -1005,6 +1010,9 @@ impl Sql<'_> {
         }
         if let Some(held) = &scope.held {
             bound.push(self.held_sql(ELEMENT, held));
+        }
+        if let Some(clear) = &scope.clear_of {
+            bound.push(self.clear_of_sql(ELEMENT, clear));
         }
         bound
     }

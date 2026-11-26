@@ -37,6 +37,8 @@ fn a_some_term_displays_as_written() {
         "some r in rules_live (named)",
         "some r in rules_live prefix \"read.\" held rules_held (@element prefix \"read.edge.\" and named and not barred)",
         "owner + some r in rules_live held rules_held (named + second)",
+        "some r in rules_live prefix \"read.\" clear of rules_cleared (named)",
+        "some r in rules_live held rules_held clear of rules_cleared (named and not barred)",
     ] {
         let s = compile(&view(expr)).unwrap_or_else(|e| panic!("{expr}: {e}"));
         assert_eq!(s.objects[0].perms[0].tree.display(), expr);
@@ -263,4 +265,25 @@ fn a_some_lists_the_branches_it_names_through_and_keeps_one_row_for_the_rest() {
     assert!(listing.contains(&named), "the others are named where an element is bound:\n{listing}");
     assert!(listing.contains("'owner'::text, 'member'::text, owner_id"), "the owner:\n{listing}");
     assert!(listing.contains("doc_acl"), "the grantees:\n{listing}");
+}
+
+#[test]
+fn clear_of_binds_only_what_the_claims_list_leaves_out_and_nothing_without_a_list() {
+    let src = view("owner + some r in rules_live prefix \"read.\" held rules_held clear of rules_cleared (named)");
+    let s = compile(&src).expect("compiles");
+    let sql = Sql::new(&s);
+    let (sub, held, cleared) = (sql.claim("sub"), sql.claim("rules_held"), sql.claim_object("rules_cleared"));
+    let using = select_using(&src);
+    let want = format!(
+        "EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with({EL}, 'read.') AND {EL} = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text({held}::jsonb) e)) AND jsonb_typeof({cleared}) = 'array' AND {EL} <> ALL(ARRAY(SELECT e FROM jsonb_array_elements_text({cleared}) e)) AND (auth.doc_named_keyed({sub}, docs.id, {EL})))"
+    );
+    assert!(using.contains(&want), "{using}");
+    let borrowed = format!(
+        "{HEAD}object doc {{\n  table docs\n  scoped estate > space\n{RELATIONS}  permission view = owner + some r in rules_live prefix \"read.\" clear of rules_cleared (named) @rls maps select\n}}\nobject note {{\n  table notes\n  scoped estate > space\n  relation of: member via object doc->view on doc_id\n  permission view = of @rls maps select\n}}\n"
+    );
+    let body = definers(&borrowed).into_iter().find(|d| d.name == "doc_can_view").expect("the borrow's definer").body;
+    assert!(
+        body.contains("jsonb_typeof((demesne_call.claims -> 'rules_cleared')) = 'array' AND demesne_element.v <> ALL(ARRAY(SELECT e FROM jsonb_array_elements_text((demesne_call.claims -> 'rules_cleared')) e))"),
+        "the definer reads the list from the claims it binds once a call:\n{body}"
+    );
 }

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+A `some` scope takes `clear of <claim>`: it binds only the elements the
+claim's JSON array does not hold, and none when the claims carry no array
+there or the array holds a `null`, so a deny-list a call never computed
+admits nothing. It may follow `held`, and it compiles beside `held`'s
+bound in the policy and in a definer that binds the claims once a call.
+
+`demesne_syntax::SomeScope` gains the public field `clear_of`, so this is a
+major release.
+
 ## v7.2.0
 
 No spec changes form, and the policies are what v7.1.0 emitted. Only the
