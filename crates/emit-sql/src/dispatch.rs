@@ -51,9 +51,37 @@ pub(crate) fn pruned(node: &PermNode, keep: Option<&Family>) -> Option<PermNode>
     }
 }
 
-fn present(table: &str, f: &Family) -> String {
-    let filter = f.prefix.as_ref().map(|p| format!(" WHERE starts_with(demesne_element.v, {})", quote_literal(p))).unwrap_or_default();
-    format!("EXISTS (SELECT 1 FROM unnest({table}.{}) AS demesne_element(v){filter})", f.col)
+fn bits(families: &[Family], col: &str) -> String {
+    families
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.col == col)
+        .map(|(i, f)| {
+            let bit = 1u32 << i;
+            f.prefix
+                .as_ref()
+                .map_or_else(|| bit.to_string(), |p| format!("CASE WHEN starts_with(demesne_element.v, {}) THEN {bit} ELSE 0 END", quote_literal(p)))
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn presence(table: &str, key: &str, families: &[Family]) -> String {
+    let mut columns: Vec<&str> = Vec::new();
+    for f in families {
+        if !columns.contains(&f.col.as_str()) {
+            columns.push(&f.col);
+        }
+    }
+    if let [col] = columns.as_slice() {
+        return format!(
+            "SELECT coalesce(bit_or({}), 0) INTO demesne_present FROM {table}, unnest({table}.{col}) AS demesne_element(v) WHERE {key};",
+            bits(families, col)
+        );
+    }
+    let masks: Vec<String> =
+        columns.iter().map(|col| format!("coalesce((SELECT bit_or({}) FROM unnest({table}.{col}) AS demesne_element(v)), 0)", bits(families, col))).collect();
+    format!("SELECT {} INTO demesne_present FROM {table} WHERE {key};", masks.join(" | "))
 }
 
 pub(crate) struct Queries {
@@ -64,19 +92,12 @@ pub(crate) struct Queries {
 
 pub(crate) fn body(table: &str, key: &str, families: &[Family], q: &Queries) -> String {
     const NEVER_FAILS: &str = "fmt::Write for String never fails";
-    let vars: Vec<String> = (1..=families.len()).map(|i| format!("demesne_has_{i}")).collect();
-    let checks: Vec<String> = families.iter().map(|f| present(table, f)).collect();
-    let only = |i: usize| vars.iter().enumerate().map(|(j, v)| if i == j { v.clone() } else { format!("NOT {v}") }).collect::<Vec<_>>().join(" AND ");
-    let nothing = vars.iter().map(|v| format!("NOT {v}")).collect::<Vec<_>>().join(" AND ");
-    let mut b = String::from("DECLARE\n");
-    for v in &vars {
-        writeln!(b, "  {v} boolean;").expect(NEVER_FAILS);
-    }
-    writeln!(b, "BEGIN\n  SELECT {} INTO {} FROM {table} WHERE {key};", checks.join(", "), vars.join(", ")).expect(NEVER_FAILS);
-    b.push_str("  IF NOT FOUND THEN\n    RETURN false;\n  END IF;\n");
+    let mut b = String::from("DECLARE\n  demesne_present integer;\nBEGIN\n");
+    writeln!(b, "  {}", presence(table, key, families)).expect(NEVER_FAILS);
+    b.push_str("  CASE demesne_present\n");
     for (i, query) in q.single.iter().enumerate() {
-        writeln!(b, "  IF {} THEN\n    RETURN {query};\n  END IF;", only(i)).expect(NEVER_FAILS);
+        writeln!(b, "    WHEN {} THEN\n      RETURN {query};", 1u32 << i).expect(NEVER_FAILS);
     }
-    write!(b, "  IF {nothing} THEN\n    RETURN {};\n  END IF;\n  RETURN {};\nEND", q.none, q.full).expect(NEVER_FAILS);
+    write!(b, "    WHEN 0 THEN\n      RETURN {};\n    ELSE\n      RETURN {};\n  END CASE;\nEND", q.none, q.full).expect(NEVER_FAILS);
     b
 }
