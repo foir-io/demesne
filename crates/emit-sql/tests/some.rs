@@ -279,7 +279,7 @@ fn clear_of_binds_only_what_the_claims_list_leaves_out_and_nothing_without_a_lis
     );
     assert!(using.contains(&want), "{using}");
     let borrowed = format!(
-        "{HEAD}object doc {{\n  table docs\n  scoped estate > space\n{RELATIONS}  permission view = owner + some r in rules_live prefix \"read.\" clear of rules_cleared (named) @rls maps select\n}}\nobject note {{\n  table notes\n  scoped estate > space\n  relation of: member via object doc->view on doc_id\n  permission view = of @rls maps select\n}}\n"
+        "{HEAD}object doc {{\n  table docs\n  scoped estate > space\n{RELATIONS}  permission view = owner + some r in rules_live prefix \"read.\" clear of rules_cleared (named) @rls maps select\n}}\nobject note {{\n  table notes\n  scoped estate > space\n  relation of: member via object doc->view on doc_id\n  permission view = of @rls maps select\n  export view as note_view_allowed(id text as row_id, estate_id text as row_estate_id, space_id text as row_space_id, doc_id text as row_doc_id)\n}}\n"
     );
     let body = definers(&borrowed).into_iter().find(|d| d.name == "doc_can_view").expect("the borrow's definer").body;
     assert!(

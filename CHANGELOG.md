@@ -16,8 +16,22 @@ borrow against the policy over every caller, with families over two columns
 and a negated one. A row then costs about its own family's plan, not the
 whole permission's.
 
-`demesne_syntax::SomeScope` gains the public field `clear_of`, so this is a
-major release. `SomeScope` and `Builtin` are now `#[non_exhaustive]`, so a
+A policy's `via object` borrow of the one permission that rules the other
+table's reads now reads that table's row under its own policies,
+`EXISTS (SELECT 1 FROM <tables schema>.<table> AS demesne_borrowed WHERE …)`, in place of a
+definer call a row, so Postgres plans it into the statement. It applies only
+where the answers are the same: the verb is the other object's one `@rls`
+permission that maps `select`, that object has no `admit` arm for `select`, no
+other object rules its table, and the borrow is not `pinned`. A definer, a
+point check and an export still call the definer, since they run past every
+policy; `borrowed.rs` checks both over the corpus, and the live suites check
+the definer against the policy. The caller now needs `SELECT` on the borrowed
+table's key. A borrow definer only policies called is emitted as `revoked`, or
+not at all, so code of your own that called it, though it was never
+`callable`, must read the row or `export` the permission.
+
+`demesne_syntax::SomeScope` gains the public field `clear_of`, and the policies
+change form, so this is a major release. `SomeScope` and `Builtin` are now `#[non_exhaustive]`, so a
 later construct is no breaking change: build a scope over a new body with
 `SomeScope::with_body`, and match `Builtin` with a wildcard arm outside
 `demesne-syntax`.

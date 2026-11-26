@@ -2495,6 +2495,44 @@ The compiler accepts the marker only where that holds, and refuses it:
 - inside a `require`, which is compiled outside the permission's containment.
   Borrow there without `pinned`.
 
+### A policy borrows by the borrowed rows
+
+When the borrowed permission is the whole of the other table's read rule, a
+policy needs no definer to ask it: the caller may read the row exactly when the
+caller may read the other table's row. The policy then reads that row itself,
+under that table's own policies, named in the tables schema:
+
+```sql
+EXISTS (SELECT 1 FROM public.docs AS demesne_borrowed WHERE demesne_borrowed.id = notes.doc_id)
+```
+
+Postgres plans that read into the statement as a join, where a definer call
+starts a plan of its own for every row. The answers are the same, since the
+policies on `docs` are the borrowed permission and its `require`.
+
+A policy borrows this way only when all of these hold, and calls
+`<object>_can_<verb>` otherwise:
+
+- the borrowed verb is the other object's one `@rls` permission that maps
+  `select`, and the borrow names no operation or `for select`;
+- the other object has no `admit` arm for `select`, since a borrow lends the
+  permission without it while the table's policy holds it;
+- no other object rules the same table, whose policies would then be more than
+  the one permission;
+- the borrow is not `pinned`, which is already asked once a statement.
+
+A definer never borrows this way. It runs as its owner, past every policy, so
+a read of the other table there would admit every row. A borrow inside a
+definer, a point check or an export is always the definer call.
+
+Two things follow. The caller reads the other table, so it needs `SELECT` on
+that table's key, as it does to read the table at all. And a borrow definer
+that only policies called is now called by no policy: it is emitted as
+`revoked`, if a generated function still calls it, or not at all. Code of your
+own that called `<object>_can_<verb>`, which was never `callable`, gets
+`permission denied` or finds no function; read the other table's row under its
+policy instead, or `export` the permission.
+
 ### Credential confinement, admit arms and exported permissions
 
 An integration token belongs to no principal table. Its authority is its kind and

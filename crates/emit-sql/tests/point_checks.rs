@@ -83,7 +83,8 @@ fn every_listing_has_an_admits_that_runs_each_select_policy_of_its_table() {
                 .find(|f| f.name == format!("{}_admits", o.table))
                 .unwrap_or_else(|| panic!("{} {}: a listing and no admits", path.display(), o.name));
             for p in selects {
-                assert!(admits.body.contains(&p.using), "{} {}: admits doesn't run {}:\n{}\n{}", path.display(), o.name, p.name, admits.body, p.using);
+                let using = by_definer(&p.using, &s, &admits.body);
+                assert!(admits.body.contains(&using), "{} {}: admits doesn't run {}:\n{}\n{using}", path.display(), o.name, p.name, admits.body);
                 checked += 1;
             }
             assert!(
@@ -96,4 +97,38 @@ fn every_listing_has_an_admits_that_runs_each_select_policy_of_its_table() {
         }
     }
     assert!(listings > 100 && checked > listings, "only {listings} listings and {checked} select policies were checked");
+}
+
+fn by_definer(sql: &str, s: &demesne_syntax::Spec, known: &str) -> String {
+    const OPEN: &str = "EXISTS (SELECT 1 FROM ";
+    let mut out = String::new();
+    let mut rest = sql;
+    while let Some(at) = rest.find(OPEN) {
+        let after = &rest[at + OPEN.len()..];
+        let parsed = after.split_once(' ').and_then(|(table, tail)| {
+            let tail = tail.strip_prefix("AS demesne_borrowed WHERE demesne_borrowed.")?;
+            let (_, tail) = tail.split_once(" = ")?;
+            let (column, tail) = tail.split_once(')')?;
+            Some((table.rsplit('.').next()?, column.rsplit('.').next()?, tail))
+        });
+        let Some((table, col, tail)) = parsed else {
+            out.push_str(&rest[..at + OPEN.len()]);
+            rest = after;
+            continue;
+        };
+        let schema = s.definer_schema();
+        let call = s
+            .objects
+            .iter()
+            .filter(|o| o.table == table)
+            .flat_map(|o| o.perms.iter().filter(|pm| pm.maps() == "select").map(move |pm| (o, pm)))
+            .flat_map(|(o, pm)| [format!("{schema}.{}_can_{}({col})", o.name, pm.verb), format!("{schema}.{}_can_{}_for_select({col})", o.name, pm.verb)])
+            .find(|call| known.contains(call.as_str()))
+            .unwrap_or_else(|| panic!("no definer call stands for the borrow of {table} by {col}"));
+        out.push_str(&rest[..at]);
+        out.push_str(&call);
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
 }

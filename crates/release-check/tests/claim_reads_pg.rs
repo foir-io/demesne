@@ -1305,7 +1305,10 @@ fn the_sql_differs_from_v1_1_0_only_in_the_ways_this_release_states() {
                 let dropped: BTreeSet<String> =
                     demesne_emit_sql::Sql::new(&s).unused_definers().unwrap_or_else(|e| panic!("{name}: {e}")).into_iter().collect();
                 let (now_read, before_read) = with_definers_reading_their_call_s_claims(
-                    &calls_per_row(&answering_any_caller(&read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, &s)), &before)),
+                    &calls_per_row(&answering_any_caller(
+                        &read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&by_definer(&now, &s, &before)), &before, &s)),
+                        &before,
+                    )),
                     &calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
                 );
                 if terms_now_bind_a_reach(&name) {
@@ -1391,4 +1394,38 @@ fn every_rule_admits_the_rows_v1_1_0_admitted() {
     assert!(tally.newly_accepted.is_empty(), "no spec v1.1.0 refused compiles now: {:?}\n{summary}", tally.newly_accepted);
     assert_eq!(tally.compared + stuck.len(), tally.specs - tally.invalid.len() - tally.newly_accepted.len(), "every spec both compile is compared:\n{summary}");
     assert!(tally.both_ways * 100 >= tally.rules * 85, "too few rules both admitted and refused a row to prove anything:\n{summary}");
+}
+
+fn by_definer(sql: &str, s: &demesne_syntax::Spec, known: &str) -> String {
+    const OPEN: &str = "EXISTS (SELECT 1 FROM ";
+    let mut out = String::new();
+    let mut rest = sql;
+    while let Some(at) = rest.find(OPEN) {
+        let after = &rest[at + OPEN.len()..];
+        let parsed = after.split_once(' ').and_then(|(table, tail)| {
+            let tail = tail.strip_prefix("AS demesne_borrowed WHERE demesne_borrowed.")?;
+            let (_, tail) = tail.split_once(" = ")?;
+            let (column, tail) = tail.split_once(')')?;
+            Some((table.rsplit('.').next()?, column.rsplit('.').next()?, tail))
+        });
+        let Some((table, col, tail)) = parsed else {
+            out.push_str(&rest[..at + OPEN.len()]);
+            rest = after;
+            continue;
+        };
+        let schema = s.definer_schema();
+        let call = s
+            .objects
+            .iter()
+            .filter(|o| o.table == table)
+            .flat_map(|o| o.perms.iter().filter(|pm| pm.maps() == "select").map(move |pm| (o, pm)))
+            .flat_map(|(o, pm)| [format!("{schema}.{}_can_{}({col})", o.name, pm.verb), format!("{schema}.{}_can_{}_for_select({col})", o.name, pm.verb)])
+            .find(|call| known.contains(call.as_str()))
+            .unwrap_or_else(|| panic!("no definer call stands for the borrow of {table} by {col}"));
+        out.push_str(&rest[..at]);
+        out.push_str(&call);
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
 }

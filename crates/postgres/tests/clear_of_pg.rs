@@ -9,7 +9,7 @@ const SOME: &str = "some r in rules_live prefix \"read.\" clear of rules_cleared
 
 fn spec() -> String {
     format!(
-        "definers schema \"{AUTH}\"\ntables schema \"{ROWS}\"\ntopology {{ level estate level space parent estate }}\nsubject member {{ anchor space; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate > space\n  relation owner: member via owner_id\n  permission view = owner + {SOME} @rls maps select\n}}\nobject note {{\n  table notes\n  scoped estate > space\n  relation of: member via object doc->view on doc_id\n  permission view = of @rls maps select\n}}\n"
+        "definers schema \"{AUTH}\"\ntables schema \"{ROWS}\"\ntopology {{ level estate level space parent estate }}\nsubject member {{ anchor space; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate > space\n  relation owner: member via owner_id\n  permission view = owner + {SOME} @rls maps select\n}}\nobject note {{\n  table notes\n  scoped estate > space\n  relation of: member via object doc->view on doc_id\n  permission view = of @rls maps select\n  export view as note_view_allowed(id text as row_id, estate_id text as row_estate_id, space_id text as row_space_id, doc_id text as row_doc_id)\n}}\n"
     )
 }
 
@@ -93,13 +93,22 @@ fn reads(who: &str, cleared: Cleared, d: &Doc) -> bool {
     d.visibility == "listed" && d.rules.iter().any(|r| r.starts_with("read.") && !items.contains(&Some(*r)))
 }
 
+fn read(tx: &mut postgres::Transaction<'_>, table: &str) -> Result<Vec<postgres::Row>, postgres::Error> {
+    if table == "definer" {
+        let ids: Vec<&str> = DOCS.iter().map(|d| d.id).collect();
+        tx.batch_execute("RESET ROLE")?;
+        return tx.query(&format!("SELECT id FROM unnest($1::text[]) AS ids(id) WHERE {AUTH}.doc_can_view(id)"), &[&ids]);
+    }
+    tx.query(&format!("SELECT id FROM {table}"), &[])
+}
+
 fn visible(db: &mut Client, who: &str, cleared: Cleared, table: &str) -> Result<BTreeSet<String>, String> {
     let mut tx = db.transaction().expect("a transaction");
     tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
     let extra = cleared.json().map(|c| format!(",\"rules_cleared\":{c}")).unwrap_or_default();
     let claims = format!("{{\"sub\":\"{who}\",\"estate_id\":\"e1\",\"space_id\":\"s1\"{extra}}}");
     tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
-    let ids = tx.query(&format!("SELECT id FROM {table}"), &[]).map_err(|e| e.to_string())?.iter().map(|r| r.get(0)).collect();
+    let ids = read(&mut tx, table).map_err(|e| e.as_db_error().map_or_else(|| e.to_string(), |d| d.message().to_owned()))?.iter().map(|r| r.get(0)).collect();
     tx.rollback().expect("rollback");
     Ok(ids)
 }
@@ -112,7 +121,8 @@ fn clear_of_binds_only_what_a_carried_list_leaves_out() {
     install(&mut db);
     let mut failures = Vec::new();
     let (mut admitted, mut refused) = (0, 0);
-    let grid = ["ann", "bob"].into_iter().flat_map(|who| CLAIMS.into_iter().flat_map(move |cleared| ["docs", "notes"].map(|table| (who, cleared, table))));
+    let grid =
+        ["ann", "bob"].into_iter().flat_map(|who| CLAIMS.into_iter().flat_map(move |cleared| ["docs", "notes", "definer"].map(|table| (who, cleared, table))));
     for (who, cleared, table) in grid {
         let want: BTreeSet<String> = DOCS.iter().filter(|d| reads(who, cleared, d)).map(|d| d.id.to_string()).collect();
         let got = match visible(&mut db, who, cleared, table) {

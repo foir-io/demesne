@@ -38,18 +38,19 @@ fn the_marker_parses_after_the_column_and_after_a_borrowed_operation() {
 }
 
 #[test]
-fn a_pinned_borrow_is_asked_once_at_the_claim_and_an_unpinned_one_at_each_row() {
+fn a_pinned_borrow_is_asked_once_at_the_claim_and_an_unpinned_one_by_the_rows_it_points_at() {
     let s = compile(&page("", "estate > space", "space_id", VIEW)).expect("compiles");
     let claim = Sql::new(&s).claim("space_id");
     let contained = format!("space_id = {claim} AND ");
     let per_row = select_policy(&page("", "estate > space", "space_id", VIEW));
-    assert!(per_row.contains(&contained) && per_row.ends_with("AND ((auth.space_can_view(space_id))))"), "{per_row}");
+    let by_rows = "EXISTS (SELECT 1 FROM public.spaces AS demesne_borrowed WHERE demesne_borrowed.id = pages.space_id)";
+    assert!(per_row.contains(&contained) && per_row.ends_with(&format!("AND (({by_rows})))")), "{per_row}");
     let once = select_policy(&page("", "estate > space", "space_id pinned", VIEW));
     assert!(once.contains(&contained) && once.ends_with(&format!("AND (((SELECT auth.space_can_view({claim})))))")), "{once}");
     assert_eq!(
-        once.replace(&format!("(SELECT auth.space_can_view({claim}))"), "auth.space_can_view(space_id)"),
+        once.replace(&format!("(SELECT auth.space_can_view({claim}))"), by_rows),
         per_row,
-        "the marker changes the borrow's call and nothing else"
+        "the marker changes how the borrow is asked and nothing else"
     );
 }
 

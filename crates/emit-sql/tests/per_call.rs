@@ -16,6 +16,7 @@ object note {
   scoped estate > space
   relation of: member via object doc->view on doc_id
   permission view = of @rls maps select
+  export view as note_view_allowed(id text as row_id, estate_id text as row_estate_id, space_id text as row_space_id, doc_id text as row_doc_id)
 }
 ";
 

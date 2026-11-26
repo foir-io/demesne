@@ -441,14 +441,10 @@ fn pinned_borrow(db: &mut Client) {
         assert_eq!(pinned, want, "{what}");
         assert_eq!(pinned, per_row, "{what}: the pinned borrow admits the rows the per-row borrow admits");
         assert!(pinned_calls <= 1, "{what}: the pinned borrow was asked {pinned_calls} times in one statement");
-        assert!(
-            per_row_calls >= i64::try_from(want.len()).expect("a small count"),
-            "{what}: the per-row borrow was asked {per_row_calls} times for {} rows",
-            want.len()
-        );
+        assert_eq!(per_row_calls, 0, "{what}: the unpinned borrow reads the spaces under their own policy and asks no definer");
     }
     let who = claims(&[("estate_id", Some("e1")), ("space_id", Some("s1"))]);
-    assert_eq!((visible_and_calls(db, &who, "pages").1, visible_and_calls(db, &who, "sheets").1), (1, 3), "three rows: one call pinned, three per row");
+    assert_eq!((visible_and_calls(db, &who, "pages").1, visible_and_calls(db, &who, "sheets").1), (1, 0), "three rows: one call pinned, none read by rows");
 }
 
 type Answers = (Option<bool>, Option<i64>, Option<String>, Vec<String>);

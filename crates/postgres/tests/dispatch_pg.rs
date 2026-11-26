@@ -9,7 +9,7 @@ const VIEW: &str = "owner + some r in rules_live prefix \"a.\" (named) + some r 
 
 fn spec() -> String {
     format!(
-        "definers schema \"{AUTH}\"\ntables schema \"{ROWS}\"\ntopology {{ level estate level space parent estate }}\nsubject member {{ anchor space; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate > space\n  relation owner: member via owner_id\n  relation named: member via edge doc_edges(principal_id, object_id) key rule_id\n  permission view = {VIEW} @rls maps select\n}}\nobject note {{\n  table notes\n  scoped estate > space\n  relation of: member via object doc->view on doc_id\n  permission view = of @rls maps select\n}}\n"
+        "definers schema \"{AUTH}\"\ntables schema \"{ROWS}\"\ntopology {{ level estate level space parent estate }}\nsubject member {{ anchor space; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate > space\n  relation owner: member via owner_id\n  relation named: member via edge doc_edges(principal_id, object_id) key rule_id\n  permission view = {VIEW} @rls maps select\n}}\nobject note {{\n  table notes\n  scoped estate > space\n  relation of: member via object doc->view on doc_id\n  permission view = of @rls maps select\n  export view as note_view_allowed(id text as row_id, estate_id text as row_estate_id, space_id text as row_space_id, doc_id text as row_doc_id)\n}}\n"
     )
 }
 
@@ -62,12 +62,21 @@ fn install(db: &mut Client) {
     db.batch_execute(&format!("GRANT USAGE ON SCHEMA {ROWS}, {AUTH} TO {CALLER}; GRANT SELECT ON {ROWS}.docs, {ROWS}.notes TO {CALLER};")).expect("grants");
 }
 
+fn read(tx: &mut postgres::Transaction<'_>, table: &str) -> Result<Vec<postgres::Row>, postgres::Error> {
+    if table == "definer" {
+        let ids: Vec<&str> = DOCS.iter().map(|d| d.id).collect();
+        tx.batch_execute("RESET ROLE")?;
+        return tx.query(&format!("SELECT id FROM unnest($1::text[]) AS ids(id) WHERE {AUTH}.doc_can_view(id)"), &[&ids]);
+    }
+    tx.query(&format!("SELECT id FROM {table}"), &[])
+}
+
 fn visible(db: &mut Client, who: &str, held: &str, table: &str) -> BTreeSet<String> {
     let mut tx = db.transaction().expect("a transaction");
     tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
     let claims = format!("{{\"sub\":\"{who}\",\"estate_id\":\"e1\",\"space_id\":\"s1\",\"tags_held\":{held}}}");
     tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
-    let ids = tx.query(&format!("SELECT id FROM {table}"), &[]).expect("the statement").iter().map(|r| r.get(0)).collect();
+    let ids = read(&mut tx, table).expect("the statement").iter().map(|r| r.get(0)).collect();
     tx.rollback().expect("rollback");
     ids
 }
@@ -84,10 +93,14 @@ fn a_borrow_that_runs_one_family_s_query_answers_as_the_policy_on_every_row() {
     for (who, held) in grid {
         let policy = visible(&mut db, who, held, "docs");
         let borrowed = visible(&mut db, who, held, "notes");
+        let judged = visible(&mut db, who, held, "definer");
         admitted += policy.len();
         refused += DOCS.len() - policy.len();
         if borrowed != policy {
             failures.push(format!("{who} holding {held}: the borrow reads {borrowed:?}, the policy {policy:?}"));
+        }
+        if judged != policy {
+            failures.push(format!("{who} holding {held}: the definer admits {judged:?}, the policy {policy:?}"));
         }
     }
     assert!(failures.is_empty(), "{} wrong answers:\n{}", failures.len(), failures.join("\n"));
@@ -107,7 +120,7 @@ fn a_borrow_that_runs_one_family_s_query_answers_as_the_policy_on_every_row() {
         ("eve", "[]", "x", true, "the negated family alone, naming someone else"),
         ("cat", "[]", "ax", true, "a family that admits beside the negated one"),
     ] {
-        for table in ["docs", "notes"] {
+        for table in ["docs", "notes", "definer"] {
             assert_eq!(visible(&mut db, who, held, table).contains(doc), want, "{who} on {doc} of {table}: {why}");
         }
     }
