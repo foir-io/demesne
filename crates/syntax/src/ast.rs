@@ -645,6 +645,7 @@ pub struct ViaConditions {
 
 /// A `some` scope: one element of a row's array column, and the expression that must hold for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SomeScope {
     pub var: String,
     pub col: String,
@@ -656,6 +657,14 @@ pub struct SomeScope {
     /// are bound, and none when the claims carry no such array.
     pub clear_of: Option<String>,
     pub body: PermNode,
+}
+
+impl SomeScope {
+    /// The same scope over `body`: its element, column and bounds kept.
+    #[must_use]
+    pub fn with_body(&self, body: PermNode) -> Self {
+        Self { body, ..self.clone() }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1016,6 +1025,7 @@ pub struct SessionRel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Builtin {
     Session(Option<SessionRel>),
     AppScope(Vec<String>),

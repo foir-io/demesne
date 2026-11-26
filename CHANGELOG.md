@@ -9,7 +9,10 @@ admits nothing. It may follow `held`, and it compiles beside `held`'s
 bound in the policy and in a definer that binds the claims once a call.
 
 `demesne_syntax::SomeScope` gains the public field `clear_of`, so this is a
-major release.
+major release. `SomeScope` and `Builtin` are now `#[non_exhaustive]`, so a
+later construct is no breaking change: build a scope over a new body with
+`SomeScope::with_body`, and match `Builtin` with a wildcard arm outside
+`demesne-syntax`.
 
 ## v7.2.0
 
