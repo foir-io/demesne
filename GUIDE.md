@@ -1285,6 +1285,17 @@ A definer that compiles a whole permission, such as the function another
 object borrows it through (`via object`), reads the declared rows from the
 table itself, as the function would, since it already runs as their owner.
 
+A borrow of a permission that holds `some` terms is PL/pgSQL. It reads the
+row's element columns once and asks which of the permission's families (each
+`some`'s column and prefix) the row holds an element of. A row of one family
+runs the permission with every other family's `some` taken out, and a row of
+none runs it with all of them out; that is exact, since a `some` with no
+element to bind is false. A row of several families runs the whole
+permission. Each query is planned once a session, and a call starts only the
+one it runs, so a permission of many families costs a row about what its own
+family costs. Up to eight families are dispatched; a permission with more
+compiles to one SQL query, as one with none does.
+
 ### `via conditions`: comparisons stored as rows
 
 ```demesne

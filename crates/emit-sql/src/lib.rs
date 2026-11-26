@@ -8,6 +8,7 @@ mod changelog;
 mod closure;
 mod conditions;
 mod definers;
+mod dispatch;
 mod error;
 mod files;
 mod genfn;

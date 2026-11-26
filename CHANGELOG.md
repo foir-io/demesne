@@ -1,12 +1,20 @@
 # Changelog
 
-## Unreleased
+## v8.0.0
 
 A `some` scope takes `clear of <claim>`: it binds only the elements the
 claim's JSON array does not hold, and none when the claims carry no array
 there or the array holds a `null`, so a deny-list a call never computed
 admits nothing. It may follow `held`, and it compiles beside `held`'s
 bound in the policy and in a definer that binds the claims once a call.
+
+A `via object` borrow of a permission that holds `some` terms compiles to
+PL/pgSQL that reads the row's elements once and runs the permission pruned to
+the one family of `some` the row holds (or to none), and the whole permission
+for a row of several. Its answers are the policy's: `dispatch_pg` checks the
+borrow against the policy over every caller, with families over two columns
+and a negated one. A row then costs about its own family's plan, not the
+whole permission's.
 
 `demesne_syntax::SomeScope` gains the public field `clear_of`, so this is a
 major release. `SomeScope` and `Builtin` are now `#[non_exhaustive]`, so a

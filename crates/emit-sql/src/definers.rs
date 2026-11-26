@@ -1334,15 +1334,49 @@ impl Sql<'_> {
                 return Err(format!("relation {} references unknown object {}", quote(&r.name), quote(&vo.object)));
             };
             let call = self.per_call();
-            let pred = call.object_verb_predicate_for(other, &vo.verb, vo.op.as_deref().unwrap_or(""), virt)?;
             let params = vec![Param::id(format!("p_{}_id", vo.object))];
             let sig = render(&params, self.s.id_type());
             let key = format!("{}.{} = p_{}_id", other.table, other.pk(), vo.object);
             let strict = binds_every(&sig, &[std::slice::from_ref(&key)]);
-            let body = call.call_body(&grant_edge_exists(&other.table, &[key, format!("({pred})")]), None);
-            defs.fns.push(GenFn { name, params, body, strict, ..Default::default() });
+            if let Some(body) = self.dispatched_borrow(&call, other, &vo.verb, vo.op.as_deref(), &key, virt)? {
+                defs.fns.push(GenFn { name, params, body, strict, language: Language::Plpgsql, raw_body: true, ..Default::default() });
+            } else {
+                let pred = call.object_verb_predicate_for(other, &vo.verb, vo.op.as_deref().unwrap_or(""), virt)?;
+                let body = call.call_body(&grant_edge_exists(&other.table, &[key, format!("({pred})")]), None);
+                defs.fns.push(GenFn { name, params, body, strict, ..Default::default() });
+            }
         }
         Ok(())
+    }
+
+    fn dispatched_borrow(&self, call: &Sql, other: &Object, verb: &str, op: Option<&str>, key: &str, virt: &Virtual) -> R<Option<String>> {
+        let Some(pm) = other.perms.iter().find(|pm| pm.verb == verb && pm.has_layer("rls")) else {
+            return Err(format!("object {} has no @rls permission {} for a cross-object reference", quote(&other.name), quote(verb)));
+        };
+        let families = crate::dispatch::families(&pm.tree);
+        if families.is_empty() || families.len() > crate::dispatch::MAX_FAMILIES {
+            return Ok(None);
+        }
+        let query = |tree: Option<demesne_syntax::PermNode>| -> R<String> {
+            let Some(tree) = tree else { return Ok("false".to_owned()) };
+            let mut borrowed = pm.clone();
+            borrowed.tree = tree;
+            if let Some(op) = op.filter(|op| !op.is_empty()) {
+                borrowed.maps = Some(op.to_owned());
+            }
+            let pred = call.perm_predicate(other, &borrowed, self.s.owner_subject(leaf(other)), virt)?;
+            Ok(format!("(SELECT {})", call.call_body(&grant_edge_exists(&other.table, &[key.to_owned(), format!("({pred})")]), None)))
+        };
+        let queries = crate::dispatch::Queries {
+            single: if families.len() == 1 {
+                Vec::new()
+            } else {
+                families.iter().map(|f| query(crate::dispatch::pruned(&pm.tree, Some(f)))).collect::<R<Vec<_>>>()?
+            },
+            none: query(crate::dispatch::pruned(&pm.tree, None))?,
+            full: query(Some(pm.tree.clone()))?,
+        };
+        Ok(Some(crate::dispatch::body(&other.table, key, &families, &queries)))
     }
 
     pub(crate) fn op_predicate(&self, obj: &Object, op: &str, virt: &Virtual) -> R<String> {
