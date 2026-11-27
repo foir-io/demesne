@@ -8,6 +8,7 @@ mod changelog;
 mod closure;
 mod conditions;
 mod definers;
+mod dispatch;
 mod error;
 mod files;
 mod genfn;
@@ -44,6 +45,7 @@ pub struct Sql<'a> {
     given: Option<(&'a str, bool)>,
     binds: Binds,
     reads: Reads,
+    borrow: Borrow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,12 +60,29 @@ enum Reads {
     PerCall,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Borrow {
+    ByDefiner,
+    ByRows,
+}
+
 pub(crate) const CALL: &str = "demesne_call";
+pub(crate) const BORROWED: &str = "demesne_borrowed";
 
 impl<'a> Sql<'a> {
     #[must_use]
     pub fn new(s: &'a Spec) -> Self {
-        Sql { s, definer_body: false, nest: None, upper: false, negated: false, given: None, binds: Binds::Parameters, reads: Reads::PerStatement }
+        Sql {
+            s,
+            definer_body: false,
+            nest: None,
+            upper: false,
+            negated: false,
+            given: None,
+            binds: Binds::Parameters,
+            reads: Reads::PerStatement,
+            borrow: Borrow::ByDefiner,
+        }
     }
 
     pub(crate) fn per_call(&self) -> Self {

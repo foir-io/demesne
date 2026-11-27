@@ -1220,6 +1220,12 @@ column satisfies the brackets. `prefix "<text>"` binds only the elements that
 start with the text. `held <claim>` binds only the elements the claim's JSON
 array also holds, so a rule the caller's credential does not carry is never
 tried.
+`clear of <claim>` binds only the elements the claim's JSON array does not
+hold: a deny-list. When the claims carry no array under that name (the claim
+is absent, or holds anything but an array), or the array holds a `null`, it
+binds none, so a call that never worked the list out admits nothing through
+it, rather than everything. `held` and `clear of` may both be written, in that
+order, and each narrows.
 
 Inside the brackets:
 
@@ -1278,6 +1284,17 @@ function of its own (below), which no caller may run.
 A definer that compiles a whole permission, such as the function another
 object borrows it through (`via object`), reads the declared rows from the
 table itself, as the function would, since it already runs as their owner.
+
+A borrow of a permission that holds `some` terms is PL/pgSQL. It reads the
+row's element columns once and asks which of the permission's families (each
+`some`'s column and prefix) the row holds an element of. A row of one family
+runs the permission with every other family's `some` taken out, and a row of
+none runs it with all of them out; that is exact, since a `some` with no
+element to bind is false. A row of several families runs the whole
+permission. Each query is planned once a session, and a call starts only the
+one it runs, so a permission of many families costs a row about what its own
+family costs. Up to eight families are dispatched; a permission with more
+compiles to one SQL query, as one with none does.
 
 ### `via conditions`: comparisons stored as rows
 
@@ -2477,6 +2494,44 @@ The compiler accepts the marker only where that holds, and refuses it:
   row reached that way holds another value;
 - inside a `require`, which is compiled outside the permission's containment.
   Borrow there without `pinned`.
+
+### A policy borrows by the borrowed rows
+
+When the borrowed permission is the whole of the other table's read rule, a
+policy needs no definer to ask it: the caller may read the row exactly when the
+caller may read the other table's row. The policy then reads that row itself,
+under that table's own policies, named in the tables schema:
+
+```sql
+EXISTS (SELECT 1 FROM public.docs AS demesne_borrowed WHERE demesne_borrowed.id = notes.doc_id)
+```
+
+Postgres plans that read into the statement as a join, where a definer call
+starts a plan of its own for every row. The answers are the same, since the
+policies on `docs` are the borrowed permission and its `require`.
+
+A policy borrows this way only when all of these hold, and calls
+`<object>_can_<verb>` otherwise:
+
+- the borrowed verb is the other object's one `@rls` permission that maps
+  `select`, and the borrow names no operation or `for select`;
+- the other object has no `admit` arm for `select`, since a borrow lends the
+  permission without it while the table's policy holds it;
+- no other object rules the same table, whose policies would then be more than
+  the one permission;
+- the borrow is not `pinned`, which is already asked once a statement.
+
+A definer never borrows this way. It runs as its owner, past every policy, so
+a read of the other table there would admit every row. A borrow inside a
+definer, a point check or an export is always the definer call.
+
+Two things follow. The caller reads the other table, so it needs `SELECT` on
+that table's key, as it does to read the table at all. And a borrow definer
+that only policies called is now called by no policy: it is emitted as
+`revoked`, if a generated function still calls it, or not at all. Code of your
+own that called `<object>_can_<verb>`, which was never `callable`, gets
+`permission denied` or finds no function; read the other table's row under its
+policy instead, or `export` the permission.
 
 ### Credential confinement, admit arms and exported permissions
 

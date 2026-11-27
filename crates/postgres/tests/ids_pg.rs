@@ -335,8 +335,6 @@ fn each_function_admits_and_refuses(w: &World, db: &mut Client, c: &Callers) {
         (member, true, format!("{a}.doc_composition_parent({}, 'read')", i(NOBODYS)), false),
         (member, true, format!("{a}.folder_paths_reachable({}, {})", i(MEMBER), i(SUBFOLDER)), true),
         (member, true, format!("{a}.folder_paths_reachable({}, {})", i(MEMBER), i(LOOSE_FOLDER)), false),
-        (member, true, format!("{a}.doc_can_view({})", i(OWNED)), true),
-        (member, true, format!("{a}.doc_can_view({})", i(NOBODYS)), false),
         (stranger, true, format!("{a}.acl_manage('doc', {})", i(GRANTED)), true),
         (member, true, format!("{a}.acl_manage('doc', {})", i(GRANTED)), false),
         (viewer, true, format!("{a}.staff_has_resource_role({}, {}, {})", i(VIEWER), i(TENANT), i(PROJECT)), true),

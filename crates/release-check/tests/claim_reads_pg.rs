@@ -390,8 +390,9 @@ fn sqlstate(e: &postgres::Error) -> String {
     e.code().map_or_else(|| e.to_string(), |c| c.code().to_string())
 }
 
-fn rows_where(tx: &mut Transaction<'_>, table: &str, filter: &str) -> Outcome {
+fn rows_where(tx: &mut Transaction<'_>, table: &str, filter: &str, role: &str) -> Outcome {
     let mut sp = tx.savepoint("rule").map_err(|e| sqlstate(&e))?;
+    sp.batch_execute(&format!("ALTER TABLE {table} DISABLE ROW LEVEL SECURITY; SET LOCAL ROLE {}", ident(role))).map_err(|e| sqlstate(&e))?;
     let got = sp.query(&format!("SELECT _row FROM {table} WHERE ({filter}) ORDER BY _row"), &[]).map_err(|e| sqlstate(&e));
     sp.rollback().map_err(|e| sqlstate(&e))?;
     got.map(|rows| rows.iter().map(|r| r.get(0)).collect())
@@ -475,11 +476,11 @@ struct Found {
     checks: Vec<String>,
 }
 
-fn judge_rules(tx: &mut Transaction<'_>, schema: &str, policies: &[Policy], judged: &mut Judged) {
+fn judge_rules(tx: &mut Transaction<'_>, schema: &str, role: &str, policies: &[Policy], judged: &mut Judged) {
     for (table, name, qual, check) in policies {
         let at = format!("{}.{}", ident(schema), ident(table));
         for (side, filter) in [("using", qual), ("check", check)].into_iter().filter_map(|(side, f)| f.as_ref().map(|f| (side, f))) {
-            judged.rules.entry(format!("{table}.{name}.{side}")).or_default().push(rows_where(tx, &at, filter));
+            judged.rules.entry(format!("{table}.{name}.{side}")).or_default().push(rows_where(tx, &at, filter, role));
         }
     }
 }
@@ -551,7 +552,7 @@ fn judge(db: &mut Client, setup: &Setup<'_>, pools: &Pools, ddl: &str, claims: &
         if let Some(json) = set {
             tx.execute("SELECT set_config($1, $2, true)", &[&setup.setting, json]).map_err(|e| why(&e))?;
         }
-        judge_rules(&mut tx, schema, &found.policies, &mut judged);
+        judge_rules(&mut tx, schema, &setup.role, &found.policies, &mut judged);
         judge_views(&mut tx, setup, &found.policies, &mut judged)?;
         judge_checks(&mut tx, s.id_type(), pools, &found.checks, set.as_deref().unwrap_or("{}"), &mut judged)?;
     }
@@ -1305,7 +1306,10 @@ fn the_sql_differs_from_v1_1_0_only_in_the_ways_this_release_states() {
                 let dropped: BTreeSet<String> =
                     demesne_emit_sql::Sql::new(&s).unused_definers().unwrap_or_else(|e| panic!("{name}: {e}")).into_iter().collect();
                 let (now_read, before_read) = with_definers_reading_their_call_s_claims(
-                    &calls_per_row(&answering_any_caller(&read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&now), &before, &s)), &before)),
+                    &calls_per_row(&answering_any_caller(
+                        &read_per_row(&declared_as_v1_1_0(&searching_its_own_schemas(&by_definer(&now, &s, &before)), &before, &s)),
+                        &before,
+                    )),
                     &calls_per_row(&without_functions_the_prune_rule_drops(&before, &dropped)),
                 );
                 if terms_now_bind_a_reach(&name) {
@@ -1391,4 +1395,38 @@ fn every_rule_admits_the_rows_v1_1_0_admitted() {
     assert!(tally.newly_accepted.is_empty(), "no spec v1.1.0 refused compiles now: {:?}\n{summary}", tally.newly_accepted);
     assert_eq!(tally.compared + stuck.len(), tally.specs - tally.invalid.len() - tally.newly_accepted.len(), "every spec both compile is compared:\n{summary}");
     assert!(tally.both_ways * 100 >= tally.rules * 85, "too few rules both admitted and refused a row to prove anything:\n{summary}");
+}
+
+fn by_definer(sql: &str, s: &demesne_syntax::Spec, known: &str) -> String {
+    const OPEN: &str = "EXISTS (SELECT 1 FROM ";
+    let mut out = String::new();
+    let mut rest = sql;
+    while let Some(at) = rest.find(OPEN) {
+        let after = &rest[at + OPEN.len()..];
+        let parsed = after.split_once(' ').and_then(|(table, tail)| {
+            let tail = tail.strip_prefix("AS demesne_borrowed WHERE demesne_borrowed.")?;
+            let (_, tail) = tail.split_once(" = ")?;
+            let (column, tail) = tail.split_once(')')?;
+            Some((table.rsplit('.').next()?, column.rsplit('.').next()?, tail))
+        });
+        let Some((table, col, tail)) = parsed else {
+            out.push_str(&rest[..at + OPEN.len()]);
+            rest = after;
+            continue;
+        };
+        let schema = s.definer_schema();
+        let call = s
+            .objects
+            .iter()
+            .filter(|o| o.table == table)
+            .flat_map(|o| o.perms.iter().filter(|pm| pm.maps() == "select").map(move |pm| (o, pm)))
+            .flat_map(|(o, pm)| [format!("{schema}.{}_can_{}({col})", o.name, pm.verb), format!("{schema}.{}_can_{}_for_select({col})", o.name, pm.verb)])
+            .find(|call| known.contains(call.as_str()))
+            .unwrap_or_else(|| panic!("no definer call stands for the borrow of {table} by {col}"));
+        out.push_str(&rest[..at]);
+        out.push_str(&call);
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
 }

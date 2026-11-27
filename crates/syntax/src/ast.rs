@@ -645,6 +645,7 @@ pub struct ViaConditions {
 
 /// A `some` scope: one element of a row's array column, and the expression that must hold for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SomeScope {
     pub var: String,
     pub col: String,
@@ -652,7 +653,18 @@ pub struct SomeScope {
     pub prefix: Option<String>,
     /// `held <claim>`: only elements the claim's JSON array also holds are bound.
     pub held: Option<String>,
+    /// `clear of <claim>`: only elements the claim's JSON array does not hold
+    /// are bound, and none when the claims carry no such array.
+    pub clear_of: Option<String>,
     pub body: PermNode,
+}
+
+impl SomeScope {
+    /// The same scope over `body`: its element, column and bounds kept.
+    #[must_use]
+    pub fn with_body(&self, body: PermNode) -> Self {
+        Self { body, ..self.clone() }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1013,6 +1025,7 @@ pub struct SessionRel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Builtin {
     Session(Option<SessionRel>),
     AppScope(Vec<String>),
@@ -1099,7 +1112,8 @@ impl Builtin {
             Builtin::Some(scope) => {
                 let prefix = scope.prefix.as_ref().map(|p| format!(" prefix {}", quote(p))).unwrap_or_default();
                 let held = scope.held.as_ref().map(|h| format!(" held {h}")).unwrap_or_default();
-                format!("some {} in {}{prefix}{held} ({})", scope.var, scope.col, scope.body.display())
+                let clear = scope.clear_of.as_ref().map(|c| format!(" clear of {c}")).unwrap_or_default();
+                format!("some {} in {}{prefix}{held}{clear} ({})", scope.var, scope.col, scope.body.display())
             }
             Builtin::ElementPrefix(p) => format!("@element prefix {}", quote(p)),
             Builtin::Clock(col) => format!("@clock({col} reached)"),

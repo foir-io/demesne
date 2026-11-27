@@ -347,13 +347,13 @@ fn a_policy_that_calls_a_function_whose_argument_types_changed_is_created_again_
          CREATE TABLE demesne_rt_rows.notes (id bigint PRIMARY KEY, tenant_id bigint, doc_id integer);",
     )
     .expect("fresh schemas");
-    let src = "definers schema \"demesne_rt_auth\"\ntables schema \"demesne_rt_rows\"\nidentifiers bigint\ntopology { level tenant }\nsubject member { anchor tenant; reach self; identifies member_id; roles none; binds owner }\nobject doc {\n  table docs\n  scoped tenant\n  relation owner: member via owner_id\n  permission view = owner @rls maps select\n}\nobject note {\n  table notes\n  scoped tenant\n  relation doc: member via object doc->view on doc_id\n  permission view = doc @rls maps select\n}\n";
+    let src = "definers schema \"demesne_rt_auth\"\ntables schema \"demesne_rt_rows\"\nidentifiers bigint\ntopology { level tenant }\nsubject member { anchor tenant; reach self; identifies member_id; roles none; binds owner }\nobject doc {\n  table docs\n  scoped tenant\n  relation owner: member via owner_id\n  permission view = owner @rls maps select\n  permission edit = owner @rls maps update\n}\nobject note {\n  table notes\n  scoped tenant\n  relation doc: member via object doc->edit on doc_id\n  permission view = doc @rls maps select\n}\n";
     let s = demesne_syntax::parse(src).expect("the spec parses");
     demesne_emit_sql::validate(&s).expect("the spec validates");
     let mut sql = String::new();
     Sql::new(&s).write_all_sql(&mut sql).expect("the SQL compiles");
     db.batch_execute(&sql).unwrap_or_else(|e| panic!("apply: {e:?}"));
-    let (wide, narrow) = ("demesne_rt_auth.doc_can_view(bigint)", "demesne_rt_auth.doc_can_view(integer)");
+    let (wide, narrow) = ("demesne_rt_auth.doc_can_edit(bigint)", "demesne_rt_auth.doc_can_edit(integer)");
     let made = demesne_emit_sql::objects(&sql)
         .expect("objects")
         .into_iter()

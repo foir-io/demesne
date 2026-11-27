@@ -19,8 +19,5 @@ demesne-model.workspace = true
 demesne-emit-sql.workspace = true
 demesne-emit-ts.workspace = true
 
-[dev-dependencies]
-insta.workspace = true
-
 [lints]
 workspace = true

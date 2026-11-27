@@ -2,7 +2,7 @@ use crate::chains::HOP;
 use crate::definers::declared_columns;
 use crate::error::Error;
 use crate::genfn::{Arg, definer_call};
-use crate::{Binds, CALL, Reads, Sql};
+use crate::{BORROWED, Binds, Borrow, CALL, Reads, Sql};
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_model::SpecExt;
 use demesne_model::analysis::{
@@ -342,6 +342,11 @@ impl Sql<'_> {
     }
 
     fn rls_result(&self) -> R<RlsResult> {
+        let policy = Sql { borrow: Borrow::ByRows, ..*self };
+        policy.rls_policies()
+    }
+
+    fn rls_policies(&self) -> R<RlsResult> {
         let virt = self.virtual_levels()?;
         let mut res = RlsResult { table_schema: self.s.table_schema().to_string(), ..Default::default() };
         for obj in &self.s.objects {
@@ -983,7 +988,17 @@ impl Sql<'_> {
     }
 
     pub(crate) fn judged(&self, nest: Option<usize>, upper: bool) -> Self {
-        Sql { s: self.s, definer_body: false, nest, upper, negated: false, given: None, binds: Binds::Parameters, reads: Reads::PerStatement }
+        Sql {
+            s: self.s,
+            definer_body: false,
+            nest,
+            upper,
+            negated: false,
+            given: None,
+            binds: Binds::Parameters,
+            reads: Reads::PerStatement,
+            borrow: Borrow::ByDefiner,
+        }
     }
 
     pub(crate) fn composition_fn(&self, obj: &Object, r: &Relation) -> String {
@@ -998,6 +1013,11 @@ impl Sql<'_> {
         format!("{value} = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text({}::jsonb) e))", self.claim(claim))
     }
 
+    pub(crate) fn clear_of_sql(&self, value: &str, claim: &str) -> String {
+        let list = self.claim_object(claim);
+        format!("jsonb_typeof({list}) = 'array' AND {value} <> ALL(ARRAY(SELECT e FROM jsonb_array_elements_text({list}) e))")
+    }
+
     pub(crate) fn some_bounds(&self, scope: &demesne_syntax::SomeScope) -> Vec<String> {
         let mut bound = Vec::new();
         if let Some(prefix) = &scope.prefix {
@@ -1005,6 +1025,9 @@ impl Sql<'_> {
         }
         if let Some(held) = &scope.held {
             bound.push(self.held_sql(ELEMENT, held));
+        }
+        if let Some(clear) = &scope.clear_of {
+            bound.push(self.clear_of_sql(ELEMENT, clear));
         }
         bound
     }
@@ -1359,6 +1382,16 @@ impl Sql<'_> {
                 Ok(vec![definer_call(&format!("{schema}.{}", vo.function_name()), &[Arg::Fixed(claim)])])
             }
             Repr::Object(vo) => {
+                if let Some(other) = self.borrowed_by_its_rows(vo) {
+                    return Ok(vec![format!(
+                        "EXISTS (SELECT 1 FROM {}.{} AS {BORROWED} WHERE {BORROWED}.{} = {}.{})",
+                        self.s.table_schema(),
+                        other.table,
+                        other.pk(),
+                        obj.table,
+                        vo.col
+                    )]);
+                }
                 let call = format!("{}.{}({})", schema, vo.function_name(), vo.col);
                 Ok(vec![self.probed(&self.object_probe(obj, vo), call)])
             }
@@ -1431,6 +1464,22 @@ impl Sql<'_> {
             return call;
         }
         format!("({probe} AND {call})")
+    }
+
+    pub(crate) fn borrowed_by_its_rows(&self, vo: &ViaObject) -> Option<&Object> {
+        if self.borrow != Borrow::ByRows || self.definer_body || self.reads_per_call() {
+            return None;
+        }
+        let other = self.s.object_by_name(&vo.object)?;
+        if self.s.objects.iter().filter(|o| o.table == other.table).count() != 1 || other.admits.iter().any(|a| contains(&a.ops, "select")) {
+            return None;
+        }
+        let reads: Vec<&Perm> = other.perms.iter().filter(|pm| pm.has_layer("rls") && !pm.predicate_only && matches!(pm.maps(), "select" | "all")).collect();
+        let op = vo.op.as_deref().unwrap_or("");
+        match reads.as_slice() {
+            [only] if only.verb == vo.verb && only.maps() == "select" && (op.is_empty() || op == "select") => Some(other),
+            _ => None,
+        }
     }
 
     fn object_probe(&self, obj: &Object, vo: &ViaObject) -> String {

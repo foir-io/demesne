@@ -311,10 +311,6 @@ exit: 0
         {
           "table": "public.pages",
           "name": "pages_select"
-        },
-        {
-          "table": "public.sheets",
-          "name": "sheets_select"
         }
       ]
     },
@@ -478,7 +474,7 @@ exit: 0
     },
     {
       "object": "policy sheets_select on public.sheets",
-      "digest": "fd0eeb7e95842c32a3b0e2f43f89e7ff9d6ae45a7c516b7dec48e5fd2a6180a7"
+      "digest": "ab1387f6dae96e8b090cc594cb68441511b23747130e6535ef849c8ae473f91d"
     },
     {
       "object": "policy skins_select on public.skins",

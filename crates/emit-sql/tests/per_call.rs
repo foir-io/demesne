@@ -16,6 +16,7 @@ object note {
   scoped estate > space
   relation of: member via object doc->view on doc_id
   permission view = of @rls maps select
+  export view as note_view_allowed(id text as row_id, estate_id text as row_estate_id, space_id text as row_space_id, doc_id text as row_doc_id)
 }
 ";
 
@@ -47,7 +48,9 @@ fn body(stmt: &str) -> &str {
 fn a_borrowed_permission_parses_the_claims_once_a_call_and_reads_its_declared_rows_from_their_table() {
     let all = emitted(SPEC);
     let f = body(function(&all, "auth.doc_can_view"));
-    assert_eq!(f.matches("current_setting(").count(), 1, "one read of the claims setting:\n{f}");
+    let queries = f.matches("RETURN (SELECT ").count();
+    assert_eq!(queries, 2, "a row with no `read.` element runs the query with its `some` pruned, any other the whole one:\n{f}");
+    assert_eq!(f.matches("current_setting(").count(), queries, "each query a call may run reads the claims setting once, and a call runs one:\n{f}");
     assert!(f.contains("FROM (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::jsonb AS claims OFFSET 0) AS demesne_call"), "{f}");
     assert!(f.contains("(demesne_call.claims ->> 'sub')"), "the owner term reads the call's claims:\n{f}");
     assert!(!f.contains("(SELECT current_setting("), "no claim is read by a subquery of its own:\n{f}");
@@ -55,7 +58,7 @@ fn a_borrowed_permission_parses_the_claims_once_a_call_and_reads_its_declared_ro
     assert_eq!(
         f.matches("FROM rule_slots WHERE rule_slots.rule_id = demesne_element.v::text").count(),
         3,
-        "the require rows twice and the except rows once:\n{f}"
+        "the whole query reads the require rows twice and the except rows once, and the pruned one none:\n{f}"
     );
 }
 

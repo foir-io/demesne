@@ -1,5 +1,42 @@
 # Changelog
 
+## v8.0.0
+
+A `some` scope takes `clear of <claim>`: it binds only the elements the
+claim's JSON array does not hold, and none when the claims carry no array
+there or the array holds a `null`, so a deny-list a call never computed
+admits nothing. It may follow `held`, and it compiles beside `held`'s
+bound in the policy and in a definer that binds the claims once a call.
+
+A `via object` borrow of a permission that holds `some` terms compiles to
+PL/pgSQL that reads the row's elements once and runs the permission pruned to
+the one family of `some` the row holds (or to none), and the whole permission
+for a row of several. Its answers are the policy's: `dispatch_pg` checks the
+borrow against the policy over every caller, with families over two columns
+and a negated one. A row then costs about its own family's plan, not the
+whole permission's.
+
+A policy's `via object` borrow of the one permission that rules the other
+table's reads now reads that table's row under its own policies,
+`EXISTS (SELECT 1 FROM <tables schema>.<table> AS demesne_borrowed WHERE …)`, in place of a
+definer call a row, so Postgres plans it into the statement. It applies only
+where the answers are the same: the verb is the other object's one `@rls`
+permission that maps `select`, that object has no `admit` arm for `select`, no
+other object rules its table, and the borrow is not `pinned`. A definer, a
+point check and an export still call the definer, since they run past every
+policy; `borrowed.rs` checks both over the corpus, and the live suites check
+the definer against the policy. The caller now needs `SELECT` on the borrowed
+table's key. A borrow definer only policies called is emitted as `revoked`, or
+not at all, so code of your own that called it, though it was never
+`callable`, must read the row or `export` the permission.
+
+`demesne_syntax::SomeScope` gains the public field `clear_of`, and the policies
+change form, so this is a major release. `SomeScope` and `Builtin` are now `#[non_exhaustive]`, so a
+later construct is no breaking change: build a scope over a new body with
+`SomeScope::with_body`, and match `Builtin` with a wildcard arm outside
+`demesne-syntax`. The Go module's API doesn't change, so it stays
+`go/v1.6.0`.
+
 ## v7.2.0
 
 No spec changes form, and the policies are what v7.1.0 emitted. Only the

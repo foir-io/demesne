@@ -33,11 +33,11 @@ exit: 0
     "auth.acl_grants_doc(text, text, text)",
     "auth.acl_grants_note(text, text, text)",
     "auth.acl_manage(text, text)",
-    "auth.doc_can_view(text)",
     "auth.support_grants_reach_set(text)"
   ],
   "revoked": [
     "auth.doc_can_edit(text)",
+    "auth.doc_can_view(text)",
     "auth.note_can_edit(text)"
   ],
   "policies": [
@@ -146,12 +146,7 @@ exit: 0
       "function": "auth.doc_can_view(text)",
       "parameters": "p_doc_id text",
       "returns": "boolean",
-      "policies": [
-        {
-          "table": "public.notes",
-          "name": "notes_select"
-        }
-      ]
+      "policies": []
     },
     {
       "function": "auth.doc_readable(text, text, text, text)",
@@ -248,7 +243,7 @@ exit: 0
     },
     {
       "object": "function auth.doc_can_view(text)",
-      "digest": "885a1918e73bc64399c76de15ea1bc3f559764aa1bccc2e20af92cd83fe40ac7"
+      "digest": "e16752b9b285eb97e6bb8795071ff2990176d9757c1eb946e17cce8258432d4d"
     },
     {
       "object": "function auth.doc_readable(text, text, text, text)",
@@ -304,7 +299,7 @@ exit: 0
     },
     {
       "object": "policy notes_select on public.notes",
-      "digest": "a696d8550d6e54ac73c5085f2f9aaf1b0c1684925248401ce2c5679d1a812dcf"
+      "digest": "2935a0e660ea9c73208912fa317a8afe82585f8900c05dfe51164ef5a9ac848e"
     },
     {
       "object": "policy notes_update on public.notes",

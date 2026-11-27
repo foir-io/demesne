@@ -1,4 +1,4 @@
-use demesne_syntax::{Builtin, DeclaredScope, Object, Perm, PermNode, Pos, Quantifier, Relation, Repr, SomeScope, Term, TermKind, ViaGrant};
+use demesne_syntax::{Builtin, DeclaredScope, Object, Perm, PermNode, Pos, Quantifier, Relation, Repr, Term, TermKind, ViaGrant};
 use std::collections::HashMap;
 
 pub const ORDERED_TABLE_OPS: [&str; 4] = ["select", "insert", "update", "delete"];
@@ -288,7 +288,7 @@ fn pruned_leaf(t: &Term, comp: Pruning<'_>, bound: Bound) -> Pruned {
     }
     if let Some(scope) = t.some_scope() {
         return match pruned_branches(&scope.body, comp, bound) {
-            Pruned::Kept(body) => rebuilt(t, Builtin::Some(Box::new(SomeScope { body, ..scope.clone() }))),
+            Pruned::Kept(body) => rebuilt(t, Builtin::Some(Box::new(scope.with_body(body)))),
             Pruned::Never => Pruned::Never,
             Pruned::Always => bound.unknown(),
         };
