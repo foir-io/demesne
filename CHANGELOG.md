@@ -34,7 +34,8 @@ not at all, so code of your own that called it, though it was never
 change form, so this is a major release. `SomeScope` and `Builtin` are now `#[non_exhaustive]`, so a
 later construct is no breaking change: build a scope over a new body with
 `SomeScope::with_body`, and match `Builtin` with a wildcard arm outside
-`demesne-syntax`.
+`demesne-syntax`. The Go module's API doesn't change, so it stays
+`go/v1.6.0`.
 
 ## v7.2.0
 
