@@ -390,8 +390,9 @@ fn sqlstate(e: &postgres::Error) -> String {
     e.code().map_or_else(|| e.to_string(), |c| c.code().to_string())
 }
 
-fn rows_where(tx: &mut Transaction<'_>, table: &str, filter: &str) -> Outcome {
+fn rows_where(tx: &mut Transaction<'_>, table: &str, filter: &str, role: &str) -> Outcome {
     let mut sp = tx.savepoint("rule").map_err(|e| sqlstate(&e))?;
+    sp.batch_execute(&format!("ALTER TABLE {table} DISABLE ROW LEVEL SECURITY; SET LOCAL ROLE {}", ident(role))).map_err(|e| sqlstate(&e))?;
     let got = sp.query(&format!("SELECT _row FROM {table} WHERE ({filter}) ORDER BY _row"), &[]).map_err(|e| sqlstate(&e));
     sp.rollback().map_err(|e| sqlstate(&e))?;
     got.map(|rows| rows.iter().map(|r| r.get(0)).collect())
@@ -475,11 +476,11 @@ struct Found {
     checks: Vec<String>,
 }
 
-fn judge_rules(tx: &mut Transaction<'_>, schema: &str, policies: &[Policy], judged: &mut Judged) {
+fn judge_rules(tx: &mut Transaction<'_>, schema: &str, role: &str, policies: &[Policy], judged: &mut Judged) {
     for (table, name, qual, check) in policies {
         let at = format!("{}.{}", ident(schema), ident(table));
         for (side, filter) in [("using", qual), ("check", check)].into_iter().filter_map(|(side, f)| f.as_ref().map(|f| (side, f))) {
-            judged.rules.entry(format!("{table}.{name}.{side}")).or_default().push(rows_where(tx, &at, filter));
+            judged.rules.entry(format!("{table}.{name}.{side}")).or_default().push(rows_where(tx, &at, filter, role));
         }
     }
 }
@@ -551,7 +552,7 @@ fn judge(db: &mut Client, setup: &Setup<'_>, pools: &Pools, ddl: &str, claims: &
         if let Some(json) = set {
             tx.execute("SELECT set_config($1, $2, true)", &[&setup.setting, json]).map_err(|e| why(&e))?;
         }
-        judge_rules(&mut tx, schema, &found.policies, &mut judged);
+        judge_rules(&mut tx, schema, &setup.role, &found.policies, &mut judged);
         judge_views(&mut tx, setup, &found.policies, &mut judged)?;
         judge_checks(&mut tx, s.id_type(), pools, &found.checks, set.as_deref().unwrap_or("{}"), &mut judged)?;
     }
