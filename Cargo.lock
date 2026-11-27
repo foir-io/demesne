@@ -162,7 +162,6 @@ dependencies = [
  "demesne-gocompat 8.0.0",
  "demesne-model 8.0.0",
  "demesne-postgres",
- "demesne-runtime 8.0.0",
  "demesne-syntax 8.0.0",
  "postgres",
 ]
@@ -177,7 +176,6 @@ dependencies = [
  "demesne-model 8.0.0",
  "demesne-runtime 8.0.0",
  "demesne-syntax 8.0.0",
- "insta",
 ]
 
 [[package]]
