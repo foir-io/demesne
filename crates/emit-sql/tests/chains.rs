@@ -290,9 +290,9 @@ fn a_chain_is_refused_where_nothing_could_judge_it() {
             "outside a composition's `path`",
         ),
         (
-            "a path reading its rows from a claim",
-            spec("  nested 0", &path().replace("doc_trail_hops(trail)", "claim trail_hops"), VIEW),
-            "a path reads the rows a table declares for its key, not a claim",
+            "a path reading its rows from a setting",
+            spec("  nested 0", &path().replace("doc_trail_hops(trail)", "setting trail_hops"), VIEW),
+            "a path reads the rows a table declares for its key, not a setting",
         ),
     ];
     for (what, src, want) in cases {

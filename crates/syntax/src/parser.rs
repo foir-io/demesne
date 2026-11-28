@@ -1319,9 +1319,9 @@ impl Parser {
         let quantifier = if self.advance().lit == "every" { Quantifier::Every } else { Quantifier::None };
         let var = self.ident()?;
         self.expect_kw("in")?;
-        let source = if self.is_kw("claim") && self.toks.get(self.i + 1).is_some_and(|t| t.kind == Tok::Ident) {
+        let source = if self.is_kw("setting") && self.toks.get(self.i + 1).is_some_and(|t| t.kind == Tok::Ident) {
             self.advance();
-            DeclaredSource::Claim(self.ident()?)
+            DeclaredSource::Setting(self.ident()?)
         } else {
             let table = self.ident()?;
             let key_col = self.paren_ident()?;

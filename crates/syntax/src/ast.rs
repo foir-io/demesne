@@ -614,8 +614,9 @@ pub enum Counted {
 pub enum DeclaredSource {
     /// `<table>(<key column>)`: the table's rows whose key column equals the element.
     Table { table: String, key_col: String },
-    /// `claim <key>`: the JSON objects the caller's claim lists under the element, a claim that is a JSON object of arrays.
-    Claim(String),
+    /// `setting <name>`: the JSON objects the setting `request.<name>` lists under the element, a setting that the caller
+    /// sets to a JSON object of arrays.
+    Setting(String),
 }
 
 /// An `every` or `none` scope inside a `some`: the rows declared for the bound element.
@@ -639,12 +640,12 @@ impl DeclaredScope {
         Self { body, ..self.clone() }
     }
 
-    /// Returns the table and key column the scope reads its rows from, or `None` for a claim.
+    /// Returns the table and key column the scope reads its rows from, or `None` for a setting.
     #[must_use]
     pub fn table(&self) -> Option<(&str, &str)> {
         match &self.source {
             DeclaredSource::Table { table, key_col } => Some((table, key_col)),
-            DeclaredSource::Claim(_) => None,
+            DeclaredSource::Setting(_) => None,
         }
     }
 }
@@ -1160,7 +1161,7 @@ impl Builtin {
                 };
                 let source = match &scope.source {
                     DeclaredSource::Table { table, key_col } => format!("{table}({key_col})"),
-                    DeclaredSource::Claim(claim) => format!("claim {claim}"),
+                    DeclaredSource::Setting(name) => format!("setting {name}"),
                 };
                 format!("{word} {} in {source}{filter}{counted} ({})", scope.var, scope.body.display())
             }

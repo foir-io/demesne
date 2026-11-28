@@ -277,49 +277,62 @@ fn minted(without: &[&str]) -> String {
     format!("{{{}}}", entries.join(","))
 }
 
-fn claims_with(who: &str, held: &[&str], slots: Option<&str>) -> String {
+fn claims_with(who: &str, held: &[&str]) -> String {
     let list: Vec<String> = held.iter().map(|h| format!("\"{h}\"")).collect();
-    let slots = slots.map(|s| format!(",\"rule_slots\":{s}")).unwrap_or_default();
-    format!("{{\"sub\":\"{who}\",\"estate_id\":\"e1\",\"space_id\":\"s1\",\"rules_held\":[{}]{slots}}}", list.join(","))
+    format!("{{\"sub\":\"{who}\",\"estate_id\":\"e1\",\"space_id\":\"s1\",\"rules_held\":[{}]}}", list.join(","))
 }
 
-fn read_under(db: &mut Client, claims: &str) -> Result<BTreeSet<String>, String> {
+fn under<T>(
+    db: &mut Client,
+    claims: &str,
+    slots: Option<&str>,
+    run: impl FnOnce(&mut postgres::Transaction<'_>) -> Result<T, postgres::Error>,
+) -> Result<T, String> {
     let mut tx = db.transaction().expect("a transaction");
     tx.batch_execute(&format!("SET LOCAL ROLE {CALLER}")).expect("the caller role");
     tx.execute("SELECT set_config('request.jwt.claims', $1, true)", &[&claims]).expect("the claims");
-    let ids = tx
-        .query("SELECT id FROM docs", &[])
-        .map(|rows| rows.iter().map(|r| r.get(0)).collect())
-        .map_err(|e| e.as_db_error().map_or_else(|| e.to_string(), |d| d.message().to_string()));
+    if let Some(slots) = slots {
+        tx.execute("SELECT set_config('request.rule_slots', $1, true)", &[&slots]).expect("the declared rows");
+    }
+    let out = run(&mut tx).map_err(|e| e.as_db_error().map_or_else(|| e.to_string(), |d| d.message().to_string()));
     tx.rollback().expect("rollback");
-    ids
+    out
 }
 
-fn admits_under(db: &mut Client, auth: &str, doc: &str, claims: &str) -> bool {
-    db.query_one(&format!("SELECT {auth}.docs_admits($1, $2::text::jsonb)"), &[&doc, &claims])
+fn read_under(db: &mut Client, claims: &str, slots: Option<&str>) -> Result<BTreeSet<String>, String> {
+    under(db, claims, slots, |tx| tx.query("SELECT id FROM docs", &[]).map(|rows| rows.iter().map(|r| r.get(0)).collect()))
+}
+
+fn admits_under(db: &mut Client, auth: &str, doc: &str, claims: &str, slots: &str) -> bool {
+    let mut tx = db.transaction().expect("a transaction");
+    tx.execute("SELECT set_config('request.rule_slots', $1, true)", &[&slots]).expect("the declared rows");
+    let admitted = tx
+        .query_one(&format!("SELECT {auth}.docs_admits($1, $2::text::jsonb)"), &[&doc, &claims])
         .unwrap_or_else(|e| panic!("admits on {doc} under {claims}: {e}"))
-        .get(0)
+        .get(0);
+    tx.rollback().expect("rollback");
+    admitted
 }
 
 const TABLE_SCHEMAS: (&str, &str) = ("demesne_decl_table_rows", "demesne_decl_table_auth");
-const CLAIM_SCHEMAS: (&str, &str) = ("demesne_decl_claim_rows", "demesne_decl_claim_auth");
+const SETTING_SCHEMAS: (&str, &str) = ("demesne_decl_setting_rows", "demesne_decl_setting_auth");
 
-fn claim_against_table(db: &mut Client, counted: &str, c: Caller, slots: &str) -> (usize, Vec<String>) {
+fn setting_against_table(db: &mut Client, counted: &str, c: Caller, slots: &str) -> (usize, Vec<String>) {
     let Caller { who, held } = c;
-    let claims = claims_with(who, held, Some(slots));
+    let claims = claims_with(who, held);
     db.batch_execute(&format!("SET search_path = {}", TABLE_SCHEMAS.0)).expect("the table's schema");
-    let want = read_under(db, &claims).expect("the table's read");
-    db.batch_execute(&format!("SET search_path = {}", CLAIM_SCHEMAS.0)).expect("the claim's schema");
-    let got = read_under(db, &claims).expect("the claim's read");
+    let want = read_under(db, &claims, Some(slots)).expect("the table's read");
+    db.batch_execute(&format!("SET search_path = {}", SETTING_SCHEMAS.0)).expect("the setting's schema");
+    let got = read_under(db, &claims, Some(slots)).expect("the setting's read");
     let mut wrong = Vec::new();
     if got != want {
-        wrong.push(format!("{who}{counted} holding {held:?}: the claim admits {got:?}, the table {want:?}"));
+        wrong.push(format!("{who}{counted} holding {held:?}: the setting admits {got:?}, the table {want:?}"));
     }
     let modelled: BTreeSet<String> = DOCS.iter().filter(|(id, _)| reads(c, id, true)).map(|(id, _)| (*id).to_string()).collect();
     if counted.is_empty() && got != modelled {
-        wrong.push(format!("{who} holding {held:?}: the claim admits {got:?}, the model {modelled:?}"));
+        wrong.push(format!("{who} holding {held:?}: the setting admits {got:?}, the model {modelled:?}"));
     }
-    for (doc, _) in DOCS.iter().filter(|(doc, _)| admits_under(db, CLAIM_SCHEMAS.1, doc, &claims) != got.contains(*doc)) {
+    for (doc, _) in DOCS.iter().filter(|(doc, _)| admits_under(db, SETTING_SCHEMAS.1, doc, &claims, slots) != got.contains(*doc)) {
         wrong.push(format!("{who}{counted} holding {held:?}: the point check on {doc} disagrees with the policy"));
     }
     (got.len(), wrong)
@@ -327,22 +340,22 @@ fn claim_against_table(db: &mut Client, counted: &str, c: Caller, slots: &str) -
 
 #[test]
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
-fn a_claim_scope_answers_as_the_table_its_rows_were_minted_from() {
+fn a_setting_scope_answers_as_the_table_its_rows_were_minted_from() {
     let url =
         std::env::var("DEMESNE_PG_URL").ok().filter(|v| !v.is_empty()).expect("set $DEMESNE_PG_URL to run the declared-row checks against a live Postgres");
     let mut db = Client::connect(&url, NoTls).expect("connect to $DEMESNE_PG_URL");
-    let ((table_rows, table_auth), (claim_rows, claim_auth)) = (TABLE_SCHEMAS, CLAIM_SCHEMAS);
+    let ((table_rows, table_auth), (setting_rows, setting_auth)) = (TABLE_SCHEMAS, SETTING_SCHEMAS);
     let slots = minted(&[]);
     let mut failures = Vec::new();
     let (mut admitted, mut refused) = (0, 0);
     for counted in ["", " nonempty"] {
-        let claim_spec = spec_from("claim rule_slots", counted, claim_rows, claim_auth);
-        assert!(claim_spec.contains(&format!("every s in claim rule_slots where role = \"require\"{counted} (")), "{claim_spec}");
+        let setting_spec = spec_from("setting rule_slots", counted, setting_rows, setting_auth);
+        assert!(setting_spec.contains(&format!("every s in setting rule_slots where role = \"require\"{counted} (")), "{setting_spec}");
         install_as(&mut db, &spec_with(counted, table_rows, table_auth), table_rows, table_auth);
-        install_as(&mut db, &claim_spec, claim_rows, claim_auth);
+        install_as(&mut db, &setting_spec, setting_rows, setting_auth);
         for who in ["ann", "bob", "cat", "dan", "eve"] {
             for held in [&ALL[..], &ALL[..2], &ALL[2..5], &[]] {
-                let (read, wrong) = claim_against_table(&mut db, counted, Caller { who, held }, &slots);
+                let (read, wrong) = setting_against_table(&mut db, counted, Caller { who, held }, &slots);
                 admitted += read;
                 refused += DOCS.len() - read;
                 failures.extend(wrong);
@@ -352,34 +365,38 @@ fn a_claim_scope_answers_as_the_table_its_rows_were_minted_from() {
     assert!(failures.is_empty(), "{} wrong answers:\n{}", failures.len(), failures.join("\n"));
     assert!(admitted > 40 && refused > 40, "the grid both admits and refuses: {admitted} admitted, {refused} refused");
     db.batch_execute(&format!(
-        "RESET search_path; DROP SCHEMA {table_rows} CASCADE; DROP SCHEMA {table_auth} CASCADE; DROP SCHEMA {claim_rows} CASCADE; DROP SCHEMA {claim_auth} CASCADE;"
+        "RESET search_path; DROP SCHEMA {table_rows} CASCADE; DROP SCHEMA {table_auth} CASCADE; DROP SCHEMA {setting_rows} CASCADE; DROP SCHEMA {setting_auth} CASCADE;"
     ))
     .expect("drop the schemas");
 }
 
 #[test]
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
-fn a_claim_scope_admits_nobody_without_its_claim_and_refuses_to_read_a_malformed_one() {
+fn a_setting_scope_admits_nobody_without_its_setting_and_refuses_to_read_a_malformed_one() {
     let url =
         std::env::var("DEMESNE_PG_URL").ok().filter(|v| !v.is_empty()).expect("set $DEMESNE_PG_URL to run the declared-row checks against a live Postgres");
     let mut db = Client::connect(&url, NoTls).expect("connect to $DEMESNE_PG_URL");
-    let (rows, auth) = ("demesne_decl_claim_gone_rows", "demesne_decl_claim_gone_auth");
-    install_as(&mut db, &spec_from("claim rule_slots", "", rows, auth), rows, auth);
-    let read = |db: &mut Client, who: &str, slots: Option<&str>| read_under(db, &claims_with(who, &ALL, slots));
+    let (rows, auth) = ("demesne_decl_setting_gone_rows", "demesne_decl_setting_gone_auth");
+    install_as(&mut db, &spec_from("setting rule_slots", "", rows, auth), rows, auth);
+    let read = |db: &mut Client, who: &str, slots: Option<&str>| read_under(db, &claims_with(who, &ALL), slots);
     let slots = minted(&[]);
-    assert!(read(&mut db, "bob", Some(&slots)).expect("a read").contains("d_one"), "the minted claim admits bob by his one declared edge");
-    assert!(read(&mut db, "eve", Some(&slots)).expect("a read").contains("d_free"), "an element the claim lists nothing under is not held back");
-    for (what, value) in [("no claim", None), ("an array", Some("[]")), ("a string", Some("\"read.one\"")), ("JSON null", Some("null"))] {
+    assert!(read(&mut db, "bob", Some(&slots)).expect("a read").contains("d_one"), "the minted setting admits bob by his one declared edge");
+    assert!(read(&mut db, "eve", Some(&slots)).expect("a read").contains("d_free"), "an element the setting lists nothing under is not held back");
+    for (what, value) in
+        [("no setting", None), ("an empty setting", Some("")), ("an array", Some("[]")), ("a string", Some("\"read.one\"")), ("JSON null", Some("null"))]
+    {
         for who in ["bob", "eve"] {
             let got = read(&mut db, who, value).unwrap_or_else(|e| panic!("{what}: {e}"));
             assert!(got.is_empty(), "{what} in place of the object admits {who} to nothing, not even an element that declares nothing: {got:?}");
         }
         assert_eq!(read(&mut db, "ann", value).expect("the owner's read").len(), DOCS.len(), "{what}: the owner reads every row by its own term");
     }
+    let err = read(&mut db, "bob", Some("{\"read.one\":")).map(|_| ()).expect_err("a setting that is not JSON");
+    assert!(err.contains("invalid input syntax for type json"), "{err}");
     let without = minted(&["read.one"]);
     assert!(
         read(&mut db, "eve", Some(&without)).expect("a read").contains("d_one"),
-        "an element missing from the claim's object declares nothing, as the table's no rows"
+        "an element missing from the setting's object declares nothing, as the table's no rows"
     );
     for (what, value, want) in [
         ("an object", "{}", "cannot call jsonb_to_recordset on a non-array"),
@@ -395,33 +412,33 @@ fn a_claim_scope_admits_nobody_without_its_claim_and_refuses_to_read_a_malformed
 
 #[test]
 #[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
-fn a_negated_claim_scope_fails_closed_without_its_claim() {
+fn a_negated_setting_scope_fails_closed_without_its_setting() {
     let url =
         std::env::var("DEMESNE_PG_URL").ok().filter(|v| !v.is_empty()).expect("set $DEMESNE_PG_URL to run the declared-row checks against a live Postgres");
     let mut db = Client::connect(&url, NoTls).expect("connect to $DEMESNE_PG_URL");
-    let (rows, auth) = ("demesne_decl_claim_not_rows", "demesne_decl_claim_not_auth");
-    let src = spec_from("claim rule_slots", " nonempty", rows, auth)
+    let (rows, auth) = ("demesne_decl_setting_not_rows", "demesne_decl_setting_not_auth");
+    let src = spec_from("setting rule_slots", " nonempty", rows, auth)
         .replace("  relation borrow:", "  relation named: member via edge doc_edges(principal_id, object_id) key rule_id\n  relation borrow:")
         .replacen(
             &format!(
-                "(every s in claim rule_slots where role = \"require\" nonempty ({ANCHORS}) and none s in claim rule_slots where role = \"except\" ({ANCHORS}))"
+                "(every s in setting rule_slots where role = \"require\" nonempty ({ANCHORS}) and none s in setting rule_slots where role = \"except\" ({ANCHORS}))"
             ),
-            &format!("(named and not every s in claim rule_slots where role = \"require\" nonempty ({ANCHORS}))"),
+            &format!("(named and not every s in setting rule_slots where role = \"require\" nonempty ({ANCHORS}))"),
             1,
         );
-    assert!(src.contains("(named and not every s in claim"), "{src}");
+    assert!(src.contains("(named and not every s in setting"), "{src}");
     install_as(&mut db, &src, rows, auth);
-    let read = |db: &mut Client, who: &str, slots: Option<&str>| read_under(db, &claims_with(who, &ALL, slots)).expect("a read");
+    let read = |db: &mut Client, who: &str, slots: Option<&str>| read_under(db, &claims_with(who, &ALL), slots).expect("a read");
     let slots = minted(&[]);
     assert!(!read(&mut db, "bob", Some(&slots)).contains("d_one"), "bob holds every edge read.one requires, so the not refuses him");
     assert!(read(&mut db, "cat", Some(&slots)).contains("d_two"), "cat holds one of the two edges read.two requires, so the not admits him");
-    for (what, value) in [("no claim", None), ("an array", Some("[]"))] {
+    for (what, value) in [("no setting", None), ("an empty setting", Some("")), ("an array", Some("[]"))] {
         let got = read(&mut db, "cat", value);
         assert!(!got.contains("d_two"), "{what}: the scope can't be judged, so its negation admits nobody: {got:?}");
     }
     assert!(
         read(&mut db, "bob", Some(&minted(&["read.one"]))).contains("d_one"),
-        "an element the claim lists nothing under fails the nonempty every, so the not admits"
+        "an element the setting lists nothing under fails the nonempty every, so the not admits"
     );
     db.batch_execute(&format!("RESET search_path; DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");
 }

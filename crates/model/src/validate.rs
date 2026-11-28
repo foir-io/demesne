@@ -927,12 +927,12 @@ fn check_declared_scope(some: &str, t: &Term, rels: &Rels) -> Vec<String> {
             "`{what}` in `some {some}` reads nothing of the rows declared for the element: test a field with `where` or `@slot`, or match one with a slot-bound relation"
         ));
     }
-    if let DeclaredSource::Claim(claim) = &scope.source {
+    if let DeclaredSource::Setting(name) = &scope.source {
         for field in fields.iter().filter(|f| f.chars().any(|c| c.is_ascii_uppercase())) {
             errs.push(format!(
-                "`{what}` reads field {} of claim {}, a JSON key that Postgres would read in lower case: name the field in lower case",
+                "`{what}` reads field {} of setting {}, a JSON key that Postgres would read in lower case: name the field in lower case",
                 quote(field),
-                quote(claim)
+                quote(name)
             ));
         }
     }
@@ -2215,7 +2215,7 @@ fn path_faults(o: &Object, vc: &ViaComposition) -> Vec<String> {
             continue;
         };
         if scope.table().is_none() {
-            faults.push(format!("uses {} in its `path` — a path reads the rows a table declares for its key, not a claim", t.display()));
+            faults.push(format!("uses {} in its `path` — a path reads the rows a table declares for its key, not a setting", t.display()));
         }
         if scope.body.is_nil() {
             faults.push(format!("uses {} whose brackets are empty", t.display()));

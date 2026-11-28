@@ -11,18 +11,21 @@ row before scanning, so a row with no element to bind paid for them.
 `bounds_first_pg` checks the policy against a three-valued model over a grid of
 rows and claims, under a `not` and outside one.
 
-`every` and `none` read their rows from a claim with `every <name> in claim
-<key> ( … )`. The claim is a JSON object keyed by element, each value an array
-of objects. The scope compiles to `jsonb_to_recordset(<claim> -> <element>)`,
-with the claim read once a statement, so an element calls no
-`<table>_declared_by_<key>`. An element the object doesn't name declares no
-rows. A value that is not an array of objects fails the statement. Claims that
-carry no object under the key leave the term undecidable, so it admits nobody,
-as `every` or `none`, and holds inside a `not`. `declared_pg` checks a claim
-scope against the table its rows were minted from, row for row, through the
-policy and the point check. A claim scope in a `path` is refused, and so is a
-field in upper case, since a JSON key is case-sensitive and Postgres folds an
-unquoted column name.
+`every` and `none` read their rows from a setting with `every <name> in
+setting <key> ( … )`: `request.<key>`, which the caller sets beside the claims
+to a JSON object keyed by element, each value an array of objects. The scope
+compiles to `jsonb_to_recordset(<setting> -> <element>)`, with the setting read
+once a statement as `(SELECT NULLIF(current_setting('request.<key>', true),
+'')::jsonb)`, so an element calls no `<table>_declared_by_<key>`. The rows stay
+out of the claims, which every definer that reads a claim parses whole on each
+call. An element the object doesn't name declares no rows. A value that is not
+an array of objects, or a setting that is not JSON, fails the statement. A
+setting that is unset, empty or holds no object leaves the term undecidable, so
+it admits nobody, as `every` or `none`, and holds inside a `not`.
+`declared_pg` checks a setting scope against the table its rows were minted
+from, row for row, through the policy and the point check. A setting scope in a
+`path` is refused, and so is a field in upper case, since a JSON key is
+case-sensitive and Postgres folds an unquoted column name.
 
 The `every` and `none` scopes joined by one `and` are tested in the order
 written, `CASE WHEN <first> THEN <second> ELSE false END`, rather than in the
@@ -39,7 +42,7 @@ scope of that shape used to emit a function returning `TABLE()`, which Postgres
 refuses.
 
 `demesne_syntax::DeclaredScope` replaces `table` and `key_col` with `source:
-DeclaredSource` (`Table { table, key_col }` or `Claim(key)`), `ViaConditions`
+DeclaredSource` (`Table { table, key_col }` or `Setting(key)`), `ViaConditions`
 gains `counted`, and the policies change form, so this is a major release.
 `DeclaredScope` and `ViaConditions` are now `#[non_exhaustive]`: build a scope
 over a new body with `DeclaredScope::with_body`, and read a table scope's table

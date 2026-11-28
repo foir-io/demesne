@@ -1295,44 +1295,48 @@ cost estimates, which can run a `none` whose brackets are dear before an
 the order changes no answer. Write the scope that refuses most often, or most
 cheaply, first. Other terms beside them stay conjuncts of their own.
 
-#### Declared rows from a claim
+#### Declared rows from a setting
 
-`every <name> in claim <key> ( … )`, and `none` likewise, reads the rows from
-the caller's claim in place of a table. The claim is a JSON object keyed by
-element, and each value is a JSON array of objects, one a declared row:
+`every <name> in setting <key> ( … )`, and `none` likewise, reads the rows
+from the setting `request.<key>` in place of a table. The caller sets it
+beside the claims, for the transaction, to a JSON object keyed by element,
+each value a JSON array of objects, one a declared row:
 
-```json
-{"rule_slots": {"read.share.k1": [{"kind": "share", "role": "require"}, {"kind": "share", "role": "except"}]}}
+```sql
+SELECT set_config('request.rule_slots', '{"read.share.k1": [{"kind": "share", "role": "require"}, {"kind": "share", "role": "except"}]}', true);
 ```
 
 ```demesne
 permission view = some r in rules_live held rules_held (
-      every s in claim rule_slots where role = "require" nonempty (
+      every s in setting rule_slots where role = "require" nonempty (
           (@slot(kind, "share") and shared) + (@slot(kind, "grant") and granted:read) )
-  and none  s in claim rule_slots where role = "except" (@slot(kind, "share") and barred)
+  and none  s in setting rule_slots where role = "except" (@slot(kind, "share") and barred)
 ) @rls maps select
 ```
 
-It compiles to `jsonb_to_recordset(<claim> -> <element>) AS demesne_slot(<fields> text)`,
-with the claim read once a statement, so an element calls no function: where
-the call works the rows out once, the policy reads them at the cost of the
-claim. `where`, `@slot`, `nonempty` and the slot-bound relations read an
+It compiles to `jsonb_to_recordset(<setting> -> <element>) AS demesne_slot(<fields> text)`,
+with the setting read once a statement as
+`(SELECT NULLIF(current_setting('request.<key>', true), '')::jsonb)`, so an
+element calls no function: where the call works the rows out once, the policy
+reads them for the cost of one parse. They are kept out of the claims because
+every definer that reads a claim parses the whole claims setting on each call,
+and rows a project declares by the hundred would make each of those calls
+pay. `where`, `@slot`, `nonempty` and the slot-bound relations read an
 object's fields as they read a table's columns.
 
-- An element the claim's object does not name declares no rows, as a table
-  holding none for it.
+- An element the object does not name declares no rows, as a table holding
+  none for it.
 - A value that is not an array, JSON `null` among them, or an entry that is
-  not an object, fails the statement.
+  not an object, fails the statement, and so does a setting that is not JSON.
 - A field an entry lacks is NULL. One that is not a string reads as its JSON
   text.
-- When the claims carry no object under the key (the claim is absent, or
-  holds anything else), the term cannot be decided. It admits nobody, as
-  `every` or as `none`, and inside a `not` it holds, so the `not` refuses too.
+- When the setting holds no object (it is unset, empty, or holds anything
+  else), the term cannot be decided. It admits nobody, as `every` or as
+  `none`, and inside a `not` it holds, so the `not` refuses too.
 
 A field names a JSON key, which is case-sensitive while Postgres folds an
-unquoted column name, so a field in upper case is refused. A definer that
-answers one row a call reads the claim from the claims it bound. A `path`
-reads its rows from a table only.
+unquoted column name, so a field in upper case is refused. A definer reads the
+setting as a policy does. A `path` reads its rows from a table only.
 
 A permission's declared rows come through one generated function per table
 and key, `<table>_declared_by_<key>`, which returns the columns permissions

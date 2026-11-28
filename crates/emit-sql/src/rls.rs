@@ -20,6 +20,7 @@ use std::fmt::Write as _;
 
 pub(crate) type Virtual = HashSet<String>;
 const CLAIMS: &str = "claims";
+const DECLARED_SETTINGS: &str = "request";
 type Inject = BTreeMap<String, Vec<String>>;
 type R<T> = Result<T, String>;
 
@@ -943,19 +944,19 @@ impl Sql<'_> {
         let decided = self.declared_rows_sql(&self.declared_rows(scope, rels), scope, &body.join(" OR "));
         Ok(vec![match &scope.source {
             DeclaredSource::Table { .. } => decided,
-            DeclaredSource::Claim(claim) if self.bounds_above() => {
-                format!("(jsonb_typeof({}) IS DISTINCT FROM 'object' OR {decided})", self.claim_object(claim))
+            DeclaredSource::Setting(name) if self.bounds_above() => {
+                format!("(jsonb_typeof({}) IS DISTINCT FROM 'object' OR {decided})", declared_setting(name))
             }
-            DeclaredSource::Claim(claim) => format!("jsonb_typeof({}) IS NOT DISTINCT FROM 'object' AND {decided}", self.claim_object(claim)),
+            DeclaredSource::Setting(name) => format!("jsonb_typeof({}) IS NOT DISTINCT FROM 'object' AND {decided}", declared_setting(name)),
         }])
     }
 
     fn declared_rows(&self, scope: &demesne_syntax::DeclaredScope, rels: &Rels) -> String {
         let columns: BTreeSet<String> = declared_columns(scope, rels).into_iter().collect();
         match &scope.source {
-            DeclaredSource::Claim(claim) => {
+            DeclaredSource::Setting(name) => {
                 let fields: Vec<String> = columns.iter().map(|c| format!("{c} text")).collect();
-                format!("jsonb_to_recordset({} -> {ELEMENT}) AS {SLOT}({})", self.claim_object(claim), fields.join(", "))
+                format!("jsonb_to_recordset({} -> {ELEMENT}) AS {SLOT}({})", declared_setting(name), fields.join(", "))
             }
             DeclaredSource::Table { table, key_col } if !self.reads_per_call() => {
                 format!("{}.{}({ELEMENT}) AS {SLOT}", self.s.definer_schema(), declared_fn(table, key_col))
@@ -1747,6 +1748,10 @@ pub(crate) fn conditions_fn(obj: &Object, r: &Relation) -> String {
 
 pub(crate) fn nearest_own_fn(lookup: &str) -> String {
     format!("{lookup}_own")
+}
+
+fn declared_setting(name: &str) -> String {
+    format!("(SELECT NULLIF(current_setting({}, true), '')::jsonb)", quote_literal(&format!("{DECLARED_SETTINGS}.{name}")))
 }
 
 fn conjuncts(kids: &[PermNode], frags: &[Vec<String>]) -> Vec<String> {
