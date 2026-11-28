@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v9.0.0
 
 A `some` whose brackets read nothing of the bound element (no `@element`, no
 keyed or slot-bound relation, no `every` or `none`) tests its bounds before its
