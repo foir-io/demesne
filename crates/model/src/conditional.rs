@@ -1,7 +1,7 @@
 use crate::ConditionalAdmission;
 use crate::analysis::Rels;
 use demesne_runtime::quote_literal;
-use demesne_syntax::{PermNode, Repr, SomeScope, Term};
+use demesne_syntax::{DeclaredScope, PermNode, Repr, SomeScope, Term};
 
 pub fn accessor_tree_op(n: &PermNode) -> &'static str {
     match n {
@@ -125,4 +125,25 @@ pub fn admission_names(adms: &[ConditionalAdmission]) -> String {
         }
     }
     out.join(", ")
+}
+
+/// Returns the columns of a declared row an `every` or `none` reads.
+///
+/// They are its `where`, its `@slot` tests, the `@holds_at` columns a composition's path names, and the columns a
+/// slot-bound relation matches, in that order, repeats kept.
+#[must_use]
+pub fn declared_columns(scope: &DeclaredScope, rels: &Rels) -> Vec<String> {
+    let bound = |t: &&Term| {
+        rels.get(t.ident()).and_then(|r| match &r.repr {
+            Repr::Edge(e) => e.slot.as_ref(),
+            Repr::Composition(c) => c.slot.as_ref(),
+            _ => None,
+        })
+    };
+    let leaves = scope.body.leaves();
+    let tested = leaves.iter().filter_map(|t| t.slot_test().or_else(|| t.slot_held())).map(|(col, _)| col.to_string());
+    let hops = leaves.iter().filter_map(|t| t.holds_at()).flat_map(|(record, element, _)| [record.to_string(), element.to_string()]);
+    let followed = leaves.iter().filter_map(|t| t.holds_at_slot()).map(str::to_string);
+    let matched = leaves.iter().filter_map(bound).map(|(_, from)| from.clone());
+    scope.filter.iter().map(|(col, _)| col.clone()).chain(tested).chain(hops).chain(followed).chain(matched).collect()
 }

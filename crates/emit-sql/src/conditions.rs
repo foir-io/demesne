@@ -2,7 +2,7 @@ use crate::Sql;
 use crate::genfn::Param;
 use crate::genfn::{Bound, GenFn, Language};
 use crate::rls::conditions_fn;
-use demesne_syntax::{Object, Relation, Repr, ViaConditions};
+use demesne_syntax::{Counted, Object, Relation, Repr, ViaConditions};
 use std::fmt::Write as _;
 
 const SPHERE_RADIUS_KM: &str = "6371.0";
@@ -129,8 +129,12 @@ impl Sql<'_> {
         };
         let body = |guard: &str| {
             format!(
-                "DECLARE\n  c record;\n  x_v jsonb;\n  x_num double precision;\n  x_txt text;\n  x_at timestamptz;\n  x_scalar text;\n  x_lat double precision;\n  x_lng double precision;\n  holds boolean;\n  undecided boolean := false;\nBEGIN\n{guard}  FOR c IN SELECT s.* FROM {table} s WHERE s.{object} = p_object{keyed} LOOP\n{caller}    CASE c.{op}{cases}\n      ELSE holds := NULL;\n    END CASE;\n    IF holds IS FALSE THEN\n      RETURN false;\n    END IF;\n    undecided := undecided OR holds IS NULL;\n  END LOOP;\n  RETURN CASE WHEN undecided THEN NULL ELSE true END;\nEND",
+                "DECLARE\n  c record;\n  x_v jsonb;\n  x_num double precision;\n  x_txt text;\n  x_at timestamptz;\n  x_scalar text;\n  x_lat double precision;\n  x_lng double precision;\n  holds boolean;\n  undecided boolean := false;\nBEGIN\n{guard}  FOR c IN SELECT s.* FROM {table} s WHERE s.{object} = p_object{keyed} LOOP\n{caller}    CASE c.{op}{cases}\n      ELSE holds := NULL;\n    END CASE;\n    IF holds IS FALSE THEN\n      RETURN false;\n    END IF;\n    undecided := undecided OR holds IS NULL;\n  END LOOP;\n{counted}  RETURN CASE WHEN undecided THEN NULL ELSE true END;\nEND",
                 table = c.table,
+                counted = match c.counted {
+                    Counted::AnyNumber => "",
+                    Counted::AtLeastOne => "  IF NOT FOUND THEN\n    RETURN NULL;\n  END IF;\n",
+                },
                 object = c.object_col,
                 op = c.op_col,
                 keyed = keyed.replace(" AND c.", " AND s."),

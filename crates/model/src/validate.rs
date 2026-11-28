@@ -4,17 +4,17 @@ use crate::analysis::{
     op_to_cmd,
 };
 use crate::closure;
-use crate::conditional::is_row_leaf;
+use crate::conditional::{declared_columns, is_row_leaf};
 use crate::error::Error;
 use crate::schema::{exported_columns, exported_row};
 use crate::topology;
 use crate::vocab::to_runtime;
 use demesne_gocompat::{fmt_slice, quote};
 use demesne_syntax::{
-    ArgSrc, Finding, Grant, GrantUse, Level, Marker, MarkerClosure, Object, Perm, PermNode, PermissionExport, PointCheck, ProbeAnswer, Relation, Repr, Require,
-    Spec, Subject, Term, ViaClosure, ViaComposition, ViaGrant, ViaMemberIn, ViaObject, Vocabulary,
+    ArgSrc, DeclaredSource, Finding, Grant, GrantUse, Level, Marker, MarkerClosure, Object, Perm, PermNode, PermissionExport, PointCheck, ProbeAnswer,
+    Relation, Repr, Require, Spec, Subject, Term, ViaClosure, ViaComposition, ViaGrant, ViaMemberIn, ViaObject, Vocabulary,
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 const KNOWN_LAYERS: [&str; 4] = ["rls", "pdp", "kernel", "check"];
 const KNOWN_BUILTINS: [&str; 21] = [
@@ -921,6 +921,21 @@ fn check_declared_scope(some: &str, t: &Term, rels: &Rels) -> Vec<String> {
     let Some(scope) = t.declared_scope() else { return Vec::new() };
     let what = format!("{} {}", if scope.quantifier == demesne_syntax::Quantifier::Every { "every" } else { "none" }, scope.var);
     let mut errs = check_brackets(&what, &scope.body, rels);
+    let fields: BTreeSet<String> = declared_columns(scope, rels).into_iter().collect();
+    if fields.is_empty() {
+        errs.push(format!(
+            "`{what}` in `some {some}` reads nothing of the rows declared for the element: test a field with `where` or `@slot`, or match one with a slot-bound relation"
+        ));
+    }
+    if let DeclaredSource::Claim(claim) = &scope.source {
+        for field in fields.iter().filter(|f| f.chars().any(|c| c.is_ascii_uppercase())) {
+            errs.push(format!(
+                "`{what}` reads field {} of claim {}, a JSON key that Postgres would read in lower case: name the field in lower case",
+                quote(field),
+                quote(claim)
+            ));
+        }
+    }
     for inner in scope.body.leaves() {
         if matches!(inner.builtin(), "some" | "declared") {
             errs.push(format!("nests {} inside `{what}` in `some {some}` — one element and one declared row are bound at a time", inner.display()));
@@ -2199,6 +2214,9 @@ fn path_faults(o: &Object, vc: &ViaComposition) -> Vec<String> {
             faults.push(format!("uses {} in its `path` — a path holds `every` and `none` terms over the rows declared for its key", t.display()));
             continue;
         };
+        if scope.table().is_none() {
+            faults.push(format!("uses {} in its `path` — a path reads the rows a table declares for its key, not a claim", t.display()));
+        }
         if scope.body.is_nil() {
             faults.push(format!("uses {} whose brackets are empty", t.display()));
         }

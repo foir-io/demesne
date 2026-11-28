@@ -289,6 +289,11 @@ fn a_chain_is_refused_where_nothing_could_judge_it() {
             spec("  nested 0", &path(), &VIEW.replace("(@slot(kind, \"lend\") and lent))", "(@holds_at(a, b) and lent))")),
             "outside a composition's `path`",
         ),
+        (
+            "a path reading its rows from a claim",
+            spec("  nested 0", &path().replace("doc_trail_hops(trail)", "claim trail_hops"), VIEW),
+            "a path reads the rows a table declares for its key, not a claim",
+        ),
     ];
     for (what, src, want) in cases {
         let err = compiled(&src).map(|(using, _)| using).expect_err(what);

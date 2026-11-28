@@ -287,3 +287,46 @@ fn clear_of_binds_only_what_the_claims_list_leaves_out_and_nothing_without_a_lis
         "the definer reads the list from the claims it binds once a call:\n{body}"
     );
 }
+
+fn policy_using(src: &str, name: &str) -> String {
+    let s = compile(src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    Sql::new(&s).emit_rls().expect("the policies compile").policies.into_iter().find(|p| p.name == name).unwrap_or_else(|| panic!("no policy {name}")).using
+}
+
+#[test]
+fn a_some_whose_body_reads_no_element_tests_its_bounds_before_its_body() {
+    let src = view("some r in rules_live prefix \"read.\" held rules_held (parent + mode visibility = \"listed\")");
+    let s = compile(&src).expect("compiles");
+    let held = Sql::new(&s).claim("rules_held");
+    let using = select_using(&src);
+    let want = format!(
+        "(EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with({EL}, 'read.') AND {EL} = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text({held}::jsonb) e))) AND (auth.doc_composition_parent(docs.id, 'read') OR visibility = 'listed') IS TRUE)"
+    );
+    assert!(using.contains(&want), "{using}");
+    let bare = select_using(&view("some r in rules_live (mode visibility = \"listed\")"));
+    assert!(bare.contains("(EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v)) AND (visibility = 'listed') IS TRUE)"), "{bare}");
+}
+
+#[test]
+fn a_some_whose_body_reads_its_element_in_any_branch_keeps_the_body_beside_its_bounds() {
+    let using = select_using(&view("some r in rules_live prefix \"read.\" ((@element prefix \"read.e.\" and parent) + mode visibility = \"listed\")"));
+    assert!(
+        using.contains("EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with(demesne_element.v, 'read.') AND ("),
+        "{using}"
+    );
+    assert!(!using.contains("IS TRUE"), "the body stays inside the element scan:\n{using}");
+    let keyed = select_using(&view("some r in rules_live (named + mode visibility = \"listed\")"));
+    assert!(keyed.contains("WHERE (auth.doc_named_keyed(") && !keyed.contains("IS TRUE"), "a keyed term reads the element:\n{keyed}");
+}
+
+#[test]
+fn a_negated_some_whose_body_reads_no_element_counts_an_unknown_body_as_holding() {
+    let src = doc(
+        "  permission view = owner + some r in rules_live (mode visibility = \"listed\") @rls maps select\n  permission edit = owner and not some r in rules_live prefix \"read.\" (mode state = \"locked\") @rls maps update",
+    );
+    let using = policy_using(&src, "docs_update");
+    assert!(
+        using.contains("((EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with(demesne_element.v, 'read.')) AND (state = 'locked') IS NOT FALSE)) IS NOT TRUE"),
+        "{using}"
+    );
+}

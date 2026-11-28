@@ -1,5 +1,4 @@
 use crate::chains::HOP;
-use crate::definers::declared_columns;
 use crate::error::Error;
 use crate::genfn::{Arg, definer_call};
 use crate::{BORROWED, Binds, Borrow, CALL, Reads, Sql};
@@ -9,12 +8,12 @@ use demesne_model::analysis::{
     Rels, access_for, contains, grant_selector, is_perm_key_lit, object_grant_edge, op_to_cmd, rels_of, store_manage_name, term_ref,
 };
 use demesne_model::closure::{self, Direction};
-use demesne_model::conditional::{ELEMENT, SLOT, mode_row_sql, row_term_sql};
+use demesne_model::conditional::{ELEMENT, SLOT, declared_columns, mode_row_sql, row_term_sql};
 use demesne_model::topology;
 use demesne_runtime::quote_literal;
 use demesne_syntax::{
-    Admit, ArgSrc, Counted, Grant, Guard, GuardOp, Level, Membership, Object, Perm, PermNode, Quantifier, Relation, Repr, Require, Subject, Term, ViaClosure,
-    ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject,
+    Admit, ArgSrc, Counted, DeclaredSource, Grant, Guard, GuardOp, Level, Membership, Object, Perm, PermNode, Quantifier, Relation, Repr, Require, Subject,
+    Term, ViaClosure, ViaColumn, ViaComposition, ViaGrant, ViaGroup, ViaObject,
 };
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as _;
@@ -941,17 +940,31 @@ impl Sql<'_> {
         if body.is_empty() {
             return Err(format!("`{}` on {}: its brackets compile to no predicate", t.display(), quote(&obj.name)));
         }
-        Ok(vec![self.declared_rows_sql(&self.declared_rows(scope, rels), scope, &body.join(" OR "))])
+        let decided = self.declared_rows_sql(&self.declared_rows(scope, rels), scope, &body.join(" OR "));
+        Ok(vec![match &scope.source {
+            DeclaredSource::Table { .. } => decided,
+            DeclaredSource::Claim(claim) if self.bounds_above() => {
+                format!("(jsonb_typeof({}) IS DISTINCT FROM 'object' OR {decided})", self.claim_object(claim))
+            }
+            DeclaredSource::Claim(claim) => format!("jsonb_typeof({}) IS NOT DISTINCT FROM 'object' AND {decided}", self.claim_object(claim)),
+        }])
     }
 
     fn declared_rows(&self, scope: &demesne_syntax::DeclaredScope, rels: &Rels) -> String {
-        let (table, key) = (&scope.table, &scope.key_col);
-        if !self.reads_per_call() {
-            return format!("{}.{}({ELEMENT}) AS {SLOT}", self.s.definer_schema(), declared_fn(table, key));
-        }
         let columns: BTreeSet<String> = declared_columns(scope, rels).into_iter().collect();
-        let selected: Vec<String> = columns.iter().map(|c| format!("{table}.{c}::text AS {c}")).collect();
-        format!("(SELECT {} FROM {table} WHERE {table}.{key} = {ELEMENT}::text) AS {SLOT}", selected.join(", "))
+        match &scope.source {
+            DeclaredSource::Claim(claim) => {
+                let fields: Vec<String> = columns.iter().map(|c| format!("{c} text")).collect();
+                format!("jsonb_to_recordset({} -> {ELEMENT}) AS {SLOT}({})", self.claim_object(claim), fields.join(", "))
+            }
+            DeclaredSource::Table { table, key_col } if !self.reads_per_call() => {
+                format!("{}.{}({ELEMENT}) AS {SLOT}", self.s.definer_schema(), declared_fn(table, key_col))
+            }
+            DeclaredSource::Table { table, key_col } => {
+                let selected: Vec<String> = columns.iter().map(|c| format!("{table}.{c}::text AS {c}")).collect();
+                format!("(SELECT {} FROM {table} WHERE {table}.{key_col} = {ELEMENT}::text) AS {SLOT}", selected.join(", "))
+            }
+        }
     }
 
     pub(crate) fn declared_rows_sql(&self, from: &str, scope: &demesne_syntax::DeclaredScope, body: &str) -> String {
@@ -1042,9 +1055,22 @@ impl Sql<'_> {
         if body.is_empty() {
             return Err(format!("`some {}` on {}: its brackets compile to no predicate", scope.var, quote(&obj.name)));
         }
+        let elements = format!("unnest({}.{}) AS demesne_element(v)", obj.table, scope.col);
         let mut bound = self.some_bounds(scope);
-        bound.push(self.some_body(&body));
-        Ok(vec![format!("EXISTS (SELECT 1 FROM unnest({}.{}) AS demesne_element(v) WHERE {})", obj.table, scope.col, bound.join(" AND "))])
+        if body.iter().any(|frag| frag.contains(ELEMENT)) {
+            bound.push(self.some_body(&body));
+            return Ok(vec![format!("EXISTS (SELECT 1 FROM {elements} WHERE {})", bound.join(" AND "))]);
+        }
+        let bounded = if bound.is_empty() {
+            format!("EXISTS (SELECT 1 FROM {elements})")
+        } else {
+            format!("EXISTS (SELECT 1 FROM {elements} WHERE {})", bound.join(" AND "))
+        };
+        Ok(vec![format!("({bounded} AND {})", self.some_body_beside(&body))])
+    }
+
+    fn some_body_beside(&self, body: &[String]) -> String {
+        format!("({}) {}", body.join(" OR "), if self.bounds_above() { "IS NOT FALSE" } else { "IS TRUE" })
     }
 
     pub(crate) fn holds_every_fn(&self, rs: &demesne_syntax::RoleStore, level: &str) -> String {

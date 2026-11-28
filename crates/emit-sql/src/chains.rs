@@ -250,9 +250,12 @@ impl<'a> Sql<'a> {
                 let Some(scope) = t.declared_scope() else {
                     return Err(format!("object {}: a `path` holds `every` and `none` terms, not {}", quote(&on.0.name), t.display()));
                 };
+                let Some((table, key_col)) = scope.table() else {
+                    return Err(format!("object {}: a `path` reads its rows from a table, not {}", quote(&on.0.name), t.display()));
+                };
                 let judge = if scope.quantifier == Quantifier::None { self.flipped() } else { *self };
                 let body = judge.hop_node(on, &scope.body, at, virt)?;
-                Ok(self.declared_rows_sql(&format!("{}.{}({key}) AS {SLOT}", self.s.definer_schema(), along_fn(&scope.table, &scope.key_col)), scope, &body))
+                Ok(self.declared_rows_sql(&format!("{}.{}({key}) AS {SLOT}", self.s.definer_schema(), along_fn(table, key_col)), scope, &body))
             }
             PermNode::Not(k) => Ok(format!("({}) IS NOT TRUE", self.flipped().path_node(on, k, key, at, virt)?)),
             PermNode::And(kids) => each(kids, " AND "),
