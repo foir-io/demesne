@@ -788,7 +788,7 @@ impl Sql<'_> {
             }
             PermNode::And(kids) => {
                 let frags = kids.iter().map(|k| self.node_frags_mode(obj, pm, k, rels, cust_claim, require)).collect::<R<Vec<_>>>()?;
-                let parts: Vec<String> = frags.iter().filter(|kf| !kf.is_empty()).map(|kf| format!("({})", kf.join(" OR "))).collect();
+                let parts = conjuncts(kids, &frags);
                 if parts.is_empty() {
                     return Ok(Vec::new());
                 }
@@ -1066,7 +1066,7 @@ impl Sql<'_> {
         } else {
             format!("EXISTS (SELECT 1 FROM {elements} WHERE {})", bound.join(" AND "))
         };
-        Ok(vec![format!("({bounded} AND {})", self.some_body_beside(&body))])
+        Ok(vec![format!("CASE WHEN {bounded} THEN {} ELSE false END", self.some_body_beside(&body))])
     }
 
     fn some_body_beside(&self, body: &[String]) -> String {
@@ -1747,6 +1747,33 @@ pub(crate) fn conditions_fn(obj: &Object, r: &Relation) -> String {
 
 pub(crate) fn nearest_own_fn(lookup: &str) -> String {
     format!("{lookup}_own")
+}
+
+fn conjuncts(kids: &[PermNode], frags: &[Vec<String>]) -> Vec<String> {
+    let mut parts = Vec::new();
+    let (mut scopes, mut scopes_at) = (Vec::new(), None);
+    for (k, kf) in kids.iter().zip(frags).filter(|(_, kf)| !kf.is_empty()) {
+        let part = format!("({})", kf.join(" OR "));
+        if k.term().is_some_and(|t| t.declared_scope().is_some()) {
+            scopes_at.get_or_insert(parts.len());
+            scopes.push(part);
+        } else {
+            parts.push(part);
+        }
+    }
+    if let Some(at) = scopes_at {
+        parts.insert(at, in_written_order(scopes));
+    }
+    parts
+}
+
+fn in_written_order(mut scopes: Vec<String>) -> String {
+    let last = scopes.pop().expect("a conjunction holds a scope where one is recorded");
+    if scopes.is_empty() {
+        return last;
+    }
+    let chained = scopes.iter().rev().fold(last, |then, test| format!("CASE WHEN {test} THEN {then} ELSE false END"));
+    format!("({chained})")
 }
 
 pub(crate) fn declared_fn(table: &str, key_col: &str) -> String {

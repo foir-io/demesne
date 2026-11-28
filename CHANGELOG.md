@@ -4,8 +4,8 @@
 
 A `some` whose brackets read nothing of the bound element (no `@element`, no
 keyed or slot-bound relation, no `every` or `none`) tests its bounds before its
-brackets: `(EXISTS (SELECT 1 FROM unnest(<column>) … WHERE <bounds>) AND
-(<brackets>) IS TRUE)`, with `IS NOT FALSE` inside a `not`. The answers are the
+brackets: `CASE WHEN EXISTS (SELECT 1 FROM unnest(<column>) … WHERE <bounds>)
+THEN (<brackets>) IS TRUE ELSE false END`, with `IS NOT FALSE` inside a `not`. The answers are the
 ones the brackets gave inside the element scan, where Postgres ran them once a
 row before scanning, so a row with no element to bind paid for them.
 `bounds_first_pg` checks the policy against a three-valued model over a grid of
@@ -23,6 +23,12 @@ scope against the table its rows were minted from, row for row, through the
 policy and the point check. A claim scope in a `path` is refused, and so is a
 field in upper case, since a JSON key is case-sensitive and Postgres folds an
 unquoted column name.
+
+The `every` and `none` scopes joined by one `and` are tested in the order
+written, `CASE WHEN <first> THEN <second> ELSE false END`, rather than in the
+order of Postgres's cost estimates, which could run a dear `none` before an
+`every` that refuses first. Each scope answers true or false, so no answer
+changes.
 
 `via conditions … nonempty`: a row, or with `key` an element, that stores no
 condition is unknown rather than true. The relation admits nobody there, and an

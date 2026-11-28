@@ -1242,11 +1242,13 @@ refused outside a `some`. How an object's reader listing names the callers a
 When nothing in the brackets reads the bound element (no `@element`, no keyed
 or slot-bound relation, no `every` or `none`), the `some` tests its bounds
 first and its brackets after:
-`(EXISTS (SELECT 1 FROM unnest(<column>) … WHERE <bounds>) AND (<brackets>) IS TRUE)`.
+`CASE WHEN EXISTS (SELECT 1 FROM unnest(<column>) … WHERE <bounds>) THEN (<brackets>) IS TRUE ELSE false END`.
 The answer is the one the brackets give inside the element scan, but there
 Postgres runs brackets that read no element once a row before it scans, so a
-row with no element to bind would pay for them. Inside a `not` the brackets
-are `IS NOT FALSE`, as wherever a negation meets what cannot be decided.
+row with no element to bind would pay for them. The `CASE` keeps the order
+whatever Postgres's cost estimates would make of a conjunction. Inside a
+`not` the brackets are `IS NOT FALSE`, as wherever a negation meets what
+cannot be decided.
 
 ### `every` and `none`: what a table declares for the element
 
@@ -1284,6 +1286,14 @@ holds, so `none … nonempty` is refused.
 
 A scope reads something of its rows: a `where`, a `@slot` or a slot-bound
 relation. One whose brackets read nothing of them is refused.
+
+The scopes joined by one `and` are tested in the order written:
+`CASE WHEN <first> THEN <second> ELSE false END`, so the second is never asked
+of an element the first refuses. Postgres would otherwise order them by its
+cost estimates, which can run a `none` whose brackets are dear before an
+`every` that refuses for less. A scope's answer is always true or false, so
+the order changes no answer. Write the scope that refuses most often, or most
+cheaply, first. Other terms beside them stay conjuncts of their own.
 
 #### Declared rows from a claim
 

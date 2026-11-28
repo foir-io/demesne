@@ -40,7 +40,7 @@ fn every_refuses_when_a_declared_row_fails_and_none_when_one_matches() {
         "NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'require' AND ({edge} OR (demesne_slot.kind = 'grant') AND (auth.doc_acl_grants(SUB, docs.id, 'read'))) IS NOT TRUE)"
     );
     let none = format!("NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'except' AND ({edge}) IS NOT FALSE)");
-    assert!(using.contains(&format!("WHERE (({every}) AND ({none}))")), "{using}");
+    assert!(using.contains(&format!("WHERE ((CASE WHEN ({every}) THEN ({none}) ELSE false END))")), "{using}");
     let (unfiltered, _) = emitted(&view("some r in rules_live (every s in rule_slots(rule_id) (@slot(kind, \"edge\") and edge_slot))"));
     assert!(unfiltered.contains(&format!("NOT EXISTS (SELECT 1 FROM {ROWS} WHERE ({edge}) IS NOT TRUE)")), "{unfiltered}");
 }
@@ -205,7 +205,7 @@ fn a_claim_scope_reads_the_rows_its_claim_lists_under_the_element_and_calls_no_d
     let none = format!(
         "jsonb_typeof({CLAIM}) IS NOT DISTINCT FROM 'object' AND NOT EXISTS (SELECT 1 FROM {rows} WHERE demesne_slot.role = 'except' AND ({edge}) IS NOT FALSE)"
     );
-    assert!(using.contains(&format!("WHERE (({every}) AND ({none}))")), "{using}");
+    assert!(using.contains(&format!("WHERE ((CASE WHEN ({every}) THEN ({none}) ELSE false END))")), "{using}");
     assert!(
         defs.iter().all(|d| !d.name.contains("_declared_by_")),
         "a claim scope needs no definer to read its rows: {:?}",
@@ -264,4 +264,32 @@ fn a_table_named_claim_is_still_a_table() {
     let (using, defs) = emitted(&view(expr));
     assert!(using.contains("auth.claim_declared_by_rule_id(demesne_element.v) AS demesne_slot"), "{using}");
     assert!(defs.iter().any(|d| d.name == "claim_declared_by_rule_id"));
+}
+
+#[test]
+fn the_scopes_of_a_conjunction_are_tested_in_the_order_written() {
+    let (every, none) = (
+        "every s in rule_slots(rule_id) where role = \"require\" (@slot(kind, \"edge\") and edge_slot)",
+        "none s in claim rule_slots where role = \"except\" (@slot(kind, \"edge\") and edge_slot)",
+    );
+    let (using, _) = emitted(&view(&format!("some r in rules_live ({every} and {none})")));
+    let (first, second) = (
+        using.find("WHERE ((CASE WHEN (NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule_id(").expect("the every leads"),
+        using.find("THEN (jsonb_typeof(").expect("the none follows"),
+    );
+    assert!(first < second && using.contains("ELSE false END))"), "{using}");
+    let (swapped, _) = emitted(&view(&format!("some r in rules_live ({none} and {every})")));
+    assert!(
+        swapped.contains("WHERE ((CASE WHEN (jsonb_typeof(") && swapped.contains("THEN (NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule_id("),
+        "{swapped}"
+    );
+    let (three, _) = emitted(&view(&format!("some r in rules_live (named and {every} and {none} and {every})")));
+    assert!(
+        three.contains("WHERE ((auth.doc_named_keyed(SUB, docs.id, demesne_element.v)) AND (CASE WHEN (NOT EXISTS"),
+        "a term beside the scopes stays a conjunct of its own:\n{three}"
+    );
+    assert_eq!(three.matches("CASE WHEN").count(), 2, "{three}");
+    assert!(three.contains("ELSE false END ELSE false END))"), "three scopes nest:\n{three}");
+    let (one, _) = emitted(&view(&format!("some r in rules_live (named and {every})")));
+    assert!(!one.contains("CASE WHEN"), "one scope needs no order:\n{one}");
 }

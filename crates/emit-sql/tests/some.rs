@@ -300,11 +300,14 @@ fn a_some_whose_body_reads_no_element_tests_its_bounds_before_its_body() {
     let held = Sql::new(&s).claim("rules_held");
     let using = select_using(&src);
     let want = format!(
-        "(EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with({EL}, 'read.') AND {EL} = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text({held}::jsonb) e))) AND (auth.doc_composition_parent(docs.id, 'read') OR visibility = 'listed') IS TRUE)"
+        "CASE WHEN EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with({EL}, 'read.') AND {EL} = ANY(ARRAY(SELECT e FROM jsonb_array_elements_text({held}::jsonb) e))) THEN (auth.doc_composition_parent(docs.id, 'read') OR visibility = 'listed') IS TRUE ELSE false END"
     );
     assert!(using.contains(&want), "{using}");
     let bare = select_using(&view("some r in rules_live (mode visibility = \"listed\")"));
-    assert!(bare.contains("(EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v)) AND (visibility = 'listed') IS TRUE)"), "{bare}");
+    assert!(
+        bare.contains("CASE WHEN EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v)) THEN (visibility = 'listed') IS TRUE ELSE false END"),
+        "{bare}"
+    );
 }
 
 #[test]
@@ -326,7 +329,20 @@ fn a_negated_some_whose_body_reads_no_element_counts_an_unknown_body_as_holding(
     );
     let using = policy_using(&src, "docs_update");
     assert!(
-        using.contains("((EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with(demesne_element.v, 'read.')) AND (state = 'locked') IS NOT FALSE)) IS NOT TRUE"),
+        using.contains("AND ((CASE WHEN EXISTS (SELECT 1 FROM unnest(docs.rules_live) AS demesne_element(v) WHERE starts_with(demesne_element.v, 'read.')) THEN (state = 'locked') IS NOT FALSE ELSE false END) IS NOT TRUE)"),
         "{using}"
     );
+}
+
+#[test]
+fn a_write_rule_that_repeats_a_read_some_whose_brackets_read_no_element_reaches_its_readers() {
+    let some = "some r in rules_live prefix \"read.\" (parent + mode visibility = \"listed\")";
+    for edit in [format!("owner and (owner + {some})"), format!("@claim(\"writes_all\", \"true\") and {some}")] {
+        compile(&doc(&format!("  permission view = owner + {some} @rls maps select\n  permission edit = {edit} @rls maps update")))
+            .unwrap_or_else(|e| panic!("the write is inside the read: {edit}\n{e}"));
+    }
+    let err = compile(&doc(&format!("  permission view = owner @rls maps select\n  permission edit = {some} @rls maps update")))
+        .map(|_| ())
+        .expect_err("a some the read lacks");
+    assert!(err.contains("admits callers the select permission doc.view does not reach"), "{err}");
 }
