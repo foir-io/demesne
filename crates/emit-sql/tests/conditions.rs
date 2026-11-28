@@ -113,3 +113,19 @@ fn stored_conditions_only_narrow_and_keyed_ones_need_an_element() {
     demesne_syntax::parse(&format!("extension postgis\nextension postgis\n{HEAD}")).expect_err("an extension declared twice");
     demesne_syntax::parse(&format!("extension postgis schema \"a b\"\n{HEAD}")).expect_err("a schema that is no identifier");
 }
+
+#[test]
+fn a_nonempty_conditions_relation_is_unknown_where_no_condition_is_stored() {
+    let src = spec("", VIEW).replace("key rule_id on id from claim facts\n", "key rule_id on id from claim facts nonempty\n");
+    assert!(src.contains("from claim facts nonempty\n"), "{src}");
+    let (_, defs) = emitted(&src);
+    let get = |name: &str| defs.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("no {name}"));
+    let counted = "  END LOOP;\n  IF NOT FOUND THEN\n    RETURN NULL;\n  END IF;\n  RETURN CASE WHEN undecided THEN NULL ELSE true END;\nEND";
+    let keyed = get("doc_matches_hold");
+    assert!(keyed.body.contains(counted), "{}", keyed.body);
+    let inside = &keyed.bound.as_ref().expect("the function binds the claims a call").inside;
+    assert!(inside.contains(counted), "the body a call binds its claims around counts the rows too:\n{inside}");
+    assert!(!get("doc_fits_hold").body.contains("IF NOT FOUND"), "a relation without nonempty holds over no rows");
+    let (_, plain) = emitted(&spec("", VIEW));
+    assert!(plain.iter().all(|d| !d.body.contains("IF NOT FOUND")), "nor does any other");
+}

@@ -1239,6 +1239,17 @@ One element is bound at a time: a `some` does not nest. A keyed relation is
 refused outside a `some`. How an object's reader listing names the callers a
 `some` admits is under the conditional enumerator, above.
 
+When nothing in the brackets reads the bound element (no `@element`, no keyed
+or slot-bound relation, no `every` or `none`), the `some` tests its bounds
+first and its brackets after:
+`CASE WHEN EXISTS (SELECT 1 FROM unnest(<column>) … WHERE <bounds>) THEN (<brackets>) IS TRUE ELSE false END`.
+The answer is the one the brackets give inside the element scan, but there
+Postgres runs brackets that read no element once a row before it scans, so a
+row with no element to bind would pay for them. The `CASE` keeps the order
+whatever Postgres's cost estimates would make of a conjunction. Inside a
+`not` the brackets are `IS NOT FALSE`, as wherever a negation meets what
+cannot be decided.
+
 ### `every` and `none`: what a table declares for the element
 
 An element often needs several things at once, and which things is itself
@@ -1272,6 +1283,60 @@ least one counted row exists and the brackets hold for each. It compiles to
 `EXISTS (<the counted rows>) AND NOT EXISTS (<a counted row the brackets
 fail>)`. `nonempty` belongs to `every` alone: a `none` over no rows already
 holds, so `none … nonempty` is refused.
+
+A scope reads something of its rows: a `where`, a `@slot` or a slot-bound
+relation. One whose brackets read nothing of them is refused.
+
+The scopes joined by one `and` are tested in the order written:
+`CASE WHEN <first> THEN <second> ELSE false END`, so the second is never asked
+of an element the first refuses. Postgres would otherwise order them by its
+cost estimates, which can run a `none` whose brackets are dear before an
+`every` that refuses for less. A scope's answer is always true or false, so
+the order changes no answer. Write the scope that refuses most often, or most
+cheaply, first. Other terms beside them stay conjuncts of their own.
+
+#### Declared rows from a setting
+
+`every <name> in setting <key> ( … )`, and `none` likewise, reads the rows
+from the setting `request.<key>` in place of a table. The caller sets it
+beside the claims, for the transaction, to a JSON object keyed by element,
+each value a JSON array of objects, one a declared row:
+
+```sql
+SELECT set_config('request.rule_slots', '{"read.share.k1": [{"kind": "share", "role": "require"}, {"kind": "share", "role": "except"}]}', true);
+```
+
+```demesne
+permission view = some r in rules_live held rules_held (
+      every s in setting rule_slots where role = "require" nonempty (
+          (@slot(kind, "share") and shared) + (@slot(kind, "grant") and granted:read) )
+  and none  s in setting rule_slots where role = "except" (@slot(kind, "share") and barred)
+) @rls maps select
+```
+
+It compiles to `jsonb_to_recordset(<setting> -> <element>) AS demesne_slot(<fields> text)`,
+with the setting read once a statement as
+`(SELECT NULLIF(current_setting('request.<key>', true), '')::jsonb)`, so an
+element calls no function: where the call works the rows out once, the policy
+reads them for the cost of one parse. They are kept out of the claims because
+every definer that reads a claim parses the whole claims setting on each call,
+and rows a project declares by the hundred would make each of those calls
+pay. `where`, `@slot`, `nonempty` and the slot-bound relations read an
+object's fields as they read a table's columns.
+
+- An element the object does not name declares no rows, as a table holding
+  none for it.
+- A value that is not an array, JSON `null` among them, or an entry that is
+  not an object, fails the statement, and so does a setting that is not JSON.
+- A field an entry lacks is NULL. One that is not a string reads as its JSON
+  text.
+- When the setting holds no object (it is unset, empty, or holds anything
+  else), the term cannot be decided. It admits nobody, as `every` or as
+  `none`, and inside a `not` it holds, so the `not` refuses too.
+
+A field names a JSON key, which is case-sensitive while Postgres folds an
+unquoted column name, so a field in upper case is refused. A definer reads the
+setting as a policy does. A `path` reads its rows from a table only.
 
 A permission's declared rows come through one generated function per table
 and key, `<table>_declared_by_<key>`, which returns the columns permissions
@@ -1334,6 +1399,11 @@ distance is at most the radius, and unknown for a latitude outside −90 to 90,
 a longitude outside −180 to 180 or a negative radius. Declare `extension postgis` (with `schema
 "<name>"` when it is not on the search path) and it compiles to `ST_DWithin`
 on geography instead.
+
+A row, or with `key` an element, that stores no condition holds. Where that
+must refuse, write `nonempty` last: `… key rule on id from claim facts
+nonempty`. The answer over no stored condition is then unknown, so the
+relation admits nobody there, and an exception it narrows still bars.
 
 A conditions relation only narrows. A rule in which it could admit a caller by
 itself is refused.

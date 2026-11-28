@@ -40,7 +40,7 @@ fn every_refuses_when_a_declared_row_fails_and_none_when_one_matches() {
         "NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'require' AND ({edge} OR (demesne_slot.kind = 'grant') AND (auth.doc_acl_grants(SUB, docs.id, 'read'))) IS NOT TRUE)"
     );
     let none = format!("NOT EXISTS (SELECT 1 FROM {ROWS} WHERE demesne_slot.role = 'except' AND ({edge}) IS NOT FALSE)");
-    assert!(using.contains(&format!("WHERE (({every}) AND ({none}))")), "{using}");
+    assert!(using.contains(&format!("WHERE ((CASE WHEN ({every}) THEN ({none}) ELSE false END))")), "{using}");
     let (unfiltered, _) = emitted(&view("some r in rules_live (every s in rule_slots(rule_id) (@slot(kind, \"edge\") and edge_slot))"));
     assert!(unfiltered.contains(&format!("NOT EXISTS (SELECT 1 FROM {ROWS} WHERE ({edge}) IS NOT TRUE)")), "{unfiltered}");
 }
@@ -188,4 +188,112 @@ fn a_some_over_declared_rows_lists_the_principals_their_shapes_name_on_the_rows_
     assert!(listed.contains("'owner'::text, 'member'::text, owner_id"), "the owner shape's principal:\n{listed}");
     assert!(listed.contains("doc_acl"), "the grant shape's principals:\n{listed}");
     assert!(!listed.contains("demesne_slot"), "the declared rows' tests are left to the policy:\n{listed}");
+}
+
+const SETTING: &str = "(SELECT NULLIF(current_setting('request.rule_slots', true), '')::jsonb)";
+
+#[test]
+fn a_setting_scope_reads_the_rows_its_setting_lists_under_the_element_and_calls_no_definer() {
+    let expr = "some r in rules_live (every s in setting rule_slots where role = \"require\" nonempty (@slot(kind, \"edge\") and edge_slot) and none s in setting rule_slots where role = \"except\" (@slot(kind, \"edge\") and edge_slot))";
+    assert_eq!(compile(&view(expr)).expect("compiles").objects[0].perms[0].tree.display(), expr);
+    let (using, defs) = emitted(&view(expr));
+    let rows = format!("jsonb_to_recordset({SETTING} -> demesne_element.v) AS demesne_slot(kind text, role text, slot text)");
+    let edge = "(demesne_slot.kind = 'edge') AND (auth.doc_edge_slot_keyed(SUB, docs.id, demesne_element.v, demesne_slot.slot))";
+    let every = format!(
+        "jsonb_typeof({SETTING}) IS NOT DISTINCT FROM 'object' AND (EXISTS (SELECT 1 FROM {rows} WHERE demesne_slot.role = 'require') AND NOT EXISTS (SELECT 1 FROM {rows} WHERE demesne_slot.role = 'require' AND ({edge}) IS NOT TRUE))"
+    );
+    let none = format!(
+        "jsonb_typeof({SETTING}) IS NOT DISTINCT FROM 'object' AND NOT EXISTS (SELECT 1 FROM {rows} WHERE demesne_slot.role = 'except' AND ({edge}) IS NOT FALSE)"
+    );
+    assert!(using.contains(&format!("WHERE ((CASE WHEN ({every}) THEN ({none}) ELSE false END))")), "{using}");
+    assert!(
+        defs.iter().all(|d| !d.name.contains("_declared_by_")),
+        "a setting scope needs no definer to read its rows: {:?}",
+        defs.iter().map(|d| &d.name).collect::<Vec<_>>()
+    );
+    let (table, defs) = emitted(&view(&expr.replace("setting rule_slots", "rule_slots(rule_id)")));
+    assert!(!table.contains("jsonb_to_recordset") && !table.contains("jsonb_typeof"), "{table}");
+    assert!(defs.iter().any(|d| d.name == "rule_slots_declared_by_rule_id"), "the table scope keeps its definer");
+}
+
+#[test]
+fn a_setting_scope_that_holds_no_object_holds_only_inside_a_not() {
+    let (using, _) = emitted(&view("some r in rules_live (named and not every s in setting rule_slots nonempty (@slot(kind, \"lock\") and edge_slot))"));
+    assert!(using.contains(&format!("(((jsonb_typeof({SETTING}) IS DISTINCT FROM 'object' OR (EXISTS (SELECT 1 FROM jsonb_to_recordset(")), "{using}");
+    assert!(using.contains(" IS FALSE)))) IS NOT TRUE)"), "{using}");
+}
+
+#[test]
+fn a_definer_reads_a_setting_scope_as_the_policy_does() {
+    let src = format!(
+        "{HEAD}object doc {{\n  table docs\n  scoped estate > space\n{RELATIONS}  permission view = owner + some r in rules_live (every s in setting rule_slots nonempty (@slot(kind, \"edge\") and edge_slot)) @rls maps select\n}}\nobject note {{\n  table notes\n  scoped estate > space\n  relation of: member via object doc->view on doc_id\n  permission view = of @rls maps select\n  export view as note_view_allowed(id text as row_id, estate_id text as row_estate_id, space_id text as row_space_id, doc_id text as row_doc_id)\n}}\n"
+    );
+    let body = emitted(&src).1.into_iter().find(|d| d.name == "doc_can_view").expect("the borrow's definer").body;
+    assert!(
+        body.contains(&format!("jsonb_typeof({SETTING}) IS NOT DISTINCT FROM 'object' AND (EXISTS (SELECT 1 FROM jsonb_to_recordset({SETTING} -> demesne_element.v) AS demesne_slot(kind text, slot text))")),
+        "{body}"
+    );
+    assert!(!body.contains("-> 'rule_slots'"), "no claim is read for the rows:\n{body}");
+}
+
+#[test]
+fn a_declared_scope_that_reads_nothing_of_its_rows_or_names_a_field_in_upper_case_is_refused() {
+    for (what, expr, want) in [
+        (
+            "a table scope reading nothing",
+            "some r in rules_live (every s in rule_slots(rule_id) nonempty (owner))",
+            "reads nothing of the rows declared for the element",
+        ),
+        (
+            "a setting scope reading nothing",
+            "some r in rules_live (none s in setting rule_slots (owner))",
+            "reads nothing of the rows declared for the element",
+        ),
+        (
+            "a setting field in upper case",
+            "some r in rules_live (every s in setting rule_slots where Role = \"require\" (@slot(kind, \"edge\") and edge_slot))",
+            "reads field \"Role\" of setting \"rule_slots\", a JSON key that Postgres would read in lower case",
+        ),
+    ] {
+        let err = compile(&view(expr)).map(|_| ()).expect_err(what);
+        assert!(err.contains(want), "{what}: {err}");
+    }
+    compile(&view("some r in rules_live (every s in rule_slots(rule_id) where Role = \"require\" (@slot(kind, \"edge\") and edge_slot))"))
+        .expect("a table's column is a SQL identifier, which Postgres folds the same way everywhere");
+}
+
+#[test]
+fn a_table_named_setting_is_still_a_table() {
+    let expr = "some r in rules_live (every s in setting(rule_id) (@slot(kind, \"edge\") and edge_slot))";
+    let (using, defs) = emitted(&view(expr));
+    assert!(using.contains("auth.setting_declared_by_rule_id(demesne_element.v) AS demesne_slot"), "{using}");
+    assert!(defs.iter().any(|d| d.name == "setting_declared_by_rule_id"));
+}
+
+#[test]
+fn the_scopes_of_a_conjunction_are_tested_in_the_order_written() {
+    let (every, none) = (
+        "every s in rule_slots(rule_id) where role = \"require\" (@slot(kind, \"edge\") and edge_slot)",
+        "none s in setting rule_slots where role = \"except\" (@slot(kind, \"edge\") and edge_slot)",
+    );
+    let (using, _) = emitted(&view(&format!("some r in rules_live ({every} and {none})")));
+    let (first, second) = (
+        using.find("WHERE ((CASE WHEN (NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule_id(").expect("the every leads"),
+        using.find("THEN (jsonb_typeof(").expect("the none follows"),
+    );
+    assert!(first < second && using.contains("ELSE false END))"), "{using}");
+    let (swapped, _) = emitted(&view(&format!("some r in rules_live ({none} and {every})")));
+    assert!(
+        swapped.contains("WHERE ((CASE WHEN (jsonb_typeof(") && swapped.contains("THEN (NOT EXISTS (SELECT 1 FROM auth.rule_slots_declared_by_rule_id("),
+        "{swapped}"
+    );
+    let (three, _) = emitted(&view(&format!("some r in rules_live (named and {every} and {none} and {every})")));
+    assert!(
+        three.contains("WHERE ((auth.doc_named_keyed(SUB, docs.id, demesne_element.v)) AND (CASE WHEN (NOT EXISTS"),
+        "a term beside the scopes stays a conjunct of its own:\n{three}"
+    );
+    assert_eq!(three.matches("CASE WHEN").count(), 2, "{three}");
+    assert!(three.contains("ELSE false END ELSE false END))"), "three scopes nest:\n{three}");
+    let (one, _) = emitted(&view(&format!("some r in rules_live (named and {every})")));
+    assert!(!one.contains("CASE WHEN"), "one scope needs no order:\n{one}");
 }

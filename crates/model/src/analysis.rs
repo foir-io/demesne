@@ -294,7 +294,7 @@ fn pruned_leaf(t: &Term, comp: Pruning<'_>, bound: Bound) -> Pruned {
         };
     }
     let Some(scope) = t.declared_scope() else { return Pruned::Kept(PermNode::Leaf(t.clone())) };
-    let rows_decide = |scope: &DeclaredScope, body: PermNode| rebuilt(t, Builtin::Declared(Box::new(DeclaredScope { body, ..scope.clone() })));
+    let rows_decide = |scope: &DeclaredScope, body: PermNode| rebuilt(t, Builtin::Declared(Box::new(scope.with_body(body))));
     match scope.quantifier {
         Quantifier::Every => match pruned_branches(&scope.body, comp, bound) {
             Pruned::Kept(body) => rows_decide(scope, body),

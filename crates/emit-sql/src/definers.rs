@@ -11,7 +11,8 @@ use demesne_model::analysis::{
 };
 use demesne_model::closure;
 use demesne_model::conditional::{
-    accessor_tree_op, admission_names, is_claim_leaf, is_composition_leaf, is_row_leaf, mode_row_sql, narrowing_accessor_leaf, row_term_sql, some_row_sql,
+    accessor_tree_op, admission_names, declared_columns, is_claim_leaf, is_composition_leaf, is_row_leaf, mode_row_sql, narrowing_accessor_leaf, row_term_sql,
+    some_row_sql,
 };
 use demesne_model::topology;
 use demesne_model::vocab::to_runtime;
@@ -1238,11 +1239,10 @@ impl Sql<'_> {
                 Repr::Composition(vc) => vc.path.as_ref().map(|path| &path.along),
                 _ => None,
             });
-            let policies =
-                trees.flat_map(PermNode::leaves_deep).filter_map(Term::declared_scope).map(|scope| (declared_fn(&scope.table, &scope.key_col), scope));
-            let chains = paths.flat_map(PermNode::leaves_deep).filter_map(Term::declared_scope).map(|scope| (along_fn(&scope.table, &scope.key_col), scope));
-            for (name, scope) in policies.chain(chains) {
-                read.entry((scope.table.clone(), scope.key_col.clone(), name)).or_default().extend(declared_columns(scope, &rels));
+            let policies = trees.flat_map(table_scopes).map(|((table, key), scope)| (table, key, declared_fn(table, key), scope));
+            let chains = paths.flat_map(table_scopes).map(|((table, key), scope)| (table, key, along_fn(table, key), scope));
+            for (table, key, name, scope) in policies.chain(chains) {
+                read.entry((table.to_string(), key.to_string(), name)).or_default().extend(declared_columns(scope, &rels));
             }
         }
         for ((table, key_col, name), cols) in read {
@@ -2343,20 +2343,8 @@ impl Sql<'_> {
     }
 }
 
-pub(crate) fn declared_columns(scope: &DeclaredScope, rels: &Rels) -> Vec<String> {
-    let bound = |t: &&Term| {
-        rels.get(t.ident()).and_then(|r| match &r.repr {
-            Repr::Edge(e) => e.slot.as_ref(),
-            Repr::Composition(c) => c.slot.as_ref(),
-            _ => None,
-        })
-    };
-    let leaves = scope.body.leaves();
-    let tested = leaves.iter().filter_map(|t| t.slot_test().or_else(|| t.slot_held())).map(|(col, _)| col.to_string());
-    let hops = leaves.iter().filter_map(|t| t.holds_at()).flat_map(|(record, element, _)| [record.to_string(), element.to_string()]);
-    let followed = leaves.iter().filter_map(|t| t.holds_at_slot()).map(str::to_string);
-    let matched = leaves.iter().filter_map(bound).map(|(_, from)| from.clone());
-    scope.filter.iter().map(|(col, _)| col.clone()).chain(tested).chain(hops).chain(followed).chain(matched).collect()
+fn table_scopes(n: &PermNode) -> impl Iterator<Item = ((&str, &str), &DeclaredScope)> {
+    n.leaves_deep().into_iter().filter_map(Term::declared_scope).filter_map(|scope| scope.table().map(|table| (table, scope)))
 }
 
 fn grant_relation_definer(name: String, obj: &Object, vg: &ViaGrant, (kind, param, id_t): (&str, &str, &str), principal_claims: Vec<String>) -> GenFn {

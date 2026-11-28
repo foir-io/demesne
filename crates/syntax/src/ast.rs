@@ -598,31 +598,61 @@ pub enum Quantifier {
     None,
 }
 
-/// How many declared rows an `every` asks for before its brackets decide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How many rows an `every` or a `via conditions` asks for before the rows decide.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Counted {
-    /// Any number, none included: an `every` over no rows holds.
+    /// Any number, none included: an `every` or a `via conditions` over no rows holds.
+    #[default]
     AnyNumber,
-    /// `nonempty`: at least one row is counted, so an `every` over no rows fails.
+    /// `nonempty`: at least one row is counted. An `every` over no rows fails, and a `via conditions` over no rows
+    /// cannot be decided.
     AtLeastOne,
 }
 
-/// An `every` or `none` scope inside a `some`: the rows a table declares for the bound element.
+/// Where an `every` or `none` scope reads the rows declared for the element a `some` has bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclaredSource {
+    /// `<table>(<key column>)`: the table's rows whose key column equals the element.
+    Table { table: String, key_col: String },
+    /// `setting <name>`: the JSON objects the setting `request.<name>` lists under the element, a setting that the caller
+    /// sets to a JSON object of arrays.
+    Setting(String),
+}
+
+/// An `every` or `none` scope inside a `some`: the rows declared for the bound element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DeclaredScope {
     pub quantifier: Quantifier,
     /// How many counted rows an `every` needs: `nonempty` for at least one.
     pub counted: Counted,
     pub var: String,
-    pub table: String,
-    pub key_col: String,
+    pub source: DeclaredSource,
     /// `where <column> = "<value>"`: only declared rows holding the value are counted.
     pub filter: Option<(String, String)>,
     pub body: PermNode,
 }
 
+impl DeclaredScope {
+    /// The same scope over `body`: its quantifier, source and filter kept.
+    #[must_use]
+    pub fn with_body(&self, body: PermNode) -> Self {
+        Self { body, ..self.clone() }
+    }
+
+    /// Returns the table and key column the scope reads its rows from, or `None` for a setting.
+    #[must_use]
+    pub fn table(&self) -> Option<(&str, &str)> {
+        match &self.source {
+            DeclaredSource::Table { table, key_col } => Some((table, key_col)),
+            DeclaredSource::Setting(_) => None,
+        }
+    }
+}
+
 /// `via conditions`: conditions stored for a row, each compared with a value the caller's claim carries.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ViaConditions {
     pub table: String,
     pub object_col: String,
@@ -641,6 +671,8 @@ pub struct ViaConditions {
     pub on: String,
     /// The claim holding the caller's values, a JSON object keyed by term.
     pub claim: String,
+    /// `nonempty`: for a row, or a bound element, that stores no condition the answer is unknown rather than true.
+    pub counted: Counted,
 }
 
 /// A `some` scope: one element of a row's array column, and the expression that must hold for it.
@@ -1127,7 +1159,11 @@ impl Builtin {
                     Counted::AnyNumber => "",
                     Counted::AtLeastOne => " nonempty",
                 };
-                format!("{word} {} in {}({}){filter}{counted} ({})", scope.var, scope.table, scope.key_col, scope.body.display())
+                let source = match &scope.source {
+                    DeclaredSource::Table { table, key_col } => format!("{table}({key_col})"),
+                    DeclaredSource::Setting(name) => format!("setting {name}"),
+                };
+                format!("{word} {} in {source}{filter}{counted} ({})", scope.var, scope.body.display())
             }
             Builtin::Slot { col, val } => format!("@slot({col}, {})", quote(val)),
             Builtin::SlotHeld { col, claim } => format!("@slot({col} held {claim})"),

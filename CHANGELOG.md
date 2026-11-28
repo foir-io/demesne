@@ -1,5 +1,55 @@
 # Changelog
 
+## v9.0.0
+
+A `some` whose brackets read nothing of the bound element (no `@element`, no
+keyed or slot-bound relation, no `every` or `none`) tests its bounds before its
+brackets: `CASE WHEN EXISTS (SELECT 1 FROM unnest(<column>) … WHERE <bounds>)
+THEN (<brackets>) IS TRUE ELSE false END`, with `IS NOT FALSE` inside a `not`. The answers are the
+ones the brackets gave inside the element scan, where Postgres ran them once a
+row before scanning, so a row with no element to bind paid for them.
+`bounds_first_pg` checks the policy against a three-valued model over a grid of
+rows and claims, under a `not` and outside one.
+
+`every` and `none` read their rows from a setting with `every <name> in
+setting <key> ( … )`: `request.<key>`, which the caller sets beside the claims
+to a JSON object keyed by element, each value an array of objects. The scope
+compiles to `jsonb_to_recordset(<setting> -> <element>)`, with the setting read
+once a statement as `(SELECT NULLIF(current_setting('request.<key>', true),
+'')::jsonb)`, so an element calls no `<table>_declared_by_<key>`. The rows stay
+out of the claims, which every definer that reads a claim parses whole on each
+call. An element the object doesn't name declares no rows. A value that is not
+an array of objects, or a setting that is not JSON, fails the statement. A
+setting that is unset, empty or holds no object leaves the term undecidable, so
+it admits nobody, as `every` or `none`, and holds inside a `not`.
+`declared_pg` checks a setting scope against the table its rows were minted
+from, row for row, through the policy and the point check. A setting scope in a
+`path` is refused, and so is a field in upper case, since a JSON key is
+case-sensitive and Postgres folds an unquoted column name.
+
+The `every` and `none` scopes joined by one `and` are tested in the order
+written, `CASE WHEN <first> THEN <second> ELSE false END`, rather than in the
+order of Postgres's cost estimates, which could run a dear `none` before an
+`every` that refuses first. Each scope answers true or false, so no answer
+changes.
+
+`via conditions … nonempty`: a row, or with `key` an element, that stores no
+condition is unknown rather than true. The relation admits nobody there, and an
+exception it narrows still bars.
+
+A declared scope whose brackets read nothing of its rows is refused. A table
+scope of that shape used to emit a function returning `TABLE()`, which Postgres
+refuses.
+
+`demesne_syntax::DeclaredScope` replaces `table` and `key_col` with `source:
+DeclaredSource` (`Table { table, key_col }` or `Setting(key)`), `ViaConditions`
+gains `counted`, and the policies change form, so this is a major release.
+`DeclaredScope` and `ViaConditions` are now `#[non_exhaustive]`: build a scope
+over a new body with `DeclaredScope::with_body`, and read a table scope's table
+and key with `DeclaredScope::table`. `Counted` derives `Default`, and
+`demesne_model::conditional::declared_columns` is public. The Go module's API
+doesn't change, so it stays `go/v1.6.0`.
+
 ## v8.0.0
 
 A `some` scope takes `clear of <claim>`: it binds only the elements the

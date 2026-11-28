@@ -8,11 +8,12 @@ mod lexer;
 mod parser;
 
 pub use ast::{
-    Admit, ArgSrc, Beneath, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, Counted, DeclaredScope, ExportParameter, Extension, External,
-    ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker,
-    MarkerClosure, Membership, Nearest, Object, Perm, PermNode, PermissionExport, PointCheck, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures,
-    Projection, Quantifier, Relation, RelationKind, Repr, Require, RoleForm, RoleStore, SessionRel, SomeScope, Spec, Subject, Template, Term, TermKind,
-    Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Beneath, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, Counted, DeclaredScope, DeclaredSource, ExportParameter,
+    Extension, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication,
+    Level, Marker, MarkerClosure, Membership, Nearest, Object, Perm, PermNode, PermissionExport, PointCheck, Pos, Preset, Probe, ProbeAnswer, ProcEntry,
+    Procedures, Projection, Quantifier, Relation, RelationKind, Repr, Require, RoleForm, RoleStore, SessionRel, SomeScope, Spec, Subject, Template, Term,
+    TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject,
+    Vocabulary,
 };
 pub use error::{Error, Finding};
 pub use files::{SpecFiles, parse_files};

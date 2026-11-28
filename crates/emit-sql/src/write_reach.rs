@@ -159,7 +159,7 @@ impl Implications<'_> {
     }
 
     fn some_followed_for_read(&self, have: &str, want: &str) -> bool {
-        if !have.starts_with("EXISTS (SELECT 1 FROM unnest(") {
+        if !have.strip_prefix("CASE WHEN ").unwrap_or(have).starts_with("EXISTS (SELECT 1 FROM unnest(") {
             return false;
         }
         self.followed.iter().fold(have.to_string(), |text, (written, read)| text.replace(written, read)) == want

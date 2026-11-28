@@ -1,10 +1,11 @@
 use crate::Error;
 use crate::ast::{
-    Admit, ArgSrc, Beneath, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, Counted, DeclaredScope, ExportParameter, Extension, External,
-    ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication, Level, Marker,
-    MarkerClosure, Membership, Nearest, Object, Perm, PermNode, PermissionExport, PointCheck, Pos, Preset, Probe, ProbeAnswer, ProcEntry, Procedures,
-    Projection, Quantifier, Relation, RelationKind, Repr, Require, RoleForm, RoleStore, SessionRel, SomeScope, Spec, Subject, Template, Term, TermKind,
-    Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject, Vocabulary,
+    Admit, ArgSrc, Beneath, Builtin, Changelog, ClaimsAccessor, Closure, ClosureBase, CompPath, Counted, DeclaredScope, DeclaredSource, ExportParameter,
+    Extension, External, ExternalArg, FieldRule, FieldScopeEntry, FieldScopes, Gate, Grant, GrantAdmits, GrantScope, GrantUse, Guard, GuardOp, Implication,
+    Level, Marker, MarkerClosure, Membership, Nearest, Object, Perm, PermNode, PermissionExport, PointCheck, Pos, Preset, Probe, ProbeAnswer, ProcEntry,
+    Procedures, Projection, Quantifier, Relation, RelationKind, Repr, Require, RoleForm, RoleStore, SessionRel, SomeScope, Spec, Subject, Template, Term,
+    TermKind, Topology, UngovEntry, Ungoverned, ViaClosure, ViaColumn, ViaComposition, ViaConditions, ViaEdge, ViaGrant, ViaGroup, ViaMemberIn, ViaObject,
+    Vocabulary,
 };
 use crate::lexer::{Tok, Token, is_plain_identifier, lex, lex_from};
 use demesne_gocompat::quote;
@@ -942,7 +943,8 @@ impl Parser {
         self.expect_kw("from")?;
         self.expect_kw("claim")?;
         let claim = self.ident()?;
-        Ok(Repr::Conditions(ViaConditions { table, object_col, term_col, op_col, num_col, txt_col, at_col, list_col, point_cols, key, on, claim }))
+        let counted = if self.accept_kw("nonempty") { Counted::AtLeastOne } else { Counted::AnyNumber };
+        Ok(Repr::Conditions(ViaConditions { table, object_col, term_col, op_col, num_col, txt_col, at_col, list_col, point_cols, key, on, claim, counted }))
     }
 
     fn parse_slot_binding(&mut self) -> PResult<Option<(String, String)>> {
@@ -1317,8 +1319,14 @@ impl Parser {
         let quantifier = if self.advance().lit == "every" { Quantifier::Every } else { Quantifier::None };
         let var = self.ident()?;
         self.expect_kw("in")?;
-        let table = self.ident()?;
-        let key_col = self.paren_ident()?;
+        let source = if self.is_kw("setting") && self.toks.get(self.i + 1).is_some_and(|t| t.kind == Tok::Ident) {
+            self.advance();
+            DeclaredSource::Setting(self.ident()?)
+        } else {
+            let table = self.ident()?;
+            let key_col = self.paren_ident()?;
+            DeclaredSource::Table { table, key_col }
+        };
         let filter = self.parse_where()?;
         let counted = if self.accept_kw("nonempty") {
             if quantifier == Quantifier::None {
@@ -1336,7 +1344,7 @@ impl Parser {
         let body = self.parse_perm_union()?;
         self.depth -= 1;
         self.expect(Tok::RParen)?;
-        Ok(Builtin::Declared(Box::new(DeclaredScope { quantifier, counted, var, table, key_col, filter, body })))
+        Ok(Builtin::Declared(Box::new(DeclaredScope { quantifier, counted, var, source, filter, body })))
     }
 
     fn parse_some(&mut self) -> PResult<Builtin> {

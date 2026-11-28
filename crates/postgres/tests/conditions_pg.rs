@@ -203,9 +203,13 @@ fn caller_values() -> Vec<Value> {
 }
 
 fn install(db: &mut Client, schema: &str, extension: &str) -> usize {
+    install_counted(db, schema, extension, "")
+}
+
+fn install_counted(db: &mut Client, schema: &str, extension: &str, counted: &str) -> usize {
     let (rows, auth) = (format!("{schema}_rows"), format!("{schema}_auth"));
     let spec = format!(
-        "{extension}definers schema \"{auth}\"\ntables schema \"{rows}\"\ntopology {{ level estate }}\nsubject member {{ anchor estate; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate\n  relation owner: member via owner_id\n  relation named: member via edge doc_edges(principal_id, object_id) key rule_id\n  relation fits: member via conditions doc_terms(object_id, term, op) values (num, txt, at, list, lat, lng) on id from claim facts\n  relation matches: member via conditions rule_terms(object_id, term, op) values (num, txt, at) key rule_id on id from claim facts\n  permission view = owner + (@kind(\"member\") and fits) + some r in rules_live (named and matches) @rls maps select\n}}\n"
+        "{extension}definers schema \"{auth}\"\ntables schema \"{rows}\"\ntopology {{ level estate }}\nsubject member {{ anchor estate; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate\n  relation owner: member via owner_id\n  relation named: member via edge doc_edges(principal_id, object_id) key rule_id\n  relation fits: member via conditions doc_terms(object_id, term, op) values (num, txt, at, list, lat, lng) on id from claim facts\n  relation matches: member via conditions rule_terms(object_id, term, op) values (num, txt, at) key rule_id on id from claim facts{counted}\n  permission view = owner + (@kind(\"member\") and fits) + some r in rules_live (named and matches) @rls maps select\n}}\n"
     );
     let s = demesne_syntax::parse(&spec).expect("the spec parses");
     demesne_emit_sql::validate(&s).expect("the spec validates");
@@ -332,6 +336,32 @@ fn keyed_conditions_are_those_of_the_bound_element_and_all_of_them() {
 }
 
 #[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_nonempty_keyed_relation_admits_through_no_element_that_stores_no_condition() {
+    let mut db = connect();
+    for (counted, through_bare) in [("", true), (" nonempty", false)] {
+        install_counted(&mut db, "demesne_condn", "", counted);
+        db.batch_execute(
+            "INSERT INTO docs VALUES ('keyed', 'e1', 'ann', ARRAY['r1', 'r3']), ('bare', 'e1', 'ann', ARRAY['r3']);
+             INSERT INTO doc_edges VALUES ('bob', 'keyed', 'r1'), ('bob', 'keyed', 'r3'), ('bob', 'bare', 'r3');
+             INSERT INTO rule_terms VALUES ('keyed', 'r1', 'level', 'le', 3, NULL, NULL), ('keyed', 'r1', 'team', 'eq', NULL, 'blue', NULL);",
+        )
+        .expect("two keyed rows");
+        for (facts, doc, want, why) in [
+            ("{\"level\":5,\"team\":\"blue\"}", "keyed", true, "every condition of r1"),
+            ("{\"level\":2,\"team\":\"blue\"}", "keyed", through_bare, "r1's level bound fails, so only r3, which stores no condition, could admit"),
+            ("{\"level\":5,\"team\":\"blue\"}", "bare", through_bare, "its one element stores no condition"),
+            ("", "bare", through_bare, "nor does a caller with no values change that"),
+        ] {
+            let facts = if facts.is_empty() { String::new() } else { format!(",\"facts\":{facts}") };
+            assert_eq!(visible_as(&mut db, "bob", "guest", &facts).contains(doc), want, "{counted:?} {doc} {facts}: {why}");
+        }
+        assert!(visible_as(&mut db, "ann", "guest", "").contains("bare"), "the owner reads it by its own term");
+    }
+    db.batch_execute("RESET search_path; DROP SCHEMA demesne_condn_rows CASCADE; DROP SCHEMA demesne_condn_auth CASCADE;").expect("drop the schemas");
+}
+
+#[test]
 #[ignore = "needs DEMESNE_PG_URL on a database that has PostGIS; run with -- --ignored"]
 fn with_postgis_declared_within_km_measures_on_the_spheroid() {
     let mut db = connect();
@@ -360,13 +390,9 @@ fn with_postgis_declared_within_km_measures_on_the_spheroid() {
     db.batch_execute("RESET search_path; DROP SCHEMA demesne_condg_rows CASCADE; DROP SCHEMA demesne_condg_auth CASCADE;").expect("drop the schemas");
 }
 
-#[test]
-#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
-fn an_exception_whose_condition_cannot_be_decided_bars() {
-    let mut db = connect();
-    let (rows, auth) = ("demesne_condx_rows", "demesne_condx_auth");
+fn install_barred(db: &mut Client, rows: &str, auth: &str, counted: &str) {
     let spec = format!(
-        "definers schema \"{auth}\"\ntables schema \"{rows}\"\ntopology {{ level estate }}\nsubject member {{ anchor estate; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate\n  relation owner: member via owner_id\n  relation named: member via edge doc_edges(principal_id, object_id) key rule_id\n  relation barred: member via edge doc_bars(principal_id, object_id) key rule_id slot slot\n  relation bar_terms: member via conditions bar_terms(object_id, term, op) values (num, txt, at) key rule_id on id from claim facts\n  permission view = owner + some r in rules_live (named and none s in rule_slots(rule_id) (barred and bar_terms)) @rls maps select\n}}\n"
+        "definers schema \"{auth}\"\ntables schema \"{rows}\"\ntopology {{ level estate }}\nsubject member {{ anchor estate; reach self; identifies sub; roles none; binds owner }}\nobject doc {{\n  table docs\n  scoped estate\n  relation owner: member via owner_id\n  relation named: member via edge doc_edges(principal_id, object_id) key rule_id\n  relation barred: member via edge doc_bars(principal_id, object_id) key rule_id slot slot\n  relation bar_terms: member via conditions bar_terms(object_id, term, op) values (num, txt, at) key rule_id on id from claim facts{counted}\n  permission view = owner + some r in rules_live (named and none s in rule_slots(rule_id) (barred and bar_terms)) @rls maps select\n}}\n"
     );
     let s = demesne_syntax::parse(&spec).expect("the spec parses");
     demesne_emit_sql::validate(&s).expect("the spec validates");
@@ -392,6 +418,31 @@ fn an_exception_whose_condition_cannot_be_decided_bars() {
         db.batch_execute(&stmt).unwrap_or_else(|e| panic!("apply: {e}\n{stmt}"));
     }
     db.batch_execute(&format!("GRANT USAGE ON SCHEMA {rows}, {auth} TO {CALLER}; GRANT SELECT ON {rows}.docs TO {CALLER};")).expect("grants");
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn a_nonempty_exception_that_stores_no_condition_still_bars() {
+    let mut db = connect();
+    let (rows, auth) = ("demesne_condxn_rows", "demesne_condxn_auth");
+    for counted in ["", " nonempty"] {
+        install_barred(&mut db, rows, auth, counted);
+        db.batch_execute(&format!("DELETE FROM {rows}.bar_terms")).expect("no condition stored");
+        assert!(
+            !visible(&mut db, "bob", ",\"facts\":{\"level\":9}").contains("d"),
+            "{counted:?}: the exception's edge holds and it stores no condition, so it bars"
+        );
+        assert!(visible(&mut db, "cat", ",\"facts\":{\"level\":9}").contains("d"), "{counted:?}: no exception edge for this caller");
+    }
+    db.batch_execute(&format!("RESET search_path; DROP SCHEMA {rows} CASCADE; DROP SCHEMA {auth} CASCADE;")).expect("drop the schemas");
+}
+
+#[test]
+#[ignore = "needs DEMESNE_PG_URL; run with -- --ignored"]
+fn an_exception_whose_condition_cannot_be_decided_bars() {
+    let mut db = connect();
+    let (rows, auth) = ("demesne_condx_rows", "demesne_condx_auth");
+    install_barred(&mut db, rows, auth, "");
     for (who, facts, reads, why) in [
         ("bob", ",\"facts\":{\"level\":3}", false, "the exception's edge and its condition both hold, so it bars"),
         ("bob", ",\"facts\":{\"level\":9}", true, "the exception's condition is decided false, so it does not bar"),
